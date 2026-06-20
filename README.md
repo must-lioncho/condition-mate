@@ -1,0 +1,208 @@
+# Condition Manager
+
+macOS 전용, 메모리 경량 메뉴바 앱. **타임 트래킹 기반 컨디션 매니저**.
+
+게임의 누적 플레이타임처럼 작업 시간이 쌓이는 성장감을 주고(100h → 1,000h),
+BGM 템포로 컨디션을 끌어올려 최상의 퍼포먼스 상태를 유지합니다.
+
+## 설계 원칙
+
+- **macOS 전용 / 하이브리드 금지**: 순수 AppKit. SwiftUI 런타임도 배제해 메모리를 최소화.
+- **메뉴바 상주 (Dock 아이콘 없음)**: `NSStatusItem` 1개 + 1Hz 하트비트 타이머 1개.
+- **메뉴는 열릴 때만 렌더링**: 유휴 상태에서 렌더링 비용 0.
+- 디버그 빌드 기준 약 45MB RSS (대부분 공유 AppKit 프레임워크). 릴리즈 빌드 시 더 감소.
+
+## 핵심 동작
+
+### 1. 타임 트래킹 (특정 앱 활성 시간)
+- 사용자가 지정한 "추적 대상 앱"이 frontmost일 때만 시간 누적.
+- 입력이 일정 시간(기본 60초) 없으면 자동 일시정지(idle).
+- 누적 시간은 `~/Library/Application Support/ConditionManager/stats.json`에 저장.
+- 마일스톤(10/50/100/200/500/1000/2000/5000/10000h)으로 성장감 제공.
+
+### 2. 컨디션 디렉터 (BGM 템포 제어)
+입력 이벤트(키/마우스/스크롤) 빈도로 활동량을 추정하고, 상태기계로 BGM 템포를 조절:
+
+- **WARMUP**: 루즈(저활동)할 때 목표 BPM을 점진적으로 올려 포텐셜을 끌어올림.
+- **SUSTAIN**: 최고 BPM 부근에서 활동량이 높게 유지되는 동안 유지.
+- **RELEASE**: 빠른 템포가 더 이상 퍼포먼스를 못 올리면(개인 피크 대비 활동량 하락이 지속)
+  낮은 BPM으로 5~10분 이완 → 이후 다시 WARMUP으로 복귀.
+
+음악은 **작업 세션 중에만** 재생(추적 앱 frontmost + 비유휴). 자리를 비우면 정지하되 컨디션 상태는 보존.
+
+#### 앱별 BGM 전략 (프로파일)
+
+추적 앱마다 **BGM 전략(템포 밴드)**을 지정할 수 있습니다. 특정 앱이 **1분 이상 연속 활성**이면
+디렉터의 활성 밴드가 그 앱의 전략으로 전환되고 음악이 그 밴드로 바뀝니다(1분 미만 짧은 전환은
+무시 → 깜빡임 방지).
+
+프리셋 4종:
+- **칠** 75–100 BPM (브라우징·휴식)
+- **스테디** 100–125 BPM (작성·기획)
+- **집중** 120–150 BPM (코딩·몰입)
+- **하이프** 140–175 BPM (고조)
+
+잘 알려진 앱 기본값: Chrome/Safari/Brave → 칠, Cursor/VSCode/Xcode → 집중, Notion/Obsidian → 스테디.
+메뉴 → "추적 앱 · BGM 전략"에서 앱마다 프로파일을 바꿀 수 있습니다.
+
+### 3. 로컬 대시보드 (내 활동 보기)
+
+메뉴 → **대시보드 열기**를 누르면 127.0.0.1 루프백 전용 미니 HTTP 서버(Network 프레임워크,
+외부 의존성 0)가 **그때 기동**되어 기본 브라우저로 활동 대시보드를 엽니다.
+
+- **오늘 활동 타임라인**: 분당 활동량(입력 빈도) 곡선 + 작업한 시간 띠를 하루 24시간 축에 표시.
+- **시간대별 주 활성 앱 띠**: 분당 가장 오래 frontmost였던 앱을 색상으로 표시 → 언제 어떤 앱을 썼는지.
+- **최근 요약**: 최근 30분 작업 시간 + 주요 앱·무드 한 줄 요약.
+- **키보드/마우스 활동 분리**: 활동 차트에 ⌨키보드·🖱마우스 라인을 따로 표기 + 타임라인 로그에 분당 수치.
+  키보드 우세 = 능동적(타이핑·코딩·리서치), 마우스 우세 = 수동적(브라우징·시청) 판별.
+- **타임라인 로그 (분 단위·최신순)**: 시간 / 길이 / 앱·사이트 / 무드 / BGM / 활동(⌨🖱) / **가치**를 한 행씩.
+  동일 앱·사이트·무드·트랙이 이어지면 한 구간으로 병합(예: `02:12 · 5분 · Chrome · youtube.com · 칠 · [096]…`).
+- **Chrome 활성 사이트 (분 단위)**: 브라우저의 활성 탭 도메인을 기록 → YouTube(시청=소극) vs ChatGPT/Gemini/Genspark(리서치=중간)를 구분.
+
+#### 시간 4분할 (토탈 · 책상 · 집중 · 퇴근)
+
+고시생이 순공시간을 타이트하게 재듯, 활동 사이 **공백(gap)** 기준으로 나눕니다.
+활동(입력 또는 미팅)이 찍힌 분을 앵커로, 앵커 사이 간격이 **6시간 미만이면 같은 업무 스팬**(그 사이
+휴식·미팅·담배는 전부 토탈에 포함), **6시간 이상이면 퇴근**으로 보고 스팬을 분리합니다.
+6시간 안에 복귀하면 퇴근 없이 전부 토탈 — 머스크식 "휴식 후 복귀 = 연속 업무" 모델.
+
+- **토탈 시간**: 업무 스팬 전체 = 책상 + 집중 + 휴식·미팅. (퇴근 공백만 제외)
+- **책상 시간**: 컴퓨터로 만들려 시도 = 리서치(중간)+코딩(적극). YouTube·휴식·미팅 제외.
+- **집중 시간**: 딥워크 = 적극(에디터)만. 순공시간.
+- **퇴근**: 6시간 이상 활동 공백. 토탈에서 제외.
+
+중첩: 집중 ⊆ 책상 ⊆ 토탈. 휴식과 미팅은 구분하지 않고 "토탈 − 책상"으로 함께 묶입니다
+(담배+미팅 동시 같은 경우를 굳이 가르지 않음). 상단 4+1 카드 + 중첩 막대로 표시.
+
+#### 가치(Value) 가중치
+
+활동 종류별로 시간에 배수를 곱해 "가치 점수"를 계산합니다(가중 작업 시간):
+- **소극 1×**: 시청·일반 브라우징 (예: YouTube)
+- **중간 3×**: AI 리서치 사이트(ChatGPT·Gemini·Genspark·Perplexity·Claude.ai 등) + 문서 앱(Notion·Obsidian)
+- **적극 5×**: 에디터·딥워크(Cursor·VSCode·Xcode·터미널)
+
+상단 "오늘 가치(가중)" 카드 = Σ(작업초 × 배수). 타임라인 각 행에 등급·배수 뱃지 표시.
+브라우저 사이트 감지는 **Apple Events(자동화) 권한**이 필요합니다 — 첫 실행 시
+"ConditionManager가 Google Chrome 제어"를 허용하세요(거부 시 사이트만 비고, 나머지는 정상).
+- **주요 앱**: 앱별 활성 시간 막대.
+- **앱별 BGM (적절성 디버그)**: 앱마다 어떤 전략으로 어떤 트랙이 재생됐는지 표로 표시.
+  트랙 BPM이 그 전략의 밴드를 벗어나면 **빨강(⚠)으로 경고** → "이 앱에 부적절한 BGM이 나왔나"를 한눈에 검증.
+- 상단 카드: 오늘 작업 / 현재 상태 / 누적 + "지금: 앱·전략·BGM" 라이브 라인. 5초마다 자동 갱신.
+- 데이터: `~/Library/Application Support/ConditionManager/activity/activity-YYYY-MM-DD.jsonl`
+  (분당 1줄: 활동량·작업초·앱·전략·트랙·BPM, 최근 7일 보관). 서버는 평소엔 떠 있지 않아 메모리 부담 없음, 루프백 전용이라 외부 접근 불가.
+
+## BGM 음원 준비 (로컬 BPM 폴더)
+
+음원 파일명에 BPM을 넣어 폴더에 모아두세요. 인식되는 패턴:
+
+- `Track Name 128bpm.mp3`
+- `Track Name [128].mp3`
+- `Track Name (128).m4a`
+- `Track Name - 128.wav`
+
+파일명에 BPM이 없으면 ID3/iTunes BPM 메타데이터를 보조로 읽습니다.
+지원 확장자: mp3, m4a, aac, wav, aiff, caf.
+
+### BPM 자동 분석 & 태깅 (파일명/태그에 BPM이 없을 때)
+
+ffmpeg만 있으면 외부 라이브러리 없이 BPM을 추정해 ID3 TBPM 태그로 내장할 수 있습니다.
+
+```bash
+# 1) 추정만 (출력: "BPM <tab> 경로")
+python3 Scripts/analyze-bpm.py temp/*.mp3
+
+# 2) 폴더 전체를 추정 + ID3 TBPM 무손실 태깅 (재실행 가능)
+bash Scripts/tag-bpm.sh temp
+```
+
+추정 방식: ffmpeg로 모노 PCM 디코드 → 온셋 포락선 → 자기상관으로 템포 검출(70–180 BPM).
+"버킷-등급" 정밀도라 잔잔/빠른 곡 경계에서 옥타브 오차(2배·절반)가 날 수 있으니,
+의심되는 곡은 귀로 확인 후 재태깅하거나 직접 TBPM을 수정하세요.
+
+### 음원 추가·정리 워크플로 (인박스 → 라이브러리)
+
+- `temp/` = **인박스**. 새 음원을 그냥 여기에 떨어뜨립니다.
+- `bgm/` = **정리된 라이브러리**. 앱이 읽는 폴더(기본값). 파일명은 `[BPM] 제목.확장자`,
+  BPM 0패딩이라 Finder에서 **템포순 정렬**됩니다.
+
+```bash
+# temp/ 에 새 음원을 넣은 뒤:
+bash Scripts/organize.sh        # BPM 분석 + ID3 태깅 + "[BPM] 제목"으로 개명 + bgm/ 로 이동
+```
+
+- 멱등: 재실행해도 `[BPM]` 접두사가 중복되지 않습니다.
+- 파일명·태그 둘 다에 BPM이 들어가므로, 태그가 사라져도 앱이 인식합니다.
+- **솎아내기**: `bgm/`에서 필요 없는 파일을 그냥 삭제하면 됩니다(앱 재시작 또는 '음악 폴더 선택'으로 같은 폴더 재선택 시 반영).
+- wav/aiff처럼 ID3가 없는 포맷은 파일명의 `[BPM]`으로 인식됩니다.
+
+현재 `bgm/`에 11곡이 정리되어 있고 앱 음악 폴더 기본값으로 등록돼 있습니다.
+
+## 권한
+
+- **손쉬운 사용(Accessibility)**: 키 입력 빈도 감지에 필요. 메뉴 → "손쉬운 사용 권한 요청".
+  미허용 시 마우스/스크롤만으로 활동량을 추정(동작은 함).
+
+## 빌드 & 실행
+
+```bash
+cd projects/condition-manager
+swift build -c release
+./.build/release/ConditionManager
+```
+
+개발 중에는 `swift run` 으로 바로 실행 가능합니다.
+
+### 첫 실행 후 설정 (메뉴바 metronome 아이콘 클릭)
+1. **음악 폴더 선택…** — BPM 표기된 음원 폴더 지정.
+2. **현재 앱을 추적에 추가** — 추적하고 싶은 작업 앱을 frontmost로 둔 뒤 클릭.
+3. (선택) **설정** — BPM 범위, 릴리즈 길이 조정.
+4. **손쉬운 사용 권한 요청** — 키 입력 감지 활성화.
+
+## .app 번들 패키징 + 로그인 자동 시작
+
+```bash
+./Scripts/build-app.sh
+```
+
+이 스크립트가 하는 일:
+- 릴리즈 바이너리 빌드 → `ConditionManager.app` 번들 조립
+- `Info.plist`(`LSUIElement = true`)로 Dock/전환 목록에서 숨김
+- ad-hoc 코드 서명 (`codesign --sign -`) — `SMAppService` 로그인 항목에 필요
+
+실행 및 자동 시작 설정:
+1. `open ConditionManager.app` (또는 `/Applications`로 이동 후 실행 — 로그인 항목 안정화 권장)
+2. 메뉴바 아이콘 → **로그인 시 자동 시작** 체크 → `SMAppService.mainApp.register()` 호출
+
+로그인 항목은 **서명된 .app 번들에서 실행할 때만** 동작합니다. 원시 SPM 바이너리(`swift run`)로
+실행하면 메뉴에 "로그인 자동 시작: .app 번들 실행 시 사용 가능" 안내가 대신 표시됩니다.
+
+> ad-hoc 서명은 로컬 사용 기준입니다. 배포하려면 Developer ID 서명/공증이 필요합니다.
+
+## 구조
+
+```
+Sources/ConditionManager/
+  main.swift              # NSApplication 진입점 (accessory policy)
+  AppDelegate.swift       # 코디네이터 + 1Hz 하트비트
+  Core/
+    Settings.swift        # UserDefaults 설정
+    TimeStore.swift       # 누적 시간 영속화 (JSON)
+    ActivityMonitor.swift # 전역 입력 빈도 → 활동량
+    ActivityLog.swift     # 분당 활동 타임라인 로깅 (jsonl, 7일 보관)
+    BGMProfile.swift      # 앱별 BGM 전략(템포 밴드) 프리셋 + 기본 매핑
+    ValueTier.swift       # 활동 종류별 가치 배수(소극1/중간3/적극5) 분류
+    BrowserInspector.swift# Chrome 등 활성 탭 도메인 읽기 (osascript)
+    LoginItem.swift       # SMAppService 로그인 항목 토글
+  Dashboard/
+    DashboardServer.swift  # 루프백 전용 미니 HTTP 서버 (Network)
+    DashboardContent.swift # 자기완결형 대시보드 HTML/캔버스 차트
+  Audio/
+    BPMLibrary.swift      # 폴더 스캔 + BPM 파싱/인덱싱
+    AudioEngine.swift     # AVAudioPlayer 루프 + 크로스페이드
+    ConditionDirector.swift # 컨디션 상태기계 (WARMUP/SUSTAIN/RELEASE)
+  UI/
+    MenuController.swift   # NSStatusItem 메뉴 (열릴 때만 렌더)
+    Formatting.swift       # 누적 시간/마일스톤 포맷
+Info.plist               # .app 번들용 (LSUIElement)
+Scripts/build-app.sh     # 릴리즈 → 서명된 .app 번들 조립
+```
