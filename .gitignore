@@ -1,0 +1,14 @@
+.build/
+.swiftpm/
+Package.resolved
+.DS_Store
+*.xcodeproj
+ConditionManager.app/
+
+# Audio assets (not part of Swift build; kept local to keep repo lean)
+temp/
+bgm/
+
+# MoAI local runtime state (session logs / memory)
+.moai/logs/
+.moai/memory/

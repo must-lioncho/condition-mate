@@ -1,0 +1,264 @@
+import AppKit
+
+// Builds the status-bar menu on demand. Rebuilding only when the menu opens
+// (NSMenuDelegate) means zero rendering work while idle — important for the
+// low-resource goal.
+final class MenuController: NSObject, NSMenuDelegate {
+
+    let menu = NSMenu()
+    private weak var delegate: AppDelegate?
+
+    init(delegate: AppDelegate) {
+        self.delegate = delegate
+        super.init()
+        menu.delegate = self
+        menu.autoenablesItems = false
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        rebuild()
+    }
+
+    private func rebuild() {
+        guard let d = delegate else { return }
+        menu.removeAllItems()
+        let s = Settings.shared
+
+        // --- Manual Start / Stop Working (top, prominent like Hubstaff) ---
+        if d.isWorking {
+            addBigAction("■  작업 중단", action: #selector(onToggleWorking), color: .systemRed)
+        } else {
+            addBigAction("▶  작업 시작", action: #selector(onToggleWorking), color: .systemGreen)
+        }
+        addDisabled("\(d.liveStatus) · 세션 \(Formatting.clock(d.sessionSeconds))")
+
+        menu.addItem(.separator())
+
+        // --- Cumulative progress (the "leveling up" headline) ---
+        addDisabled("누적 \(Formatting.hoursLabel(d.store.data.totalSeconds))", bold: true)
+        addDisabled(Formatting.milestoneProgress(forSeconds: d.store.data.totalSeconds))
+        addDisabled("오늘 \(Formatting.hoursLabel(d.store.todaySeconds))")
+
+        menu.addItem(.separator())
+
+        // --- Condition / BGM status ---
+        if d.director.isActive {
+            let app = d.activeAppLabel.isEmpty ? "" : " · \(d.activeAppLabel)"
+            addDisabled("전략: \(d.director.activeProfileLabel)\(app)")
+            addDisabled("컨디션: \(d.director.phase.rawValue) · 목표 \(Int(d.director.targetBPM)) BPM")
+            if let remain = d.director.releaseRemaining {
+                addDisabled("  릴리즈 \(Int(remain / 60))분 \(Int(remain.truncatingRemainder(dividingBy: 60)))초 남음")
+            }
+            if let title = d.audio.currentTitle {
+                addDisabled("♪ \(title)")
+            }
+        } else if s.musicEnabled {
+            if d.library.tracks.isEmpty {
+                addDisabled("음원 없음 — 음악 폴더를 선택하세요")
+            } else {
+                addDisabled("컨디션 대기 중 (작업 세션 시작 시 재생)")
+            }
+        } else {
+            addDisabled("음악 꺼짐")
+        }
+        if !d.library.tracks.isEmpty {
+            let range = d.library.bpmRange
+            let r = range.map { " (\(Int($0.min))–\(Int($0.max)) BPM)" } ?? ""
+            addDisabled("음원 \(d.library.tracks.count)곡\(r)")
+        }
+
+        menu.addItem(.separator())
+
+        // --- Toggles ---
+        addCheck("음악 (BGM)", checked: s.musicEnabled, action: #selector(onToggleMusic))
+        addItem("대시보드 열기 (내 활동 보기)", action: #selector(onOpenDashboard))
+
+        menu.addItem(.separator())
+
+        // --- Setup ---
+        addItem("음악 폴더 선택…", action: #selector(onChooseFolder))
+        addItem("현재 앱을 추적에 추가", action: #selector(onAddApp))
+
+        // Tracked apps submenu — each app maps to a BGM strategy (profile).
+        let trackedItem = NSMenuItem(title: "추적 앱 · BGM 전략 (\(s.trackedApps.count))", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        if s.trackedApps.isEmpty {
+            let empty = NSMenuItem(title: "없음 — '현재 앱을 추적에 추가' 사용", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            sub.addItem(empty)
+        } else {
+            for id in s.trackedApps {
+                let name = appName(forBundleID: id) ?? id
+                let currentKey = s.profileKey(for: id)
+                let profile = BGMProfile.by(key: currentKey)
+                let appItem = NSMenuItem(title: "\(name) — \(profile.label)", action: nil, keyEquivalent: "")
+                appItem.submenu = buildAppProfileMenu(bundleID: id, name: name, currentKey: currentKey)
+                sub.addItem(appItem)
+            }
+        }
+        trackedItem.submenu = sub
+        menu.addItem(trackedItem)
+
+        // Settings submenu (BPM range + release minutes)
+        menu.addItem(buildSettingsSubmenu(s))
+
+        menu.addItem(.separator())
+
+        // --- Permission status ---
+        if !d.activity.isTrusted {
+            addItem("손쉬운 사용 권한 요청 (키 입력 감지)", action: #selector(onRequestAccessibility))
+        } else {
+            addDisabled("손쉬운 사용 권한: 허용됨")
+        }
+
+        // --- Login at startup (only meaningful from a signed .app bundle) ---
+        if LoginItem.isBundled {
+            addCheck("로그인 시 자동 시작", checked: LoginItem.isEnabled, action: #selector(onToggleLoginItem))
+        } else {
+            addDisabled("로그인 자동 시작: .app 번들 실행 시 사용 가능")
+        }
+
+        menu.addItem(.separator())
+        addItem("종료", action: #selector(onQuit), key: "q")
+    }
+
+    // Per-app BGM strategy picker.
+    private func buildAppProfileMenu(bundleID: String, name: String, currentKey: String) -> NSMenu {
+        let m = NSMenu()
+        let header = NSMenuItem(title: "\(name) · 1분 이상 사용 시 이 전략으로", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        m.addItem(header)
+        for p in BGMProfile.all {
+            let i = NSMenuItem(title: "\(p.label)  \(Int(p.minBPM))–\(Int(p.maxBPM))",
+                               action: #selector(onSetProfile(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = [bundleID, p.key]
+            i.state = (p.key == currentKey) ? .on : .off
+            m.addItem(i)
+        }
+        m.addItem(.separator())
+        let remove = NSMenuItem(title: "✕  추적에서 제거", action: #selector(onRemoveApp(_:)), keyEquivalent: "")
+        remove.target = self
+        remove.representedObject = bundleID
+        m.addItem(remove)
+        return m
+    }
+
+    private func buildSettingsSubmenu(_ s: Settings) -> NSMenuItem {
+        let item = NSMenuItem(title: "설정", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+
+        let bpmHeader = NSMenuItem(title: "BPM 범위: \(Int(s.minBPM))–\(Int(s.maxBPM))", action: nil, keyEquivalent: "")
+        bpmHeader.isEnabled = false
+        sub.addItem(bpmHeader)
+        for (lo, hi) in [(70.0, 130.0), (70.0, 150.0), (80.0, 170.0), (90.0, 180.0)] {
+            let i = NSMenuItem(title: "  \(Int(lo))–\(Int(hi)) BPM", action: #selector(onSetBPMRange(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = [lo, hi]
+            i.state = (s.minBPM == lo && s.maxBPM == hi) ? .on : .off
+            sub.addItem(i)
+        }
+
+        sub.addItem(.separator())
+        let relHeader = NSMenuItem(title: "릴리즈 길이: \(Int(s.releaseMinutes))분", action: nil, keyEquivalent: "")
+        relHeader.isEnabled = false
+        sub.addItem(relHeader)
+        for m in [5.0, 7.0, 10.0] {
+            let i = NSMenuItem(title: "  \(Int(m))분", action: #selector(onSetRelease(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = m
+            i.state = (s.releaseMinutes == m) ? .on : .off
+            sub.addItem(i)
+        }
+
+        item.submenu = sub
+        return item
+    }
+
+    // MARK: - Item builders
+
+    private func addDisabled(_ title: String, bold: Bool = false) {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        if bold {
+            item.attributedTitle = NSAttributedString(
+                string: title,
+                attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)]
+            )
+        }
+        menu.addItem(item)
+    }
+
+    // Prominent, colored, bold action — the Start/Stop headline.
+    private func addBigAction(_ title: String, action: Selector, color: NSColor) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.isEnabled = true
+        item.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize + 1),
+                .foregroundColor: color,
+            ]
+        )
+        menu.addItem(item)
+    }
+
+    private func addItem(_ title: String, action: Selector, key: String = "") {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.target = self
+        item.isEnabled = true
+        menu.addItem(item)
+    }
+
+    private func addCheck(_ title: String, checked: Bool, action: Selector) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.isEnabled = true
+        item.state = checked ? .on : .off
+        menu.addItem(item)
+    }
+
+    private func appName(forBundleID id: String) -> String? {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+            return FileManager.default.displayName(atPath: url.path)
+                .replacingOccurrences(of: ".app", with: "")
+        }
+        return nil
+    }
+
+    // MARK: - Actions
+
+    @objc private func onToggleWorking() { delegate?.toggleWorking() }
+    @objc private func onToggleMusic() { delegate?.toggleMusic() }
+    @objc private func onOpenDashboard() { delegate?.openDashboard() }
+    @objc private func onChooseFolder() { delegate?.chooseMusicFolder() }
+    @objc private func onAddApp() { delegate?.addCurrentFrontmostApp() }
+    @objc private func onRequestAccessibility() { delegate?.requestAccessibility() }
+    @objc private func onToggleLoginItem() { delegate?.toggleLoginItem() }
+    @objc private func onQuit() { delegate?.quit() }
+
+    @objc private func onRemoveApp(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? String {
+            Settings.shared.removeTrackedApp(id)
+        }
+    }
+
+    @objc private func onSetProfile(_ sender: NSMenuItem) {
+        if let arr = sender.representedObject as? [String], arr.count == 2 {
+            delegate?.setAppProfile(arr[1], for: arr[0])
+        }
+    }
+
+    @objc private func onSetBPMRange(_ sender: NSMenuItem) {
+        if let pair = sender.representedObject as? [Double], pair.count == 2 {
+            delegate?.setBPMRange(min: pair[0], max: pair[1])
+        }
+    }
+
+    @objc private func onSetRelease(_ sender: NSMenuItem) {
+        if let m = sender.representedObject as? Double {
+            delegate?.setReleaseMinutes(m)
+        }
+    }
+}
