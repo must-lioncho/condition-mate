@@ -17,11 +17,7 @@ final class TimeStore {
     private let dayFormatter: DateFormatter
 
     init() {
-        let fm = FileManager.default
-        let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("ConditionManager", isDirectory: true)
-        try? fm.createDirectory(at: base, withIntermediateDirectories: true)
-        fileURL = base.appendingPathComponent("stats.json")
+        fileURL = AppPaths.base.appendingPathComponent("stats.json")
 
         let df = DateFormatter()
         df.locale = Locale(identifier: "en_US_POSIX")
