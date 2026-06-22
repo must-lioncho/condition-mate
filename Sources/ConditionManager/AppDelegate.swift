@@ -397,15 +397,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let day = reviewStore.todayKey
         let r = reviewStore.review(day)
         let goals = reviewStore.goals
-            .map { "{\"id\":\(jsonString($0.id)),\"text\":\(jsonString($0.text))}" }
+            .map { g -> String in
+                // startedAt as epoch seconds (0 = not running); trackedSeconds is the
+                // banked total, so the client can tick the live session locally.
+                let started = g.startedAt.map { String($0.timeIntervalSince1970) } ?? "0"
+                return "{\"id\":\(jsonString(g.id)),\"seq\":\(g.seq),\"text\":\(jsonString(g.text)),\"parent\":\(jsonString(g.parent)),"
+                    + "\"status\":\(jsonString(g.status)),\"trackedSeconds\":\(g.trackedSeconds),\"startedAt\":\(started)}"
+            }
             .joined(separator: ",")
         let contribs = r.contributions
             .map { "\(jsonString($0.key)):\($0.value)" }
             .joined(separator: ",")
+        let notes = r.notes
+            .map { "\(jsonString($0.key)):\(jsonString($0.value))" }
+            .joined(separator: ",")
         func optInt(_ v: Int?) -> String { v.map(String.init) ?? "null" }
         return "{\"goals\":[\(goals)],"
             + "\"selfScore\":\(optInt(r.selfScore)),\"submittedSelf\":\(r.submittedSelf),"
-            + "\"contributions\":{\(contribs)},"
+            + "\"contributions\":{\(contribs)},\"notes\":{\(notes)},"
             + "\"aiScore\":\(optInt(r.aiScore)),\"aiNote\":\(jsonString(r.aiNote)),"
             + "\"adminScore\":\(optInt(r.adminScore))}"
     }
@@ -419,9 +428,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let day = reviewStore.todayKey
             switch path {
             case "/api/goal/add":
-                if let text = obj["text"] as? String { reviewStore.addGoal(text: text) }
+                if let text = obj["text"] as? String {
+                    reviewStore.addGoal(text: text, parent: (obj["parent"] as? String) ?? "")
+                }
             case "/api/goal/remove":
-                if let id = obj["id"] as? String { reviewStore.removeGoal(id: id) }
+                if let id = obj["id"] as? String {
+                    // Clean up notes/contributions for the goal and its children.
+                    let removed = Set([id] + reviewStore.goals.filter { $0.parent == id }.map { $0.id })
+                    var r = reviewStore.review(day)
+                    removed.forEach { r.notes.removeValue(forKey: $0); r.contributions.removeValue(forKey: $0) }
+                    reviewStore.saveReview(r, day: day)
+                    reviewStore.removeGoal(id: id)
+                }
+            case "/api/goal/note":
+                if let id = obj["id"] as? String {
+                    var r = reviewStore.review(day)
+                    r.notes[id] = (obj["note"] as? String) ?? ""
+                    reviewStore.saveReview(r, day: day)
+                }
+            case "/api/goal/parent":
+                if let id = obj["id"] as? String {
+                    reviewStore.setParent(id: id, parent: (obj["parent"] as? String) ?? "")
+                }
+            case "/api/goal/reorder":
+                if let order = obj["order"] as? [String] {
+                    reviewStore.reorderGoals(order: order)
+                }
+            case "/api/goal/status":
+                if let id = obj["id"] as? String, let status = obj["status"] as? String {
+                    reviewStore.setStatus(id: id, status: status)
+                }
             case "/api/review":
                 var r = reviewStore.review(day)
                 if let s = (obj["selfScore"] as? NSNumber)?.intValue { r.selfScore = s }
