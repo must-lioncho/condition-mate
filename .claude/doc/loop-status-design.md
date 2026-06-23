@@ -104,20 +104,30 @@ waiting 을 자동으로 잡으려면 "Claude가 사용자 입력을 기다리�
 
 루프 자체는 두 가지 방식이 가능하다. 하나는 앱 내부에 주기 스캐너를 두어 backlog 를 집어 실행으로 전환하는 방식이고, 다른 하나는 외부에서(예: Claude Code의 루프 실행) 대시보드 API를 폴링하며 backlog 목록을 가져와 처리하는 방식이다. 어느 쪽이든 적격성 규칙(5장)과 동시 실행 한도는 동일하게 적용한다. 외부 폴링 방식을 쓰려면 backlog 목록만 추려 반환하는 조회 API가 있으면 편하다.
 
-## 8. 미결정 사항
+## 8. 결정 사항 (확정)
 
-다음은 구현 전에 결정해야 할 항목이다.
+다음은 구현 전 합의로 확정된 항목이다.
 
-첫째, waiting 상태의 시간 적립이다. 응답 대기 시간을 활성 작업 시간으로 칠지, 아니면 waiting 진입 시 적립을 끊고 대기 시간은 제외할지 정해야 한다. "에이전트가 실제로 일한 시간"을 정확히 보려면 제외하는 편이 맞지만, 라이브 표시가 끊기는 단점이 있다.
+첫째, waiting 상태의 시간 적립은 대기 시간을 제외한다. waiting 진입 시 적립을 끊고 시계를 멈추며, 대기 시간은 trackedSeconds 에 절대 더하지 않는다. 재개(active) 시 새 활성 윈도를 시작한다. 이 부분은 이미 구현되어 있다(waitingSince 필드, 화면 전용 카운트다운). 참고로 idle 이벤트도 backlog 가 아니라 waiting 으로 매핑된다(Stop 역시 사람에게 제어를 넘긴 상태이므로). 자세한 내용은 waiting-signal-policy.md 를 따른다.
 
-둘째, cancelled 와 done 의 화면 취급이다. 둘 다 종착 상태이므로 기본 화면에서 숨길지, 별도 필터로 노출할지 정한다. 기존 완료 필터 흐름과 일관성을 맞춰야 한다.
+둘째, 종착 상태의 화면 취급은 cancelled 만 숨긴다. done 은 기존 완료 필터 흐름을 그대로 유지하고, cancelled 는 기본 화면에서 숨기되 별도의 취소 토글로 노출한다. stopped 는 waiting 과 마찬가지로 항상 표시한다(사용자가 재개하려면 보여야 한다).
 
-셋째, waiting 신호의 신뢰성이다. Notification 훅이 모든 입력 대기 상황을 빠짐없이 잡는지 검증이 필요하다. 누락 가능성이 있으면 수동 지정과 타임아웃 기반 보조 판정을 함께 둔다.
+셋째, waiting 신호 신뢰성은 이미 해결되어 있다. Notification 훅 푸시와 transcript 기반 풀 감지(detectWaitingSessions)를 함께 두는 다층 구조가 구현돼 있으므로 이번 작업 범위에서 제외한다.
 
-넷째, 루프가 backlog 를 집어 in_progress 로 바꾼 직후 세션이 붙기 전 공백 구간의 처리다. 루프가 표시상 진행으로 바꿨는데 실제 에이전트가 아직 안 붙은 상태를 어떻게 다룰지(별도 표시 또는 짧은 유예) 정한다.
+넷째, 루프 전환 직후 공백 구간은 유예 후 자동 회수로 처리한다. 다만 이 처리는 루프 구동 주체의 책임이며(이번 범위 밖), 루프를 붙일 때 backlog→in_progress 전환 후 일정 시간 내 세션이 붙지 않으면 backlog 로 되돌리는 안전망을 둔다. 기존 detectWaitingSessions 의 풀 기반 안전망과 같은 결의 보호 장치다.
 
-다섯째, 취소/중지의 되돌리기 정책이다. cancelled 와 stopped 에서 backlog 로 복귀할 때 누적 시간과 기존 연결(sessionId, transcriptPath)을 유지할지 초기화할지 정한다.
+다섯째, 취소/중지의 되돌리기는 모두 유지한다. cancelled/stopped 에서 backlog 로 복귀할 때 trackedSeconds 와 sessionId/transcriptPath 를 그대로 보존한다. 현재 setStatus 가 in_progress 이탈 시 시간만 적립하고 나머지를 건드리지 않으므로 추가 코드 없이 충족된다.
 
-## 9. 다음 단계
+## 9. 구현 현황
 
-이 문서의 상태 모델과 적격성 규칙에 합의가 되면, 7장의 코드 변경 지점을 순서대로 적용한다. 먼저 ReviewStore의 상태 집합과 전이를 넓히고, 그다음 대시보드 표시와 필터를 맞추고, 마지막으로 루프 구동 주체를 붙인다. 각 단계는 독립적으로 검증 가능하므로, 상태 추가와 화면 반영까지 끝낸 뒤 루프를 붙이는 순서를 권장한다.
+이번 작업에서 적용된 변경은 다음과 같다(루프 구동 자체는 외부 담당, 이번 범위는 상태와 API까지).
+
+ReviewStore 의 validStatuses 에 stopped, cancelled 를 추가했다. setStatus 는 기존 in_progress 이탈 분기가 시간 적립과 waitingSince 정리, 연결 보존을 그대로 처리하므로 추가 변경이 필요 없었다. recordSession 에는 보호 가드를 넣어, 상태가 stopped 또는 cancelled 인 goal 은 세션 훅이 라벨과 transcript 만 갱신하고 status 나 시간은 절대 건드리지 않게 했다. 이로써 사용자가 보류하거나 폐기한 goal 을 세션 이벤트가 다시 큐로 끌어오는 일이 없다.
+
+대시보드는 leaf goal 의 상태 위젯을 여섯 개 상태(대기, 진행, 응답 대기, 중지, 취소, 완료)를 담은 콤보박스(select)로 교체했다. 부모 goal 은 종전대로 자식에서 계산한 롤업 상태를 표시한다. 필터 막대에는 취소 토글을 추가했고, cancelled 는 기본 숨김, stopped 는 항상 표시로 두었다.
+
+외부 루프용 조회 엔드포인트로 GET /api/loop/queue 를 추가했다. 응답은 backlog 인 leaf goal 만 seq 순으로 담은 worklist 이며, in_progress/waiting/stopped/cancelled/done 과 부모 goal 은 모두 제외된다. 루프는 이 큐의 항목을 집어 POST /api/goal/status 로 in_progress 로 바꾸고 작업을 진행한 뒤, 완료 시 done, 보류 시 stopped, 폐기 시 cancelled 로 전이시키면 된다.
+
+## 10. 남은 작업 (루프 구동)
+
+상태와 API가 준비되었으므로, 다음 단계는 실제 루프 구동 주체를 붙이는 것이다. 외부 폴링 방식(예: Claude Code 루프)이 /api/loop/queue 를 주기적으로 읽어 동시 실행 한도 안에서 항목을 집어 실행한다. 이때 9장 넷째 항목의 유예-회수 안전망과 동시 실행 한도(현재 대시보드의 active parent 기반 게이팅과 정합)를 함께 구현한다.

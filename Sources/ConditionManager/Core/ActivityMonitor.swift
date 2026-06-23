@@ -101,6 +101,9 @@ final class ActivityMonitor {
         mouseSmoothed = mouseSmoothed * (1 - smoothingAlpha) + mousePerMin * smoothingAlpha
         keyRate = keySmoothed
         mouseRate = mouseSmoothed
+        WorkerRegistry.shared.recordRun("activity-sample",
+            why: "5초 입력 집계·평활화",
+            effect: "APM \(Int(instantAPM)) · ⌨ \(Int(keyRate))/분 · 🖱 \(Int(mouseRate))/분")
     }
 
     var idleSeconds: TimeInterval {

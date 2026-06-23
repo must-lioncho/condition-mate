@@ -6,6 +6,7 @@ import Network
 //   GET  /                       -> dashboard HTML
 //   GET  /data.json              -> today's activity JSON
 //   GET  /live.json              -> tiny real-time payload (APM gauge, ~250ms polling)
+//   GET  /api/loop/queue         -> JSON worklist of loop-eligible (backlog) goals
 //   GET  /evidence/<g>/<e>       -> a stored evidence file (binary download)
 //   GET  /transcript?goal=<id>   -> readable HTML view of a session's transcript
 //   GET  /breakdown?goal=<id>    -> minute-by-minute tool/token analysis of a session
@@ -25,6 +26,9 @@ final class DashboardServer {
     private let file: (String) -> (Data, String, String)?
     // (full path incl. query) -> readable HTML page, or nil = 404. Used by /transcript.
     private let page: (String) -> String?
+    // () -> JSON worklist of loop-eligible (backlog) goals. Read by an external auto-loop
+    // that pulls 대기 goals and skips 중지/취소. See /api/loop/queue below.
+    private let loopFeed: () -> String
     private let queue = DispatchQueue(label: "cm.dashboard", qos: .utility)
 
     // Hard cap on a single request (headers + body). Evidence uploads arrive as
@@ -37,13 +41,15 @@ final class DashboardServer {
          live: @escaping () -> String = { "{}" },
          post: @escaping (String, String) -> String = { _, _ in "{}" },
          file: @escaping (String) -> (Data, String, String)? = { _ in nil },
-         page: @escaping (String) -> String? = { _ in nil }) {
+         page: @escaping (String) -> String? = { _ in nil },
+         loopFeed: @escaping () -> String = { "{}" }) {
         self.html = html
         self.data = data
         self.live = live
         self.post = post
         self.file = file
         self.page = page
+        self.loopFeed = loopFeed
     }
 
     var isRunning: Bool { listener != nil }
@@ -134,13 +140,16 @@ final class DashboardServer {
                 send(conn, status: "404 Not Found", contentType: "text/plain; charset=utf-8",
                      body: Data("not found".utf8), extra: "")
             }
+        } else if method == "GET" && path.hasPrefix("/api/loop/queue") {
+            send(conn, status: "200 OK", contentType: "application/json; charset=utf-8",
+                 body: Data(self.loopFeed().utf8), extra: "")
         } else if path.hasPrefix("/live.json") {
             send(conn, status: "200 OK", contentType: "application/json; charset=utf-8",
                  body: Data(self.live().utf8), extra: "")
         } else if path.hasPrefix("/data.json") {
             send(conn, status: "200 OK", contentType: "application/json; charset=utf-8",
                  body: Data(self.data().utf8), extra: "")
-        } else if method == "GET" && (path.hasPrefix("/transcript") || path.hasPrefix("/breakdown")) {
+        } else if method == "GET" && (path.hasPrefix("/transcript") || path.hasPrefix("/breakdown") || path.hasPrefix("/worker")) {
             if let pageHTML = self.page(path) {
                 send(conn, status: "200 OK", contentType: "text/html; charset=utf-8",
                      body: Data(pageHTML.utf8), extra: "")

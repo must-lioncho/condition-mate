@@ -268,6 +268,9 @@ final class ConditionDirector {
         }
 
         applyTrack(force: false)
+        WorkerRegistry.shared.recordRun("director",
+            why: "20초 주기 활동률 평가 (norm \(String(format: "%.2f", lastNorm)))",
+            effect: "\(phase.rawValue) · 목표 \(Int(targetBPM))BPM [\(Int(minBPM))-\(Int(maxBPM))]")
     }
 
     // User explicitly disliked the current track: down-weight it, open a cooldown

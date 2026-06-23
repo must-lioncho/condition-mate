@@ -56,17 +56,27 @@ final class ReviewStore {
         // Completion evidence (links + files) — persistent, so finished goals stay
         // discoverable with their supporting material long after the day they closed.
         var evidence: [Evidence] = []
+        // Scheduling fields for the 일정관리 (resource management) view.
+        //   targetAt    - planned target/deadline (nil = unscheduled).
+        //   completedAt - when the goal actually finished. Auto-stamped on the first
+        //                 transition to done (setStatus / recordSession "end") when unset,
+        //                 and manually editable in the schedule view. Cleared if the goal
+        //                 leaves done, so it always reflects the CURRENT completion.
+        var targetAt: Date? = nil
+        var completedAt: Date? = nil
 
         init(id: String, seq: Int = 0, text: String, parent: String = "",
              status: String = "backlog", trackedSeconds: Double = 0, startedAt: Date? = nil,
              waitingSince: Date? = nil,
              energy: Int = 0, agents: [String] = [], tokens: Int = 0, value: Int = 0,
-             evidence: [Evidence] = [], sessionId: String = "", transcriptPath: String = "") {
+             evidence: [Evidence] = [], sessionId: String = "", transcriptPath: String = "",
+             targetAt: Date? = nil, completedAt: Date? = nil) {
             self.id = id; self.seq = seq; self.text = text; self.parent = parent
             self.status = status; self.trackedSeconds = trackedSeconds; self.startedAt = startedAt
             self.waitingSince = waitingSince
             self.energy = energy; self.agents = agents; self.tokens = tokens; self.value = value
             self.evidence = evidence; self.sessionId = sessionId; self.transcriptPath = transcriptPath
+            self.targetAt = targetAt; self.completedAt = completedAt
         }
 
         // Tolerant decoder: fields added over time (seq, status, energy, ...) may be absent
@@ -74,7 +84,7 @@ final class ReviewStore {
         // key (it ignores default values), wiping every goal on load — so decode each
         // optional-with-default field via decodeIfPresent and fall back to its default.
         enum CodingKeys: String, CodingKey {
-            case id, seq, text, parent, status, trackedSeconds, startedAt, waitingSince, energy, agents, tokens, value, evidence, sessionId, transcriptPath
+            case id, seq, text, parent, status, trackedSeconds, startedAt, waitingSince, energy, agents, tokens, value, evidence, sessionId, transcriptPath, targetAt, completedAt
         }
         init(from dec: Decoder) throws {
             let c = try dec.container(keyedBy: CodingKeys.self)
@@ -93,6 +103,8 @@ final class ReviewStore {
             evidence = try c.decodeIfPresent([Evidence].self, forKey: .evidence) ?? []
             sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId) ?? ""
             transcriptPath = try c.decodeIfPresent(String.self, forKey: .transcriptPath) ?? ""
+            targetAt = try c.decodeIfPresent(Date.self, forKey: .targetAt)
+            completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
         }
     }
 
@@ -128,7 +140,15 @@ final class ReviewStore {
 
     // Valid status values; anything else is rejected. `waiting` (응답 대기) is the
     // parked-for-human state: the clock is stopped (startedAt nil) while in it.
-    static let validStatuses: Set<String> = ["backlog", "in_progress", "waiting", "done"]
+    // backlog  - 대기: the loop's queue. The ONLY status the auto-loop picks up.
+    // in_progress - 진행: actively worked.
+    // waiting  - 응답 대기: parked for a human decision (auto-detected; loop hands to user).
+    // stopped  - 중지: user-held pause. NOT cancelled; the loop must skip it until resumed.
+    // cancelled - 취소: abandoned; the loop ignores it permanently.
+    // done     - 완료: finished.
+    // stopped/cancelled are user-authoritative holds — see recordSession (session hooks
+    // never resurrect them) and the loop eligibility rule (.doc/loop-status-design.md).
+    static let validStatuses: Set<String> = ["backlog", "in_progress", "waiting", "stopped", "cancelled", "done"]
 
     struct DayReview: Codable {
         var selfScore: Int? = nil               // 0-100, user's honest value estimate
@@ -298,7 +318,19 @@ final class ReviewStore {
         // waitingSince tracks ONLY the waiting window; set it on entry, clear it on any
         // other transition so it never leaks into a non-waiting state.
         goals[idx].waitingSince = (status == "waiting") ? now : nil
+        stampCompletion(idx, now: now)
         saveGoals()
+    }
+
+    // Keep completedAt in sync with the done status: stamp `now` on the first entry to
+    // done when it is still unset (a manual edit therefore survives), and clear it the
+    // moment a goal leaves done so a reopened goal never carries a stale finish time.
+    private func stampCompletion(_ idx: Int, now: Date) {
+        if goals[idx].status == "done" {
+            if goals[idx].completedAt == nil { goals[idx].completedAt = now }
+        } else {
+            goals[idx].completedAt = nil
+        }
     }
 
     // Rename a goal's title from the dashboard. Works for both hand-made and
@@ -353,6 +385,14 @@ final class ReviewStore {
         }
         if !tpath.isEmpty { goals[idx].transcriptPath = tpath }   // remember where to read
 
+        // A user-held goal (중지/취소) is authoritative. The session hooks still refresh its
+        // label/transcript above, but must NOT resurrect its status or bank time: the loop
+        // skips these, so an incoming active/idle/end can never silently pull a stopped or
+        // cancelled goal back into the queue. Only a manual setStatus moves it out of the hold.
+        if goals[idx].status == "stopped" || goals[idx].status == "cancelled" {
+            saveGoals(); return
+        }
+
         // Bank the live timed session (if any) back into trackedSeconds.
         func bankLive() {
             if let started = goals[idx].startedAt {
@@ -384,6 +424,7 @@ final class ReviewStore {
             goals[idx].waitingSince = nil
             goals[idx].status = "backlog"
         }
+        stampCompletion(idx, now: now)
         saveGoals()
     }
 
@@ -429,6 +470,21 @@ final class ReviewStore {
     func setValue(id: String, value: Int) {
         guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
         goals[idx].value = max(0, value)
+        saveGoals()
+    }
+
+    // MARK: Scheduling (target / completion datetimes)
+
+    // Set or clear (nil) a goal's planned target/deadline. Used by the 일정관리 view.
+    func setTargetAt(id: String, date: Date?) {
+        guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
+        goals[idx].targetAt = date
+        saveGoals()
+    }
+    // Manually set or clear (nil) a goal's completion time, overriding the auto-stamp.
+    func setCompletedAt(id: String, date: Date?) {
+        guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
+        goals[idx].completedAt = date
         saveGoals()
     }
 

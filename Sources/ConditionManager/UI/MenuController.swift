@@ -72,6 +72,11 @@ final class MenuController: NSObject, NSMenuDelegate {
 
         // --- Toggles ---
         addCheck("음악 (BGM)", checked: s.musicEnabled, action: #selector(onToggleMusic))
+        // Menu-bar gauge: 스포츠(라이브 APM) ↔ 타임(시간). Label shows the next state.
+        let modeLabel = d.menuBarMode == .sports
+            ? "메뉴바: ⚡APM (스포츠) → 시간으로"
+            : "메뉴바: ⏱ 시간 (타임) → APM으로"
+        addItem(modeLabel, action: #selector(onToggleMenuBarMode))
         addItem("대시보드 열기 (내 활동 보기)", action: #selector(onOpenDashboard))
 
         menu.addItem(.separator())
@@ -254,6 +259,7 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     @objc private func onToggleWorking() { delegate?.toggleWorking() }
     @objc private func onToggleMusic() { delegate?.toggleMusic() }
+    @objc private func onToggleMenuBarMode() { delegate?.toggleMenuBarMode() }
     @objc private func onDislikeTrack() { delegate?.dislikeCurrentTrack() }
     @objc private func onOpenDashboard() { delegate?.openDashboard() }
     @objc private func onChooseFolder() { delegate?.chooseMusicFolder() }
