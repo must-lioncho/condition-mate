@@ -182,7 +182,23 @@ swift build -c release
 ./.build/release/ConditionManager
 ```
 
-개발 중에는 `swift run` 으로 바로 실행 가능합니다.
+개발 중에는 `./Scripts/dev-run.sh` 로 실행하세요 (빌드 → 서명 → 실행).
+
+### 손쉬운 사용 권한이 빌드할 때마다 풀리는 문제 (중요)
+
+macOS 손쉬운 사용 권한(TCC)은 바이너리의 코드 서명으로 "누구에게 권한을 줬는지"
+기억합니다. ad-hoc 서명(`swift run` / `codesign --sign -`)은 빌드마다 해시가
+바뀌어 권한이 매번 풀립니다. 자체 서명 인증서로 서명하면 designated requirement가
+인증서 기반(`certificate leaf = H"..."`)으로 고정되어, **한 번 허용하면 재빌드해도 유지**됩니다.
+
+```bash
+./Scripts/setup-signing.sh   # 한 번만: "ConditionManager Dev" 자체 서명 인증서 생성
+```
+
+이후 `dev-run.sh` 와 `build-app.sh` 가 자동으로 이 인증서로 서명합니다. 처음 한 번은
+codesign이 키체인 접근 대화상자를 띄울 수 있으니 **"항상 허용"** 을 누르세요. 기존에
+ad-hoc 바이너리로 허용했던 항목이 시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용에
+남아 있으면 지우고, 새로 서명된 앱으로 한 번 다시 허용하면 됩니다.
 
 ### 첫 실행 후 설정 (메뉴바 metronome 아이콘 클릭)
 1. **음악 폴더 선택…** — BPM 표기된 음원 폴더 지정.
@@ -199,7 +215,7 @@ swift build -c release
 이 스크립트가 하는 일:
 - 릴리즈 바이너리 빌드 → `ConditionManager.app` 번들 조립
 - `Info.plist`(`LSUIElement = true`)로 Dock/전환 목록에서 숨김
-- ad-hoc 코드 서명 (`codesign --sign -`) — `SMAppService` 로그인 항목에 필요
+- 코드 서명 — `ConditionManager Dev` 인증서가 있으면 그것으로(권한 유지), 없으면 ad-hoc
 
 실행 및 자동 시작 설정:
 1. `open ConditionManager.app` (또는 `/Applications`로 이동 후 실행 — 로그인 항목 안정화 권장)

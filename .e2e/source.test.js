@@ -12,8 +12,13 @@ const onkeydown = (SRC.match(/id="goalText"[\s\S]*?onkeydown="([^"]+)"/) || [])[
 const jsStart = SRC.indexOf('let _composing');
 const jsEnd = SRC.indexOf('function removeGoal');
 const realJs = SRC.slice(jsStart, jsEnd);
-// helpers the slice depends on
-const helpers = `function $(id){return document.getElementById(id);}\n`;
+// helpers the slice depends on. The extracted slice also wires the group-mode add bar
+// via bindImeEnter(gAddText, gAdd) — both are defined elsewhere in source (hoisted) and
+// fall outside this slice, so stub them: this test drives #goalText only, and an
+// unstubbed forward-reference would throw and abort the whole injected script.
+const helpers = `function $(id){return document.getElementById(id);}
+  function bindImeEnter(){}
+  function gAdd(){}\n`;
 
 if (!onkeydown || jsStart < 0 || jsEnd < 0) {
   console.error('FAIL could not extract source pieces', { onkeydown, jsStart, jsEnd });

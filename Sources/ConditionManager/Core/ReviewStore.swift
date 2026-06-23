@@ -20,18 +20,53 @@ final class ReviewStore {
         var status: String = "backlog"    // backlog | in_progress | done
         var trackedSeconds: Double = 0    // banked active time (excludes the live session)
         var startedAt: Date? = nil        // start of the current in_progress session (nil = not running)
+        // Claude Code session id this goal mirrors ("" = a normal hand-made goal).
+        // When set, the goal is auto-managed by session hooks: it flips to in_progress
+        // while the agent works a turn and back to backlog (대기) when it stops, so
+        // trackedSeconds accrues only real active time — the honest answer to
+        // "how long did the agent actually run vs just burn tokens".
+        var sessionId: String = ""
+        // Absolute path to the Claude Code transcript (.jsonl) backing this session,
+        // when known. Lets the dashboard open a readable view without re-deriving the
+        // path. May be empty for older session goals — the server then falls back to
+        // locating <sessionId>.jsonl under ~/.claude/projects.
+        var transcriptPath: String = ""
+
+        // Concurrency-aware AI work fields. These only matter once two or more goals
+        // run in_progress at once (only possible with AI), where naive parallelism
+        // wastes tokens and degrades quality. They make that trade-off visible:
+        //   energy  - % of the user's finite 100% capacity allocated to this goal
+        //             while in_progress. The sum across in_progress goals must stay
+        //             <= 100% (enforced/warned in the dashboard, not here).
+        //   agents  - assigned agents (e.g. ["agent1","agent2"]); relevant at 3+ concurrent.
+        //   tokens  - cumulative tokens spent (in thousands, K).
+        //   value   - produced value score (arbitrary points).
+        // value/tokens = ROI, computed client-side, distinguishes steady output from token burn.
+        var energy: Int = 0
+        var agents: [String] = []
+        var tokens: Int = 0
+        var value: Int = 0
+        // Completion evidence (links + files) — persistent, so finished goals stay
+        // discoverable with their supporting material long after the day they closed.
+        var evidence: [Evidence] = []
 
         init(id: String, seq: Int = 0, text: String, parent: String = "",
-             status: String = "backlog", trackedSeconds: Double = 0, startedAt: Date? = nil) {
+             status: String = "backlog", trackedSeconds: Double = 0, startedAt: Date? = nil,
+             energy: Int = 0, agents: [String] = [], tokens: Int = 0, value: Int = 0,
+             evidence: [Evidence] = [], sessionId: String = "", transcriptPath: String = "") {
             self.id = id; self.seq = seq; self.text = text; self.parent = parent
             self.status = status; self.trackedSeconds = trackedSeconds; self.startedAt = startedAt
+            self.energy = energy; self.agents = agents; self.tokens = tokens; self.value = value
+            self.evidence = evidence; self.sessionId = sessionId; self.transcriptPath = transcriptPath
         }
 
-        // Tolerant decoder: fields added over time (seq, status, ...) may be absent
+        // Tolerant decoder: fields added over time (seq, status, energy, ...) may be absent
         // in older goals.json. Swift's synthesized Decodable would THROW on a missing
         // key (it ignores default values), wiping every goal on load — so decode each
         // optional-with-default field via decodeIfPresent and fall back to its default.
-        enum CodingKeys: String, CodingKey { case id, seq, text, parent, status, trackedSeconds, startedAt }
+        enum CodingKeys: String, CodingKey {
+            case id, seq, text, parent, status, trackedSeconds, startedAt, energy, agents, tokens, value, evidence, sessionId, transcriptPath
+        }
         init(from dec: Decoder) throws {
             let c = try dec.container(keyedBy: CodingKeys.self)
             id = try c.decode(String.self, forKey: .id)
@@ -41,6 +76,43 @@ final class ReviewStore {
             status = try c.decodeIfPresent(String.self, forKey: .status) ?? "backlog"
             trackedSeconds = try c.decodeIfPresent(Double.self, forKey: .trackedSeconds) ?? 0
             startedAt = try c.decodeIfPresent(Date.self, forKey: .startedAt)
+            energy = try c.decodeIfPresent(Int.self, forKey: .energy) ?? 0
+            agents = try c.decodeIfPresent([String].self, forKey: .agents) ?? []
+            tokens = try c.decodeIfPresent(Int.self, forKey: .tokens) ?? 0
+            value = try c.decodeIfPresent(Int.self, forKey: .value) ?? 0
+            evidence = try c.decodeIfPresent([Evidence].self, forKey: .evidence) ?? []
+            sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId) ?? ""
+            transcriptPath = try c.decodeIfPresent(String.self, forKey: .transcriptPath) ?? ""
+        }
+    }
+
+    // A piece of completion evidence attached to a goal — a web link or a file.
+    // Files are copied into the app's evidence store; `filename` is the stored name
+    // (served back via /evidence/<goalId>/<id>). Links keep their URL in `url`.
+    struct Evidence: Codable {
+        var id: String            // UUID (internal key, also the URL path segment)
+        var kind: String          // "link" | "file"
+        var title: String         // display label (link title / original file name)
+        var url: String = ""      // link: the URL; file: ""
+        var filename: String = "" // file: stored file name on disk; link: ""
+        var addedAt: Date
+
+        init(id: String, kind: String, title: String, url: String = "",
+             filename: String = "", addedAt: Date) {
+            self.id = id; self.kind = kind; self.title = title
+            self.url = url; self.filename = filename; self.addedAt = addedAt
+        }
+
+        // Tolerant decoder (same rationale as Goal): tolerate missing fields.
+        enum CodingKeys: String, CodingKey { case id, kind, title, url, filename, addedAt }
+        init(from dec: Decoder) throws {
+            let c = try dec.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "link"
+            title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+            url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
+            filename = try c.decodeIfPresent(String.self, forKey: .filename) ?? ""
+            addedAt = try c.decodeIfPresent(Date.self, forKey: .addedAt) ?? Date(timeIntervalSince1970: 0)
         }
     }
 
@@ -78,11 +150,45 @@ final class ReviewStore {
 
     // MARK: Goals
 
+    // True only when we hold a trustworthy in-memory picture of goals: either the
+    // file was genuinely absent (first run) or it decoded cleanly. While false, a
+    // load failed and saveGoals() MUST NOT overwrite the on-disk file — otherwise a
+    // transient read/decode failure would silently destroy real data.
+    private var loadSucceeded = false
+
     private func loadGoals() {
-        guard let data = try? Data(contentsOf: goalsURL),
-              let g = try? JSONDecoder().decode([Goal].self, from: data) else { return }
+        // Missing file = genuine first run: nothing to load, safe to save later.
+        guard FileManager.default.fileExists(atPath: goalsURL.path) else {
+            loadSucceeded = true
+            return
+        }
+        guard let data = try? Data(contentsOf: goalsURL) else {
+            // Existing file we could not read: treat as transient. Keep loadSucceeded
+            // false so saveGoals() refuses to clobber it.
+            loadSucceeded = false
+            return
+        }
+        guard let g = try? JSONDecoder().decode([Goal].self, from: data) else {
+            // File exists but is undecodable: preserve a copy before anything can
+            // overwrite it, then stay in read-only mode (loadSucceeded = false).
+            backupGoalsFile(reason: "corrupt")
+            loadSucceeded = false
+            return
+        }
         goals = g
+        loadSucceeded = true
         migrateSeq()
+    }
+
+    // Copy the current on-disk goals.json aside (best-effort) so a destructive or
+    // failed load can always be recovered from goals.<reason>-<timestamp>.json.
+    private func backupGoalsFile(reason: String) {
+        guard FileManager.default.fileExists(atPath: goalsURL.path) else { return }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyyMMdd-HHmmss"
+        let dst = dir.appendingPathComponent("goals.\(reason)-\(f.string(from: Date())).json")
+        try? FileManager.default.copyItem(at: goalsURL, to: dst)
     }
     // Backfill stable seq for legacy goals saved before the field existed (seq <= 0).
     // Numbers are assigned uniquely and never reused, then persisted so they stay fixed.
@@ -98,6 +204,18 @@ final class ReviewStore {
     }
     private func nextSeq() -> Int { (goals.map { $0.seq }.max() ?? 0) + 1 }
     private func saveGoals() {
+        // Never let a failed/empty in-memory state destroy real on-disk data.
+        // 1) If we never successfully loaded, refuse to write at all.
+        // 2) If we're about to write an empty list over a non-empty file, that is a
+        //    suspicious destructive overwrite (the exact data-loss path): back the
+        //    existing file up first, then proceed.
+        if !loadSucceeded { return }
+        if goals.isEmpty,
+           let onDisk = try? Data(contentsOf: goalsURL),
+           let existing = try? JSONDecoder().decode([Goal].self, from: onDisk),
+           !existing.isEmpty {
+            backupGoalsFile(reason: "rescued")
+        }
         if let data = try? JSONEncoder().encode(goals) { try? data.write(to: goalsURL, options: .atomic) }
     }
     func addGoal(text: String, parent: String = "") {
@@ -143,36 +261,175 @@ final class ReviewStore {
         saveGoals()
     }
 
-    // Change a goal's workflow status, enforcing a single in_progress goal and
-    // banking tracked time on every transition.
+    // Change a goal's workflow status, banking tracked time on every transition.
+    // Concurrent in_progress goals ARE allowed: before AI a person could only run
+    // one task at a time, but agents make 2-3+ parallel goals real. The dashboard
+    // uses the concurrent in_progress count to gate energy/agent inputs, so this no
+    // longer forces a single in_progress goal. Each running goal accrues wall-clock
+    // time independently (intentional: parallel work multiplies output per minute).
     func setStatus(id: String, status: String) {
         guard Self.validStatuses.contains(status),
               let idx = goals.firstIndex(where: { $0.id == id }) else { return }
         let now = Date()
 
-        // Bank the live session of whichever goal is currently running.
-        func bank(_ i: Int) {
-            if let started = goals[i].startedAt {
-                goals[i].trackedSeconds += max(0, now.timeIntervalSince(started))
-                goals[i].startedAt = nil
-            }
-        }
-
         if status == "in_progress" {
-            // Pause every other running goal (single in_progress invariant).
-            for i in goals.indices where i != idx && goals[i].status == "in_progress" {
-                bank(i)
-                goals[i].status = "backlog"
-            }
-            // Start (or keep) the target's session.
+            // Start (or keep) the target's session; leave other running goals alone.
             if goals[idx].startedAt == nil { goals[idx].startedAt = now }
             goals[idx].status = "in_progress"
         } else {
             // Leaving in_progress -> bank the live session, then set new status.
-            bank(idx)
+            if let started = goals[idx].startedAt {
+                goals[idx].trackedSeconds += max(0, now.timeIntervalSince(started))
+                goals[idx].startedAt = nil
+            }
             goals[idx].status = status
         }
         saveGoals()
+    }
+
+    // Rename a goal's title from the dashboard. Works for both hand-made and
+    // session-mirrored goals. Returns the updated goal so the caller can mirror the
+    // new title back into the session transcript (for session goals) — without that,
+    // the next session event would re-derive the title from the transcript's aiTitle
+    // and clobber the manual rename. Empty titles are rejected: a goal keeps a label.
+    @discardableResult
+    func setGoalTitle(id: String, title: String) -> Goal? {
+        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, let idx = goals.firstIndex(where: { $0.id == id }) else { return nil }
+        goals[idx].text = t
+        saveGoals()
+        return goals[idx]
+    }
+
+    // MARK: Claude Code session mirroring
+
+    // Drive a goal from a Claude Code session lifecycle event. The goal is keyed by
+    // the session id and auto-created on first sight, so the hooks need no goal id:
+    //   start  - session opened: ensure the goal exists (대기/backlog), don't disturb a live run
+    //   active - agent started working a turn: in_progress (진행), begin a timed session
+    //   idle   - agent finished a turn: back to 대기 (backlog), bank the elapsed active time
+    //   end    - session closed: 완료 (done), bank any final active time
+    // Net effect: trackedSeconds accumulates only the active windows (active->idle),
+    // which is the real "how long did the agent actually run" figure.
+    func recordSession(sessionId: String, event: String, text: String = "", transcriptPath: String = "") {
+        let sid = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sid.isEmpty else { return }
+        let now = Date()
+
+        // `text` carries the session's latest aiTitle (Claude Code's auto-generated
+        // title, read from the transcript by the hook). It is empty early on, before
+        // a title exists, so it only ever fills in / refreshes — never wipes — a label.
+        let label = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tpath = transcriptPath.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let idx: Int
+        if let i = goals.firstIndex(where: { $0.sessionId == sid }) {
+            idx = i
+            if !label.isEmpty { goals[idx].text = label }   // refresh to the current aiTitle
+        } else {
+            let title = label.isEmpty ? "Claude 세션 \(sid.prefix(8))" : label
+            goals.append(Goal(id: UUID().uuidString, seq: nextSeq(), text: title, sessionId: sid))
+            idx = goals.count - 1
+        }
+        if !tpath.isEmpty { goals[idx].transcriptPath = tpath }   // remember where to read
+
+        // Bank the live timed session (if any) back into trackedSeconds.
+        func bankLive() {
+            if let started = goals[idx].startedAt {
+                goals[idx].trackedSeconds += max(0, now.timeIntervalSince(started))
+                goals[idx].startedAt = nil
+            }
+        }
+
+        switch event {
+        case "active":
+            if goals[idx].startedAt == nil { goals[idx].startedAt = now }
+            goals[idx].status = "in_progress"
+        case "idle":
+            bankLive()
+            goals[idx].status = "backlog"
+        case "end":
+            bankLive()
+            goals[idx].status = "done"
+        default: // "start" — just ensure it exists; never interrupt an active run.
+            if goals[idx].status == "in_progress" { bankLive() }
+            goals[idx].status = "backlog"
+        }
+        saveGoals()
+    }
+
+    // Manually attach an existing goal to a Claude Code session (the dashboard's
+    // "connect" action, after the user picks a transcript file). Refuses if another
+    // goal already mirrors that session id, so the session<->goal link stays 1:1.
+    @discardableResult
+    func connectSession(goalId: String, sessionId: String, transcriptPath: String) -> Bool {
+        let sid = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sid.isEmpty,
+              let idx = goals.firstIndex(where: { $0.id == goalId }),
+              !goals.contains(where: { $0.id != goalId && $0.sessionId == sid }) else { return false }
+        goals[idx].sessionId = sid
+        goals[idx].transcriptPath = transcriptPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        saveGoals()
+        return true
+    }
+
+    // MARK: Concurrency-aware AI work fields
+
+    // Energy % allocated to a goal while in_progress, clamped to 0...100. The sum
+    // across in_progress goals is capped at 100% in the dashboard (warned, not here).
+    func setEnergy(id: String, energy: Int) {
+        guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
+        goals[idx].energy = max(0, min(100, energy))
+        saveGoals()
+    }
+    // Replace the assigned-agent list (trimmed, empties dropped, order preserved).
+    func setAgents(id: String, agents: [String]) {
+        guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
+        goals[idx].agents = agents
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        saveGoals()
+    }
+    // Cumulative tokens spent (in K), never negative.
+    func setTokens(id: String, tokens: Int) {
+        guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
+        goals[idx].tokens = max(0, tokens)
+        saveGoals()
+    }
+    // Produced value score, never negative.
+    func setValue(id: String, value: Int) {
+        guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
+        goals[idx].value = max(0, value)
+        saveGoals()
+    }
+
+    // MARK: Completion evidence (links + files)
+
+    // Append a piece of evidence to a goal and return it (nil if the goal is gone).
+    // File bytes are written to disk by the caller; here we only store metadata.
+    func addEvidence(goalId: String, kind: String, title: String,
+                     url: String = "", filename: String = "") -> Evidence? {
+        guard let idx = goals.firstIndex(where: { $0.id == goalId }) else { return nil }
+        let ev = Evidence(id: UUID().uuidString, kind: kind, title: title,
+                          url: url, filename: filename, addedAt: Date())
+        goals[idx].evidence.append(ev)
+        saveGoals()
+        return ev
+    }
+
+    // Remove one evidence item; returns it so the caller can delete its file (if any).
+    @discardableResult
+    func removeEvidence(goalId: String, evidenceId: String) -> Evidence? {
+        guard let gi = goals.firstIndex(where: { $0.id == goalId }),
+              let ei = goals[gi].evidence.firstIndex(where: { $0.id == evidenceId }) else { return nil }
+        let removed = goals[gi].evidence.remove(at: ei)
+        saveGoals()
+        return removed
+    }
+
+    // Look up a single evidence item (used when serving a stored file).
+    func evidence(goalId: String, evidenceId: String) -> Evidence? {
+        goals.first(where: { $0.id == goalId })?.evidence.first(where: { $0.id == evidenceId })
     }
 
     // Effective tracked seconds including the live (unbanked) session, if running.

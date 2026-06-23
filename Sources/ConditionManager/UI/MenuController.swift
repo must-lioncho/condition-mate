@@ -51,6 +51,7 @@ final class MenuController: NSObject, NSMenuDelegate {
             }
             if let title = d.audio.currentTitle {
                 addDisabled("♪ \(title)")
+                addItem("✕  이 곡 싫어요 (다른 곡으로 교체)", action: #selector(onDislikeTrack))
             }
         } else if s.musicEnabled {
             if d.library.tracks.isEmpty {
@@ -105,10 +106,14 @@ final class MenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // --- Permission status ---
+        // Leading icon makes the granted/needed state readable at a glance:
+        // green check when trusted, amber warning when action is still needed.
         if !d.activity.isTrusted {
-            addItem("손쉬운 사용 권한 요청 (키 입력 감지)", action: #selector(onRequestAccessibility))
+            let item = addItem("손쉬운 사용 권한 요청 (키 입력 감지)", action: #selector(onRequestAccessibility))
+            item.image = statusIcon("exclamationmark.triangle.fill", color: .systemOrange)
         } else {
-            addDisabled("손쉬운 사용 권한: 허용됨")
+            let item = addDisabled("손쉬운 사용 권한: 허용됨")
+            item.image = statusIcon("checkmark.circle.fill", color: .systemGreen)
         }
 
         // --- Login at startup (only meaningful from a signed .app bundle) ---
@@ -177,7 +182,8 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     // MARK: - Item builders
 
-    private func addDisabled(_ title: String, bold: Bool = false) {
+    @discardableResult
+    private func addDisabled(_ title: String, bold: Bool = false) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
         if bold {
@@ -187,6 +193,21 @@ final class MenuController: NSObject, NSMenuDelegate {
             )
         }
         menu.addItem(item)
+        return item
+    }
+
+    // Small tinted SF Symbol for use as a leading menu-item icon.
+    private func statusIcon(_ symbol: String, color: NSColor) -> NSImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        guard let base = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(config) else { return nil }
+        let tinted = base.copy() as! NSImage
+        tinted.isTemplate = false
+        tinted.lockFocus()
+        color.set()
+        NSRect(origin: .zero, size: tinted.size).fill(using: .sourceAtop)
+        tinted.unlockFocus()
+        return tinted
     }
 
     // Prominent, colored, bold action — the Start/Stop headline.
@@ -204,11 +225,13 @@ final class MenuController: NSObject, NSMenuDelegate {
         menu.addItem(item)
     }
 
-    private func addItem(_ title: String, action: Selector, key: String = "") {
+    @discardableResult
+    private func addItem(_ title: String, action: Selector, key: String = "") -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
         item.target = self
         item.isEnabled = true
         menu.addItem(item)
+        return item
     }
 
     private func addCheck(_ title: String, checked: Bool, action: Selector) {
@@ -231,6 +254,7 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     @objc private func onToggleWorking() { delegate?.toggleWorking() }
     @objc private func onToggleMusic() { delegate?.toggleMusic() }
+    @objc private func onDislikeTrack() { delegate?.dislikeCurrentTrack() }
     @objc private func onOpenDashboard() { delegate?.openDashboard() }
     @objc private func onChooseFolder() { delegate?.chooseMusicFolder() }
     @objc private func onAddApp() { delegate?.addCurrentFrontmostApp() }

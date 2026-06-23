@@ -92,15 +92,31 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   let pass = 0, fail = 0;
   const log = (ok, msg) => { console.log((ok ? 'PASS ' : 'FAIL ') + msg); ok ? pass++ : fail++; };
 
+  // This is a COMPARISON harness: it runs three handler variants and asserts each
+  // against its DOCUMENTED behavior, not against a single "correct" output. Only
+  // C_compositionDeferred is deployed and must be correct in both WebKit realities;
+  // A_original and B_isComposingGuard are kept as living proof of the bug, so each is
+  // expected to REPRODUCE its known mis-handling. A green run therefore means both
+  // "the fix works" and "the bug is still reproduced by the unfixed variants" — if C
+  // ever regresses, or A/B silently stop leaking, that is a real failure worth seeing.
+  // Keys are name|enterIsComposing; LEAK is the duplicate-goal bug, CLEAN is correct.
+  const LEAK = ['지급', '급'], CLEAN = ['지급'];
+  const expected = {
+    'A_original|true': LEAK,   'A_original|false': LEAK,            // buggy in both realities
+    'B_isComposingGuard|true': CLEAN, 'B_isComposingGuard|false': LEAK, // partial: only fixes isComposing=true
+    'C_compositionDeferred|true': CLEAN, 'C_compositionDeferred|false': CLEAN, // deployed fix: correct in both
+  };
   for (const [name, variant] of Object.entries(VARIANTS)) {
+    const role = name === 'C_compositionDeferred' ? 'deployed fix' : 'pre-fix demo';
     // Scenario: "지급" committed-prefix="지", composing="급".
     // Test BOTH isComposing realities WebKit may report on the committing Enter.
     for (const enterIsComposing of [true, false]) {
       const page = await browser.newPage();
       await page.setContent(pageHtml(variant));
       const submits = await typeKoreanAndEnter(page, { committedPrefix: '지', composing: '급', enterIsComposing });
-      const ok = eq(submits, ['지급']);
-      log(ok, `${name} | enterIsComposing=${enterIsComposing} | "지급" -> ${JSON.stringify(submits)} (expect ["지급"])`);
+      const want = expected[`${name}|${enterIsComposing}`];
+      const ok = eq(submits, want);
+      log(ok, `${name} (${role}) | enterIsComposing=${enterIsComposing} | "지급" -> ${JSON.stringify(submits)} (expect ${JSON.stringify(want)})`);
       await page.close();
     }
   }
