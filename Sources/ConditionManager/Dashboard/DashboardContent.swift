@@ -56,6 +56,25 @@ enum DashboardContent {
   .btn:hover{border-color:var(--accent)}
   .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .btn:disabled{opacity:.5;cursor:not-allowed}
+  /* View switcher combobox (입력 / 그룹 / 프리뷰) — styled to match .btn. */
+  select.btn{appearance:none;-webkit-appearance:none;-moz-appearance:none;padding-right:24px;
+    background-image:linear-gradient(45deg,transparent 50%,var(--mut) 50%),linear-gradient(135deg,var(--mut) 50%,transparent 50%);
+    background-position:calc(100% - 13px) 55%,calc(100% - 8px) 55%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+  /* Group-mode input: sticky add bar + collapsible per-parent sections. */
+  .gqbar{position:sticky;top:0;z-index:5;background:var(--panel);padding:8px 0;margin:0 0 6px;border-bottom:1px solid var(--line)}
+  .gsec{border:1px solid var(--line);border-radius:10px;margin:8px 0;overflow:hidden}
+  .gsec-hd{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#1a1e27;cursor:pointer;user-select:none}
+  .gsec-hd:hover{background:#1d2230}
+  .gsec-hd .tw{color:var(--mut);width:12px;flex:0 0 auto;transition:transform .15s;text-align:center}
+  .gsec.collapsed .gsec-hd .tw{transform:rotate(-90deg)}
+  .gsec-hd .gtitle{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .gsec-hd .prog{color:var(--mut);font-size:12px;font-variant-numeric:tabular-nums;flex:0 0 auto}
+  .gsec-body{padding:4px 10px 8px}
+  .gsec.collapsed .gsec-body{display:none}
+  .gchild{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .gchild:last-of-type{border-bottom:none}
+  .gchild .gt{flex:1;min-width:80px}
+  .gsec-add{display:flex;gap:6px;margin-top:6px}
   .hdr{display:flex;align-items:center;justify-content:space-between;gap:12px}
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto;z-index:50}
   .overlay.on{display:flex}
@@ -67,10 +86,63 @@ enum DashboardContent {
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
   input[type=text],input[type=number]{background:#0d1016;border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:6px 9px;font-size:13px}
   input[type=range]{vertical-align:middle}
-  .goal{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line)}
-  .goal .g{flex:1}
+  .goal{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line)}
+  .goal .g{flex:1;position:relative}
+  /* Editable goal title: double-click to rename in place (목록 + 그룹 자식 행). */
+  .gt{cursor:text;border-radius:5px;padding:1px 4px;margin:0 -4px}
+  .gt:hover{background:rgba(255,255,255,.05)}
+  .gt input.gedit{width:100%;box-sizing:border-box;padding:3px 6px;font-size:13px}
+  /* Concurrency-gated AI-work row: shown only when 2+ goals run at once (= AI).
+     Holds energy allocation, assigned agents, tokens spent, value, and ROI. */
+  .aiwork{flex:0 0 100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:2px 0 4px 26px;
+          padding:6px 10px;border-radius:8px;background:rgba(91,140,255,.06);border:1px solid var(--line);font-size:12px}
+  .aiwork .lab{color:var(--mut);font-size:11px}
+  .aiwork input[type=number]{width:62px;text-align:right;padding:4px 7px;font-size:12px}
+  .aiwork input.agents{width:150px;padding:4px 7px;font-size:12px}
+  .roi{font-variant-numeric:tabular-nums;border-radius:6px;padding:2px 8px;font-size:11px;border:1px solid var(--line);white-space:nowrap}
+  .roi.hi{background:rgba(54,192,138,.16);border-color:var(--green);color:#9be9c9}
+  .roi.mid{background:rgba(232,161,58,.14);border-color:#e8a13a;color:#f0c884}
+  .roi.lo{background:rgba(255,99,99,.14);border-color:#ff6363;color:#ff9b9b}
+  /* Energy gauge banner: sum of in_progress energy vs the 100% cap. */
+  .engauge{margin:6px 0 8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:rgba(91,140,255,.05);font-size:12px}
+  .engauge .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
+  .engauge .bar{height:8px;border-radius:999px;background:#1d2230;overflow:hidden}
+  .engauge .fill{height:100%;background:linear-gradient(90deg,#36c08a,#5b8cff);transition:width .3s}
+  .engauge.over{border-color:#ff6363;background:rgba(255,99,99,.08)}
+  .engauge.over .fill{background:linear-gradient(90deg,#e8a13a,#ff6363)}
+  .engauge .warn{color:#ff9b9b}
+  /* Completion evidence (links + files) attached to a goal. */
+  .evbtn{flex:0 0 auto;padding:3px 8px;font-size:12px}
+  .evbtn.has{border-color:var(--green);color:#9be9c9}
+  .evpanel{flex:0 0 100%;display:none;margin:2px 0 6px 26px;padding:8px 10px;border-radius:8px;background:rgba(54,192,138,.05);border:1px solid var(--line)}
+  .evpanel.open{display:block}
+  .evlist{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .evitem{display:inline-flex;align-items:center;gap:4px;background:#1d2230;border:1px solid var(--line);border-radius:999px;padding:2px 4px 2px 10px;font-size:12px;max-width:340px}
+  .evitem a{color:var(--accent);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .evitem a:hover{text-decoration:underline}
+  .evx{background:none;border:none;color:var(--mut);cursor:pointer;font-size:12px;line-height:1;padding:0 3px}
+  .evx:hover{color:var(--red)}
+  .evrep{margin:2px 0 6px;font-size:12px;display:flex;flex-wrap:wrap;gap:10px}
+  .evrep a{color:var(--accent);text-decoration:none}
+  .evrep a:hover{text-decoration:underline}
+  /* Completion celebration: check sweep (strike + green flash) + floating +Nv value. */
+  .goal.celebrate{background:rgba(54,192,138,.14);transition:background .45s}
+  .gstrike{position:absolute;left:0;top:55%;height:2px;width:0;background:var(--green);transition:width .45s ease}
+  .gstrike.on{width:100%}
+  .vfloat{position:fixed;z-index:60;background:rgba(54,192,138,.16);border:1px solid var(--green);color:#9be9c9;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600;pointer-events:none;opacity:0;transition:transform 1s ease,opacity 1s ease}
   .grip{cursor:grab;color:var(--mut);user-select:none;padding:0 2px;font-size:14px;line-height:1}
   .grip:active{cursor:grabbing}
+  /* Session-link toggle: bright chain when a Claude session is attached (opens the
+     readable transcript), dim broken chain when not (opens the connect picker). */
+  .slink{cursor:pointer;background:none;border:none;padding:2px 4px;border-radius:6px;font-size:13px;line-height:1}
+  .slink:hover{background:#1d2230}
+  .slink.on{filter:none;opacity:1}
+  .slink.off{opacity:.4;filter:grayscale(1)}
+  /* DEV dataset badge — shown only when the app runs on a CM_DATA_DIR override
+     (e.g. .localdata). Makes "this is not production data" impossible to miss. */
+  .devbadge{display:inline-block;vertical-align:middle;margin-left:8px;padding:2px 9px;border-radius:6px;
+    font-size:12px;font-weight:700;letter-spacing:.06em;color:#1a1205;background:#f5a623;border:1px solid #ffce7a}
+  body.devmode{border-top:3px solid #f5a623}
   .goal.dragging{opacity:.45}
   .goal.dropTarget{border-top:2px solid var(--accent)}
   .stat{display:inline-flex;gap:3px;flex:0 0 auto}
@@ -80,6 +152,8 @@ enum DashboardContent {
   .sb.on.in_progress{background:var(--accent);border-color:var(--accent);color:#fff}
   .sb.on.done{background:var(--green);border-color:var(--green);color:#06281c}
   .ttime{font-variant-numeric:tabular-nums;color:var(--mut);font-size:12px;min-width:48px;text-align:right;flex:0 0 auto}
+  .ttime.clk{cursor:pointer;color:#9fc0ff}
+  .ttime.clk:hover{text-decoration:underline}
   .goal.running{background:rgba(91,140,255,.06)}
   .goal.ontrack{background:rgba(76,201,240,.07)}
   /* Derived rollup status for parent goals (computed from children, not clickable). */
@@ -91,16 +165,23 @@ enum DashboardContent {
   .stage .n{width:22px;height:22px;border-radius:50%;background:#1d2230;display:flex;align-items:center;justify-content:center;font-size:12px;flex:0 0 auto}
   .stage .s{flex:1} .stage .st{font-size:12px}
   .ok{color:var(--green)} .wait{color:var(--mut)} .bad{color:var(--red)}
+  /* Pixel bard standing fully above the goal input, anchored to the right edge. */
+  .bardwrap{position:relative;flex:1;display:flex;min-width:140px}
+  #bardCanvas{position:absolute;top:-40px;right:14px;width:40px;height:40px;image-rendering:pixelated;pointer-events:none;z-index:3}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="hdr">
     <div>
-      <h1>오늘 활동 · BGM 디버그</h1>
+      <h1>오늘 활동 · BGM 디버그 <span id="devBadge" class="devbadge" style="display:none"></span></h1>
       <div class="sub" id="date">불러오는 중…</div>
     </div>
-    <button class="btn" onclick="document.getElementById('policy').classList.add('on')">기준 (정책서)</button>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span id="perf" title="이 대시보드 페이지의 자원 사용량 (메모리=JS 힙, CPU=프레임 타이밍 근사치)"
+            style="font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap">측정 중…</span>
+      <button class="btn" onclick="document.getElementById('policy').classList.add('on')">기준 (정책서)</button>
+    </div>
   </div>
 
   <div class="cards">
@@ -123,16 +204,30 @@ enum DashboardContent {
   <div class="nowline" id="now">지금: –</div>
 
   <div class="hdr"><h2 style="margin:18px 0 10px">오늘 가치 확정 (어뷰징 필터)</h2>
-    <button class="btn" id="viewToggle" onclick="toggleView()">프리뷰 ▸</button></div>
+    <select class="btn" id="viewSelect" onchange="setView(this.value)" title="뷰 전환">
+      <option value="input">목록</option>
+      <option value="group">그룹</option>
+      <option value="preview">프리뷰</option>
+    </select></div>
   <div class="panel">
     <!-- INPUT VIEW -->
     <div id="inputView">
       <div class="row">목표 추가:
-        <input type="text" id="goalText" placeholder="목표/디테일 입력 후 Enter (계속 추가)" style="flex:1;min-width:140px"
-               onkeydown="goalKey(event)">
+        <span class="bardwrap">
+          <canvas id="bardCanvas" width="48" height="48" aria-hidden="true" title="음유시인이 1분마다 버프를 연주합니다"></canvas>
+          <input type="text" id="goalText" placeholder="목표/디테일 입력 후 Enter (계속 추가)" style="width:100%"
+                 onkeydown="goalKey(event)">
+        </span>
         <button class="btn" onclick="addGoal()">추가</button>
       </div>
       <div class="muted" style="font-size:12px;margin:2px 0 6px">번호를 보고 각 목표의 <b>부모#</b> 칸에 부모 번호를 입력하면 묶입니다 (비우면 최상위). 압축된 결과는 프리뷰에서 확인.</div>
+      <div class="row" style="margin:2px 0 6px;gap:6px">
+        <span class="muted" style="font-size:12px">보기</span>
+        <button class="btn primary" id="flt_backlog" onclick="toggleStatusFilter('backlog')">대기</button>
+        <button class="btn primary" id="flt_inprog" onclick="toggleStatusFilter('in_progress')">진행</button>
+        <button class="btn primary" id="flt_done" onclick="toggleStatusFilter('done')">완료</button>
+        <span class="muted" id="flt_summary" style="font-size:12px">— 모두 표시</span>
+      </div>
       <div id="goals"></div>
 
       <div class="stage" style="margin-top:8px">
@@ -170,6 +265,26 @@ enum DashboardContent {
         <button class="btn" onclick="copyMd()">마크다운 복사</button>
       </div>
       <div id="report"></div>
+    </div>
+
+    <!-- GROUP VIEW (grouped input) -->
+    <div id="groupView" style="display:none">
+      <div class="gqbar">
+        <div class="row" style="margin:0">
+          <input type="text" id="gAddText" placeholder="목표 입력 후 Enter — 오른쪽 '부모'로 지정된 곳에 추가" style="flex:1;min-width:140px">
+          <span class="muted" style="font-size:12px">부모</span>
+          <input type="text" id="gParentPick" list="gParentList" placeholder="미분류(최상위)" onchange="gPickParent(this.value)" style="width:170px">
+          <datalist id="gParentList"></datalist>
+          <button class="btn primary" onclick="gAdd()">추가</button>
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:4px">부모를 고르면 그 자리에 고정되어 Enter로 자식을 계속 추가할 수 있습니다. 부모를 비우면 새 최상위 목표가 됩니다. 각 섹션 머리글의 <b>+여기에</b>를 누르면 그 목표가 부모로 지정됩니다.</div>
+      </div>
+      <div class="row" style="margin:0 0 6px">
+        <input type="text" id="gSearch" placeholder="부모 섹션 검색…" oninput="gSetQuery(this.value)" style="flex:1;min-width:120px">
+        <button class="btn" onclick="gCollapseAll(true)">모두 접기</button>
+        <button class="btn" onclick="gCollapseAll(false)">모두 펼치기</button>
+      </div>
+      <div id="groupSections"></div>
     </div>
 
     <div class="row" style="margin-top:12px;font-size:15px;border-top:1px solid var(--line);padding-top:12px">
@@ -264,6 +379,96 @@ function appColor(a){
 const BANDS = {'칠 (느긋)':[75,100],'스테디 (안정)':[100,125],'집중 (몰입)':[120,150],'하이프 (고조)':[140,175]};
 function trackBpm(t){ const m=/\[(\d{2,3})\]/.exec(t||''); return m?parseInt(m[1],10):null; }
 function fmtMin(m){ if(m>=60) return (m/60).toFixed(1)+'시간'; return m+'분'; }
+// "Accelerator" gauge: live APM (actions/min, StarCraft-style). Backend polled
+// fast (~100ms); the number + bar are driven by a damped SPRING every animation
+// frame so they snap toward the target with a little tachometer kick (overshoot).
+// Juice: zone color (green->amber->red), a redline pulse glow, and a VU-style
+// peak-hold marker that floats down from the recent max.
+let _apmTo=0,_apmAt=0,_apmV=0,_nmTo=0,_nmAt=0,_nmV=0,_peak=0,_gaugeOn=false,_lastT=0;
+const SPRING_K=500, SPRING_D=26;   // stiffness / damping => zeta~0.58, ~250ms snap, ~8% overshoot
+function ensureGauge(){
+  const host=$('accel'); if(!host) return false;
+  if(host.dataset.built!=='1'){
+    host.innerHTML=' &nbsp; <span id="apmlab" style="color:var(--mut)">APM </span>'
+      +'<span id="apmnum" style="display:inline-block;min-width:3ch;text-align:right;font-variant-numeric:tabular-nums;font-weight:700">0</span>'
+      +' <span id="apmbar" style="position:relative;display:inline-block;width:96px;height:9px;border-radius:5px;background:#1b1f29;vertical-align:middle;overflow:hidden">'
+      +'<span id="apmfill" style="position:absolute;left:0;top:0;height:100%;width:0%;background:#36c08a"></span>'
+      +'<span id="apmpeak" style="position:absolute;top:0;height:100%;width:2px;background:#fff;opacity:.65;left:0%"></span></span>'
+      +'<span id="apmgear" style="color:var(--mut)"></span><span id="apmnext" style="color:var(--mut)"></span>';
+    host.dataset.built='1';
+  }
+  return true;
+}
+function zoneColor(x){   // 0 -> green, 0.6 -> amber, 1 -> red
+  const h = x<0.6 ? 145-(145-42)*(x/0.6) : 42-42*Math.min(1,(x-0.6)/0.4);
+  return 'hsl('+Math.max(0,h).toFixed(0)+',72%,55%)';
+}
+function renderGauge(t){
+  const red=_nmTo>=0.85, nm=Math.min(1,Math.max(0,_nmAt));
+  const num=$('apmnum'),fill=$('apmfill'),bar=$('apmbar'),peak=$('apmpeak'),lab=$('apmlab');
+  if(num){ num.textContent=Math.max(0,Math.round(_apmAt)); num.style.color=red?'#ff5a6e':'var(--fg)'; }
+  if(fill){ fill.style.width=(nm*100).toFixed(1)+'%'; fill.style.background=zoneColor(nm); }
+  if(peak) peak.style.left=(Math.min(1,_peak)*100).toFixed(1)+'%';
+  if(lab) lab.style.color=red?'#ff5a6e':'var(--mut)';
+  if(bar){
+    if(red){ const g=0.5+0.5*Math.sin(t*0.009); bar.style.boxShadow='0 0 '+(5+9*g).toFixed(1)+'px rgba(255,90,110,'+(0.45+0.45*g).toFixed(2)+')'; }
+    else bar.style.boxShadow='none';
+  }
+}
+function setGauge(n){
+  const host=$('accel');
+  if(!n||!n.track||n.track==='-'){ if(host){host.innerHTML='';host.dataset.built='';} _gaugeOn=false; _apmTo=_apmAt=_apmV=_nmTo=_nmAt=_nmV=_peak=0; return; }
+  _gaugeOn=true;
+  if(!ensureGauge()) return;
+  _apmTo=Math.max(0,n.apm||0);
+  _nmTo=Math.max(0,Math.min(1,n.norm||0));
+  const g=$('apmgear'),nx=$('apmnext');
+  if(g) g.textContent=(n.gear&&n.gear!=='-')?(' · '+n.gear):'';
+  if(nx) nx.textContent=(n.nextTrack&&n.nextTrack!=='-')?(' → 다음 '+n.nextTrack):'';
+}
+// --- Page resource meter (top-right) -------------------------------------
+// Memory: JS heap via performance.memory (Chromium only); DOM node count works
+// everywhere. CPU is not exposed to JS, so we approximate it from frame timing:
+// over a 1s window, the fraction of wall-clock the main thread overran the
+// 60fps frame budget (16.7ms) is shown as an approximate busy %, with the
+// measured FPS alongside. Honest proxy, not a real OS CPU reading.
+const _FRAME_MS=1000/60;
+let _pfFrames=0, _pfBusy=0, _pfWin=0, _pfLast=0, _pfRenderMs=0;
+function perfFrame(t){
+  if(_pfLast){ const ms=t-_pfLast; _pfFrames++; if(ms>_FRAME_MS) _pfBusy+=(ms-_FRAME_MS); }
+  _pfLast=t;
+  if(t-_pfWin>=1000){
+    const span=t-_pfWin; _pfWin=t;
+    const fps=Math.round(_pfFrames*1000/Math.max(1,span));
+    const cpu=Math.min(99,Math.round(_pfBusy/Math.max(1,span)*100));
+    _pfFrames=0; _pfBusy=0;
+    const el=$('perf'); if(el){
+      let mem='';
+      const m=(performance&&performance.memory)?performance.memory:null;
+      if(m){ mem='메모리 '+(m.usedJSHeapSize/1048576).toFixed(0)+'MB'; }
+      const nodes=document.getElementsByTagName('*').length;
+      const r=_pfRenderMs?(' · 렌더 '+_pfRenderMs.toFixed(0)+'ms'):'';
+      el.textContent=(mem?mem+' · ':'')+'DOM '+nodes+'개 · CPU ~'+cpu+'% · '+fps+'fps'+r;
+    }
+  }
+}
+function tweenGauge(t){
+  perfFrame(t);
+  const dt = _lastT ? Math.min(0.033,(t-_lastT)/1000) : 0.016; _lastT=t;
+  if(_gaugeOn){
+    _apmV += ((_apmTo-_apmAt)*SPRING_K - _apmV*SPRING_D)*dt; _apmAt += _apmV*dt;
+    _nmV  += ((_nmTo-_nmAt)*SPRING_K - _nmV*SPRING_D)*dt;     _nmAt  += _nmV*dt;
+    if(_nmAt>_peak) _peak=_nmAt; else _peak=Math.max(_nmAt, _peak-0.18*dt);  // peak-hold drifts down
+    renderGauge(t);
+  }
+  requestAnimationFrame(tweenGauge);
+}
+requestAnimationFrame(tweenGauge);
+async function liveTick(){
+  let l; try { l = await (await fetch('/live.json',{cache:'no-store'})).json(); }
+  catch(e){ return; }
+  setGauge(l);
+}
 
 async function load(){
   let d;
@@ -273,6 +478,12 @@ async function load(){
   const w = d.now.working;
   $('status').innerHTML = '<span class="dot" style="background:'+(w?'var(--green)':'#555')+'"></span>'+d.now.status;
   $('date').textContent = d.date + ' · 분당 기록';
+  // DEV dataset indicator: badge + top ribbon + tab title prefix when not production.
+  const dev=$('devBadge');
+  if(d.dev){ dev.style.display='inline-block'; dev.textContent='DEV · '+(d.dataLabel||'localdata');
+    document.body.classList.add('devmode');
+    if(!document.title.startsWith('[DEV]')) document.title='[DEV] '+document.title; }
+  else { dev.style.display='none'; document.body.classList.remove('devmode'); }
   const ss = withCarryForward(d.samples);   // 10-min continuity applied
   const b = timeBuckets(ss);
   $('t_total').textContent = fmtH(b.total);
@@ -283,13 +494,16 @@ async function load(){
   const n=d.now;
   const siteStr=(n.site&&n.site!=='-')?' ('+esc(n.site)+')':'';
   $('now').innerHTML='지금: 앱 <b>'+esc(n.app)+siteStr+'</b> &nbsp; '+tierBadge(n.tier,n.mult)
-    +' &nbsp; ⌨ '+(n.key||0)+' 🖱 '+(n.mouse||0)+' &nbsp; 전략 <b>'+esc(n.profile)+'</b> · BGM <b>'+esc(n.track)+'</b>';
+    +' &nbsp; ⌨ '+(n.key||0)+' 🖱 '+(n.mouse||0)+' &nbsp; 전략 <b>'+esc(n.profile)+'</b> · BGM <b>'+esc(n.track)+'</b><span id="accel"></span>';
+  setGauge(n);
+  const _t0=performance.now();
   drawChart(ss);
   drawStrip(ss);
   renderReview(d);
   renderSummary(ss);
   renderTimeline(ss);
   renderApps(ss);
+  _pfRenderMs=performance.now()-_t0;
 }
 function hhmm(t){ const d=new Date(t*1000); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
 
@@ -329,30 +543,56 @@ function timelineSegments(samples){
   return segs;
 }
 
-function renderTimeline(samples){
+// Lazy timeline: keep all segments in memory-light form but only paint a small
+// initial slice into the DOM (the table is the heaviest part of the page). The
+// "불러오기" button reveals more on demand, so the default DOM footprint stays
+// minimal regardless of how long the log gets. _logShown survives auto-refresh
+// so an expanded view isn't collapsed every 5s.
+const LOG_INIT=30, LOG_STEP=50, LOG_MAX=600;
+let _logSegs=[], _logShown=LOG_INIT;
+function rowHtml(g){
+      const idle=(g.app==='-');
+      const col=idle?'#555':appColor(g.app);
+      const band=BANDS[g.profile];
+      const bpm=trackBpm(g.track);
+      const bad=band&&bpm!=null&&(bpm<band[0]||bpm>band[1]);
+      const trackCell=(g.track==='-')?'<span class="empty">–</span>'
+        :'<span class="chip'+(bad?' bad':'')+'" style="margin:0">'+esc(g.track)+'</span>';
+      const siteRow=(g.site&&g.site!=='-')?'<div style="color:var(--mut);font-size:11px">'+esc(g.site)+'</div>':'';
+      const k=Math.round(g.keySum/g.mins), mo=Math.round(g.mouseSum/g.mins);
+      return '<tr>'
+        +'<td style="white-space:nowrap">'+hhmm(g.startT)+'</td>'
+        +'<td style="white-space:nowrap;color:var(--mut)">'+g.mins+'분</td>'
+        +'<td style="white-space:nowrap"><span class="dot" style="background:'+col+'"></span>'+esc(g.app)+siteRow+'</td>'
+        +'<td style="white-space:nowrap">'+esc(g.profile)+'</td>'
+        +'<td>'+trackCell+'</td>'
+        +'<td style="white-space:nowrap;color:var(--mut)">⌨'+k+' 🖱'+mo+'</td>'
+        +'<td>'+categoryBadge(g)+'</td>'
+        +'</tr>';
+}
+function paintTimeline(){
   const rows=$('logrows');
-  const segs=timelineSegments(samples).reverse().slice(0,120);
-  if(!segs.length){ rows.innerHTML='<tr><td colspan="7" class="empty">데이터 없음</td></tr>'; return; }
-  rows.innerHTML=segs.map(g=>{
-    const idle=(g.app==='-');
-    const col=idle?'#555':appColor(g.app);
-    const band=BANDS[g.profile];
-    const bpm=trackBpm(g.track);
-    const bad=band&&bpm!=null&&(bpm<band[0]||bpm>band[1]);
-    const trackCell=(g.track==='-')?'<span class="empty">–</span>'
-      :'<span class="chip'+(bad?' bad':'')+'" style="margin:0">'+esc(g.track)+'</span>';
-    const siteRow=(g.site&&g.site!=='-')?'<div style="color:var(--mut);font-size:11px">'+esc(g.site)+'</div>':'';
-    const k=Math.round(g.keySum/g.mins), mo=Math.round(g.mouseSum/g.mins);
-    return '<tr>'
-      +'<td style="white-space:nowrap">'+hhmm(g.startT)+'</td>'
-      +'<td style="white-space:nowrap;color:var(--mut)">'+g.mins+'분</td>'
-      +'<td style="white-space:nowrap"><span class="dot" style="background:'+col+'"></span>'+esc(g.app)+siteRow+'</td>'
-      +'<td style="white-space:nowrap">'+esc(g.profile)+'</td>'
-      +'<td>'+trackCell+'</td>'
-      +'<td style="white-space:nowrap;color:var(--mut)">⌨'+k+' 🖱'+mo+'</td>'
-      +'<td>'+categoryBadge(g)+'</td>'
-      +'</tr>';
-  }).join('');
+  const total=_logSegs.length;
+  if(!total){ rows.innerHTML='<tr><td colspan="7" class="empty">데이터 없음</td></tr>'; return; }
+  const shown=Math.min(_logShown,total);
+  let html=_logSegs.slice(0,shown).map(rowHtml).join('');
+  if(shown<total){
+    const next=Math.min(LOG_STEP,total-shown);
+    html+='<tr><td colspan="7" style="text-align:center;padding:10px">'
+      +'<button class="btn" onclick="loadMoreLog()">불러오기 (+'+next+')</button>'
+      +' <span class="muted" style="font-size:11px">전체 '+total+'개 중 '+shown+'개 표시 · 메모리 절약 모드</span>'
+      +'</td></tr>';
+  } else if(total>LOG_INIT){
+    html+='<tr><td colspan="7" style="text-align:center;padding:6px"><span class="muted" style="font-size:11px">전체 '+total+'개 표시</span></td></tr>';
+  }
+  rows.innerHTML=html;
+}
+function loadMoreLog(){ _logShown=Math.min(_logShown+LOG_STEP,LOG_MAX,_logSegs.length); paintTimeline(); }
+function renderTimeline(samples){
+  _logSegs=timelineSegments(samples).reverse().slice(0,LOG_MAX);
+  // Clamp the persisted "shown" count to the new total (never below the initial).
+  _logShown=Math.max(LOG_INIT,Math.min(_logShown,_logSegs.length));
+  paintTimeline();
 }
 function esc(s){ return (s||'-').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 function minOfDay(s){ const dt=new Date(s.t*1000); return dt.getHours()*60+dt.getMinutes(); }
@@ -452,16 +692,209 @@ function goalKey(e){ if(e.key!=='Enter')return; if(_composing){_pendingAdd=true;
   el.addEventListener('compositionstart',function(){_composing=true;});
   el.addEventListener('compositionend',function(){_composing=false; if(_pendingAdd){_pendingAdd=false; addGoal();}});
 })();
+// Group-mode top add bar: same IME-safe Enter (bindImeEnter is hoisted).
+(function(){ bindImeEnter(document.getElementById('gAddText'), function(){ gAdd(); }); })();
 function addGoal(){ const t=$('goalText').value.trim(); if(!t)return; $('goalText').value=''; $('goalText').focus(); post('/api/goal/add',{text:t}); }
 function removeGoal(id){ post('/api/goal/remove',{id:id}); }
 function saveNote(id,note){ post('/api/goal/note',{id:id,note:note}); }
+// Inline rename: double-click a goal title to edit it in place. IME-safe Enter
+// commits, Esc cancels, blur commits; empty or unchanged just restores. For a
+// session-linked goal the server also mirrors the new title into the transcript so
+// it survives future session events (see /api/goal/title).
+function startTitleEdit(e,id){
+  if(e){e.stopPropagation();}
+  const span=document.getElementById('gt_'+id); if(!span||span._editing)return;
+  const g=(_goals||[]).find(x=>x.id===id); const cur=g?(g.text||''):span.textContent;
+  span._editing=true;
+  const inp=document.createElement('input');
+  inp.type='text'; inp.className='gedit'; inp.value=cur; inp.title='Enter 저장 · Esc 취소';
+  span.innerHTML=''; span.appendChild(inp); inp.focus(); inp.select();
+  let done=false;
+  function commit(){ if(done)return; done=true;
+    const t=inp.value.trim();
+    if(!t||t===cur){ load(); return; }   // unchanged/empty -> restore
+    post('/api/goal/title',{id:id,title:t}); }   // reloads on success
+  inp.addEventListener('keydown',function(ev){ if(ev.key==='Escape'){ev.preventDefault();ev.stopPropagation(); if(!done){done=true; load();}} });
+  inp.addEventListener('blur',commit);
+  bindImeEnter(inp,commit);
+}
+// --- Completion evidence (links + files) + 완료 필터 ---
+// Evidence is attached to the goal (persistent), so a finished item keeps its links
+// and files for later — to find it and hand off the supporting material. Files are
+// copied into the app store and served back via /evidence/<goalId>/<id>.
+let _evOpen=new Set();    // goal ids whose evidence panel is expanded
+// Per-status visibility toggles. A goal shows when its effective status is active.
+// All-on = 전체(모두); only-done reproduces the old "완료만" hand-off view.
+let _statusFilter={backlog:true,in_progress:true,done:true};
+let _review=null;         // last review object (for filter-only re-render)
+function evCount(g){ return (g.evidence||[]).length; }
+function toggleEv(id){ if(_evOpen.has(id))_evOpen.delete(id); else _evOpen.add(id); applyEvOpen(); }
+function applyEvOpen(){ (_goals||[]).forEach(g=>{ const p=document.getElementById('ev_'+g.id);
+  if(p) p.classList.toggle('open', _evOpen.has(g.id)); }); }
+function evItem(g,e){
+  const t=esc(e.title||e.href||''), icon=(e.kind==='file')?'📄 ':'🔗 ';
+  const a=(e.kind==='file')
+    ? '<a href="'+esc(e.href)+'" download>'+icon+t+'</a>'
+    : '<a href="'+esc(e.href)+'" target="_blank" rel="noopener">'+icon+t+'</a>';
+  return '<span class="evitem">'+a+'<button class="evx" title="삭제" onclick="removeEvidence(\''+g.id+'\',\''+e.id+'\')">✕</button></span>';
+}
+function evidencePanel(g){
+  const ev=g.evidence||[];
+  const list=ev.length? ev.map(e=>evItem(g,e)).join('')
+    : '<span class="muted" style="font-size:12px">첨부된 증거가 없습니다. 링크나 파일을 추가하세요.</span>';
+  return '<div class="evpanel" id="ev_'+g.id+'">'
+    +'<div class="evlist">'+list+'</div>'
+    +'<div class="row" style="margin:6px 0 0">'
+      +'<input type="text" id="evurl_'+g.id+'" placeholder="링크 URL 붙여넣기 후 Enter" style="flex:1;min-width:140px" onkeydown="evLinkKey(event,\''+g.id+'\')">'
+      +'<button class="btn" onclick="addEvidenceLink(\''+g.id+'\')">링크 추가</button>'
+      +'<label class="btn" style="cursor:pointer">파일 첨부<input type="file" multiple style="display:none" onchange="addEvidenceFiles(\''+g.id+'\',this)"></label>'
+    +'</div></div>';
+}
+function evLinkKey(e,id){ if(e.key==='Enter'){ e.preventDefault(); addEvidenceLink(id); } }
+function addEvidenceLink(id){
+  const el=document.getElementById('evurl_'+id); if(!el)return;
+  let u=el.value.trim(); if(!u)return;
+  if(!/^[a-z][a-z0-9+.-]*:/i.test(u)) u='https://'+u;   // bare domain -> https
+  el.value=''; _evOpen.add(id);
+  post('/api/goal/evidence/add',{id:id,kind:'link',url:u});
+}
+function removeEvidence(gid,eid){ _evOpen.add(gid); post('/api/goal/evidence/remove',{id:gid,evidenceId:eid}); }
+const EV_MAX=48*1024*1024;   // ~48MB/file (server caps the base64 request at 64MB)
+function addEvidenceFiles(id,input){
+  const files=input.files; if(!files||!files.length)return;
+  _evOpen.add(id);
+  let i=0;
+  (function next(){
+    if(i>=files.length){ input.value=''; load(); return; }
+    const f=files[i++];
+    if(f.size>EV_MAX){ alert('파일이 너무 큽니다(48MB 초과): '+f.name); next(); return; }
+    const rd=new FileReader();
+    rd.onload=function(){
+      fetch('/api/goal/evidence/add',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id:id,kind:'file',filename:f.name,data:rd.result})})
+        .then(()=>next()).catch(()=>next());
+    };
+    rd.onerror=function(){ next(); };
+    rd.readAsDataURL(f);
+  })();
+}
+// 완료 필터: 완료된 목표(또는 자식이 모두 완료된 부모)만 추려, 나중에 찾고 자료를 넘길 때 사용.
+function isDoneGoal(g,goals){ return (g.status==='done')||(derivedStatus(goals,g)==='done'); }
+// Effective status used for visibility filtering. Parents report a derived rollup
+// (on_track counts as 진행); leaves use their own status (default 대기).
+function effStatus(g,goals){ const ds=derivedStatus(goals,g); if(ds!=null) return ds==='on_track'?'in_progress':ds; return g.status||'backlog'; }
+// 보기 토글: 상태 버튼을 켜면 그 상태의 목표가 보이고, 끄면 숨겨진다.
+function toggleStatusFilter(s){ _statusFilter[s]=!_statusFilter[s]; if(_review) renderGoalsInput(_review); }
+function anyStatusActive(){ return _statusFilter.backlog||_statusFilter.in_progress||_statusFilter.done; }
+// Summary text mirrors the active combo: 모두 / 완료 만 / 완료 진행 만 …
+function filterSummary(){
+  if(!anyStatusActive()) return '표시할 상태를 선택하세요 (대기 · 진행 · 완료)';
+  if(_statusFilter.backlog&&_statusFilter.in_progress&&_statusFilter.done) return '모두 표시';
+  const names=[];
+  if(_statusFilter.done) names.push('완료');
+  if(_statusFilter.in_progress) names.push('진행');
+  if(_statusFilter.backlog) names.push('대기');
+  return names.join(' ')+' 만';
+}
+function updateFilterButtons(){
+  [['flt_backlog','backlog'],['flt_inprog','in_progress'],['flt_done','done']].forEach(function(p){
+    const b=$(p[0]); if(b) b.classList.toggle('primary',!!_statusFilter[p[1]]);
+  });
+  const s=$('flt_summary'); if(s) s.textContent='— '+filterSummary();
+}
 // --- Goal status + per-goal time tracking ---
-// Only one goal can be in_progress; the server enforces it and banks elapsed time
-// on every transition. trackedSeconds is the banked total; while running we add the
-// live session (now - startedAt) on the client so the clock ticks without re-rendering.
-function setStatus(id,s){ post('/api/goal/status',{id:id,status:s}); }
+// Multiple goals MAY run in_progress at once (only feasible with AI). The server banks
+// elapsed time on every transition; trackedSeconds is the banked total, and while running
+// we add the live session (now - startedAt) on the client so the clock ticks without
+// re-rendering. The count of concurrent in_progress goals gates the AI-work inputs below.
+const VGAIN='0.5';   // value units (v) awarded per completion — abstract value, NOT hours
+// --- Concurrency-gated AI-work helpers (energy / agents / tokens / value / ROI) ---
+// Energy/agent/token/value are managed at the PARENT (big-picture goal) level, NOT per
+// leaf task — per-task entry was too costly/noisy. The unit of "concurrent work" is an
+// ACTIVE PARENT: a parent whose rollup is on_track (some child is in progress). Thresholds:
+// 1+ active parent -> agent/token/value/ROI; 2+ active parents -> energy split + gauge.
+const CONC_ENERGY=2, CONC_AGENT=1;
+// ROI = value / tokens(K). Tunable bands: >=HI efficient, >=LO acceptable, else token burn.
+const ROI_HI=1.0, ROI_LO=0.4;
+// A parent is "active" when its derived rollup is on_track (a child is in progress).
+function activeParent(goals,g){ return derivedStatus(goals,g)==='on_track'; }
+function concCount(goals){ return (goals||[]).filter(g=>activeParent(goals,g)).length; }
+function energySum(goals){ return (goals||[]).filter(g=>activeParent(goals,g)).reduce((a,g)=>a+(g.energy||0),0); }
+function roiOf(g){ return ((g.tokens||0)>0)?((g.value||0)/g.tokens):null; }
+function roiClass(r){ return r==null?'':(r>=ROI_HI?'hi':(r>=ROI_LO?'mid':'lo')); }
+function setEnergy(id,v){ post('/api/goal/energy',{id:id,energy:parseInt(v,10)||0}); }
+function setAgents(id,s){ post('/api/goal/agents',{id:id,agents:String(s||'')}); }
+function setTokens(id,v){ post('/api/goal/tokens',{id:id,tokens:parseInt(v,10)||0}); }
+function setValue(id,v){ post('/api/goal/value',{id:id,value:parseInt(v,10)||0}); }
+function setStatus(id,s,ev){
+  // Completing a task is a value moment: play the check sweep + floating +Nv, then
+  // commit. Value is in "v" (not hours) on purpose — rewarding hours just invites
+  // filling time; v rewards finishing something worth finishing.
+  if(s==='done'){ celebrateDone(id, ev&&ev.target?ev.target.closest('.goal'):null); return; }
+  post('/api/goal/status',{id:id,status:s});
+}
+function celebrateDone(id,row){
+  if(row && row.classList.contains('celebrate')) return;   // debounce double-clicks
+  _evOpen.add(id);   // open the evidence panel so the just-finished goal invites a link/file
+  playDing();
+  if(row){
+    row.classList.add('celebrate');
+    const g=row.querySelector('.g'); if(g && !g.querySelector('.gstrike')){
+      const st=document.createElement('span'); st.className='gstrike'; g.appendChild(st);
+      requestAnimationFrame(()=>requestAnimationFrame(()=>st.classList.add('on')));
+    }
+    floatValue(row);
+  }
+  // Commit after the sweep is visible; the reload then settles the row to its done state.
+  setTimeout(()=>post('/api/goal/status',{id:id,status:'done'}), 480);
+}
+// Cash-register "ka-ching" completion sound (Web Audio — no asset, offline):
+// a drawer clack (band-passed noise burst) + a double metallic bell built from
+// INHARMONIC partials (1 : 2.41 : 3.93 : 5.2 — non-integer ratios give the metal
+// timbre). Played inside the click gesture so WebKit autoplay allows it; gentle
+// gains so it sits over the focus BGM without spiking.
+let _actx=null;
+function _bell(c,t0,base,amp,dur){
+  [1,2.41,3.93,5.2].forEach((r,i)=>{
+    const o=c.createOscillator(), g=c.createGain();
+    o.type='sine'; o.frequency.value=base*r; const a=amp/(i+1);
+    g.gain.setValueAtTime(0.0001,t0);
+    g.gain.exponentialRampToValueAtTime(a,t0+0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+    o.connect(g).connect(c.destination); o.start(t0); o.stop(t0+dur+0.02);
+  });
+}
+function _clack(c,t0,freq,amp,dur){
+  const n=Math.floor(c.sampleRate*dur), buf=c.createBuffer(1,n,c.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<n;i++) d[i]=Math.random()*2-1;
+  const s=c.createBufferSource(); s.buffer=buf;
+  const bp=c.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=freq; bp.Q.value=6;
+  const g=c.createGain(); g.gain.setValueAtTime(amp,t0); g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+  s.connect(bp).connect(g).connect(c.destination); s.start(t0); s.stop(t0+dur);
+}
+function playDing(){
+  try{
+    // Duck the native BGM under the effect (fire-and-forget; ignore if server busy).
+    fetch('/api/duck',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).catch(()=>{});
+    const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
+    _actx=_actx||new AC(); if(_actx.state==='suspended') _actx.resume();
+    const t=_actx.currentTime+0.01;
+    _clack(_actx,t,1500,0.22,0.05);        // drawer clack
+    _bell(_actx,t+0.05,1318.5,0.14,0.5);   // ching (E6)
+    _bell(_actx,t+0.10,1760.0,0.12,0.6);   // ching (A6)
+  }catch(e){}
+}
+function floatValue(row){
+  const r=row.getBoundingClientRect();
+  const v=document.createElement('div'); v.className='vfloat'; v.textContent='+'+VGAIN+'v';
+  v.style.left=(r.left+58)+'px'; v.style.top=(r.top+4)+'px';
+  document.body.appendChild(v);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{ v.style.opacity='1'; v.style.transform='translateY(-34px)'; }));
+  setTimeout(()=>{ v.style.opacity='0'; }, 650);
+  setTimeout(()=>{ v.remove(); }, 1100);
+}
 function statBtn(g,val,label){ const on=(g.status||'backlog')===val;
-  return '<button class="sb'+(on?(' on '+val):'')+'" onclick="setStatus(\''+g.id+'\',\''+val+'\')">'+label+'</button>'; }
+  return '<button class="sb'+(on?(' on '+val):'')+'" onclick="setStatus(\''+g.id+'\',\''+val+'\',event)">'+label+'</button>'; }
 // Children of a goal (1-level hierarchy: only top-level goals can be parents).
 function goalKids(goals,g){ return (goals||[]).filter(c=>c.parent===g.id); }
 // Derived parent status (rollup from children). null = leaf (use manual buttons).
@@ -515,15 +948,154 @@ function num2(i){ return (i<9?'0':'')+(i+1); }
 // Stable per-goal id label (goal-NN, seq zero-padded). Assigned at creation and
 // UNCHANGED by reorder — drag only moves position, the label stays with the goal.
 function gnum(g){ const n=g.seq||0; return 'goal-'+(n<10?'0':'')+n; }
+// Session-link icon for a goal row. Connected -> bright chain that opens the readable
+// transcript; not connected -> dim broken chain that opens the native connect picker.
+function slinkBtn(g){
+  if(g.sessionId){
+    return '<button class="slink on" title="세션 트랜스크립트 보기" onclick="viewSession(event,\''+g.id+'\')">🔗</button>';
+  }
+  return '<button class="slink off" title="세션 연결 (파일 선택)" onclick="connectSession(event,\''+g.id+'\')">⛓️‍💥</button>';
+}
+function viewSession(e,id){ if(e){e.stopPropagation();} window.open('/transcript?goal='+encodeURIComponent(id),'_blank'); }
+// The accumulated-time cell. For a session-linked goal it becomes a clickable link
+// to the minute-by-minute breakdown (tools + tokens); otherwise it's a plain readout.
+function ttimeHTML(g){
+  const on=!!g.sessionId;
+  const attr=on?(' onclick="viewBreakdown(event,\''+g.id+'\')" title="분 단위 작업·토큰 보기"'):' title="누적 작업 시간"';
+  return '<span class="ttime'+(on?' clk':'')+'" id="tt_'+g.id+'"'+attr+'>'+fmtDur(effTracked(g))+'</span>';
+}
+function viewBreakdown(e,id){ if(e){e.stopPropagation();} window.open('/breakdown?goal='+encodeURIComponent(id),'_blank'); }
+function connectSession(e,id){ if(e){e.stopPropagation();}
+  // The picker is a native modal opened by the app; the POST returns immediately, so
+  // reload a few times to catch the link once the user has chosen a file.
+  post('/api/goal/connect',{id:id});
+  [1500,4000,8000].forEach(function(ms){ setTimeout(load,ms); });
+}
 function submitSelf(){ post('/api/review',{selfScore:parseInt($('selfRange').value,10)||0}); }
 function runAI(){ $('aiNote').textContent='분석 중…'; post('/api/aifilter',{}); }
 
 let _view='input', _md='';
-function toggleView(){ _view=(_view==='input')?'preview':'input'; applyView(); }
+function pad2(n){ return (n<10?'0':'')+n; }
+function setView(v){ _view=v; if(_review) fillActiveView(_review); applyView(); }
 function applyView(){
-  const inp=$('inputView'), pv=$('previewView'), btn=$('viewToggle');
-  if(_view==='preview'){ inp.style.display='none'; pv.style.display=''; btn.textContent='◂ 입력'; }
-  else { inp.style.display=''; pv.style.display='none'; btn.textContent='프리뷰 ▸'; }
+  const inp=$('inputView'), pv=$('previewView'), gv=$('groupView');
+  inp.style.display=(_view==='input')?'':'none';
+  gv.style.display =(_view==='group')?'':'none';
+  pv.style.display =(_view==='preview')?'':'none';
+  const sel=$('viewSelect'); if(sel && sel.value!==_view) sel.value=_view;
+}
+// Fill ONLY the active view's input DOM. 목록/그룹 render the same goals with the same
+// element ids (tt_<id>, ev_<id>) for live timers and evidence panels, so keeping both
+// in the DOM at once would collide. We blank the inactive one and render the active one.
+function fillActiveView(r){
+  if(_view==='group'){ $('goals').innerHTML=''; renderGroupSections(r); }
+  else if(_view==='input'){ $('groupSections').innerHTML=''; renderGoalsInput(r); }
+  else { $('goals').innerHTML=''; $('groupSections').innerHTML=''; }   // preview: report only
+}
+// ===== Group-mode input: sticky add bar (active parent) + collapsible parent sections =====
+let _activeParent='';        // active parent goal id ('' = new top-level)
+let _gCollapsed=new Set();    // collapsed parent ids
+let _gQuery='';              // section search filter (lowercased)
+// IME-safe Enter binding (Korean composition; same rationale as goalKey). Reusable so
+// the top add bar and every per-section add box commit only on a fully-composed Enter.
+function bindImeEnter(el, fn){
+  if(!el || el._imeBound) return; el._imeBound=true;
+  let composing=false, pending=false;
+  el.addEventListener('compositionstart',function(){composing=true;});
+  el.addEventListener('compositionend',function(){composing=false; if(pending){pending=false; fn(el);}});
+  el.addEventListener('keydown',function(e){ if(e.key!=='Enter')return; if(composing){pending=true;} else { fn(el); } });
+}
+// Resolve the active parent from the picker text ("goal-03", "03", "3", or empty).
+function gPickParent(val){
+  const s=(val||'').trim();
+  if(!s){ _activeParent=''; return; }
+  const n=parseInt(s.replace(/[^0-9]/g,''),10);
+  const tgt=(_goals||[]).find(g=>g.seq===n && !g.parent);   // parent must be top-level
+  _activeParent=tgt?tgt.id:'';
+}
+// Set the active parent from a section header (+여기에) and reflect it in the picker.
+function gSetActiveParent(id){
+  _activeParent=id||'';
+  const g=(_goals||[]).find(x=>x.id===id);
+  const el=$('gParentPick'); if(el) el.value=g?('goal-'+pad2(g.seq||0)):'';
+}
+function gAdd(){
+  const el=$('gAddText'); if(!el) return;
+  const t=el.value.trim(); if(!t) return;
+  el.value=''; el.focus();
+  post('/api/goal/add',{text:t,parent:_activeParent});
+}
+// Add a child directly under a parent (section add box). The section re-renders on
+// reload (new input element), so we flag the parent to restore focus after render —
+// enabling rapid Enter-Enter entry straight into a section.
+let _gRefocus='';
+function gAddChild(parentId, inputEl){
+  const t=inputEl.value.trim(); if(!t) return;
+  inputEl.value=''; _gRefocus=parentId;
+  post('/api/goal/add',{text:t,parent:parentId});
+}
+function gSectAdd(parentId, btn){ const inp=btn.parentNode.querySelector('input'); if(inp) gAddChild(parentId,inp); }
+function gToggleSec(id){ if(_gCollapsed.has(id))_gCollapsed.delete(id); else _gCollapsed.add(id);
+  const el=document.getElementById('gsec_'+id); if(el) el.classList.toggle('collapsed', _gCollapsed.has(id)); }
+function gCollapseAll(c){ const tops=(_goals||[]).filter(g=>!g.parent);
+  _gCollapsed = c ? new Set(tops.map(g=>g.id)) : new Set();
+  if(_review) renderGroupSections(_review); }
+function gSetQuery(q){ _gQuery=(q||'').toLowerCase(); if(_review) renderGroupSections(_review); }
+// One child row: same inline editors (status / note / evidence / delete) and element
+// ids as the 목록 view, so timers + evidence panels work unchanged here too.
+function gChildRow(g,r){
+  const nv=gnote(r,g.id).replace(/"/g,'&quot;');
+  return '<div class="gchild">'
+    +'<span class="pill" style="font-variant-numeric:tabular-nums">'+gnum(g)+'</span>'
+    +slinkBtn(g)
+    +'<span class="gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span>'
+    +'<span class="stat">'+statBtn(g,'backlog','대기')+statBtn(g,'in_progress','진행')+statBtn(g,'done','완료')+'</span>'
+    +ttimeHTML(g)
+    +'<input type="text" placeholder="리뷰 메모" value="'+nv+'" onchange="saveNote(\''+g.id+'\',this.value)" style="width:130px">'
+    +'<button class="btn evbtn'+(evCount(g)>0?' has':'')+'" onclick="toggleEv(\''+g.id+'\')" title="증거(링크·파일)">📎 '+evCount(g)+'</button>'
+    +'<button class="btn" onclick="removeGoal(\''+g.id+'\')">삭제</button>'
+    +evidencePanel(g)+'</div>';
+}
+function gSection(t,all,r){
+  const kids=goalKids(all,t);
+  const done=kids.filter(k=>(k.status||'backlog')==='done').length;
+  const ds=derivedStatus(all,t);
+  const collapsed=_gCollapsed.has(t.id);
+  const tag=ds==='on_track'?'<span class="otTag">on track</span>'
+    :(ds==='done'?'<span class="otTag" style="border-color:var(--green);color:var(--green);background:rgba(54,192,138,.12)">완료</span>':'');
+  const prog=kids.length?('자식 '+done+'/'+kids.length):'자식 없음';
+  let body=kids.length? kids.map(k=>gChildRow(k,r)).join('')
+    : '<div class="muted" style="font-size:12px;padding:4px 0">아직 자식이 없습니다. 아래에서 추가하세요.</div>';
+  body+='<div class="gsec-add">'
+    +'<input type="text" data-parent="'+t.id+'" placeholder="이 목표 아래 추가 후 Enter" style="flex:1;min-width:120px">'
+    +'<button class="btn" onclick="gSectAdd(\''+t.id+'\',this)">추가</button></div>';
+  return '<div class="gsec'+(collapsed?' collapsed':'')+'" id="gsec_'+t.id+'">'
+    +'<div class="gsec-hd" onclick="gToggleSec(\''+t.id+'\')">'
+      +'<span class="tw">▾</span>'
+      +'<span class="pill" style="font-variant-numeric:tabular-nums">'+gnum(t)+'</span>'
+      +slinkBtn(t)
+      +'<span class="gtitle">'+esc(t.text)+tag+'</span>'
+      +'<span class="prog">'+prog+'</span>'
+      +'<button class="btn" onclick="event.stopPropagation();gSetActiveParent(\''+t.id+'\')" title="상단 입력칸의 부모를 이 목표로 지정">+여기에</button>'
+      +'<button class="btn" onclick="event.stopPropagation();removeGoal(\''+t.id+'\')">삭제</button>'
+    +'</div><div class="gsec-body">'+body+'</div></div>';
+}
+function renderGroupSections(r){
+  const all=(r&&r.goals)||[]; _goals=all;
+  const host=$('groupSections'); if(!host) return;
+  // Parent autocomplete = top-level goals only (1-level hierarchy).
+  const dl=$('gParentList');
+  if(dl) dl.innerHTML=all.filter(g=>!g.parent)
+    .map(g=>'<option value="goal-'+pad2(g.seq)+'">goal-'+pad2(g.seq)+' · '+esc(g.text)+'</option>').join('');
+  if(!all.length){ host.innerHTML='<div class="muted" style="padding:8px 0">목표가 없습니다. 위 입력칸에 추가하세요.</div>'; return; }
+  const tops=all.filter(g=>!g.parent);
+  const q=_gQuery;
+  const vis=q? tops.filter(t=> t.text.toLowerCase().includes(q) || goalKids(all,t).some(k=>k.text.toLowerCase().includes(q))) : tops;
+  if(!vis.length){ host.innerHTML='<div class="muted" style="padding:8px 0">검색 결과 없음: '+esc(_gQuery)+'</div>'; return; }
+  host.innerHTML=vis.map(t=>gSection(t,all,r)).join('');
+  applyEvOpen();
+  host.querySelectorAll('.gsec-add input').forEach(el=>bindImeEnter(el,function(x){ gAddChild(x.dataset.parent,x); }));
+  if(_gRefocus){ const el=host.querySelector('.gsec-add input[data-parent="'+_gRefocus+'"]'); _gRefocus=''; if(el) el.focus(); }
 }
 function copyMd(b){ if(navigator.clipboard) navigator.clipboard.writeText(_md); const o=b.textContent; b.textContent='복사됨'; setTimeout(()=>{b.textContent=o;},1200); }
 function gnote(r,id){ return (r.notes&&r.notes[id])||''; }
@@ -531,6 +1103,7 @@ function gnote(r,id){ return (r.notes&&r.notes[id])||''; }
 let _lastReviewKey='';
 function renderReview(d){
   const r=d.review||{goals:[],notes:{},submittedSelf:false,aiScore:null,selfScore:null};
+  _review=r;   // keep latest review so the 완료 필터 can re-render rows on demand
   // confirmed value (always — no input fields here)
   const prov=provisionalHours(d.samples);
   $('provVal').textContent=prov.toFixed(1)+'h';
@@ -549,18 +1122,37 @@ function renderReview(d){
   const key=JSON.stringify(r);
   if(key!==_lastReviewKey){
     _lastReviewKey=key;
-    renderGoalsInput(r);
+    fillActiveView(r);   // renders 목록 OR 그룹 (only the active one — see note above)
     renderStages(r);
   }
   applyView();
 }
 // Flat, numbered list (creation order). Parent set later via the 부모# field.
+// The 완료만 filter narrows the rendered rows but keeps _goals as the full list so
+// drag indices and the live timers stay correct.
 function renderGoalsInput(r){
-  const goals=r.goals||[], gv=$('goals');
-  _goals=goals;
-  if(!goals.length){ gv.innerHTML='<div class="muted" style="padding:4px 0">목표를 추가하세요. (Enter로 계속 추가)</div>'; return; }
-  const idToNum={}; goals.forEach(g=>{ idToNum[g.id]=g.seq; });   // stable seq, not position
-  gv.innerHTML=goals.map((g,i)=>goalRow(g,i,r,idToNum)).join('');
+  const all=r.goals||[], gv=$('goals');
+  _goals=all;
+  updateFilterButtons();
+  if(!all.length){ gv.innerHTML='<div class="muted" style="padding:4px 0">목표를 추가하세요. (Enter로 계속 추가)</div>'; return; }
+  const list=all.filter(g=>_statusFilter[effStatus(g,all)]);
+  // 완료만 보기일 땐 첨부(증거) 패널을 펼쳐 자료 넘기기를 돕는다 (기존 동작 유지).
+  const onlyDone=_statusFilter.done&&!_statusFilter.backlog&&!_statusFilter.in_progress;
+  if(onlyDone) list.forEach(g=>_evOpen.add(g.id));
+  if(!list.length){ gv.innerHTML='<div class="muted" style="padding:4px 0">'+(anyStatusActive()?'해당 상태의 목표가 없습니다.':'표시할 상태를 선택하세요 (대기 · 진행 · 완료).')+'</div>'; return; }
+  const idToNum={}; all.forEach(g=>{ idToNum[g.id]=g.seq; });   // stable seq, not position
+  gv.innerHTML=energyGauge(all)+list.map(g=>goalRow(g,all.indexOf(g),r,idToNum)).join('');
+  applyEvOpen();
+}
+// Energy gauge: only meaningful once 2+ goals run at once (AI concurrency). Shows the
+// summed allocation against the user's 100% cap; turns red and warns when over-committed.
+function energyGauge(goals){
+  const c=concCount(goals); if(c<CONC_ENERGY) return '';
+  const sum=energySum(goals), over=sum>100, pct=Math.min(100,sum);
+  return '<div class="engauge'+(over?' over':'')+'">'
+    +'<div class="head"><span>동시 진행 '+c+'개 · 에너지 '+sum+'% / 100</span>'
+    +'<span class="'+(over?'warn':'muted')+'">'+(over?'⚠ 에너지 초과 — 동시 작업 과부하':('남은 '+Math.max(0,100-sum)+'%'))+'</span></div>'
+    +'<div class="bar"><div class="fill" style="width:'+pct+'%"></div></div></div>';
 }
 function goalRow(g,i,r,idToNum){
   const nv=gnote(r,g.id).replace(/"/g,'&quot;');
@@ -575,14 +1167,46 @@ function goalRow(g,i,r,idToNum){
   return '<div class="goal'+(ds==='on_track'?' ontrack':(running?' running':''))+'" data-i="'+i+'" ondragover="dragOver(event,'+i+')" ondrop="dropOn(event,'+i+')" ondragleave="dragLeave(event)">'
     +'<span class="grip" draggable="true" ondragstart="dragStart(event,'+i+')" ondragend="dragEnd(event)" title="드래그하여 우선순위 변경">⠿</span>'
     +'<span class="pill" style="font-variant-numeric:tabular-nums">'+gnum(g)+'</span>'
-    +'<span class="g">'+(isChild?'<span class="muted">└ </span>':'')+esc(g.text)+'</span>'
+    +slinkBtn(g)
+    +'<span class="g">'+(isChild?'<span class="muted">└ </span>':'')+'<span class="gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span></span>'
     +'<span class="stat">'+statCell+'</span>'
-    +'<span class="ttime" id="tt_'+g.id+'" title="누적 작업 시간">'+fmtDur(effTracked(g))+'</span>'
+    +ttimeHTML(g)
     +'<span class="muted" style="font-size:12px">부모#</span>'
     +'<input type="text" inputmode="numeric" value="'+pnum+'" placeholder="–" title="부모 번호 입력 (비우면 최상위)" '
     +'onchange="setParentByNumber(\''+g.id+'\',this.value)" style="width:46px;text-align:center">'
     +'<input type="text" placeholder="리뷰 메모" value="'+nv+'" onchange="saveNote(\''+g.id+'\',this.value)" style="flex:1;min-width:100px">'
-    +'<button class="btn" onclick="removeGoal(\''+g.id+'\')">삭제</button></div>';
+    +'<button class="btn evbtn'+(evCount(g)>0?' has':'')+'" onclick="toggleEv(\''+g.id+'\')" title="증거(링크·파일) 첨부·보기">📎 '+evCount(g)+'</button>'
+    +'<button class="btn" onclick="removeGoal(\''+g.id+'\')">삭제</button>'
+    +aiWorkRow(g,r)+evidencePanel(g)+'</div>';
+}
+// AI-work inputs on a PARENT goal (big-picture level), shown only while that parent is
+// active (on_track). Energy and agent blocks gate independently on the active-parent count:
+//   agents/tokens/value/ROI from CONC_AGENT (1 = a single active parent can name its agents),
+//   energy from CONC_ENERGY (2 = two parents in parallel must split the 100% capacity).
+function aiWorkRow(g,r){
+  if(!activeParent(r.goals,g)) return '';
+  const c=concCount(r.goals);
+  const showEnergy=c>=CONC_ENERGY, showAgent=c>=CONC_AGENT;
+  if(!showEnergy && !showAgent) return '';
+  let h='<div class="aiwork">';
+  if(showEnergy){
+    h+='<span class="lab">에너지</span>'
+      +'<input type="number" min="0" max="100" value="'+(g.energy||0)+'" onchange="setEnergy(\''+g.id+'\',this.value)">'
+      +'<span class="lab">%</span>';
+  }
+  if(showAgent){
+    const ag=(g.agents||[]).join(', ').replace(/"/g,'&quot;');
+    const roi=roiOf(g), rc=roiClass(roi);
+    const roiTxt=(roi==null)?'ROI –':('ROI '+roi.toFixed(2));
+    h+='<span class="lab">에이전트</span>'
+      +'<input type="text" class="agents" placeholder="agent1, agent2" value="'+ag+'" onchange="setAgents(\''+g.id+'\',this.value)">'
+      +'<span class="lab">토큰</span>'
+      +'<input type="number" min="0" value="'+(g.tokens||0)+'" onchange="setTokens(\''+g.id+'\',this.value)"><span class="lab">K</span>'
+      +'<span class="lab">가치</span>'
+      +'<input type="number" min="0" value="'+(g.value||0)+'" onchange="setValue(\''+g.id+'\',this.value)">'
+      +'<span class="roi '+rc+'" title="가치 ÷ 토큰(K) — 동시 작업이 실제로 의미있는지">'+roiTxt+'</span>';
+  }
+  return h+'</div>';
 }
 function renderStages(r){
   if(r.submittedSelf){ $('st_self').innerHTML='<span class="ok">완료 '+(r.selfScore||0)+'%</span>'; $('selfRange').value=r.selfScore||0; $('selfVal').textContent=r.selfScore||0; }
@@ -590,15 +1214,32 @@ function renderStages(r){
   if(r.aiScore!=null){ const cls=r.aiScore>=80?'ok':(r.aiScore>=50?'wait':'bad'); $('st_ai').innerHTML='<span class="'+cls+'">신뢰도 '+r.aiScore+'%</span>'; $('aiNote').textContent=r.aiNote||''; }
   else { $('st_ai').innerHTML='<span class="wait">대기</span>'; }
 }
+// Evidence rendered for the report (clickable, in-app) and markdown (portable text).
+// In markdown, file rows show the name only — their /evidence URL is dashboard-local
+// and won't resolve once the text is pasted elsewhere; links keep their full URL.
+function evReportHtml(g){
+  const ev=g.evidence||[]; if(!ev.length) return '';
+  return '<div class="evrep">'+ev.map(e=>{
+    const t=esc(e.title||e.href||''), icon=(e.kind==='file')?'📄 ':'🔗 ';
+    return (e.kind==='file')
+      ? '<a href="'+esc(e.href)+'" download>'+icon+t+'</a>'
+      : '<a href="'+esc(e.href)+'" target="_blank" rel="noopener">'+icon+t+'</a>';
+  }).join('')+'</div>';
+}
+function evMd(g){
+  const ev=g.evidence||[]; if(!ev.length) return '';
+  return ev.map(e=> '  - '+(e.kind==='file'?('📄 '+(e.title||'file')):('🔗 '+(e.title||e.href)+' '+e.href))).join('\n')+'\n';
+}
 function buildMarkdown(d,r,conf,prov){
   const goals=r.goals||[], tops=goals.filter(g=>!g.parent);
   let md='# 오늘 리포트 ('+d.date+')\n\n- 확정 가치: '+conf.toFixed(2)+'h (잠정 '+prov.toFixed(1)+'h)\n\n';
   tops.forEach(t=>{
     const ds=derivedStatus(goals,t);
     md+='## '+t.text+(ds==='on_track'?' [on track]':(ds==='done'?' [완료]':''))+(gnote(r,t.id)?(' — '+gnote(r,t.id)):'')+'\n';
+    md+=evMd(t);
     goals.filter(c=>c.parent===t.id).forEach(c=>{ const cs=(c.status||'backlog');
       const m=cs==='in_progress'?' (진행)':(cs==='done'?' (완료)':'');
-      md+='- '+c.text+m+(gnote(r,c.id)?(' — '+gnote(r,c.id)):'')+'\n'; });
+      md+='- '+c.text+m+(gnote(r,c.id)?(' — '+gnote(r,c.id)):'')+'\n'; md+=evMd(c); });
     md+='\n';
   });
   return md;
@@ -612,10 +1253,11 @@ function renderReport(d,r,conf,prov){
     const tag=ds==='on_track'?'<span class="otTag">on track</span>':(ds==='done'?'<span class="otTag" style="border-color:var(--green);color:var(--green);background:rgba(54,192,138,.12)">완료</span>':'');
     html+='<h3 style="margin:12px 0 4px">'+esc(t.text)+tag+'</h3>';
     if(gnote(r,t.id)) html+='<div class="muted" style="margin-bottom:4px">'+esc(gnote(r,t.id))+'</div>';
+    html+=evReportHtml(t);
     const kids=goals.filter(c=>c.parent===t.id);
     if(kids.length) html+='<ul>'+kids.map(c=>{ const cs=(c.status||'backlog');
       const m=cs==='in_progress'?' <span style="color:#9be3fb">(진행)</span>':(cs==='done'?' <span class="ok">(완료)</span>':'');
-      return '<li>'+esc(c.text)+m+(gnote(r,c.id)?' <span class="muted">— '+esc(gnote(r,c.id))+'</span>':'')+'</li>'; }).join('')+'</ul>';
+      return '<li>'+esc(c.text)+m+(gnote(r,c.id)?' <span class="muted">— '+esc(gnote(r,c.id))+'</span>':'')+evReportHtml(c)+'</li>'; }).join('')+'</ul>';
   });
   $('report').innerHTML=html;
 }
@@ -700,7 +1342,37 @@ function renderApps(samples){
 
 load();
 setInterval(load,5000);
+setInterval(liveTick,100);
 window.addEventListener('resize', load);
+
+// ===== Pixel bard perched on the goal input =====
+// Idle by default; plays a short "buff performance" (notes rise from a raised
+// hand) once a minute. Same pixel data as the macOS menu-bar bard.
+(function(){
+  var cv=document.getElementById('bardCanvas'); if(!cv) return;
+  var ctx=cv.getContext('2d'); ctx.imageSmoothingEnabled=false;
+  var PAL={'.':null,o:'#2a2440',p:'#7b5cff',r:'#ff6b3d',s:'#ffd0a3',e:'#15101f',t:'#21c7b8',b:'#4a3b73',w:'#e0863a',m:'#ffd9a0',n:'#ffd84d'};
+  var idle=["................",".......oo.......","......orro......","....oorppo......","...opppppo......","...opppppo......","...osssso.......","...oseseo.......","...osssso.......","....oooo........","...ottto........","..otttttto......","..ottwwwtto.....","..obtwmwwto.....","...otwwwto......","...oo..oo......."];
+  var cast1=["................",".......oo.......","......orro......","....oorppo......","...opppppo......","...opppppo......","...osssso....n..","...oseseo.......","...osssso..oso..","....oooo..osso..","...ottto.oso....","..otttttto......","..ottwwwtto.....","..obtwmwwto.....","...otwwwto......","...oo..oo......."];
+  var cast2=["................",".......oo.......","......orro......","....oorppo......","...opppppo...n..","...opppppo......","...osssso...n...","...oseseo.......","...osssso..oso..","....oooo..osso..","...ottto.oso....","..otttttto......","..ottwwwtto.....","..obtwmwwto.....","...otwwwto......","...oo..oo......."];
+  var cast3=["................",".......oo.......","......orro....n.","....oorppo...n..","...opppppo......","...opppppo...n..","...osssso.......","...oseseo.......","...osssso..oso..","....oooo..osso..","...ottto.oso....","..otttttto......","..ottwwwtto.....","..obtwmwwto.....","...otwwwto......","...oo..oo......."];
+  var cast4=["..............n.",".......oo.......","......orro......","....oorppo...n..","...opppppo......","...opppppo......","...osssso.......","...oseseo.......","...osssso..oso..","....oooo..osso..","...ottto.oso....","..otttttto......","..ottwwwtto.....","..obtwmwwto.....","...otwwwto......","...oo..oo......."];
+  var casts=[cast1,cast2,cast3,cast4], SC=3;
+  function draw(g){ ctx.clearRect(0,0,48,48);
+    for(var y=0;y<g.length;y++){ var row=g[y];
+      for(var x=0;x<row.length;x++){ var c=PAL[row[x]]; if(!c) continue; ctx.fillStyle=c; ctx.fillRect(x*SC,y*SC,SC,SC); } } }
+  var frameTimer=null;
+  function playBuff(){ if(frameTimer) return;
+    var start=Date.now(), i=0;
+    frameTimer=setInterval(function(){
+      if(Date.now()-start>=3500){ clearInterval(frameTimer); frameTimer=null; draw(idle); return; }
+      draw(casts[i%4]); i++;
+    },130);
+  }
+  draw(idle);
+  playBuff();                 // play once on load as feedback
+  setInterval(playBuff,60000); // then once a minute
+})();
 </script>
 </body>
 </html>

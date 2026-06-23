@@ -45,10 +45,24 @@ final class BPMLibrary {
     }
 
     // Closest track to a target BPM, optionally excluding the currently playing url.
-    func track(forTargetBPM target: Double, excluding: URL? = nil) -> Track? {
-        let candidates = tracks.filter { $0.url != excluding }
-        let pool = candidates.isEmpty ? tracks : candidates
-        return pool.min { abs($0.bpm - target) < abs($1.bpm - target) }
+    //
+    // `penalty` adds "virtual BPM" distance to a track (learned dis-preference),
+    // so a disliked track ranks below a slightly-further-but-liked one. `blocked`
+    // skips a track entirely (post-dislike cooldown). Both default to no-ops, so
+    // the plain nearest-BPM behavior is unchanged for callers that don't pass them.
+    // If every non-excluded track is blocked, we fall back to the blocked pool
+    // rather than going silent.
+    func track(forTargetBPM target: Double,
+               excluding: URL? = nil,
+               penalty: (Track) -> Double = { _ in 0 },
+               blocked: (Track) -> Bool = { _ in false }) -> Track? {
+        let notExcluded = tracks.filter { $0.url != excluding }
+        let base = notExcluded.isEmpty ? tracks : notExcluded
+        let allowed = base.filter { !blocked($0) }
+        let pool = allowed.isEmpty ? base : allowed
+        return pool.min {
+            (abs($0.bpm - target) + penalty($0)) < (abs($1.bpm - target) + penalty($1))
+        }
     }
 
     var bpmRange: (min: Double, max: Double)? {

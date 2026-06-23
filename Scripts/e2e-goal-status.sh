@@ -60,15 +60,23 @@ sleep 2.2
 post /api/goal/status "{\"id\":\"$A\",\"status\":\"in_progress\"}"  # no-op, keeps running
 # effective = trackedSeconds + (now - startedAt); verify server banks on transition below
 
-echo "[4] B -> in_progress : single invariant, A reverts to backlog with banked time"
+echo "[4] B -> in_progress : concurrent in_progress allowed (single invariant removed)"
+# Before AI a person could only run one task; agents make 2-3+ parallel goals real, so
+# starting B must NOT pause A. Each running goal accrues its own live session.
 post /api/goal/status "{\"id\":\"$B\",\"status\":\"in_progress\"}"
-[ "$(count_status in_progress)" = "1" ] && ok "exactly one in_progress" || ng "in_progress count = $(count_status in_progress)"
-[ "$(field 0 status)" = "backlog" ] && ok "A reverted to backlog" || ng "A status = $(field 0 status)"
+[ "$(count_status in_progress)" = "2" ] && ok "two concurrent in_progress" || ng "in_progress count = $(count_status in_progress)"
+[ "$(field 0 status)" = "in_progress" ] && ok "A stays in_progress" || ng "A status = $(field 0 status)"
+python3 -c "import sys; sys.exit(0 if float('$(field 0 startedAt)')>0 else 1)" && ok "A keeps running (startedAt set)" || ng "A startedAt cleared"
+
+echo "[5] A -> backlog : banks A's live session, B keeps running"
+post /api/goal/status "{\"id\":\"$A\",\"status\":\"backlog\"}"
+[ "$(field 0 status)" = "backlog" ] && ok "A backlog" || ng "A status = $(field 0 status)"
 AT=$(field 0 trackedSeconds)
 python3 -c "import sys; sys.exit(0 if float('$AT')>=2 else 1)" && ok "A banked >=2s ($AT)" || ng "A banked time too low ($AT)"
-[ "$(field 0 startedAt)" = "0.0" ] || [ "$(field 0 startedAt)" = "0" ] && ok "A startedAt cleared" || ng "A startedAt not cleared ($(field 0 startedAt))"
+{ [ "$(field 0 startedAt)" = "0.0" ] || [ "$(field 0 startedAt)" = "0" ]; } && ok "A startedAt cleared" || ng "A startedAt not cleared ($(field 0 startedAt))"
+[ "$(count_status in_progress)" = "1" ] && ok "B still in_progress" || ng "in_progress count = $(count_status in_progress)"
 
-echo "[5] B -> done : tracking stops, zero in_progress"
+echo "[6] B -> done : tracking stops, zero in_progress"
 sleep 1.2
 post /api/goal/status "{\"id\":\"$B\",\"status\":\"done\"}"
 [ "$(field 1 status)" = "done" ] && ok "B done" || ng "B not done"
@@ -76,18 +84,18 @@ post /api/goal/status "{\"id\":\"$B\",\"status\":\"done\"}"
 BT=$(field 1 trackedSeconds)
 python3 -c "import sys; sys.exit(0 if float('$BT')>=1 else 1)" && ok "B banked >=1s ($BT)" || ng "B banked time too low ($BT)"
 
-echo "[6] B -> in_progress again : resumes on top of banked total"
+echo "[7] B -> in_progress again : resumes on top of banked total"
 post /api/goal/status "{\"id\":\"$B\",\"status\":\"in_progress\"}"
 sleep 1.2
 post /api/goal/status "{\"id\":\"$B\",\"status\":\"backlog\"}"
 BT2=$(field 1 trackedSeconds)
 python3 -c "import sys; sys.exit(0 if float('$BT2')>float('$BT') else 1)" && ok "B accumulated ($BT -> $BT2)" || ng "B did not accumulate ($BT -> $BT2)"
 
-echo "[7] reject invalid status"
-post /api/goal/status "{\"id\":\"$A\",\"status\":\"bogus\"}"
-[ "$(field 0 status)" = "backlog" ] && ok "invalid status rejected" || ng "invalid status accepted"
+echo "[8] reject invalid status"
+post /api/goal/status "{\"id\":\"$B\",\"status\":\"bogus\"}"
+[ "$(field 1 status)" = "backlog" ] && ok "invalid status rejected" || ng "invalid status accepted ($(field 1 status))"
 
-echo "[8] remove a running goal"
+echo "[9] remove a running goal"
 post /api/goal/status "{\"id\":\"$A\",\"status\":\"in_progress\"}"
 post /api/goal/remove "{\"id\":\"$A\"}"
 [ "$(goals_json | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')" = "1" ] && ok "running goal removed" || ng "remove failed"
