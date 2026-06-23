@@ -100,6 +100,36 @@ post /api/goal/status "{\"id\":\"$A\",\"status\":\"in_progress\"}"
 post /api/goal/remove "{\"id\":\"$A\"}"
 [ "$(goals_json | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')" = "1" ] && ok "running goal removed" || ng "remove failed"
 
+# --- waiting (응답 대기): the clock MUST stop so a human-wait is never banked as work.
+# This is the whole point — it prevents "worked 5 min, reported 2 h". See
+# .doc/waiting-signal-policy.md.
+echo "[10] waiting stops the clock; wait time is NOT counted as work"
+post /api/goal/add '{"text":"goal C"}'
+C=$(id_at 1)
+post /api/goal/status "{\"id\":\"$C\",\"status\":\"in_progress\"}"
+sleep 2.2
+post /api/goal/status "{\"id\":\"$C\",\"status\":\"waiting\"}"
+[ "$(field 1 status)" = "waiting" ] && ok "C waiting" || ng "C status = $(field 1 status)"
+CT=$(field 1 trackedSeconds)
+python3 -c "import sys; sys.exit(0 if float('$CT')>=2 else 1)" && ok "C banked active time on wait (>=2s: $CT)" || ng "C did not bank on wait ($CT)"
+{ [ "$(field 1 startedAt)" = "0.0" ] || [ "$(field 1 startedAt)" = "0" ]; } && ok "C clock stopped (startedAt cleared)" || ng "C clock still running ($(field 1 startedAt))"
+python3 -c "import sys; sys.exit(0 if float('$(field 1 waitingSince)')>0 else 1)" && ok "C waitingSince set" || ng "C waitingSince not set"
+
+echo "[11] long human-wait does NOT inflate tracked time"
+sleep 2.5   # human away — must add ZERO work time
+CT2=$(field 1 trackedSeconds)
+python3 -c "import sys; sys.exit(0 if abs(float('$CT2')-float('$CT'))<0.05 else 1)" \
+  && ok "tracked unchanged across wait ($CT -> $CT2)" || ng "wait leaked into work time ($CT -> $CT2)"
+
+echo "[12] resume from waiting continues on top of the banked total"
+post /api/goal/status "{\"id\":\"$C\",\"status\":\"in_progress\"}"
+python3 -c "import sys; sys.exit(0 if float('$(field 1 startedAt)')>0 else 1)" && ok "C clock restarted" || ng "C startedAt not set on resume"
+{ [ "$(field 1 waitingSince)" = "0.0" ] || [ "$(field 1 waitingSince)" = "0" ]; } && ok "C waitingSince cleared on resume" || ng "C waitingSince not cleared ($(field 1 waitingSince))"
+sleep 1.2
+post /api/goal/status "{\"id\":\"$C\",\"status\":\"backlog\"}"
+CT3=$(field 1 trackedSeconds)
+python3 -c "import sys; sys.exit(0 if float('$CT3')>float('$CT2') else 1)" && ok "C resumed accrual ($CT2 -> $CT3)" || ng "C did not resume accrual ($CT2 -> $CT3)"
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -58,6 +58,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // freeze the menu bar). Re-armed when the session ends.
     private var musicFolderPromptShown = false
 
+    // --- Waiting (응답 대기) detection (see .doc/waiting-signal-policy.md) ---
+    // Safety-net timeout: an in_progress session whose transcript has not grown for
+    // this many seconds is treated as parked-waiting, banking its time. Large enough
+    // not to mistake a long-running tool for a stall; tunable (CM_WAIT_TIMEOUT, tests).
+    private let waitTimeout = Double(ProcessInfo.processInfo.environment["CM_WAIT_TIMEOUT"] ?? "") ?? 120
+    // Per-session transcript size cache: re-parse the tail only when the file grew,
+    // so an idle/waiting session costs a cheap stat, not a full read, each tick.
+    private var sessionSeenSize: [String: Int] = [:]
+    private var sessionPendingAsk: [String: Bool] = [:]   // last tail had an unanswered AskUserQuestion
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         director = ConditionDirector(activity: activity, library: library, audio: audio, prefStore: trackPrefs)
         audio.targetVolume = Float(Settings.shared.volume)
@@ -238,6 +248,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             minuteSiteSeconds.removeAll()
         }
 
+        // Detect agents parked waiting for a human (every few seconds — file IO).
+        if tick % 3 == 0 { detectWaitingSessions() }
+
         // Live status label every second while working; save every 30s.
         updateStatusTitle()
         if tick % 30 == 0 { store.saveIfNeeded() }
@@ -251,6 +264,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 "[hb t=\(tick)] front=\(frontBundle ?? "-") dwell=\(frontStableSeconds) committed=\(committedProfileKey)\(dir)\n"
                     .data(using: .utf8)!)
         }
+    }
+
+    // Drive session goals between in_progress and waiting from the transcript, so the
+    // clock stops while the agent waits for a human and resumes when work continues.
+    // This is the pull-based safety net behind the Notification hook (push): even if no
+    // hook fires, a stalled in_progress session is parked here, so waiting time can never
+    // be banked as active work. See .doc/waiting-signal-policy.md (layers 2 and 3).
+    private func detectWaitingSessions() {
+        let now = Date()
+        let fm = FileManager.default
+        for goal in reviewStore.goals {
+            guard !goal.sessionId.isEmpty,
+                  goal.status == "in_progress" || goal.status == "waiting",
+                  let url = resolveTranscript(goal),
+                  let attrs = try? fm.attributesOfItem(atPath: url.path),
+                  let mtime = attrs[.modificationDate] as? Date else { continue }
+            let size = (attrs[.size] as? Int) ?? 0
+
+            if goal.status == "waiting" {
+                // Resume when the transcript has grown since we parked it: a tool_result
+                // arrived (incl. an AskUserQuestion answer, which never fires the active
+                // hook) or the agent wrote a new line. This growth check is the only
+                // resume path for AskUserQuestion waits.
+                if let since = goal.waitingSince, mtime > since.addingTimeInterval(0.5) {
+                    reviewStore.recordSession(sessionId: goal.sessionId, event: "active")
+                }
+                continue
+            }
+
+            // in_progress: refresh the unanswered-AskUserQuestion flag only when the
+            // file changed (idle sessions stay a cheap stat, no re-read).
+            if sessionSeenSize[goal.sessionId] != size {
+                sessionSeenSize[goal.sessionId] = size
+                sessionPendingAsk[goal.sessionId] = transcriptHasPendingAsk(url)
+            }
+            let pendingAsk = sessionPendingAsk[goal.sessionId] ?? false
+            let stale = now.timeIntervalSince(mtime)
+            // AskUserQuestion is human-waiting by definition (park immediately); a generic
+            // stall is ambiguous (a long tool may be running) so only the timeout parks it.
+            if pendingAsk || stale >= waitTimeout {
+                reviewStore.recordSession(sessionId: goal.sessionId, event: "wait")
+            }
+        }
+    }
+
+    // True when the transcript's last outstanding tool call is an AskUserQuestion with
+    // no answering tool_result yet — i.e. the agent is blocked on the user. Walks lines
+    // in order, tracking the most recent unanswered tool_use name.
+    private func transcriptHasPendingAsk(_ url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: url) else { return false }
+        var pending: String? = nil   // name of an open tool_use, nil = all answered
+        String(decoding: data, as: UTF8.self).enumerateLines { line, _ in
+            guard let d = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                  let type = obj["type"] as? String, type == "user" || type == "assistant",
+                  let msg = obj["message"] as? [String: Any],
+                  let content = msg["content"] as? [[String: Any]] else { return }
+            for b in content {
+                switch b["type"] as? String ?? "" {
+                case "tool_use":    pending = b["name"] as? String
+                case "tool_result": pending = nil
+                default:            break
+                }
+            }
+        }
+        return pending == "AskUserQuestion"
     }
 
     private func updateStatusTitle() {
@@ -970,6 +1049,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // startedAt as epoch seconds (0 = not running); trackedSeconds is the
                 // banked total, so the client can tick the live session locally.
                 let started = g.startedAt.map { String($0.timeIntervalSince1970) } ?? "0"
+                // waitingSince as epoch seconds (0 = not waiting); display-only, never
+                // added to trackedSeconds. Lets the client show the live wait duration.
+                let waiting = g.waitingSince.map { String($0.timeIntervalSince1970) } ?? "0"
                 let agents = g.agents.map { jsonString($0) }.joined(separator: ",")
                 // Evidence: files expose a server download URL (/evidence/<goalId>/<id>);
                 // links carry their own URL directly. `href` is what the dashboard opens.
@@ -980,7 +1062,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         + "\"addedAt\":\(e.addedAt.timeIntervalSince1970)}"
                 }.joined(separator: ",")
                 return "{\"id\":\(jsonString(g.id)),\"seq\":\(g.seq),\"text\":\(jsonString(g.text)),\"parent\":\(jsonString(g.parent)),"
-                    + "\"status\":\(jsonString(g.status)),\"trackedSeconds\":\(g.trackedSeconds),\"startedAt\":\(started),"
+                    + "\"status\":\(jsonString(g.status)),\"trackedSeconds\":\(g.trackedSeconds),\"startedAt\":\(started),\"waitingSince\":\(waiting),"
                     + "\"energy\":\(g.energy),\"agents\":[\(agents)],\"tokens\":\(g.tokens),\"value\":\(g.value),"
                     + "\"evidence\":[\(evidence)],\"sessionId\":\(jsonString(g.sessionId))}"
             }
