@@ -115,6 +115,8 @@ final class MenuBarBard {
     }
 
     private func playBuff() {
+        WorkerRegistry.shared.recordRun("bard",
+            why: "세션 활성 · 60초 주기", effect: "버프 연출 재생(메뉴바 픽셀 애니메이션)")
         frameTimer?.invalidate()
         let start = Date()
         var i = 0

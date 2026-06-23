@@ -32,8 +32,19 @@ field() {
 sid="$(field session_id)"
 [ -z "$sid" ] && exit 0
 
-# The data dir mirrors AppPaths.base (CM_DATA_DIR override, else Application Support).
-data_dir="${CM_DATA_DIR:-$HOME/Library/Application Support/ConditionManager}"
+# The data dir mirrors AppPaths.base. Resolution order, so the hook always reaches the
+# same store the app writes to:
+#   1. CM_DATA_DIR            - explicit override (tests / custom runs)
+#   2. CLAUDE_PROJECT_DIR/.localdata - the dev store (dev-run.sh points the app here too),
+#                              so a session in this project posts to the running dev app
+#   3. ~/Library/Application Support/ConditionManager - the production default
+if [ -n "$CM_DATA_DIR" ]; then
+  data_dir="$CM_DATA_DIR"
+elif [ -n "$CLAUDE_PROJECT_DIR" ] && [ -d "$CLAUDE_PROJECT_DIR/.localdata" ]; then
+  data_dir="$CLAUDE_PROJECT_DIR/.localdata"
+else
+  data_dir="$HOME/Library/Application Support/ConditionManager"
+fi
 port_file="$data_dir/dashboard.port"
 [ -f "$port_file" ] || exit 0
 port="$(tr -dc '0-9' < "$port_file")"

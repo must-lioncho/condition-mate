@@ -125,6 +125,29 @@ enum DashboardContent {
   .evrep{margin:2px 0 6px;font-size:12px;display:flex;flex-wrap:wrap;gap:10px}
   .evrep a{color:var(--accent);text-decoration:none}
   .evrep a:hover{text-decoration:underline}
+  /* Review memo: not important enough for an always-on field, so it collapses to a
+     button that opens an inline editor on click (mirrors the evidence panel pattern). */
+  .notebtn{flex:0 0 auto;padding:3px 8px;font-size:12px}
+  .notebtn.has{border-color:var(--accent);color:#9fc0ff}
+  .notepanel{flex:0 0 100%;display:none;margin:2px 0 6px 26px;padding:8px 10px;border-radius:8px;background:rgba(91,140,255,.05);border:1px solid var(--line)}
+  .notepanel.open{display:block}
+  .notepanel input{width:100%}
+  /* 일정관리(schedule) view: urgency-grouped sections + per-goal target/완료 datetime pickers. */
+  .schsec{border:1px solid var(--line);border-radius:10px;margin:10px 0;overflow:hidden}
+  .schsec-hd{display:flex;align-items:center;gap:8px;padding:8px 12px;font-weight:600;background:#1a1e27}
+  .schsec-hd .cnt{color:var(--mut);font-weight:400;font-size:12px}
+  .schsec.overdue .schsec-hd{background:rgba(255,99,99,.10);color:#ff9b9b}
+  .schsec.today .schsec-hd{background:rgba(232,163,61,.12);color:#f0c884}
+  .schsec.done .schsec-hd{background:rgba(54,192,138,.10);color:#9be9c9}
+  .schrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--line)}
+  .schrow:last-child{border-bottom:none}
+  .schrow .st{flex:1;min-width:120px}
+  .schrow .dlab{color:var(--mut);font-size:11px}
+  .schrow input[type=datetime-local]{background:#0d1016;border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:5px 8px;font-size:12px;color-scheme:dark}
+  .dday{font-variant-numeric:tabular-nums;font-size:11px;border-radius:6px;padding:1px 7px;border:1px solid var(--line);color:var(--mut);white-space:nowrap}
+  .dday.over{border-color:#ff6363;color:#ff9b9b;background:rgba(255,99,99,.10)}
+  .dday.soon{border-color:#e8a33d;color:#f0c884;background:rgba(232,163,61,.10)}
+  .dday.done{border-color:var(--green);color:#9be9c9;background:rgba(54,192,138,.10)}
   /* Completion celebration: check sweep (strike + green flash) + floating +Nv value. */
   .goal.celebrate{background:rgba(54,192,138,.14);transition:background .45s}
   .gstrike{position:absolute;left:0;top:55%;height:2px;width:0;background:var(--green);transition:width .45s ease}
@@ -152,6 +175,16 @@ enum DashboardContent {
   .sb.on.in_progress{background:var(--accent);border-color:var(--accent);color:#fff}
   .sb.on.waiting{background:#e8a33d;border-color:#e8a33d;color:#2a1c06}
   .sb.on.done{background:var(--green);border-color:var(--green);color:#06281c}
+  /* Status combobox: six statuses outgrew the inline buttons, so leaf goals pick status
+     from a select. Border/text color-code the CURRENT status so the row reads at a glance. */
+  .statsel{background:#1d2230;border:1px solid var(--line);color:var(--fg);border-radius:6px;
+    padding:3px 8px;font-size:12px;cursor:pointer;flex:0 0 auto}
+  .statsel:hover{border-color:var(--accent)}
+  .statsel.in_progress{border-color:var(--accent);color:#9fc0ff}
+  .statsel.waiting{border-color:#e8a33d;color:#e8a33d}
+  .statsel.stopped{border-color:var(--mut);color:var(--mut)}
+  .statsel.cancelled{border-color:#7a2233;color:#e07a8c;text-decoration:line-through}
+  .statsel.done{border-color:var(--green);color:#36c08a}
   /* Live "응답 대기" badge: a human-attention flag, pulsing amber so it stands out. */
   .wbadge{font-variant-numeric:tabular-nums;font-size:11px;color:#e8a33d;border:1px solid #e8a33d;
     border-radius:6px;padding:1px 6px;margin-left:6px;white-space:nowrap;animation:wpulse 1.6s ease-in-out infinite}
@@ -185,6 +218,10 @@ enum DashboardContent {
     <div style="display:flex;align-items:center;gap:10px">
       <span id="perf" title="이 대시보드 페이지의 자원 사용량 (메모리=JS 힙, CPU=프레임 타이밍 근사치)"
             style="font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap">측정 중…</span>
+      <span style="display:inline-flex;gap:4px" title="스포츠=라이브 APM 바운싱 (집중·재미), 타임=토탈 시간 카운트업 (체력 총량). 8시간+엔 타임 자동">
+        <button class="btn primary" id="mode_sports" onclick="setGaugeMode('sports',true)">스포츠</button>
+        <button class="btn" id="mode_time" onclick="setGaugeMode('time',true)">타임</button>
+      </span>
       <button class="btn" onclick="document.getElementById('policy').classList.add('on')">기준 (정책서)</button>
     </div>
   </div>
@@ -212,6 +249,7 @@ enum DashboardContent {
     <select class="btn" id="viewSelect" onchange="setView(this.value)" title="뷰 전환">
       <option value="input">목록</option>
       <option value="group">그룹</option>
+      <option value="schedule">일정</option>
       <option value="preview">프리뷰</option>
     </select></div>
   <div class="panel">
@@ -221,6 +259,7 @@ enum DashboardContent {
       <button class="btn primary" id="flt_backlog" onclick="toggleStatusFilter('backlog')">대기</button>
       <button class="btn primary" id="flt_inprog" onclick="toggleStatusFilter('in_progress')">진행</button>
       <button class="btn primary" id="flt_done" onclick="toggleStatusFilter('done')">완료</button>
+      <button class="btn" id="flt_cancelled" onclick="toggleStatusFilter('cancelled')" title="켜면 취소된 목표도 표시 (기본은 숨김)">취소</button>
       <button class="btn" id="flt_parents" onclick="toggleShowParents()" title="켜면 상위 목표는 필터와 무관하게 항상 표시. 끄면 상위 목표도 롤업 상태로 필터링됩니다.">상위 항상 표시</button>
       <span class="muted" id="flt_summary" style="font-size:12px">— 모두 표시</span>
     </div>
@@ -294,6 +333,12 @@ enum DashboardContent {
       <div id="groupSections"></div>
     </div>
 
+    <!-- SCHEDULE VIEW (일정관리 — resource management) -->
+    <div id="scheduleView" style="display:none">
+      <div class="muted" style="font-size:12px;margin:0 0 4px">목표 날짜·완료 날짜로 리소스를 관리합니다. 각 목표의 <b>목표</b> 날짜시간을 정하면 긴급도(지남·오늘·이번 주·예정)로 묶입니다. 상태를 완료로 바꾸면 <b>완료</b> 시각이 자동 기록되며, 필요하면 직접 수정할 수 있습니다.</div>
+      <div id="scheduleSections"></div>
+    </div>
+
     <div class="row" style="margin-top:12px;font-size:15px;border-top:1px solid var(--line);padding-top:12px">
       <b>확정 가치:</b> <b id="confVal">0</b>
       <span class="muted">(현재 생성 <span id="provVal">0</span>)</span>
@@ -332,6 +377,16 @@ enum DashboardContent {
       <tbody id="bgmrows"><tr><td colspan="4" class="empty">데이터 없음</td></tr></tbody>
     </table>
     <div class="legend"><span><span class="chip bad" style="margin:0">예시</span> = 전략 밴드를 벗어난 트랙(부적절 의심)</span></div>
+  </div>
+
+  <h2 style="display:flex;align-items:center;justify-content:space-between">워커 상태 (백그라운드 작업)
+    <a class="btn" href="/worker-log" target="_blank" style="font-size:12px;font-weight:400">전체 로그 타임라인</a></h2>
+  <div class="panel">
+    <table>
+      <thead><tr><th>워커</th><th>하는 일</th><th>주기</th><th>마지막 실행</th><th>다음 실행</th><th>실행</th><th>상태</th><th>로그</th></tr></thead>
+      <tbody id="workerrows"><tr><td colspan="8" class="empty">데이터 없음</td></tr></tbody>
+    </table>
+    <div class="legend"><span><span class="chip" style="margin:0">동작 중</span> = 일정대로 실행 중 · <span class="chip bad" style="margin:0">유휴</span> = 현재 멈춤(세션 비활성 등)</span></div>
   </div>
 
   <div class="foot">5초마다 자동 갱신 · 127.0.0.1 로컬 전용</div>
@@ -393,11 +448,49 @@ function fmtMin(m){ if(m>=60) return (m/60).toFixed(1)+'시간'; return m+'분';
 // peak-hold marker that floats down from the recent max.
 let _apmTo=0,_apmAt=0,_apmV=0,_nmTo=0,_nmAt=0,_nmV=0,_peak=0,_gaugeOn=false,_lastT=0;
 const SPRING_K=500, SPRING_D=26;   // stiffness / damping => zeta~0.58, ~250ms snap, ~8% overshoot
+// --- Gauge mode: 스포츠(라이브 APM 바운싱) ↔ 타임(토탈 시간 카운트업) ----------
+// 시작 1시간 이전엔 스포츠로 집중·재미에, 8시간을 넘기면 타임으로 체력 총량의
+// 뿌듯함에 포커스가 가도록 자동 기본값을 정한다. 사용자가 직접 토글하면 자동
+// 전환은 멈춘다(_modeUserSet). 타임 모드는 토탈 시간을 초 단위로 카운트업한다.
+let _gaugeMode='sports', _modeUserSet=false;
+let _totalBaseSec=0, _totalBaseWall=0, _working=false;
+function fmtClock(sec){
+  sec=Math.max(0,Math.floor(sec));
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+  const p=n=>('0'+n).slice(-2);
+  return h+':'+p(m)+':'+p(s);
+}
+function ensureTimeGauge(){
+  const host=$('accel'); if(!host) return false;
+  if(host.dataset.tbuilt!=='1'){
+    host.innerHTML=' &nbsp; <span style="color:var(--mut)">토탈 </span>'
+      +'<span id="apmtime" style="display:inline-block;font-variant-numeric:tabular-nums;font-weight:700">0:00:00</span>'
+      +'<span id="apmtlab" style="color:var(--mut)"></span>';
+    host.dataset.tbuilt='1';
+  }
+  return true;
+}
+function renderTime(){
+  if(!ensureTimeGauge()) return;
+  const live=_working ? (Date.now()-_totalBaseWall)/1000 : 0;
+  const num=$('apmtime'); if(num){ num.textContent=fmtClock(_totalBaseSec+live); num.style.color=_working?'var(--green)':'var(--fg)'; }
+  const lab=$('apmtlab'); if(lab) lab.textContent=_working?' · 진행 중':' · 정지';
+}
+function setGaugeMode(m, byUser){
+  _gaugeMode=m;
+  if(byUser) _modeUserSet=true;
+  const sb=$('mode_sports'), tb=$('mode_time');
+  if(sb) sb.className=(m==='sports')?'btn primary':'btn';
+  if(tb) tb.className=(m==='time')?'btn primary':'btn';
+  const host=$('accel');
+  if(host){ host.innerHTML=''; host.dataset.built=''; host.dataset.tbuilt=''; }
+  if(m==='time') renderTime();   // 스포츠는 다음 라이브 틱에서 재구성
+}
 function ensureGauge(){
   const host=$('accel'); if(!host) return false;
   if(host.dataset.built!=='1'){
     host.innerHTML=' &nbsp; <span id="apmlab" style="color:var(--mut)">APM </span>'
-      +'<span id="apmnum" style="display:inline-block;min-width:3ch;text-align:right;font-variant-numeric:tabular-nums;font-weight:700">0</span>'
+      +'<span id="apmnum" style="display:inline-block;min-width:4ch;text-align:right;font-variant-numeric:tabular-nums;font-weight:700">0</span>'
       +' <span id="apmbar" style="position:relative;display:inline-block;width:96px;height:9px;border-radius:5px;background:#1b1f29;vertical-align:middle;overflow:hidden">'
       +'<span id="apmfill" style="position:absolute;left:0;top:0;height:100%;width:0%;background:#36c08a"></span>'
       +'<span id="apmpeak" style="position:absolute;top:0;height:100%;width:2px;background:#fff;opacity:.65;left:0%"></span></span>'
@@ -424,6 +517,7 @@ function renderGauge(t){
 }
 function setGauge(n){
   const host=$('accel');
+  if(_gaugeMode==='time'){ renderTime(); return; }   // 타임 모드가 #accel을 소유
   if(!n||!n.track||n.track==='-'){ if(host){host.innerHTML='';host.dataset.built='';} _gaugeOn=false; _apmTo=_apmAt=_apmV=_nmTo=_nmAt=_nmV=_peak=0; return; }
   _gaugeOn=true;
   if(!ensureGauge()) return;
@@ -462,7 +556,9 @@ function perfFrame(t){
 function tweenGauge(t){
   perfFrame(t);
   const dt = _lastT ? Math.min(0.033,(t-_lastT)/1000) : 0.016; _lastT=t;
-  if(_gaugeOn){
+  if(_gaugeMode==='time'){
+    renderTime();
+  } else if(_gaugeOn){
     _apmV += ((_apmTo-_apmAt)*SPRING_K - _apmV*SPRING_D)*dt; _apmAt += _apmV*dt;
     _nmV  += ((_nmTo-_nmAt)*SPRING_K - _nmV*SPRING_D)*dt;     _nmAt  += _nmV*dt;
     if(_nmAt>_peak) _peak=_nmAt; else _peak=Math.max(_nmAt, _peak-0.18*dt);  // peak-hold drifts down
@@ -497,6 +593,9 @@ async function load(){
   $('t_desk').textContent = fmtH(b.desk);
   $('t_focus').textContent = fmtH(b.focus);
   $('t_off').textContent = b.off > 0 ? fmtH(b.off) : '–';
+  // Gauge mode: 타임 카운트업 기준(토탈 분→초) + 자동 기본값(<8h 스포츠, 8h+ 타임).
+  _totalBaseSec = b.total*60; _totalBaseWall = Date.now(); _working = !!w;
+  if(!_modeUserSet) setGaugeMode(b.total>=480 ? 'time' : 'sports', false);
   drawTiers(b);
   const n=d.now;
   const siteStr=(n.site&&n.site!=='-')?' ('+esc(n.site)+')':'';
@@ -510,6 +609,7 @@ async function load(){
   renderSummary(ss);
   renderTimeline(ss);
   renderApps(ss);
+  renderWorkers(d.workers);
   _pfRenderMs=performance.now()-_t0;
 }
 function hhmm(t){ const d=new Date(t*1000); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
@@ -734,7 +834,9 @@ let _evOpen=new Set();    // goal ids whose evidence panel is expanded
 // All-on = 전체(모두); only-done reproduces the old "완료만" hand-off view.
 // waiting has no filter toggle (no UI button): it is always surfaced so a goal parked
 // for the user can never be hidden — the whole point of the 응답 대기 state.
-let _statusFilter={backlog:true,in_progress:true,waiting:true,done:true};
+// stopped (중지) is shown by default like waiting (user needs to see it to resume); cancelled
+// (취소) is HIDDEN by default and revealed via its own toggle, the way 완료 hand-off works.
+let _statusFilter={backlog:true,in_progress:true,waiting:true,stopped:true,cancelled:false,done:true};
 // 상위 항상 표시: when on, parents (goals with children) bypass the status filter so the
 // hierarchy never collapses out from under a child. Default off = parents follow their
 // rolled-up status like any other goal (디폴트는 부모도 안 보이도록).
@@ -745,6 +847,18 @@ function evCount(g){ return (g.evidence||[]).length; }
 function toggleEv(id){ if(_evOpen.has(id))_evOpen.delete(id); else _evOpen.add(id); applyEvOpen(); }
 function applyEvOpen(){ (_goals||[]).forEach(g=>{ const p=document.getElementById('ev_'+g.id);
   if(p) p.classList.toggle('open', _evOpen.has(g.id)); }); }
+// Review memo as a toggle button + collapsible inline editor (saveNote unchanged).
+let _noteOpen=new Set();   // goal ids whose memo editor is expanded
+function noteBtn(g,r){ const has=!!gnote(r,g.id);
+  return '<button class="btn notebtn'+(has?' has':'')+'" onclick="toggleNote(\''+g.id+'\')" title="리뷰 메모">📝'+(has?' ✓':'')+'</button>'; }
+function notePanel(g,r){ const nv=gnote(r,g.id).replace(/"/g,'&quot;');
+  return '<div class="notepanel" id="note_'+g.id+'">'
+    +'<input type="text" placeholder="리뷰 메모 입력" value="'+nv+'" onchange="saveNote(\''+g.id+'\',this.value)">'
+    +'</div>'; }
+function toggleNote(id){ if(_noteOpen.has(id))_noteOpen.delete(id); else _noteOpen.add(id); applyNoteOpen();
+  const p=document.getElementById('note_'+id); if(p&&_noteOpen.has(id)){ const el=p.querySelector('input'); if(el) el.focus(); } }
+function applyNoteOpen(){ (_goals||[]).forEach(g=>{ const p=document.getElementById('note_'+g.id);
+  if(p) p.classList.toggle('open', _noteOpen.has(g.id)); }); }
 function evItem(g,e){
   const t=esc(e.title||e.href||''), icon=(e.kind==='file')?'📄 ':'🔗 ';
   const a=(e.kind==='file')
@@ -819,19 +933,20 @@ function reapplyFilter(){
 // 보기 토글: 상태 버튼을 켜면 그 상태의 목표가 보이고, 끄면 숨겨진다.
 function toggleStatusFilter(s){ _statusFilter[s]=!_statusFilter[s]; reapplyFilter(); }
 function toggleShowParents(){ _showParents=!_showParents; reapplyFilter(); }
-function anyStatusActive(){ return _statusFilter.backlog||_statusFilter.in_progress||_statusFilter.done; }
+function anyStatusActive(){ return _statusFilter.backlog||_statusFilter.in_progress||_statusFilter.done||_statusFilter.cancelled; }
 // Summary text mirrors the active combo: 모두 / 완료 만 / 완료 진행 만 …
 function filterSummary(){
   if(!anyStatusActive()) return '표시할 상태를 선택하세요 (대기 · 진행 · 완료)';
-  if(_statusFilter.backlog&&_statusFilter.in_progress&&_statusFilter.done) return '모두 표시';
+  if(_statusFilter.backlog&&_statusFilter.in_progress&&_statusFilter.done&&!_statusFilter.cancelled) return '모두 표시';
   const names=[];
   if(_statusFilter.done) names.push('완료');
+  if(_statusFilter.cancelled) names.push('취소');
   if(_statusFilter.in_progress) names.push('진행');
   if(_statusFilter.backlog) names.push('대기');
   return names.join(' ')+' 만';
 }
 function updateFilterButtons(){
-  [['flt_backlog','backlog'],['flt_inprog','in_progress'],['flt_done','done']].forEach(function(p){
+  [['flt_backlog','backlog'],['flt_inprog','in_progress'],['flt_done','done'],['flt_cancelled','cancelled']].forEach(function(p){
     const b=$(p[0]); if(b) b.classList.toggle('primary',!!_statusFilter[p[1]]);
   });
   const pb=$('flt_parents'); if(pb) pb.classList.toggle('primary',_showParents);
@@ -930,6 +1045,16 @@ function floatValue(row){
 }
 function statBtn(g,val,label){ const on=(g.status||'backlog')===val;
   return '<button class="sb'+(on?(' on '+val):'')+'" onclick="setStatus(\''+g.id+'\',\''+val+'\',event)">'+label+'</button>'; }
+// Leaf-goal status picker. Six statuses (대기·진행·응답 대기·중지·취소·완료) are too many for
+// inline buttons, so a single combobox carries them. waiting is normally auto-set by the
+// session hooks, but kept selectable for manual override. setStatus still routes 완료 through
+// the celebration path. Parent goals use a derived rollup (statLabel), not this picker.
+const STATUS_OPTS=[['backlog','대기'],['in_progress','진행'],['waiting','응답 대기'],['stopped','중지'],['cancelled','취소'],['done','완료']];
+function statSel(g){
+  const cur=g.status||'backlog';
+  const opts=STATUS_OPTS.map(o=>'<option value="'+o[0]+'"'+(o[0]===cur?' selected':'')+'>'+o[1]+'</option>').join('');
+  return '<select class="statsel '+cur+'" title="상태 변경" onchange="setStatus(\''+g.id+'\',this.value,event)">'+opts+'</select>';
+}
 // Children of a goal (1-level hierarchy: only top-level goals can be parents).
 function goalKids(goals,g){ return (goals||[]).filter(c=>c.parent===g.id); }
 // Derived parent status (rollup from children). null = leaf (use manual buttons).
@@ -1021,9 +1146,10 @@ let _view='input', _md='';
 function pad2(n){ return (n<10?'0':'')+n; }
 function setView(v){ _view=v; if(_review) fillActiveView(_review); applyView(); }
 function applyView(){
-  const inp=$('inputView'), pv=$('previewView'), gv=$('groupView');
+  const inp=$('inputView'), pv=$('previewView'), gv=$('groupView'), sv=$('scheduleView');
   inp.style.display=(_view==='input')?'':'none';
   gv.style.display =(_view==='group')?'':'none';
+  sv.style.display =(_view==='schedule')?'':'none';
   pv.style.display =(_view==='preview')?'':'none';
   const sel=$('viewSelect'); if(sel && sel.value!==_view) sel.value=_view;
 }
@@ -1031,9 +1157,10 @@ function applyView(){
 // element ids (tt_<id>, ev_<id>) for live timers and evidence panels, so keeping both
 // in the DOM at once would collide. We blank the inactive one and render the active one.
 function fillActiveView(r){
-  if(_view==='group'){ $('goals').innerHTML=''; renderGroupSections(r); }
-  else if(_view==='input'){ $('groupSections').innerHTML=''; renderGoalsInput(r); }
-  else { $('goals').innerHTML=''; $('groupSections').innerHTML=''; }   // preview: report only
+  if(_view==='group'){ $('goals').innerHTML=''; $('scheduleSections').innerHTML=''; renderGroupSections(r); }
+  else if(_view==='input'){ $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; renderGoalsInput(r); }
+  else if(_view==='schedule'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; renderSchedule(r); }
+  else { $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; }   // preview: report only
 }
 // ===== Group-mode input: sticky add bar (active parent) + collapsible parent sections =====
 let _activeParent='';        // active parent goal id ('' = new top-level)
@@ -1087,17 +1214,16 @@ function gSetQuery(q){ _gQuery=(q||'').toLowerCase(); if(_review) renderGroupSec
 // One child row: same inline editors (status / note / evidence / delete) and element
 // ids as the 목록 view, so timers + evidence panels work unchanged here too.
 function gChildRow(g,r){
-  const nv=gnote(r,g.id).replace(/"/g,'&quot;');
   return '<div class="gchild">'
     +'<span class="pill" style="font-variant-numeric:tabular-nums">'+gnum(g)+'</span>'
     +slinkBtn(g)
     +'<span class="gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span>'
-    +'<span class="stat">'+statBtn(g,'backlog','대기')+statBtn(g,'in_progress','진행')+statBtn(g,'done','완료')+'</span>'
+    +'<span class="stat">'+statSel(g)+'</span>'
     +ttimeHTML(g)
-    +'<input type="text" placeholder="리뷰 메모" value="'+nv+'" onchange="saveNote(\''+g.id+'\',this.value)" style="width:130px">'
+    +noteBtn(g,r)
     +'<button class="btn evbtn'+(evCount(g)>0?' has':'')+'" onclick="toggleEv(\''+g.id+'\')" title="증거(링크·파일)">📎 '+evCount(g)+'</button>'
     +'<button class="btn" onclick="removeGoal(\''+g.id+'\')">삭제</button>'
-    +evidencePanel(g)+'</div>';
+    +notePanel(g,r)+evidencePanel(g)+'</div>';
 }
 function gSection(t,all,r){
   const kids=goalKids(all,t);
@@ -1141,12 +1267,89 @@ function renderGroupSections(r){
   const vis=q? tops.filter(t=> t.text.toLowerCase().includes(q) || goalKids(all,t).some(k=>k.text.toLowerCase().includes(q))) : tops;
   if(!vis.length){ host.innerHTML='<div class="muted" style="padding:8px 0">검색 결과 없음: '+esc(_gQuery)+'</div>'; return; }
   host.innerHTML=vis.map(t=>gSection(t,all,r)).join('');
-  applyEvOpen();
+  applyEvOpen(); applyNoteOpen();
   host.querySelectorAll('.gsec-add input').forEach(el=>bindImeEnter(el,function(x){ gAddChild(x.dataset.parent,x); }));
   if(_gRefocus){ const el=host.querySelector('.gsec-add input[data-parent="'+_gRefocus+'"]'); _gRefocus=''; if(el) el.focus(); }
 }
 function copyMd(b){ if(navigator.clipboard) navigator.clipboard.writeText(_md); const o=b.textContent; b.textContent='복사됨'; setTimeout(()=>{b.textContent=o;},1200); }
 function gnote(r,id){ return (r.notes&&r.notes[id])||''; }
+
+// ===== 일정관리 (schedule / resource management) =====
+// Every goal is dropped into an urgency bucket derived from its 목표(target) datetime, so
+// the board reads "what's overdue / due today / this week / later". Completed goals collect
+// in their own 완료 group (newest first) regardless of target. Each row carries inline
+// target/완료 datetime pickers; editing one posts to the server and the 5s poll re-renders.
+function startOfDay(epochSec){ const d=new Date(epochSec*1000); d.setHours(0,0,0,0); return d.getTime()/1000; }
+// datetime-local needs "YYYY-MM-DDTHH:mm" in LOCAL time; 0/absent => empty field.
+function localInput(epochSec){ if(!epochSec) return '';
+  const d=new Date(epochSec*1000), p=n=>(n<10?'0':'')+n;
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
+function fmtDate(epochSec){ if(!epochSec) return '–'; const d=new Date(epochSec*1000), p=n=>(n<10?'0':'')+n;
+  return (d.getMonth()+1)+'/'+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes()); }
+// datetime-local value -> epoch seconds (local tz); empty -> 0 (clears the field server-side).
+function setTarget(id,val){ const v=val?Math.floor(new Date(val).getTime()/1000):0; post('/api/goal/target',{id:id,target:v}); }
+function setCompleted(id,val){ const v=val?Math.floor(new Date(val).getTime()/1000):0; post('/api/goal/completed',{id:id,completed:v}); }
+function ddayBadge(g){
+  if((g.status||'backlog')==='done'){ const c=g.completedAt||0; return '<span class="dday done">✓ '+(c?fmtDate(c):'완료')+'</span>'; }
+  const t=g.targetAt||0; if(!t) return '<span class="dday">미정</span>';
+  const days=Math.round((startOfDay(t)-startOfDay(Date.now()/1000))/86400);
+  if(days<0) return '<span class="dday over">D+'+(-days)+' 지남</span>';
+  if(days===0) return '<span class="dday soon">D-DAY</span>';
+  if(days<=3) return '<span class="dday soon">D-'+days+'</span>';
+  return '<span class="dday">D-'+days+'</span>';
+}
+function schRow(g,r){
+  const ds=derivedStatus(r.goals,g);
+  const statCell=(ds!==null)?'<span class="ot '+ds+'" title="자식 태스크 상태에서 자동 계산">'+statLabel(ds)+'</span>':statSel(g);
+  return '<div class="schrow">'
+    +'<span class="pill" style="font-variant-numeric:tabular-nums">'+gnum(g)+'</span>'
+    +slinkBtn(g)
+    +'<span class="st"><span class="gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span></span>'
+    +'<span>'+statCell+'</span>'
+    +ddayBadge(g)
+    +'<span class="dlab">목표</span><input type="datetime-local" value="'+localInput(g.targetAt)+'" onchange="setTarget(\''+g.id+'\',this.value)">'
+    +'<span class="dlab">완료</span><input type="datetime-local" value="'+localInput(g.completedAt)+'" onchange="setCompleted(\''+g.id+'\',this.value)">'
+    +noteBtn(g,r)
+    +'<button class="btn evbtn'+(evCount(g)>0?' has':'')+'" onclick="toggleEv(\''+g.id+'\')" title="증거(링크·파일)">📎 '+evCount(g)+'</button>'
+    +notePanel(g,r)+evidencePanel(g)+'</div>';
+}
+function schSection(cls,title,goals,r){
+  return '<div class="schsec'+(cls?' '+cls:'')+'">'
+    +'<div class="schsec-hd">'+esc(title)+'<span class="cnt">'+goals.length+'개</span></div>'
+    +goals.map(g=>schRow(g,r)).join('')+'</div>';
+}
+function renderSchedule(r){
+  const all=(r&&r.goals)||[]; _goals=all;
+  const host=$('scheduleSections'); if(!host) return;
+  // Unified status filter (목록·그룹·프리뷰와 동일): unchecking 완료 etc. hides those goals here too.
+  const list=getFilteredGoals(all);
+  if(!list.length){ host.innerHTML='<div class="muted" style="padding:8px 0">'+(anyStatusActive()?'해당 상태의 목표가 없습니다.':'표시할 상태를 선택하세요 (대기 · 진행 · 완료).')+'</div>'; return; }
+  const sod=startOfDay(Date.now()/1000), eod=sod+86400, week=sod+7*86400;
+  const G={over:[],today:[],week:[],later:[],none:[],done:[]};
+  list.forEach(g=>{
+    if((g.status||'backlog')==='done'){ G.done.push(g); return; }
+    const t=g.targetAt||0;
+    if(!t) G.none.push(g);
+    else if(t<sod) G.over.push(g);
+    else if(t<eod) G.today.push(g);
+    else if(t<week) G.week.push(g);
+    else G.later.push(g);
+  });
+  const byTarget=(a,b)=>((a.targetAt||0)-(b.targetAt||0))||((a.seq||0)-(b.seq||0));
+  G.over.sort(byTarget); G.today.sort(byTarget); G.week.sort(byTarget); G.later.sort(byTarget);
+  G.none.sort((a,b)=>(a.seq||0)-(b.seq||0));
+  G.done.sort((a,b)=>(b.completedAt||0)-(a.completedAt||0));
+  const secs=[
+    ['overdue','지남 (기한 초과)',G.over],
+    ['today','오늘',G.today],
+    ['','이번 주',G.week],
+    ['','예정',G.later],
+    ['','미정 (목표일 없음)',G.none],
+    ['done','완료',G.done],
+  ];
+  host.innerHTML=secs.filter(s=>s[2].length).map(s=>schSection(s[0],s[1],s[2],r)).join('');
+  applyEvOpen(); applyNoteOpen();
+}
 
 let _lastReviewKey='';
 function renderReview(d){
@@ -1191,7 +1394,7 @@ function renderGoalsInput(r){
   if(!list.length){ gv.innerHTML='<div class="muted" style="padding:4px 0">'+(anyStatusActive()?'해당 상태의 목표가 없습니다.':'표시할 상태를 선택하세요 (대기 · 진행 · 완료).')+'</div>'; return; }
   const idToNum={}; all.forEach(g=>{ idToNum[g.id]=g.seq; });   // stable seq, not position
   gv.innerHTML=energyGauge(all)+list.map(g=>goalRow(g,all.indexOf(g),r,idToNum)).join('');
-  applyEvOpen();
+  applyEvOpen(); applyNoteOpen();
 }
 // Energy gauge: only meaningful once 2+ goals run at once (AI concurrency). Shows the
 // summed allocation against the user's 100% cap; turns red and warns when over-committed.
@@ -1204,14 +1407,13 @@ function energyGauge(goals){
     +'<div class="bar"><div class="fill" style="width:'+pct+'%"></div></div></div>';
 }
 function goalRow(g,i,r,idToNum){
-  const nv=gnote(r,g.id).replace(/"/g,'&quot;');
   const pnum=(g.parent&&idToNum[g.parent])?idToNum[g.parent]:'';
   const isChild=!!g.parent;
   // Parent goals show a derived rollup status (not manual buttons); leaves stay manual.
   const ds=derivedStatus(r.goals,g);
   const statCell=(ds!==null)
     ? '<span class="ot '+ds+'" title="자식 태스크 상태에서 자동 계산">'+statLabel(ds)+'</span>'
-    : statBtn(g,'backlog','대기')+statBtn(g,'in_progress','진행')+statBtn(g,'waiting','응답 대기')+statBtn(g,'done','완료');
+    : statSel(g);
   const running=(g.status==='in_progress')||(ds==='on_track');
   return '<div class="goal'+(ds==='on_track'?' ontrack':(running?' running':''))+'" data-i="'+i+'" ondragover="dragOver(event,'+i+')" ondrop="dropOn(event,'+i+')" ondragleave="dragLeave(event)">'
     +'<span class="grip" draggable="true" ondragstart="dragStart(event,'+i+')" ondragend="dragEnd(event)" title="드래그하여 우선순위 변경">⠿</span>'
@@ -1223,10 +1425,10 @@ function goalRow(g,i,r,idToNum){
     +'<span class="muted" style="font-size:12px">부모#</span>'
     +'<input type="text" inputmode="numeric" value="'+pnum+'" placeholder="–" title="부모 번호 입력 (비우면 최상위)" '
     +'onchange="setParentByNumber(\''+g.id+'\',this.value)" style="width:46px;text-align:center">'
-    +'<input type="text" placeholder="리뷰 메모" value="'+nv+'" onchange="saveNote(\''+g.id+'\',this.value)" style="flex:1;min-width:100px">'
+    +noteBtn(g,r)
     +'<button class="btn evbtn'+(evCount(g)>0?' has':'')+'" onclick="toggleEv(\''+g.id+'\')" title="증거(링크·파일) 첨부·보기">📎 '+evCount(g)+'</button>'
     +'<button class="btn" onclick="removeGoal(\''+g.id+'\')">삭제</button>'
-    +aiWorkRow(g,r)+evidencePanel(g)+'</div>';
+    +aiWorkRow(g,r)+notePanel(g,r)+evidencePanel(g)+'</div>';
 }
 // AI-work inputs on a PARENT goal (big-picture level), shown only while that parent is
 // active (on_track). Energy and agent blocks gate independently on the active-parent count:
@@ -1388,6 +1590,45 @@ function renderApps(samples){
       +'<td>'+esc(profLabel)+'</td><td>'+chips+'</td><td>'+fmtMin(s.minutes)+'</td></tr>';
   }).join('');
 }
+
+// ===== Workers (background jobs) =====
+// Shows every background worker, its schedule, and whether it's actually firing.
+// The server sends agoSec/nextSec snapshots; we tick them locally each second so
+// "마지막 실행" counts up and "다음 실행" counts down between 5s refreshes.
+let _workers=[];          // last snapshot from the server
+let _workersBase=0;       // performance.now() when the snapshot arrived (ms)
+function fmtInterval(s){ if(s>=60&&s%60===0) return (s/60)+'분'; return s+'초'; }
+function fmtAgo(sec){ if(sec<0) return '아직 없음';
+  if(sec<60) return sec+'초 전'; const m=(sec/60)|0,s=sec%60; return m+'분 '+(s>0?s+'초 ':'')+'전'; }
+function renderWorkers(arr){
+  _workers=Array.isArray(arr)?arr:[];
+  _workersBase=performance.now();
+  const rows=$('workerrows');
+  if(!_workers.length){ rows.innerHTML='<tr><td colspan="8" class="empty">데이터 없음</td></tr>'; return; }
+  rows.innerHTML=_workers.map((w,i)=>{
+    const badge=w.active?'<span class="chip">동작 중</span>':'<span class="chip bad">유휴</span>';
+    const more=w.id?'<a class="btn" href="/worker?id='+encodeURIComponent(w.id)+'" target="_blank">자세히</a>':'';
+    return '<tr><td><b>'+esc(w.name)+'</b></td>'
+      +'<td class="muted">'+esc(w.detail)+'</td>'
+      +'<td>'+fmtInterval(w.interval)+'</td>'
+      +'<td id="wk_ago_'+i+'">'+fmtAgo(w.agoSec)+'</td>'
+      +'<td id="wk_next_'+i+'">'+(w.active&&w.nextSec>=0?w.nextSec+'초 후':'–')+'</td>'
+      +'<td>'+(w.runs||0).toLocaleString()+'</td>'
+      +'<td>'+badge+'</td>'
+      +'<td>'+more+'</td></tr>';
+  }).join('');
+}
+// Live 1s tick: advance ago up / next down without waiting for the 5s reload.
+function tickWorkers(){
+  if(!_workers.length) return;
+  const elapsed=Math.floor((performance.now()-_workersBase)/1000);
+  _workers.forEach((w,i)=>{
+    if(w.agoSec>=0){ const a=document.getElementById('wk_ago_'+i); if(a) a.textContent=fmtAgo(w.agoSec+elapsed); }
+    if(w.active&&w.nextSec>=0){ const n=document.getElementById('wk_next_'+i);
+      if(n) n.textContent=Math.max(0,w.nextSec-elapsed)+'초 후'; }
+  });
+}
+setInterval(tickWorkers,1000);
 
 load();
 setInterval(load,5000);
