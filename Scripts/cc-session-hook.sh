@@ -37,23 +37,30 @@ port_file="$data_dir/dashboard.port"
 port="$(tr -dc '0-9' < "$port_file")"
 [ -z "$port" ] && exit 0
 
-# Title the goal with Claude Code's own session title (the "aiTitle" it auto-generates
-# and writes into the transcript). It does not exist at SessionStart and gets filled in
-# / refined as the session runs, so we re-read the latest one on every event. Empty until
-# Claude produces it — the server keeps the "Claude 세션 <id>" placeholder until then.
+# Title the goal from the session transcript, newest-wins per source, in priority order:
+#   goal-title-override (manual rename from the dashboard)   -- always wins
+#   ai-title            (Claude's auto-generated rolling title)
+#   custom-title        (a pinned title Claude Code attached to the session)
+#   first user prompt   (first last-prompt record, truncated) -- fallback that exists once
+#                        the session has any prompt, so the goal stops being stuck on the
+#                        "Claude 세션 <id>" placeholder when Claude never writes a title.
+# Re-read on every event since the higher-priority sources get filled in / refined as the
+# session runs. Empty only before the first prompt -- the server keeps the placeholder then.
 text=""
 tpath="$(field transcript_path)"
 if [ -n "$tpath" ] && [ -f "$tpath" ]; then
   if command -v python3 >/dev/null 2>&1; then
-    # Proper JSON parse: handles quotes/escapes/unicode in the title correctly. A
-    # manual goal-title-override (written by the dashboard on rename) wins over
-    # Claude's auto aiTitle. NB: python3 -c, NOT a heredoc — a here-document inside
-    # $(...) fails to parse under macOS's system bash 3.2, which silently broke
-    # title extraction entirely (the goal stayed on the "Claude 세션 <id>" placeholder).
+    # Proper JSON parse: handles quotes/escapes/unicode in the title correctly. Priority
+    # is override > ai-title > custom-title > first prompt (see the header comment). NB:
+    # python3 -c, NOT a heredoc — a here-document inside $(...) fails to parse under
+    # macOS's system bash 3.2, which silently broke title extraction entirely (the goal
+    # stayed on the "Claude 세션 <id>" placeholder).
     text="$(python3 -c '
 import sys, json
+override = ""    # manual rename from the dashboard (always wins)
 title = ""       # Claude auto aiTitle (latest wins)
-override = ""    # manual rename from the dashboard (takes precedence)
+custom = ""      # pinned custom-title Claude Code attached to the session
+first = ""       # first user prompt (fallback, present after the first turn)
 try:
     for ln in open(sys.argv[1], encoding="utf-8"):
         try:
@@ -61,23 +68,38 @@ try:
         except Exception:
             continue
         t = o.get("type")
-        if t == "ai-title" and o.get("aiTitle"):
-            title = o["aiTitle"]
-        elif t == "goal-title-override" and o.get("title"):
+        if t == "goal-title-override" and o.get("title"):
             override = o["title"]
+        elif t == "ai-title" and o.get("aiTitle"):
+            title = o["aiTitle"]
+        elif t == "custom-title" and o.get("customTitle"):
+            custom = o["customTitle"]
+        elif t == "last-prompt" and o.get("lastPrompt") and not first:
+            first = o["lastPrompt"]
 except Exception:
     pass
-print((override or title).replace(chr(10), " ").strip())
+out = override or title or custom
+if not out and first:
+    s = " ".join(first.split())
+    out = s[:40].rstrip() + ("…" if len(s) > 40 else "")
+print(out.replace(chr(10), " ").strip())
 ' "$tpath")"
   else
-    # Fallback (no python3): grep the last line. A manual goal-title-override wins
-    # over Claude's aiTitle; both work for titles without embedded quotes (the
-    # overwhelmingly common case).
+    # Fallback (no python3): grep per source in priority order. The last-prompt fallback
+    # uses head -1 (the first prompt) and is left untruncated to avoid splitting a
+    # multibyte char mid-byte; titles without embedded quotes (the overwhelmingly common
+    # case) extract cleanly.
     text="$(grep '"type":"goal-title-override"' "$tpath" 2>/dev/null | tail -1 \
       | grep -o '"title"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
       | sed 's/.*:[[:space:]]*"\(.*\)"$/\1/')"
     [ -z "$text" ] && text="$(grep '"type":"ai-title"' "$tpath" 2>/dev/null | tail -1 \
       | grep -o '"aiTitle"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
+      | sed 's/.*:[[:space:]]*"\(.*\)"$/\1/')"
+    [ -z "$text" ] && text="$(grep '"type":"custom-title"' "$tpath" 2>/dev/null | tail -1 \
+      | grep -o '"customTitle"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
+      | sed 's/.*:[[:space:]]*"\(.*\)"$/\1/')"
+    [ -z "$text" ] && text="$(grep '"type":"last-prompt"' "$tpath" 2>/dev/null | head -1 \
+      | grep -o '"lastPrompt"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
       | sed 's/.*:[[:space:]]*"\(.*\)"$/\1/')"
   fi
 fi
