@@ -21,7 +21,7 @@ final class ActivityMonitor {
     // tracker: it always reads against this constant so the needle swings up and
     // down with the live rate regardless of any past peak. A one-off burst (e.g.
     // spinning the scroll wheel) no longer pins the scale and flattens the gauge.
-    let apmRedline: Double = 300
+    let apmRedline: Double = 250
     // Live APM as a 0...1 fraction of the fixed redline.
     var apmNorm: Double { min(1.0, instantAPM / apmRedline) }
 
