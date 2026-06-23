@@ -323,7 +323,10 @@ final class ReviewStore {
     //   active - agent started working a turn: in_progress (진행), begin a timed session
     //   wait   - agent parked waiting for a human (응답 대기/waiting): bank elapsed active
     //            time and STOP the clock, so the waiting window is not counted as work
-    //   idle   - agent finished a turn: back to 대기 (backlog), bank the elapsed active time
+    //   idle   - agent finished a turn (Stop hook): also awaiting the human, so it shares
+    //            the `wait` state — Claude Code flags an ended turn as "입력 필요" too, and
+    //            mapping it to backlog desynced the dashboard from that. Banks time + stops
+    //            the clock identically; only resumes to in_progress when the turn restarts.
     //   end    - session closed: 완료 (done), bank any final active time
     // Net effect: trackedSeconds accumulates only the active windows (active->wait/idle),
     // which is the real "how long did the agent actually run" figure — the waiting window
@@ -364,16 +367,14 @@ final class ReviewStore {
             if goals[idx].startedAt == nil { goals[idx].startedAt = now }
             goals[idx].waitingSince = nil
             goals[idx].status = "in_progress"
-        case "wait":
-            // Park for a human: bank what was worked so far, stop the clock, remember
-            // when the wait began. Idempotent — re-entering wait keeps the first since.
+        case "wait", "idle":
+            // Park for a human (Notification's `wait` or an ended turn's `idle` — both mean
+            // the agent handed control back and Claude Code shows "입력 필요"). Bank what was
+            // worked so far, stop the clock, remember when the wait began. Idempotent —
+            // re-entering keeps the first `since` so the ⏳ countdown doesn't reset.
             bankLive()
             if goals[idx].status != "waiting" { goals[idx].waitingSince = now }
             goals[idx].status = "waiting"
-        case "idle":
-            bankLive()
-            goals[idx].waitingSince = nil
-            goals[idx].status = "backlog"
         case "end":
             bankLive()
             goals[idx].waitingSince = nil

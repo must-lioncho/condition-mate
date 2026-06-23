@@ -7,7 +7,9 @@
 #   active (UserPromptSubmit)  -> 진행 (in_progress); starts the active-time clock
 #   wait   (Notification)      -> 응답 대기 (waiting); banks elapsed time and STOPS the
 #                                 clock so a human-wait is never counted as active work
-#   idle   (Stop)              -> 대기 (backlog); banks the elapsed active time
+#   idle   (Stop)              -> 응답 대기 (waiting); an ended turn is also awaiting the
+#                                 human (Claude Code shows it as "입력 필요"), so it shares
+#                                 the wait state. Banks elapsed active time, stops the clock.
 #   end    (SessionEnd)        -> 완료 (done); banks any final active time
 #
 # The accumulated active time (진행 windows only) answers "how long did the
