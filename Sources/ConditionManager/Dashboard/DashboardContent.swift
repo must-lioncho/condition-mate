@@ -215,6 +215,15 @@ enum DashboardContent {
       <option value="preview">프리뷰</option>
     </select></div>
   <div class="panel">
+    <!-- SHARED STATUS FILTER — one bar drives 목록·그룹·프리뷰 alike -->
+    <div class="row" style="margin:0 0 8px;gap:6px">
+      <span class="muted" style="font-size:12px">보기</span>
+      <button class="btn primary" id="flt_backlog" onclick="toggleStatusFilter('backlog')">대기</button>
+      <button class="btn primary" id="flt_inprog" onclick="toggleStatusFilter('in_progress')">진행</button>
+      <button class="btn primary" id="flt_done" onclick="toggleStatusFilter('done')">완료</button>
+      <button class="btn" id="flt_parents" onclick="toggleShowParents()" title="켜면 상위 목표는 필터와 무관하게 항상 표시. 끄면 상위 목표도 롤업 상태로 필터링됩니다.">상위 항상 표시</button>
+      <span class="muted" id="flt_summary" style="font-size:12px">— 모두 표시</span>
+    </div>
     <!-- INPUT VIEW -->
     <div id="inputView">
       <div class="row">목표 추가:
@@ -226,13 +235,6 @@ enum DashboardContent {
         <button class="btn" onclick="addGoal()">추가</button>
       </div>
       <div class="muted" style="font-size:12px;margin:2px 0 6px">번호를 보고 각 목표의 <b>부모#</b> 칸에 부모 번호를 입력하면 묶입니다 (비우면 최상위). 압축된 결과는 프리뷰에서 확인.</div>
-      <div class="row" style="margin:2px 0 6px;gap:6px">
-        <span class="muted" style="font-size:12px">보기</span>
-        <button class="btn primary" id="flt_backlog" onclick="toggleStatusFilter('backlog')">대기</button>
-        <button class="btn primary" id="flt_inprog" onclick="toggleStatusFilter('in_progress')">진행</button>
-        <button class="btn primary" id="flt_done" onclick="toggleStatusFilter('done')">완료</button>
-        <span class="muted" id="flt_summary" style="font-size:12px">— 모두 표시</span>
-      </div>
       <div id="goals"></div>
 
       <div class="stage" style="margin-top:8px">
@@ -733,7 +735,12 @@ let _evOpen=new Set();    // goal ids whose evidence panel is expanded
 // waiting has no filter toggle (no UI button): it is always surfaced so a goal parked
 // for the user can never be hidden — the whole point of the 응답 대기 state.
 let _statusFilter={backlog:true,in_progress:true,waiting:true,done:true};
+// 상위 항상 표시: when on, parents (goals with children) bypass the status filter so the
+// hierarchy never collapses out from under a child. Default off = parents follow their
+// rolled-up status like any other goal (디폴트는 부모도 안 보이도록).
+let _showParents=false;
 let _review=null;         // last review object (for filter-only re-render)
+let _lastReportArgs=null; // cached (d,r,conf,prov) so 프리뷰 can re-render on filter change
 function evCount(g){ return (g.evidence||[]).length; }
 function toggleEv(id){ if(_evOpen.has(id))_evOpen.delete(id); else _evOpen.add(id); applyEvOpen(); }
 function applyEvOpen(){ (_goals||[]).forEach(g=>{ const p=document.getElementById('ev_'+g.id);
@@ -790,8 +797,28 @@ function isDoneGoal(g,goals){ return (g.status==='done')||(derivedStatus(goals,g
 // Effective status used for visibility filtering. Parents report a derived rollup
 // (on_track counts as 진행); leaves use their own status (default 대기).
 function effStatus(g,goals){ const ds=derivedStatus(goals,g); if(ds!=null) return ds==='on_track'?'in_progress':ds; return g.status||'backlog'; }
+// ===== Unified visibility: ONE filter feeds 목록·그룹·프리뷰 =====
+// Single source of truth for "does this goal pass the current filter". Every view calls
+// this instead of re-implementing the status test, so a filter applied once shows the
+// same result everywhere. A parent (has children) is kept regardless when 상위 항상 표시
+// is on; otherwise it follows its rolled-up effStatus like a leaf.
+function hasKids(goals,g){ return goals.some(k=>k.parent===g.id); }
+function goalPasses(g,goals){
+  if(_showParents && hasKids(goals,g)) return true;
+  return !!_statusFilter[effStatus(g,goals)];
+}
+function getFilteredGoals(goals){ return goals.filter(g=>goalPasses(g,goals)); }
+// Re-render every view from the cached review when the filter changes — instant feedback
+// in whichever view is active, without waiting for the 5s auto-refresh.
+function reapplyFilter(){
+  if(!_review) return;
+  updateFilterButtons();
+  fillActiveView(_review);
+  if(_lastReportArgs){ const a=_lastReportArgs; _md=buildMarkdown(a.d,a.r,a.conf,a.prov); renderReport(a.d,a.r,a.conf,a.prov); }
+}
 // 보기 토글: 상태 버튼을 켜면 그 상태의 목표가 보이고, 끄면 숨겨진다.
-function toggleStatusFilter(s){ _statusFilter[s]=!_statusFilter[s]; if(_review) renderGoalsInput(_review); }
+function toggleStatusFilter(s){ _statusFilter[s]=!_statusFilter[s]; reapplyFilter(); }
+function toggleShowParents(){ _showParents=!_showParents; reapplyFilter(); }
 function anyStatusActive(){ return _statusFilter.backlog||_statusFilter.in_progress||_statusFilter.done; }
 // Summary text mirrors the active combo: 모두 / 완료 만 / 완료 진행 만 …
 function filterSummary(){
@@ -807,7 +834,8 @@ function updateFilterButtons(){
   [['flt_backlog','backlog'],['flt_inprog','in_progress'],['flt_done','done']].forEach(function(p){
     const b=$(p[0]); if(b) b.classList.toggle('primary',!!_statusFilter[p[1]]);
   });
-  const s=$('flt_summary'); if(s) s.textContent='— '+filterSummary();
+  const pb=$('flt_parents'); if(pb) pb.classList.toggle('primary',_showParents);
+  const s=$('flt_summary'); if(s) s.textContent='— '+filterSummary()+(_showParents?' · 상위 항상 표시':'');
 }
 // --- Goal status + per-goal time tracking ---
 // Multiple goals MAY run in_progress at once (only feasible with AI). The server banks
@@ -1073,14 +1101,16 @@ function gChildRow(g,r){
 }
 function gSection(t,all,r){
   const kids=goalKids(all,t);
+  const vkids=kids.filter(k=>goalPasses(k,all));   // filter for display; count stays full
   const done=kids.filter(k=>(k.status||'backlog')==='done').length;
   const ds=derivedStatus(all,t);
   const collapsed=_gCollapsed.has(t.id);
   const tag=ds==='on_track'?'<span class="otTag">on track</span>'
     :(ds==='done'?'<span class="otTag" style="border-color:var(--green);color:var(--green);background:rgba(54,192,138,.12)">완료</span>':'');
   const prog=kids.length?('자식 '+done+'/'+kids.length):'자식 없음';
-  let body=kids.length? kids.map(k=>gChildRow(k,r)).join('')
-    : '<div class="muted" style="font-size:12px;padding:4px 0">아직 자식이 없습니다. 아래에서 추가하세요.</div>';
+  let body=vkids.length? vkids.map(k=>gChildRow(k,r)).join('')
+    : '<div class="muted" style="font-size:12px;padding:4px 0">'
+      +(kids.length?('필터로 가려진 자식 '+kids.length+'개'):'아직 자식이 없습니다. 아래에서 추가하세요.')+'</div>';
   body+='<div class="gsec-add">'
     +'<input type="text" data-parent="'+t.id+'" placeholder="이 목표 아래 추가 후 Enter" style="flex:1;min-width:120px">'
     +'<button class="btn" onclick="gSectAdd(\''+t.id+'\',this)">추가</button></div>';
@@ -1103,7 +1133,10 @@ function renderGroupSections(r){
   if(dl) dl.innerHTML=all.filter(g=>!g.parent)
     .map(g=>'<option value="goal-'+pad2(g.seq)+'">goal-'+pad2(g.seq)+' · '+esc(g.text)+'</option>').join('');
   if(!all.length){ host.innerHTML='<div class="muted" style="padding:8px 0">목표가 없습니다. 위 입력칸에 추가하세요.</div>'; return; }
-  const tops=all.filter(g=>!g.parent);
+  updateFilterButtons();
+  // Parent sections follow the shared filter too (디폴트는 상위도 필터; 상위 항상 표시 시 모두 노출).
+  const tops=all.filter(g=>!g.parent && goalPasses(g,all));
+  if(!tops.length){ host.innerHTML='<div class="muted" style="padding:8px 0">'+(anyStatusActive()?'해당 상태의 상위 목표가 없습니다.':'표시할 상태를 선택하세요 (대기 · 진행 · 완료).')+'</div>'; return; }
   const q=_gQuery;
   const vis=q? tops.filter(t=> t.text.toLowerCase().includes(q) || goalKids(all,t).some(k=>k.text.toLowerCase().includes(q))) : tops;
   if(!vis.length){ host.innerHTML='<div class="muted" style="padding:8px 0">검색 결과 없음: '+esc(_gQuery)+'</div>'; return; }
@@ -1131,6 +1164,7 @@ function renderReview(d){
   $('value').textContent=conf.toFixed(1)+'h';
   // report + markdown (read-only; safe to rebuild each tick)
   _md=buildMarkdown(d,r,conf,prov);
+  _lastReportArgs={d:d,r:r,conf:conf,prov:prov};   // so reapplyFilter() can rebuild 프리뷰
   renderReport(d,r,conf,prov);
   // input-side DOM (has text fields) — rebuild only when review data changes,
   // so the 5s auto-refresh never wipes a note you're typing.
@@ -1150,7 +1184,7 @@ function renderGoalsInput(r){
   _goals=all;
   updateFilterButtons();
   if(!all.length){ gv.innerHTML='<div class="muted" style="padding:4px 0">목표를 추가하세요. (Enter로 계속 추가)</div>'; return; }
-  const list=all.filter(g=>_statusFilter[effStatus(g,all)]);
+  const list=getFilteredGoals(all);
   // 완료만 보기일 땐 첨부(증거) 패널을 펼쳐 자료 넘기기를 돕는다 (기존 동작 유지).
   const onlyDone=_statusFilter.done&&!_statusFilter.backlog&&!_statusFilter.in_progress;
   if(onlyDone) list.forEach(g=>_evOpen.add(g.id));
@@ -1246,13 +1280,13 @@ function evMd(g){
   return ev.map(e=> '  - '+(e.kind==='file'?('📄 '+(e.title||'file')):('🔗 '+(e.title||e.href)+' '+e.href))).join('\n')+'\n';
 }
 function buildMarkdown(d,r,conf,prov){
-  const goals=r.goals||[], tops=goals.filter(g=>!g.parent);
+  const goals=r.goals||[], tops=goals.filter(g=>!g.parent && goalPasses(g,goals));
   let md='# 오늘 리포트 ('+d.date+')\n\n- 확정 가치: '+conf.toFixed(2)+'h (잠정 '+prov.toFixed(1)+'h)\n\n';
   tops.forEach(t=>{
     const ds=derivedStatus(goals,t);
     md+='## '+t.text+(ds==='on_track'?' [on track]':(ds==='done'?' [완료]':''))+(gnote(r,t.id)?(' — '+gnote(r,t.id)):'')+'\n';
     md+=evMd(t);
-    goals.filter(c=>c.parent===t.id).forEach(c=>{ const cs=(c.status||'backlog');
+    goals.filter(c=>c.parent===t.id && goalPasses(c,goals)).forEach(c=>{ const cs=(c.status||'backlog');
       const m=cs==='in_progress'?' (진행)':(cs==='done'?' (완료)':'');
       md+='- '+c.text+m+(gnote(r,c.id)?(' — '+gnote(r,c.id)):'')+'\n'; md+=evMd(c); });
     md+='\n';
@@ -1260,16 +1294,16 @@ function buildMarkdown(d,r,conf,prov){
   return md;
 }
 function renderReport(d,r,conf,prov){
-  const goals=r.goals||[], tops=goals.filter(g=>!g.parent);
+  const goals=r.goals||[], tops=goals.filter(g=>!g.parent && goalPasses(g,goals));
   let html='<div class="muted" style="margin-bottom:10px">'+esc(d.date)+' · 확정 '+conf.toFixed(2)+'h (잠정 '+prov.toFixed(1)+'h)</div>';
-  if(!tops.length) html+='<div class="muted">목표가 없습니다. 입력 뷰에서 추가하세요.</div>';
+  if(!tops.length) html+='<div class="muted">'+(anyStatusActive()?'필터에 해당하는 목표가 없습니다.':'목표가 없습니다. 입력 뷰에서 추가하세요.')+'</div>';
   tops.forEach(t=>{
     const ds=derivedStatus(goals,t);
     const tag=ds==='on_track'?'<span class="otTag">on track</span>':(ds==='done'?'<span class="otTag" style="border-color:var(--green);color:var(--green);background:rgba(54,192,138,.12)">완료</span>':'');
     html+='<h3 style="margin:12px 0 4px">'+esc(t.text)+tag+'</h3>';
     if(gnote(r,t.id)) html+='<div class="muted" style="margin-bottom:4px">'+esc(gnote(r,t.id))+'</div>';
     html+=evReportHtml(t);
-    const kids=goals.filter(c=>c.parent===t.id);
+    const kids=goals.filter(c=>c.parent===t.id && goalPasses(c,goals));
     if(kids.length) html+='<ul>'+kids.map(c=>{ const cs=(c.status||'backlog');
       const m=cs==='in_progress'?' <span style="color:#9be3fb">(진행)</span>':(cs==='done'?' <span class="ok">(완료)</span>':'');
       return '<li>'+esc(c.text)+m+(gnote(r,c.id)?' <span class="muted">— '+esc(gnote(r,c.id))+'</span>':'')+evReportHtml(c)+'</li>'; }).join('')+'</ul>';
