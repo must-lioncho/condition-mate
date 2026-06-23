@@ -150,7 +150,12 @@ enum DashboardContent {
   .sb:hover{border-color:var(--accent)}
   .sb.on.backlog{color:var(--fg);border-color:var(--mut)}
   .sb.on.in_progress{background:var(--accent);border-color:var(--accent);color:#fff}
+  .sb.on.waiting{background:#e8a33d;border-color:#e8a33d;color:#2a1c06}
   .sb.on.done{background:var(--green);border-color:var(--green);color:#06281c}
+  /* Live "응답 대기" badge: a human-attention flag, pulsing amber so it stands out. */
+  .wbadge{font-variant-numeric:tabular-nums;font-size:11px;color:#e8a33d;border:1px solid #e8a33d;
+    border-radius:6px;padding:1px 6px;margin-left:6px;white-space:nowrap;animation:wpulse 1.6s ease-in-out infinite}
+  @keyframes wpulse{0%,100%{opacity:1}50%{opacity:.45}}
   .ttime{font-variant-numeric:tabular-nums;color:var(--mut);font-size:12px;min-width:48px;text-align:right;flex:0 0 auto}
   .ttime.clk{cursor:pointer;color:#9fc0ff}
   .ttime.clk:hover{text-decoration:underline}
@@ -725,7 +730,9 @@ function startTitleEdit(e,id){
 let _evOpen=new Set();    // goal ids whose evidence panel is expanded
 // Per-status visibility toggles. A goal shows when its effective status is active.
 // All-on = 전체(모두); only-done reproduces the old "완료만" hand-off view.
-let _statusFilter={backlog:true,in_progress:true,done:true};
+// waiting has no filter toggle (no UI button): it is always surfaced so a goal parked
+// for the user can never be hidden — the whole point of the 응답 대기 state.
+let _statusFilter={backlog:true,in_progress:true,waiting:true,done:true};
 let _review=null;         // last review object (for filter-only re-render)
 function evCount(g){ return (g.evidence||[]).length; }
 function toggleEv(id){ if(_evOpen.has(id))_evOpen.delete(id); else _evOpen.add(id); applyEvOpen(); }
@@ -915,7 +922,15 @@ function effTracked(g){ const base=g.trackedSeconds||0;
   return (g.startedAt&&g.startedAt>0)?(base+Math.max(0,(Date.now()/1000)-g.startedAt)):base; }
 function fmtDur(sec){ sec=Math.max(0,Math.floor(sec)); const h=(sec/3600)|0,m=((sec%3600)/60)|0,s=sec%60,p=n=>(n<10?'0':'')+n;
   return (h>0?(h+':'+p(m)):m)+':'+p(s); }
-function tickTimers(){ (_goals||[]).forEach(g=>{ const el=document.getElementById('tt_'+g.id); if(el) el.textContent=fmtDur(effTracked(g)); }); }
+// Live wait duration (seconds since waitingSince). DISPLAY-ONLY — never folded into
+// effTracked, so the work clock stays frozen while this ticks up. 0 = not waiting.
+function waitSecs(g){ return (g.waitingSince&&g.waitingSince>0)?Math.max(0,(Date.now()/1000)-g.waitingSince):0; }
+function wbadgeHTML(g){ if((g.status||'')!=='waiting') return '';
+  return '<span class="wbadge" id="tw_'+g.id+'" title="사람의 응답을 기다린 시간 — 작업 시간(왼쪽)에는 포함되지 않음">⏳ 응답 대기 '+fmtDur(waitSecs(g))+'</span>'; }
+function tickTimers(){ (_goals||[]).forEach(g=>{
+  const el=document.getElementById('tt_'+g.id); if(el) el.textContent=fmtDur(effTracked(g));
+  const w=document.getElementById('tw_'+g.id); if(w) w.textContent='⏳ 응답 대기 '+fmtDur(waitSecs(g));
+}); }
 setInterval(tickTimers,1000);
 // Set parent by typing the parent's number (1-based). Empty clears it.
 let _goals=[];
@@ -1162,7 +1177,7 @@ function goalRow(g,i,r,idToNum){
   const ds=derivedStatus(r.goals,g);
   const statCell=(ds!==null)
     ? '<span class="ot '+ds+'" title="자식 태스크 상태에서 자동 계산">'+statLabel(ds)+'</span>'
-    : statBtn(g,'backlog','대기')+statBtn(g,'in_progress','진행')+statBtn(g,'done','완료');
+    : statBtn(g,'backlog','대기')+statBtn(g,'in_progress','진행')+statBtn(g,'waiting','응답 대기')+statBtn(g,'done','완료');
   const running=(g.status==='in_progress')||(ds==='on_track');
   return '<div class="goal'+(ds==='on_track'?' ontrack':(running?' running':''))+'" data-i="'+i+'" ondragover="dragOver(event,'+i+')" ondrop="dropOn(event,'+i+')" ondragleave="dragLeave(event)">'
     +'<span class="grip" draggable="true" ondragstart="dragStart(event,'+i+')" ondragend="dragEnd(event)" title="드래그하여 우선순위 변경">⠿</span>'
@@ -1170,7 +1185,7 @@ function goalRow(g,i,r,idToNum){
     +slinkBtn(g)
     +'<span class="g">'+(isChild?'<span class="muted">└ </span>':'')+'<span class="gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span></span>'
     +'<span class="stat">'+statCell+'</span>'
-    +ttimeHTML(g)
+    +ttimeHTML(g)+wbadgeHTML(g)
     +'<span class="muted" style="font-size:12px">부모#</span>'
     +'<input type="text" inputmode="numeric" value="'+pnum+'" placeholder="–" title="부모 번호 입력 (비우면 최상위)" '
     +'onchange="setParentByNumber(\''+g.id+'\',this.value)" style="width:46px;text-align:center">'

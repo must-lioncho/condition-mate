@@ -5,6 +5,8 @@
 # session shows up as a goal whose status tracks real agent activity:
 #   start  (SessionStart)      -> create/ensure the goal in 대기 (backlog)
 #   active (UserPromptSubmit)  -> 진행 (in_progress); starts the active-time clock
+#   wait   (Notification)      -> 응답 대기 (waiting); banks elapsed time and STOPS the
+#                                 clock so a human-wait is never counted as active work
 #   idle   (Stop)              -> 대기 (backlog); banks the elapsed active time
 #   end    (SessionEnd)        -> 완료 (done); banks any final active time
 #

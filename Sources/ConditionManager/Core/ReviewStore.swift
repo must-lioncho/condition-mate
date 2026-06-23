@@ -20,6 +20,13 @@ final class ReviewStore {
         var status: String = "backlog"    // backlog | in_progress | done
         var trackedSeconds: Double = 0    // banked active time (excludes the live session)
         var startedAt: Date? = nil        // start of the current in_progress session (nil = not running)
+        // Start of the current "응답 대기"(waiting) window (nil = not waiting). Set when
+        // the agent parks waiting for a human (AskUserQuestion / permission / stall) and
+        // cleared on resume. It is DISPLAY-ONLY: it measures how long we have been
+        // waiting and is NEVER added to trackedSeconds, so waiting time can never inflate
+        // the honest "how long did the agent actually work" figure. See
+        // .doc/waiting-signal-policy.md.
+        var waitingSince: Date? = nil
         // Claude Code session id this goal mirrors ("" = a normal hand-made goal).
         // When set, the goal is auto-managed by session hooks: it flips to in_progress
         // while the agent works a turn and back to backlog (대기) when it stops, so
@@ -52,10 +59,12 @@ final class ReviewStore {
 
         init(id: String, seq: Int = 0, text: String, parent: String = "",
              status: String = "backlog", trackedSeconds: Double = 0, startedAt: Date? = nil,
+             waitingSince: Date? = nil,
              energy: Int = 0, agents: [String] = [], tokens: Int = 0, value: Int = 0,
              evidence: [Evidence] = [], sessionId: String = "", transcriptPath: String = "") {
             self.id = id; self.seq = seq; self.text = text; self.parent = parent
             self.status = status; self.trackedSeconds = trackedSeconds; self.startedAt = startedAt
+            self.waitingSince = waitingSince
             self.energy = energy; self.agents = agents; self.tokens = tokens; self.value = value
             self.evidence = evidence; self.sessionId = sessionId; self.transcriptPath = transcriptPath
         }
@@ -65,7 +74,7 @@ final class ReviewStore {
         // key (it ignores default values), wiping every goal on load — so decode each
         // optional-with-default field via decodeIfPresent and fall back to its default.
         enum CodingKeys: String, CodingKey {
-            case id, seq, text, parent, status, trackedSeconds, startedAt, energy, agents, tokens, value, evidence, sessionId, transcriptPath
+            case id, seq, text, parent, status, trackedSeconds, startedAt, waitingSince, energy, agents, tokens, value, evidence, sessionId, transcriptPath
         }
         init(from dec: Decoder) throws {
             let c = try dec.container(keyedBy: CodingKeys.self)
@@ -76,6 +85,7 @@ final class ReviewStore {
             status = try c.decodeIfPresent(String.self, forKey: .status) ?? "backlog"
             trackedSeconds = try c.decodeIfPresent(Double.self, forKey: .trackedSeconds) ?? 0
             startedAt = try c.decodeIfPresent(Date.self, forKey: .startedAt)
+            waitingSince = try c.decodeIfPresent(Date.self, forKey: .waitingSince)
             energy = try c.decodeIfPresent(Int.self, forKey: .energy) ?? 0
             agents = try c.decodeIfPresent([String].self, forKey: .agents) ?? []
             tokens = try c.decodeIfPresent(Int.self, forKey: .tokens) ?? 0
@@ -116,8 +126,9 @@ final class ReviewStore {
         }
     }
 
-    // Valid status values; anything else is rejected.
-    static let validStatuses: Set<String> = ["backlog", "in_progress", "done"]
+    // Valid status values; anything else is rejected. `waiting` (응답 대기) is the
+    // parked-for-human state: the clock is stopped (startedAt nil) while in it.
+    static let validStatuses: Set<String> = ["backlog", "in_progress", "waiting", "done"]
 
     struct DayReview: Codable {
         var selfScore: Int? = nil               // 0-100, user's honest value estimate
@@ -284,6 +295,9 @@ final class ReviewStore {
             }
             goals[idx].status = status
         }
+        // waitingSince tracks ONLY the waiting window; set it on entry, clear it on any
+        // other transition so it never leaks into a non-waiting state.
+        goals[idx].waitingSince = (status == "waiting") ? now : nil
         saveGoals()
     }
 
@@ -307,10 +321,13 @@ final class ReviewStore {
     // the session id and auto-created on first sight, so the hooks need no goal id:
     //   start  - session opened: ensure the goal exists (대기/backlog), don't disturb a live run
     //   active - agent started working a turn: in_progress (진행), begin a timed session
+    //   wait   - agent parked waiting for a human (응답 대기/waiting): bank elapsed active
+    //            time and STOP the clock, so the waiting window is not counted as work
     //   idle   - agent finished a turn: back to 대기 (backlog), bank the elapsed active time
     //   end    - session closed: 완료 (done), bank any final active time
-    // Net effect: trackedSeconds accumulates only the active windows (active->idle),
-    // which is the real "how long did the agent actually run" figure.
+    // Net effect: trackedSeconds accumulates only the active windows (active->wait/idle),
+    // which is the real "how long did the agent actually run" figure — the waiting window
+    // is explicitly excluded. See .doc/waiting-signal-policy.md.
     func recordSession(sessionId: String, event: String, text: String = "", transcriptPath: String = "") {
         let sid = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sid.isEmpty else { return }
@@ -343,16 +360,27 @@ final class ReviewStore {
 
         switch event {
         case "active":
+            // Resume work: start a fresh timed window and leave any waiting state.
             if goals[idx].startedAt == nil { goals[idx].startedAt = now }
+            goals[idx].waitingSince = nil
             goals[idx].status = "in_progress"
+        case "wait":
+            // Park for a human: bank what was worked so far, stop the clock, remember
+            // when the wait began. Idempotent — re-entering wait keeps the first since.
+            bankLive()
+            if goals[idx].status != "waiting" { goals[idx].waitingSince = now }
+            goals[idx].status = "waiting"
         case "idle":
             bankLive()
+            goals[idx].waitingSince = nil
             goals[idx].status = "backlog"
         case "end":
             bankLive()
+            goals[idx].waitingSince = nil
             goals[idx].status = "done"
         default: // "start" — just ensure it exists; never interrupt an active run.
             if goals[idx].status == "in_progress" { bankLive() }
+            goals[idx].waitingSince = nil
             goals[idx].status = "backlog"
         }
         saveGoals()
