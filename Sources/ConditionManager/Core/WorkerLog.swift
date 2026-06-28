@@ -35,9 +35,11 @@ final class WorkerLog {
 
     // Append one run record. Cheap to call from any worker; the actual IO is
     // dispatched off the caller's thread.
-    func append(_ id: String, why: String, effect: String, at date: Date = Date()) {
+    func append(_ id: String, why: String, effect: String, level: String = "info", at date: Date = Date()) {
         let ms = Int(date.timeIntervalSince1970 * 1000)
-        let line = "{\"t\":\(ms),\"why\":\(Self.j(why)),\"effect\":\(Self.j(effect))}\n"
+        // Only stamp a level when it's noteworthy (error), so healthy lines stay compact.
+        let lvl = level == "info" ? "" : ",\"lvl\":\(Self.j(level))"
+        let line = "{\"t\":\(ms),\"why\":\(Self.j(why)),\"effect\":\(Self.j(effect))\(lvl)}\n"
         queue.async { [weak self] in
             guard let self = self else { return }
             let url = self.fileURL(id)
@@ -57,21 +59,22 @@ final class WorkerLog {
 
     // Read the most recent records for a worker, newest first. Runs synchronously
     // on the log queue so it can't race a concurrent append/trim.
-    func recent(_ id: String, limit: Int = 500) -> [(t: Int, why: String, effect: String)] {
+    func recent(_ id: String, limit: Int = 500) -> [(t: Int, why: String, effect: String, level: String)] {
         queue.sync {
             let url = fileURL(id)
             guard let data = try? Data(contentsOf: url) else { return [] }
-            var out: [(Int, String, String)] = []
+            var out: [(Int, String, String, String)] = []
             String(decoding: data, as: UTF8.self).enumerateLines { line, _ in
                 guard let d = line.data(using: .utf8),
                       let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return }
                 let t = (obj["t"] as? Int) ?? 0
                 let why = (obj["why"] as? String) ?? ""
                 let effect = (obj["effect"] as? String) ?? ""
-                out.append((t, why, effect))
+                let level = (obj["lvl"] as? String) ?? "info"
+                out.append((t, why, effect, level))
             }
             if out.count > limit { out = Array(out.suffix(limit)) }
-            return out.reversed().map { (t: $0.0, why: $0.1, effect: $0.2) }
+            return out.reversed().map { (t: $0.0, why: $0.1, effect: $0.2, level: $0.3) }
         }
     }
 

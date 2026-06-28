@@ -19,8 +19,12 @@ final class WorkerRegistry {
         let name: String       // short Korean label for the dashboard
         let detail: String     // one-line description of what it does
         let interval: Double   // seconds between runs (the schedule)
+        let owner: String      // "core" (always on) or a plugin id (e.g. "claude-desktop")
         var lastRun: Date?     // when it last fired (nil = never yet)
         var runCount: Int      // total fires since launch
+        var lastError: String? // last quality-check failure (nil = healthy)
+        var lastErrorAt: Date? // when the last error was recorded
+        var enabled: Bool      // user on/off (false = 꺼짐); only toggleable workers use it
     }
 
     private var workers: [String: Worker] = [:]
@@ -31,12 +35,39 @@ final class WorkerRegistry {
 
     // Declare a worker. Idempotent: re-registering keeps the existing run stats so
     // a worker that re-registers (e.g. after restart paths) doesn't lose its count.
-    func register(id: String, name: String, detail: String, interval: Double) {
+    // `owner` is "core" for always-on workers, or a plugin id for ones gated by a
+    // plugin connection (registered on connect, unregistered on disconnect).
+    func register(id: String, name: String, detail: String, interval: Double,
+                  owner: String = "core", enabled: Bool = true) {
         lock.lock(); defer { lock.unlock() }
         if workers[id] != nil { return }   // keep existing run stats on re-register
         workers[id] = Worker(id: id, name: name, detail: detail, interval: interval,
-                             lastRun: nil, runCount: 0)
+                             owner: owner, lastRun: nil, runCount: 0,
+                             lastError: nil, lastErrorAt: nil, enabled: enabled)
         order.append(id)
+    }
+
+    // Flip a worker's user on/off state (drives the 꺼짐 badge). The runner script reads
+    // its own flag file for the authoritative gate; this just mirrors it for display.
+    func setEnabled(_ id: String, _ enabled: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        guard var w = workers[id] else { return }
+        w.enabled = enabled
+        workers[id] = w
+    }
+
+    // Remove a worker (e.g. its owning plugin was disconnected). The row vanishes
+    // from the dashboard and its run stats are dropped; re-registering starts fresh.
+    func unregister(id: String) {
+        lock.lock(); defer { lock.unlock() }
+        workers.removeValue(forKey: id)
+        order.removeAll { $0 == id }
+    }
+
+    // Is this worker currently registered? Lets the heartbeat skip gated work cheaply.
+    func isRegistered(_ id: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return workers[id] != nil
     }
 
     // Stamp a worker as having just fired. Cheap (date + counter) so even the
@@ -55,6 +86,31 @@ final class WorkerRegistry {
     func recordRun(_ id: String, why: String, effect: String, at date: Date = Date()) {
         recordRun(id, at: date)
         WorkerLog.shared.append(id, why: why, effect: effect, at: date)
+    }
+
+    // Record a quality-check FAILURE: stamp the run, flag the worker with an error
+    // (surfaced as a red 상태 badge), and write an error-level log line. The worker
+    // stays registered — the error clears on the next healthy run (recordRun).
+    func recordError(_ id: String, why: String, detail: String, at date: Date = Date()) {
+        lock.lock()
+        if var w = workers[id] {
+            w.lastRun = date
+            w.runCount += 1
+            w.lastError = detail
+            w.lastErrorAt = date
+            workers[id] = w
+        }
+        lock.unlock()
+        WorkerLog.shared.append(id, why: why, effect: detail, level: "error", at: date)
+    }
+
+    // Clear a worker's error flag (a quality check passed). Cheap; safe to call every run.
+    func clearError(_ id: String) {
+        lock.lock(); defer { lock.unlock() }
+        guard var w = workers[id], w.lastError != nil else { return }
+        w.lastError = nil
+        w.lastErrorAt = nil
+        workers[id] = w
     }
 
     // Static metadata for one worker (name/detail/interval), for the log page.
@@ -101,9 +157,21 @@ final class WorkerRegistry {
             } else {
                 nextSec = -1
             }
+            let errJSON = w.lastError.map { Self.j($0) } ?? "null"
+            // The QA automation workers are user-toggleable; core/plugin workers aren't.
+            // "즉시 실행" only applies to the periodic inspection worker — the fix worker
+            // is event-driven (fired when a goal is filed), so it's toggleable but not runnable.
+            let toggleable = (w.owner == "qa")
+            let runnable = (w.id == "qa-agent")
+            // bug-hunt is launched BY HAND at end of day (Scripts/bug-hunt.sh), not by a
+            // scheduler. Its `interval` is the per-round cadence inside one multi-hour run,
+            // not a fire schedule — flag it so the dashboard labels it 수동, not 자동화.
+            let manual = (w.id == "bug-hunt")
             return "{\"id\":\(Self.j(w.id)),\"name\":\(Self.j(w.name)),\"detail\":\(Self.j(w.detail)),"
-                + "\"interval\":\(Int(w.interval.rounded())),\"active\":\(active),"
-                + "\"agoSec\":\(agoSec),\"nextSec\":\(nextSec),\"runs\":\(w.runCount)}"
+                + "\"owner\":\(Self.j(w.owner)),\"interval\":\(Int(w.interval.rounded())),\"active\":\(active),"
+                + "\"agoSec\":\(agoSec),\"nextSec\":\(nextSec),\"runs\":\(w.runCount),"
+                + "\"error\":\(w.lastError != nil),\"errorMsg\":\(errJSON),"
+                + "\"enabled\":\(w.enabled),\"toggleable\":\(toggleable),\"runnable\":\(runnable),\"manual\":\(manual)}"
         }
         return "[" + entries.joined(separator: ",") + "]"
     }
