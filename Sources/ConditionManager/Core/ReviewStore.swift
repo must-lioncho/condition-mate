@@ -65,18 +65,35 @@ final class ReviewStore {
         var targetAt: Date? = nil
         var completedAt: Date? = nil
 
+        // Sprint membership (지라식 스프린트 = 릴리즈 단위). The number is the user-typed
+        // sprint id (0 = unassigned / backlog). `released` marks a goal that has been
+        // committed via the 릴리즈 action: it is hidden from the active list and recorded
+        // in a Release (releaseId), and a 복원 clears both flags to bring it back.
+        var sprint: Int = 0
+        var released: Bool = false
+        var releaseId: String = ""
+
+        // Priority (우선순위): 5-level bucket, default "medium". Display-only — it does NOT
+        // reorder the list (the sprint board shows it as a colored dot); it just lets the
+        // user triage which work matters most. Order: urgent > high > medium > low > lowest.
+        var priority: String = "medium"
+
         init(id: String, seq: Int = 0, text: String, parent: String = "",
              status: String = "backlog", trackedSeconds: Double = 0, startedAt: Date? = nil,
              waitingSince: Date? = nil,
              energy: Int = 0, agents: [String] = [], tokens: Int = 0, value: Int = 0,
              evidence: [Evidence] = [], sessionId: String = "", transcriptPath: String = "",
-             targetAt: Date? = nil, completedAt: Date? = nil) {
+             targetAt: Date? = nil, completedAt: Date? = nil,
+             sprint: Int = 0, released: Bool = false, releaseId: String = "",
+             priority: String = "medium") {
             self.id = id; self.seq = seq; self.text = text; self.parent = parent
             self.status = status; self.trackedSeconds = trackedSeconds; self.startedAt = startedAt
             self.waitingSince = waitingSince
             self.energy = energy; self.agents = agents; self.tokens = tokens; self.value = value
             self.evidence = evidence; self.sessionId = sessionId; self.transcriptPath = transcriptPath
             self.targetAt = targetAt; self.completedAt = completedAt
+            self.sprint = sprint; self.released = released; self.releaseId = releaseId
+            self.priority = priority
         }
 
         // Tolerant decoder: fields added over time (seq, status, energy, ...) may be absent
@@ -84,7 +101,7 @@ final class ReviewStore {
         // key (it ignores default values), wiping every goal on load — so decode each
         // optional-with-default field via decodeIfPresent and fall back to its default.
         enum CodingKeys: String, CodingKey {
-            case id, seq, text, parent, status, trackedSeconds, startedAt, waitingSince, energy, agents, tokens, value, evidence, sessionId, transcriptPath, targetAt, completedAt
+            case id, seq, text, parent, status, trackedSeconds, startedAt, waitingSince, energy, agents, tokens, value, evidence, sessionId, transcriptPath, targetAt, completedAt, sprint, released, releaseId, priority
         }
         init(from dec: Decoder) throws {
             let c = try dec.container(keyedBy: CodingKeys.self)
@@ -105,6 +122,10 @@ final class ReviewStore {
             transcriptPath = try c.decodeIfPresent(String.self, forKey: .transcriptPath) ?? ""
             targetAt = try c.decodeIfPresent(Date.self, forKey: .targetAt)
             completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
+            sprint = try c.decodeIfPresent(Int.self, forKey: .sprint) ?? 0
+            released = try c.decodeIfPresent(Bool.self, forKey: .released) ?? false
+            releaseId = try c.decodeIfPresent(String.self, forKey: .releaseId) ?? ""
+            priority = try c.decodeIfPresent(String.self, forKey: .priority) ?? "medium"
         }
     }
 
@@ -138,6 +159,119 @@ final class ReviewStore {
         }
     }
 
+    // A release (커밋) — a snapshot taken when the user closes out a sprint's finished
+    // work. It records WHEN the release happened and WHAT value it produced, so the
+    // release page reads like a commit log ("내가 언제 릴리즈했고 어떤 가치를 만들었나").
+    // The committed goals are marked released (hidden from the active list); titles are
+    // snapshotted so the log stays readable even if a goal is later renamed/removed.
+    struct Release: Codable {
+        var id: String
+        var sprint: Int            // sprint number released (0 = released across all sprints)
+        var releasedAt: Date
+        var value: Int             // summed produced value of the committed goals
+        var goalIds: [String]      // ids of the goals committed (for 복원/restore)
+        var titles: [String]       // title snapshot at release time (readable log)
+
+        enum CodingKeys: String, CodingKey { case id, sprint, releasedAt, value, goalIds, titles }
+        init(id: String, sprint: Int, releasedAt: Date, value: Int, goalIds: [String], titles: [String]) {
+            self.id = id; self.sprint = sprint; self.releasedAt = releasedAt
+            self.value = value; self.goalIds = goalIds; self.titles = titles
+        }
+        init(from dec: Decoder) throws {
+            let c = try dec.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            sprint = try c.decodeIfPresent(Int.self, forKey: .sprint) ?? 0
+            releasedAt = try c.decodeIfPresent(Date.self, forKey: .releasedAt) ?? Date(timeIntervalSince1970: 0)
+            value = try c.decodeIfPresent(Int.self, forKey: .value) ?? 0
+            goalIds = try c.decodeIfPresent([String].self, forKey: .goalIds) ?? []
+            titles = try c.decodeIfPresent([String].self, forKey: .titles) ?? []
+        }
+    }
+
+    // A sprint definition. Per the policy (.claude/doc/sprint-policy.md) a sprint is just
+    // "a bundle of goals + a length", so it carries only WHAT it aims to ship (goalText,
+    // the 결과물) and HOW LONG (durationKind: 1d/2d/3d/1w/2w/1m). No start/end clock — the
+    // user explicitly does not want time fields; the length is a tag, not a schedule.
+    struct Sprint: Codable {
+        var number: Int            // internal stable id goals reference (unique, never reused)
+        var code: String           // user-facing id "YY-n" (e.g. 26-1) — uniqueness + year context
+        var goalText: String       // 결과물 / 예상 결과 — what this sprint completes
+        var durationKind: String   // 1d | 2d | 3d | 1w | 2w | 1m
+        var startAt: Date?         // auto-filled on create (now); user fine-tunes
+        var targetAt: Date?        // auto = startAt + duration; user fine-tunes (목표 날짜)
+        var createdAt: Date
+        // closed = released. A released sprint drops out of the active board and filter;
+        // its record lives on in the 완료 로그. 복원 reopens it.
+        var closed: Bool = false
+
+        enum CodingKeys: String, CodingKey { case number, code, goalText, durationKind, startAt, targetAt, createdAt, closed }
+        init(number: Int, code: String = "", goalText: String, durationKind: String,
+             startAt: Date? = nil, targetAt: Date? = nil, createdAt: Date, closed: Bool = false) {
+            self.number = number; self.code = code; self.goalText = goalText
+            self.durationKind = durationKind; self.startAt = startAt; self.targetAt = targetAt
+            self.createdAt = createdAt; self.closed = closed
+        }
+        init(from dec: Decoder) throws {
+            let c = try dec.container(keyedBy: CodingKeys.self)
+            number = try c.decode(Int.self, forKey: .number)
+            code = try c.decodeIfPresent(String.self, forKey: .code) ?? ""
+            goalText = try c.decodeIfPresent(String.self, forKey: .goalText) ?? ""
+            durationKind = try c.decodeIfPresent(String.self, forKey: .durationKind) ?? "1d"
+            startAt = try c.decodeIfPresent(Date.self, forKey: .startAt)
+            targetAt = try c.decodeIfPresent(Date.self, forKey: .targetAt)
+            createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
+            closed = try c.decodeIfPresent(Bool.self, forKey: .closed) ?? false
+        }
+    }
+    static let validDurations: Set<String> = ["1d", "2d", "3d", "1w", "2w", "1m"]
+
+    // A single similar/overlapping goal the AI dedup pass flagged for a candidate.
+    // `seq` points at the existing goal; `text` snapshots its title (so the queue
+    // stays readable even if that goal is later renamed); `why` is the AI's short
+    // Korean reason for the overlap.
+    struct QueueMatch: Codable {
+        var seq: Int
+        var text: String = ""
+        var why: String = ""
+        enum CodingKeys: String, CodingKey { case seq, text, why }
+        init(seq: Int, text: String = "", why: String = "") { self.seq = seq; self.text = text; self.why = why }
+        init(from dec: Decoder) throws {
+            let c = try dec.container(keyedBy: CodingKeys.self)
+            seq = try c.decodeIfPresent(Int.self, forKey: .seq) ?? 0
+            text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+            why = try c.decodeIfPresent(String.self, forKey: .why) ?? ""
+        }
+    }
+
+    // A deferred ("later") AI-add candidate. When AI추가 flags a possible duplicate and
+    // the user is not ready to decide, the candidate is parked here instead of becoming
+    // a goal. The user later reviews the queue one item at a time and chooses 추가/스킵/수정.
+    // This is the "에너지 아끼기" path: pile up decisions, resolve them in a batch.
+    struct AIQueueItem: Codable {
+        var id: String
+        var text: String                 // the candidate goal text
+        var parent: String = ""          // optional parent goal UUID ("" = top-level)
+        var note: String = ""            // AI's short summary of the overlap
+        var matches: [QueueMatch] = []   // similar existing goals the AI flagged
+        var createdAt: Date
+
+        enum CodingKeys: String, CodingKey { case id, text, parent, note, matches, createdAt }
+        init(id: String, text: String, parent: String = "", note: String = "",
+             matches: [QueueMatch] = [], createdAt: Date) {
+            self.id = id; self.text = text; self.parent = parent
+            self.note = note; self.matches = matches; self.createdAt = createdAt
+        }
+        init(from dec: Decoder) throws {
+            let c = try dec.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+            parent = try c.decodeIfPresent(String.self, forKey: .parent) ?? ""
+            note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+            matches = try c.decodeIfPresent([QueueMatch].self, forKey: .matches) ?? []
+            createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
+        }
+    }
+
     // Valid status values; anything else is rejected. `waiting` (응답 대기) is the
     // parked-for-human state: the clock is stopped (startedAt nil) while in it.
     // backlog  - 대기: the loop's queue. The ONLY status the auto-loop picks up.
@@ -162,12 +296,21 @@ final class ReviewStore {
 
     private let dir: URL
     private let goalsURL: URL
+    private let releasesURL: URL
+    private let sprintsURL: URL
+    private let queueURL: URL
     private let dayFmt: DateFormatter
     private(set) var goals: [Goal] = []
+    private(set) var releases: [Release] = []
+    private(set) var sprints: [Sprint] = []
+    private(set) var aiQueue: [AIQueueItem] = []
 
     init() {
         dir = AppPaths.sub("review")
         goalsURL = dir.appendingPathComponent("goals.json")
+        releasesURL = dir.appendingPathComponent("releases.json")
+        sprintsURL = dir.appendingPathComponent("sprints.json")
+        queueURL = dir.appendingPathComponent("ai-queue.json")
 
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -175,6 +318,9 @@ final class ReviewStore {
         dayFmt = f
 
         loadGoals()
+        loadReleases()
+        loadSprints()
+        loadQueue()
     }
 
     var todayKey: String { dayFmt.string(from: Date()) }
@@ -249,16 +395,56 @@ final class ReviewStore {
         }
         if let data = try? JSONEncoder().encode(goals) { try? data.write(to: goalsURL, options: .atomic) }
     }
-    func addGoal(text: String, parent: String = "") {
+    func addGoal(text: String, parent: String = "", sprint: Int = 0) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
-        goals.append(Goal(id: UUID().uuidString, seq: nextSeq(), text: t, parent: parent))
+        goals.append(Goal(id: UUID().uuidString, seq: nextSeq(), text: t, parent: parent, sprint: max(0, sprint)))
         saveGoals()
     }
     func removeGoal(id: String) {
         // Remove the goal and re-parent (delete) its children too.
         goals.removeAll { $0.id == id || $0.parent == id }
         saveGoals()
+    }
+
+    // MARK: AI dedup queue (the "later" pile)
+
+    private func loadQueue() {
+        guard FileManager.default.fileExists(atPath: queueURL.path),
+              let data = try? Data(contentsOf: queueURL),
+              let q = try? JSONDecoder().decode([AIQueueItem].self, from: data) else { return }
+        aiQueue = q
+    }
+    private func saveQueue() {
+        if let data = try? JSONEncoder().encode(aiQueue) { try? data.write(to: queueURL, options: .atomic) }
+    }
+    // Park a flagged candidate for later review (the "later" button).
+    func addQueueItem(text: String, parent: String, note: String, matches: [QueueMatch]) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        aiQueue.append(AIQueueItem(id: UUID().uuidString, text: t, parent: parent,
+                                   note: note, matches: matches, createdAt: Date()))
+        saveQueue()
+    }
+    // Resolve one queued candidate. "add" promotes it to a real goal (using `text` if
+    // given, else the stored text), "edit" rewrites the stored text and keeps it queued,
+    // "skip" (or anything else) just drops it.
+    func resolveQueueItem(id: String, action: String, text: String?) {
+        guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return }
+        let item = aiQueue[idx]
+        switch action {
+        case "add":
+            let final = (text?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? item.text
+            addGoal(text: final, parent: item.parent)
+            aiQueue.remove(at: idx)
+        case "edit":
+            let t = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !t.isEmpty else { return }
+            aiQueue[idx].text = t
+        default:   // "skip" and unknown actions drop the item
+            aiQueue.remove(at: idx)
+        }
+        saveQueue()
     }
 
     // Reorder goals to match the given id order (priority list, drag-and-drop).
@@ -290,6 +476,217 @@ final class ReviewStore {
             goals[idx].parent = parent
         }
         saveGoals()
+    }
+
+    // MARK: Sprint / Release
+
+    // Assign (or clear with 0) a goal's sprint number. Negative is clamped to 0.
+    // sprint: >0 = that sprint; 0 = unassigned/Backlog (children inherit parent's sprint);
+    // -1 = explicitly detached Backlog (a child that does NOT follow its parent's sprint).
+    func setGoalSprint(id: String, sprint: Int) {
+        guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
+        goals[idx].sprint = max(-1, sprint)
+        saveGoals()
+    }
+
+    // Valid 5-level priority buckets (urgent > high > medium > low > lowest).
+    static let validPriorities: Set<String> = ["urgent", "high", "medium", "low", "lowest"]
+
+    // Set the priority of one or many goals in a single pass. The board's Cmd-drag "paint"
+    // sends a whole batch of ids at once, so coalesce them into a single save (one disk
+    // write, one client refresh) instead of N round-trips. Unknown priority values and
+    // unknown ids are ignored.
+    func setGoalPriority(ids: [String], priority: String) {
+        guard ReviewStore.validPriorities.contains(priority) else { return }
+        let wanted = Set(ids)
+        var changed = false
+        for i in goals.indices where wanted.contains(goals[i].id) && goals[i].priority != priority {
+            goals[i].priority = priority
+            changed = true
+        }
+        if changed { saveGoals() }
+    }
+
+    // Release (커밋) the finished work: take every done, not-yet-released goal matching the
+    // filter and commit it. Results are GROUPED BY SPRINT — one Release record per sprint
+    // number — so the release log always shows which sprint shipped (번호 + 결과물). Each
+    // released sprint is also marked closed, dropping it from the 스프린트 관리 list.
+    // `sprint == nil` releases across all sprints (still grouped per sprint).
+    @discardableResult
+    func releaseSprint(_ sprint: Int?) -> [Release] {
+        let targets = goals.indices.filter { i in
+            !goals[i].released && goals[i].status == "done" &&
+            (sprint == nil || goals[i].sprint == sprint!)
+        }
+        guard !targets.isEmpty else { return [] }
+        var groups: [Int: [Int]] = [:]
+        for i in targets { groups[goals[i].sprint, default: []].append(i) }
+        let now = Date()
+        var created: [Release] = []
+        for (sp, members) in groups.sorted(by: { $0.key < $1.key }) {
+            let rid = UUID().uuidString
+            let value = members.reduce(0) { $0 + goals[$1].value }
+            let rel = Release(id: rid, sprint: sp, releasedAt: now, value: value,
+                              goalIds: members.map { goals[$0].id },
+                              titles: members.map { goals[$0].text })
+            for i in members { goals[i].released = true; goals[i].releaseId = rid }
+            releases.insert(rel, at: 0)   // newest first (commit log order)
+            created.append(rel)
+            // Close the sprint only once it is fully shipped — if unfinished (non-released)
+            // goals remain in it, keep it open so the leftover work stays visible.
+            if sp > 0, let si = sprints.firstIndex(where: { $0.number == sp }),
+               !goals.contains(where: { $0.sprint == sp && !$0.released }) {
+                sprints[si].closed = true
+            }
+        }
+        saveGoals(); saveReleases(); saveSprints()
+        return created
+    }
+
+    // Complete a sprint and roll forward. This is the "Complete sprint" action — the
+    // bump-out / reset moment (see .doc/sprint-policy.md). In one step it: (1) commits the
+    // sprint's finished goals to the 완료 로그, (2) opens a fresh successor sprint (auto
+    // start=now, target=now+24h, 1d default — editable), (3) carries every still-unfinished
+    // goal of the old sprint into that successor so no work is dropped, and (4) closes the
+    // old sprint. Returning the successor lets the caller surface its new code (26-2 → 26-3).
+    // The unique sprint code always advances — never reused — so company resource tracking
+    // keeps a monotonic period id. Releasing without rolling is still available via
+    // releaseSprint (used for the "모든 스프린트" commit path).
+    @discardableResult
+    func completeSprint(_ number: Int) -> Sprint? {
+        guard sprints.contains(where: { $0.number == number }) else { return nil }
+        // 1. Commit finished work (done + not-yet-released). Safe when nothing is done —
+        //    releaseSprint just returns []; we still close and roll forward below.
+        releaseSprint(number)
+        // 2. Open the successor (auto 24h window, 1d default).
+        let next = createSprint(goalText: "", durationKind: "1d")
+        // 3. Carry every still-unfinished goal of the old sprint into the successor.
+        for i in goals.indices where goals[i].sprint == number && !goals[i].released {
+            goals[i].sprint = next.number
+        }
+        // 4. Close the old sprint regardless of whether it had finished goals to commit.
+        if let si = sprints.firstIndex(where: { $0.number == number }) {
+            sprints[si].closed = true
+        }
+        saveGoals(); saveSprints()
+        return next
+    }
+
+    // Restore (복원) a release: bring its goals back into the active list, reopen its sprint
+    // (so it returns to 스프린트 관리), and drop the release record.
+    func restoreRelease(id: String) {
+        guard let ri = releases.firstIndex(where: { $0.id == id }) else { return }
+        let sp = releases[ri].sprint
+        let ids = Set(releases[ri].goalIds)
+        for i in goals.indices where goals[i].releaseId == id || ids.contains(goals[i].id) {
+            goals[i].released = false; goals[i].releaseId = ""
+        }
+        if sp > 0, let si = sprints.firstIndex(where: { $0.number == sp }) { sprints[si].closed = false }
+        releases.remove(at: ri)
+        saveGoals(); saveReleases(); saveSprints()
+    }
+
+    private func loadReleases() {
+        guard FileManager.default.fileExists(atPath: releasesURL.path),
+              let data = try? Data(contentsOf: releasesURL),
+              let r = try? JSONDecoder().decode([Release].self, from: data) else { return }
+        releases = r
+    }
+    private func saveReleases() {
+        if let data = try? JSONEncoder().encode(releases) {
+            try? data.write(to: releasesURL, options: .atomic)
+        }
+    }
+
+    // Next sprint number: max existing + 1, never reused (mirrors nextSeq for goals).
+    private func nextSprintNumber() -> Int { (sprints.map { $0.number }.max() ?? 0) + 1 }
+
+    // Next user-facing code "YY-n": YY = 2-digit current year, n = max existing n for that
+    // year + 1. Year-scoped sequence keeps codes short, unique, and meaningful (26-1, 26-2…).
+    private func nextSprintCode() -> String {
+        let yy = Calendar.current.component(.year, from: Date()) % 100
+        let prefix = "\(yy)-"
+        let maxN = sprints.compactMap { s -> Int? in
+            guard s.code.hasPrefix(prefix) else { return nil }
+            return Int(s.code.dropFirst(prefix.count))
+        }.max() ?? 0
+        return "\(prefix)\(maxN + 1)"
+    }
+    // Add a duration tag to a date (1d/2d/3d/1w/2w/1m). Used to auto-fill targetAt.
+    private func addDuration(_ d: Date, _ kind: String) -> Date {
+        var c = DateComponents()
+        switch kind {
+        case "2d": c.day = 2
+        case "3d": c.day = 3
+        case "1w": c.day = 7
+        case "2w": c.day = 14
+        case "1m": c.month = 1
+        default:   c.day = 1   // 1d
+        }
+        return Calendar.current.date(byAdding: c, to: d) ?? d
+    }
+
+    // Create a sprint. startAt auto-fills to now, targetAt to now + duration (both editable).
+    @discardableResult
+    func createSprint(goalText: String, durationKind: String) -> Sprint {
+        let dur = Self.validDurations.contains(durationKind) ? durationKind : "1d"
+        let now = Date()
+        let s = Sprint(number: nextSprintNumber(), code: nextSprintCode(),
+                       goalText: goalText.trimmingCharacters(in: .whitespacesAndNewlines),
+                       durationKind: dur, startAt: now, targetAt: addDuration(now, dur),
+                       createdAt: now)
+        sprints.append(s)
+        saveSprints()
+        return s
+    }
+    // Update a sprint. Each arg is applied only when provided. Changing the duration
+    // recomputes targetAt from startAt UNLESS targetAt is explicitly supplied too. The
+    // date args are Date?? so .none = leave alone, .some(nil) = clear, .some(date) = set.
+    func updateSprint(number: Int, goalText: String? = nil, durationKind: String? = nil,
+                      startAt: Date?? = nil, targetAt: Date?? = nil) {
+        guard let idx = sprints.firstIndex(where: { $0.number == number }) else { return }
+        if let t = goalText { sprints[idx].goalText = t.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if let d = durationKind, Self.validDurations.contains(d) {
+            sprints[idx].durationKind = d
+            if case .none = targetAt, let st = sprints[idx].startAt {
+                sprints[idx].targetAt = addDuration(st, d)   // keep target in step with duration
+            }
+        }
+        if case let .some(s) = startAt { sprints[idx].startAt = s }
+        if case let .some(t) = targetAt { sprints[idx].targetAt = t }
+        saveSprints()
+    }
+    // Delete a sprint definition and unassign every goal that pointed at it (-> backlog).
+    func deleteSprint(number: Int) {
+        sprints.removeAll { $0.number == number }
+        for i in goals.indices where goals[i].sprint == number { goals[i].sprint = 0 }
+        saveSprints(); saveGoals()
+    }
+    private func loadSprints() {
+        guard FileManager.default.fileExists(atPath: sprintsURL.path),
+              let data = try? Data(contentsOf: sprintsURL),
+              let s = try? JSONDecoder().decode([Sprint].self, from: data) else { return }
+        sprints = s
+        migrateSprints()
+    }
+    // Backfill code (YY-n) and auto dates for sprints saved before those fields existed.
+    private func migrateSprints() {
+        var changed = false
+        for i in sprints.indices where sprints[i].code.isEmpty {
+            sprints[i].code = nextSprintCode(); changed = true
+        }
+        for i in sprints.indices where sprints[i].startAt == nil {
+            let base = sprints[i].createdAt.timeIntervalSince1970 > 0 ? sprints[i].createdAt : Date()
+            sprints[i].startAt = base
+            if sprints[i].targetAt == nil { sprints[i].targetAt = addDuration(base, sprints[i].durationKind) }
+            changed = true
+        }
+        if changed { saveSprints() }
+    }
+    private func saveSprints() {
+        if let data = try? JSONEncoder().encode(sprints) {
+            try? data.write(to: sprintsURL, options: .atomic)
+        }
     }
 
     // Change a goal's workflow status, banking tracked time on every transition.

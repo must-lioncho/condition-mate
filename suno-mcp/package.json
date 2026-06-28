@@ -1,0 +1,25 @@
+{
+  "name": "suno-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Personal MCP server that wraps Suno's internal web API for music generation automation",
+  "bin": {
+    "suno-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

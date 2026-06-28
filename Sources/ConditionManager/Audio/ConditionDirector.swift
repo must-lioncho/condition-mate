@@ -25,6 +25,16 @@ final class ConditionDirector {
     private let minTrackDwell: TimeInterval = 90.0    // min seconds a track plays before an organic switch
     private let dislikeCooldown: TimeInterval = 2 * 3600 // disliked track skipped for 2h
 
+    // Scene mapping (BGM 시작/전이 전략, see doc/bgm-management.md §3). The user
+    // pins specific songs to specific moments by name rather than by nearest BPM:
+    //   opening : 096 유리문 속 세계  — login/entry theme played on first launch
+    //   settled : 105 새 출발 엔딩    — "starting village" settle after the hold window
+    //   release : 082 창가의 바람     — recovery track played when entering RELEASE
+    private static let openingKeyword = "유리문"
+    private static let settledKeyword = "새 출발 엔딩"
+    private static let releaseKeyword = "창가의 바람"
+    private let openingHoldMinutes: TimeInterval = 5.0 // 096 → 105 handoff at 5 min
+
     private(set) var phase: Phase = .warmup
     private(set) var targetBPM: Double = 70
     private(set) var lastNorm: Double = 0             // last activity/peak ratio (for logging)
@@ -32,6 +42,14 @@ final class ConditionDirector {
     private var plateauCount = 0
     private var releaseUntil: Date?
     private var lastTrackChange: Date?               // when the current track started (for min-dwell)
+
+    // Opening sequence: on the first active start after launch, script the scene
+    // (096 유리문 → after 5 min → 105 새 출발 엔딩) instead of BPM-driven selection,
+    // then hand control back to the normal state machine. Per-process: plays once
+    // per launch (not reset by stop()), so toggling within a launch won't replay it.
+    private var openingPlayed = false                // opening initiated this launch
+    private var openingActive = false                // currently inside the scripted opening
+    private var openingStartedAt: Date?
 
     // IDLE (ambient) mode: while the user is away (no input), we don't go silent —
     // we hold the slowest available track at a softened volume. The decision timer
@@ -80,7 +98,56 @@ final class ConditionDirector {
         targetBPM = activeMinBPM
         plateauCount = 0
         releaseUntil = nil
+        // First active start of this launch: play the scripted opening scene
+        // (096 유리문) instead of the nearest-BPM track. Falls back to normal
+        // selection if the scene track isn't in the library.
+        if !openingPlayed, let opening = library.track(matchingKeyword: Self.openingKeyword) {
+            openingPlayed = true
+            openingActive = true
+            openingStartedAt = Date()
+            lastTrackChange = Date()
+            audio.play(url: opening.url, title: opening.title)
+            armDecisionTimer()
+            return
+        }
+        openingPlayed = true
         resumeSession()
+    }
+
+    // The scripted opening's once-per-launch handoff: after the hold window, settle
+    // into 105 새 출발 엔딩, then return control to normal warmup so adaptive tempo
+    // takes over organically from the next tick.
+    private func tickOpening() {
+        guard let startedAt = openingStartedAt else { openingActive = false; return }
+        guard Date().timeIntervalSince(startedAt) >= openingHoldMinutes * 60 else { return }
+        if let settled = library.track(matchingKeyword: Self.settledKeyword) {
+            lastTrackChange = Date()
+            audio.play(url: settled.url, title: settled.title)
+        }
+        openingActive = false
+        phase = .warmup
+        targetBPM = activeMinBPM
+        plateauCount = 0
+        WorkerRegistry.shared.recordRun("director",
+            why: "오프닝 종료 (\(Int(openingHoldMinutes))분 경과)",
+            effect: "시작 마을 정착 → 105 새 출발 엔딩, 적응 제어 재개")
+    }
+
+    private func armDecisionTimer() {
+        if timer == nil {
+            timer = Timer.scheduledTimer(withTimeInterval: decisionInterval, repeats: true) { [weak self] _ in
+                self?.tick()
+            }
+        }
+    }
+
+    // Condition-mate seam (see Plugins/ConditionMate, .doc/condition-mate.md). A connected
+    // mate is the optional comrade above this executor: it hands down a Cue (intent) and we
+    // translate it via the primitives we already have. Stage 1 handles the mood-band switch
+    // (the cleanest existing public path); energyBias/narration/forced events are wired in
+    // later stages. A default cue (no profileKey) leaves autonomous control alone.
+    func apply(cue: Cue) {
+        if let key = cue.profileKey { applyProfile(BGMProfile.by(key: key)) }
     }
 
     // Switch the active tempo band to a per-app BGM profile. Re-seats the
@@ -161,11 +228,7 @@ final class ConditionDirector {
         // back to the session level immediately instead of lingering on the slow
         // idle track.
         applyTrack(force: true)
-        if timer == nil {
-            timer = Timer.scheduledTimer(withTimeInterval: decisionInterval, repeats: true) { [weak self] _ in
-                self?.tick()
-            }
-        }
+        armDecisionTimer()
     }
 
     // The slowest sensible tempo for ambient idle: the slowest track in the
@@ -183,11 +246,7 @@ final class ConditionDirector {
         } else {
             audio.resume()
         }
-        if timer == nil {
-            timer = Timer.scheduledTimer(withTimeInterval: decisionInterval, repeats: true) { [weak self] _ in
-                self?.tick()
-            }
-        }
+        armDecisionTimer()
     }
 
     // Seconds remaining in a release window, for UI display (nil if not releasing).
@@ -221,6 +280,10 @@ final class ConditionDirector {
     }
 
     private func tick() {
+        // During the scripted opening, suspend adaptive decisions and just watch
+        // for the 5-min handoff to 105 새 출발 엔딩.
+        if openingActive { tickOpening(); return }
+
         let minBPM = activeMinBPM
         let maxBPM = activeMaxBPM
         let releaseBPM = minBPM + (maxBPM - minBPM) * 0.1 // gentle floor for recovery
@@ -251,6 +314,12 @@ final class ConditionDirector {
                     releaseUntil = Date().addingTimeInterval(Settings.shared.releaseMinutes * 60)
                     targetBPM = releaseBPM
                     plateauCount = 0
+                    // Pin the release scene (082 창가의 바람) on entry; later release
+                    // ticks hold it via min-dwell. Fall through to nearest-BPM if absent.
+                    if let release = library.track(matchingKeyword: Self.releaseKeyword) {
+                        lastTrackChange = Date()
+                        audio.play(url: release.url, title: release.title)
+                    }
                 }
             } else {
                 plateauCount = max(0, plateauCount - 1)

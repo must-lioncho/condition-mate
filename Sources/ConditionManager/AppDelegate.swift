@@ -13,22 +13,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let reviewStore = ReviewStore()
     let trackPrefs = TrackPreferenceStore()
     let trackEvents = TrackEventLog()
+    let pluginStore = PluginStore()
+    let chatStore = ChatStore()
     private(set) var director: ConditionDirector!
 
     // Local dashboard web server (loopback only, started on demand).
     private lazy var dashboard = DashboardServer(
-        html: { DashboardContent.html() },
+        html: { DashboardContent.html(lastView: Settings.shared.lastView, doneCutoff: Settings.shared.doneCutoff, uiPrefs: Settings.shared.uiPrefs) },
         data: { [weak self] in self?.dashboardData() ?? "{}" },
         live: { [weak self] in self?.liveData() ?? "{}" },
         post: { [weak self] path, body in self?.handlePost(path, body) ?? "{}" },
-        file: { [weak self] path in self?.serveEvidence(path) },
+        file: { [weak self] path in
+            if path.hasPrefix("/chat-img/") { return self?.serveChatImage(path) }
+            return self?.serveEvidence(path)
+        },
         page: { [weak self] path in
+            if path.hasPrefix("/goal") { return self?.goalPage(path) }
             if path.hasPrefix("/worker-log") { return self?.workerLogAllPage(path) }
             if path.hasPrefix("/worker") { return self?.workerLogPage(path) }
             if path.hasPrefix("/breakdown") { return self?.breakdownPage(path) }
             return self?.transcriptPage(path)
         },
-        loopFeed: { [weak self] in self?.loopQueueJSON() ?? "{}" }
+        loopFeed: { [weak self] in self?.loopQueueJSON() ?? "{}" },
+        chat: { [weak self] in self?.chatJSON() ?? "{}" }
     )
     private var minuteInput = 0   // input-present seconds while working (any app), this minute
     private var minuteAppSeconds: [String: Int] = [:] // frontmost seconds per app this minute
@@ -41,6 +48,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuController: MenuController!
     private var heartbeat: Timer?
     private var tick: Int = 0
+    // Smooth menu-bar APM: the heartbeat only fires at 1 Hz, so reading instantAPM
+    // straight into the title makes the number jump in big steps every second. A
+    // dedicated ~20 Hz timer glides a displayed value toward the live target so the
+    // digit rises and falls smoothly instead of stuttering.
+    private var titleTimer: Timer?
+    private var displayedAPM: Double = 0
     // Last values written to the worker log, so high-frequency workers log only on
     // change instead of one line per fire (see onHeartbeat).
     private var lastLoggedStatus = ""
@@ -105,6 +118,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // 응답 대기 (slice of design B). Only sessions touched within this window are revived,
     // so an ancient, abandoned session is never resurrected. Tunable (CM_RECONCILE_WINDOW).
     private let reconcileWindow = Double(ProcessInfo.processInfo.environment["CM_RECONCILE_WINDOW"] ?? "") ?? 21600
+    // Reap window for an abandoned 응답 대기 goal: a session parked for a human whose
+    // transcript stays silent this long is treated as abandoned (the user closed it, or
+    // forked it into a new session_id) and retired to 취소(cancelled). Without this, waiting
+    // is a one-way trap — priority-1 can't resume a transcript that never changes again and
+    // SessionEnd never fires on app-close/fork — so the count grows forever and drifts from
+    // Claude Code's live-session view. cancelled (not done) keeps it out of completion metrics
+    // and hidden by default. Reap is terminal (recordSession + reconcile both skip cancelled,
+    // so it never bounces back), so keep this comfortably longer than a plausible human break;
+    // the user can manually reopen if they return to that exact session. Tunable (CM_WAIT_REAP).
+    private let waitReap = Double(ProcessInfo.processInfo.environment["CM_WAIT_REAP"] ?? "") ?? 3600
     // Per-session transcript size cache: re-parse the tail only when the file grew,
     // so an idle/waiting session costs a cheap stat, not a full read, each tick.
     private var sessionSeenSize: [String: Int] = [:]
@@ -140,6 +163,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.onHeartbeat()
         }
 
+        // Glide the menu-bar APM digit between the 1 Hz heartbeats so it flows
+        // smoothly instead of jumping. Runs in .common mode so it keeps ticking
+        // while the menu is open.
+        let tt = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
+            self?.updateStatusTitle()
+        }
+        RunLoop.main.add(tt, forMode: .common)
+        titleTimer = tt
+
         registerWorkers()
 
         // Seed one sample so the dashboard isn't empty on first open.
@@ -172,6 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         activity.stop()
         bard?.stop()
         heartbeat?.invalidate()
+        titleTimer?.invalidate()
     }
 
     // MARK: - Workers
@@ -185,22 +218,155 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sampleInterval = Double(ProcessInfo.processInfo.environment["CM_SAMPLE_SEC"] ?? "") ?? 60
         r.register(id: "heartbeat", name: "코어 루프",
                    detail: "1초마다 시간 적립·세션 게이팅·상태바 갱신", interval: 1)
-        r.register(id: "session-reconcile", name: "세션 상태 동기화",
-                   detail: "트랜스크립트로 세션 진행중·응답 대기 실시간 판정", interval: 1)
         r.register(id: "activity-sample", name: "활동 샘플",
                    detail: "키·마우스 입력률 평활화(APM 산출)", interval: 5)
         r.register(id: "browser-domain", name: "브라우저 도메인",
                    detail: "활성 탭 도메인 갱신(가치 분류용)", interval: 5)
-        r.register(id: "director", name: "BGM 디렉터",
-                   detail: "활동률 기반 BGM 템포 결정(세션 활성 시)", interval: 20)
+        // The BGM 디렉터 worker is owned by 컨디션 메이트 (registered in syncPluginWorkers),
+        // not core — installing that plugin is what brings BGM online.
         r.register(id: "autosave", name: "상태 저장",
                    detail: "누적 시간 디스크 플러시", interval: 30)
-        r.register(id: "title-stamp", name: "세션 제목 스탬프",
-                   detail: "데스크톱 세션 제목에 [seq] 재기입", interval: 30)
         r.register(id: "bard", name: "메뉴바 음유시인",
                    detail: "분당 버프 애니메이션(세션 활성 시)", interval: 60)
         r.register(id: "timeline-sample", name: "타임라인 기록",
                    detail: "분 단위 활동 샘플을 대시보드 타임라인에 적립", interval: sampleInterval)
+        // QA agent: an EXTERNAL automation (launchd → claude -p, see Scripts/qa-scan.sh)
+        // that screenshots the dashboard, flags UI rendering breakage, and files a goal
+        // doc. The app only observes it — each run is reported via POST /api/worker/ping.
+        // owner "qa" renders as a distinct 자동화 badge. It reads 유휴 whenever the
+        // launchd job isn't pinging (which is the truth). The scan period is user-set in
+        // qa-interval-sec (default 600=10분, via Scripts/qa-set-interval.sh); read it so
+        // the dashboard 주기 column matches the real cadence (refreshed on next launch).
+        r.register(id: "qa-agent", name: "QA 점검",
+                   detail: "대시보드 UI 렌더링 깨짐 탐지 · goal 문서 자동 생성",
+                   interval: Self.qaIntervalSeconds(), owner: "qa",
+                   enabled: !FileManager.default.fileExists(atPath: Self.qaDisabledFlag.path))
+        // QA fix agent: event-driven. qa-scan.sh fires it (detached) whenever the
+        // inspection agent files a goal; it fixes the UI in an isolated git worktree and
+        // reports here. Not periodic — interval is display-only; it reads 유휴 between fixes.
+        r.register(id: "qa-fix", name: "QA 수정",
+                   detail: "goal 생성 시 트리거 · 격리 worktree에서 UI 깨짐 자동 수정·빌드",
+                   interval: Self.qaIntervalSeconds(), owner: "qa",
+                   enabled: !FileManager.default.fileExists(atPath: Self.qaFixDisabledFlag.path))
+        // Bug-hunt agent: a LONG-RUNNING (default 4h) hunt for FUNCTIONAL/LOGIC bugs —
+        // wrong behavior a user hits (e.g. a 완료 filter that doesn't actually hide 완료
+        // items), as opposed to the qa-agent's UI-rendering breakage. Run BY HAND at the
+        // end of the day (Scripts/bug-hunt.sh); it reasons over the source for hours, files
+        // a goal per confirmed bug, and never fixes. The app only observes it via the same
+        // POST /api/worker/ping. Interval here is the round cadence (display-only); the row
+        // reads 유휴 outside an active hunt. Toggleable (꺼짐 writes bug-hunt-disabled).
+        r.register(id: "bug-hunt", name: "버그 헌트",
+                   detail: "퇴근 시 수동 실행 · 최소 4시간 기능·로직 버그 탐색 · goal 문서 자동 생성",
+                   interval: Self.bugHuntRoundSeconds(), owner: "qa",
+                   enabled: !FileManager.default.fileExists(atPath: Self.bugHuntDisabledFlag.path))
+        // Claude Desktop's session workers are NOT registered here — they are owned by
+        // the plugin and appear/disappear with its connection (see syncPluginWorkers).
+        syncPluginWorkers()
+    }
+
+    // The QA agent's scan period, read from the same qa-interval-sec file the runner
+    // script reads (data dir). Default 600s (10분); floored at 60s. Display-only here —
+    // the actual cadence is enforced by qa-scan.sh's interval gate.
+    private static func qaIntervalSeconds() -> Double {
+        let file = AppPaths.base.appendingPathComponent("qa-interval-sec")
+        guard let raw = try? String(contentsOf: file, encoding: .utf8),
+              let v = Int(raw.trimmingCharacters(in: .whitespacesAndNewlines)), v >= 60 else {
+            return 600
+        }
+        return Double(v)
+    }
+
+    // The bug-hunt agent's per-round cadence, read from the same bug-hunt-round-sec file
+    // the runner reads (data dir). Default 1200s (20분); floored at 300s (5분). Display-only
+    // here — the hunt's real pacing is enforced by Scripts/bug-hunt.sh.
+    private static func bugHuntRoundSeconds() -> Double {
+        let file = AppPaths.base.appendingPathComponent("bug-hunt-round-sec")
+        guard let raw = try? String(contentsOf: file, encoding: .utf8),
+              let v = Int(raw.trimmingCharacters(in: .whitespacesAndNewlines)), v >= 300 else {
+            return 1200
+        }
+        return Double(v)
+    }
+
+    // Flag files in the data dir that the runner script (qa-scan.sh) shares with the app:
+    //   qa-disabled   present  -> the scan is OFF (the 꺼짐 toggle)
+    //   qa-force-run  present  -> next base tick runs once now, bypassing the gates
+    static var qaDisabledFlag: URL { AppPaths.base.appendingPathComponent("qa-disabled") }
+    static var qaFixDisabledFlag: URL { AppPaths.base.appendingPathComponent("qa-fix-disabled") }
+    static var qaForceRunFlag: URL { AppPaths.base.appendingPathComponent("qa-force-run") }
+    // bug-hunt-disabled present -> the bug-hunt agent is OFF (its 꺼짐 toggle). The runner
+    // (Scripts/bug-hunt.sh) refuses to start, and a running hunt stops at the next round.
+    static var bugHuntDisabledFlag: URL { AppPaths.base.appendingPathComponent("bug-hunt-disabled") }
+    // Latest DOM self-audit pushed by the dashboard ({width, ts, issues:[…]}).
+    static var qaAuditFile: URL { AppPaths.base.appendingPathComponent("qa-audit.json") }
+
+    // Best-effort path to the runner script, so "즉시 실행" can spawn it for true
+    // immediacy. Derived from the dev data dir (<repo>/.localdata → <repo>/Scripts).
+    // Returns nil for an installed app with no sibling repo (run-now falls back to the
+    // force-run flag, which the next launchd tick picks up).
+    static func qaScriptURL() -> URL? {
+        let candidate = AppPaths.base.deletingLastPathComponent()
+            .appendingPathComponent("Scripts/qa-scan.sh")
+        return FileManager.default.isExecutableFile(atPath: candidate.path) ? candidate : nil
+    }
+
+    // Run the QA scan once, immediately, bypassing the interval + change gates. Spawns
+    // the script detached (QA_FORCE=1) when reachable; otherwise drops the force-run flag
+    // for the next launchd tick. Never blocks — the script reports back via the ping.
+    func triggerQARunNow() {
+        if let script = Self.qaScriptURL() {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/bash")
+            p.arguments = [script.path]
+            var env = ProcessInfo.processInfo.environment
+            env["QA_FORCE"] = "1"
+            p.environment = env
+            do { try p.run() } catch {
+                try? Data().write(to: Self.qaForceRunFlag)   // fall back to the flag
+            }
+        } else {
+            try? Data().write(to: Self.qaForceRunFlag)
+        }
+    }
+
+    // Worker ids owned by the Claude Desktop plugin (registered on connect, removed on
+    // disconnect). Kept in one place so the heartbeat gating and the registry agree.
+    private let claudeWorkerIDs = ["session-reconcile", "title-stamp", "claude-sync-check"]
+
+    // Worker ids owned by the 컨디션 메이트 plugin (registered on install, removed on
+    // uninstall). The BGM director is the plugin's basic function; mate-tick is the
+    // connoisseur layer. mate-discord / mate-suno join in later stages.
+    private let mateWorkerIDs = ["director", "mate-tick"]
+
+    // Bring the plugin-owned workers in line with the plugin's connection state. Called
+    // at launch and after every plugin connect/disconnect/verify. Connecting Claude
+    // Desktop makes its three workers appear in the dashboard and start running;
+    // disconnecting removes them (sync pauses, existing goals are left untouched).
+    func syncPluginWorkers() {
+        let r = WorkerRegistry.shared
+        if pluginStore.isConnected("claude-desktop") {
+            r.register(id: "session-reconcile", name: "세션 상태 동기화",
+                       detail: "트랜스크립트로 세션 진행중·응답 대기 실시간 판정", interval: 1, owner: "claude-desktop")
+            r.register(id: "title-stamp", name: "세션 제목 스탬프",
+                       detail: "데스크톱 세션 제목에 [seq] 재기입", interval: 30, owner: "claude-desktop")
+            r.register(id: "claude-sync-check", name: "프로젝트 활성·싱크 점검",
+                       detail: "프로젝트별 활성 강도(5단계) 산출 · 연동 목표 transcript 누락 검사", interval: 30, owner: "claude-desktop")
+            pluginStore.refreshClaudeProjects()   // seed the project list before the first 30s tick
+        } else {
+            claudeWorkerIDs.forEach { r.unregister(id: $0) }
+        }
+
+        // 컨디션 메이트: installing the plugin brings BGM online (the director, its basic
+        // function) plus the mate decision loop. Uninstalling removes both — BGM goes silent
+        // (the heartbeat music gate stops the director when the plugin is not installed).
+        if pluginStore.isConnected("condition-mate") {
+            r.register(id: "director", name: "BGM 디렉터",
+                       detail: "활동률 기반 BGM 템포 결정(세션 활성 시)", interval: 20, owner: "condition-mate")
+            r.register(id: "mate-tick", name: "컨디션 메이트",
+                       detail: "상황 평가 후 음악 연출(Cue) 산출 — 활성 메이트가 결정", interval: 30, owner: "condition-mate")
+        } else {
+            mateWorkerIDs.forEach { r.unregister(id: $0) }
+        }
     }
 
     // MARK: - Heartbeat (1 Hz)
@@ -287,8 +453,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Gate music to the active session.
-        if s.musicEnabled && inSession && !musicFolderConfigured {
+        // Gate music to the active session — and to the 컨디션 메이트 plugin. BGM is the
+        // plugin's basic function, so it only runs while the plugin is installed; uninstalled
+        // means no music at all (the director is stopped and stays silent).
+        if !pluginStore.isConnected("condition-mate") {
+            if director.isRunning { director.stop() }
+        } else if s.musicEnabled && inSession && !musicFolderConfigured {
             // Playback would start but no music folder is set: nudge the user
             // (once per session) and offer to jump straight to folder selection.
             promptForMusicFolderIfNeeded()
@@ -345,15 +515,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 effect: "앱=\(sample.app) · tier=\(sample.tier) · 입력=\(sample.active)초 · BPM=\(sample.bpm)")
         }
 
-        // Reconcile session goal status from transcripts every heartbeat (cheap stat per
-        // goal; full re-parse only on growth) — keeps 진행중 real-time (priority 1).
-        reconcileSessionStates(); WorkerRegistry.shared.recordRun("session-reconcile")
+        // Claude Desktop integration: session-reconcile, title-stamp, and the sync check
+        // only run while the plugin is connected (valid folder). Disconnecting pauses
+        // them — existing session goals keep their last status, no transcripts read.
+        let claudeOn = pluginStore.isConnected("claude-desktop")
+        if claudeOn {
+            // Reconcile session goal status from transcripts every heartbeat (cheap stat per
+            // goal; full re-parse only on growth) — keeps 진행중 real-time (priority 1).
+            reconcileSessionStates(); WorkerRegistry.shared.recordRun("session-reconcile")
 
-        // Policy 3: re-stamp [seq] onto Claude desktop session titles so a human can
-        // eyeball-match a desktop session to its goal (file IO, throttled, off-main).
-        if tick % 30 == 0 { stampSessionTitles()
-            WorkerRegistry.shared.recordRun("title-stamp",
-                why: "30초 주기 세션 제목 동기화", effect: "데스크톱 세션 제목에 [seq] 재기입 점검") }
+            // Policy 3: re-stamp [seq] onto Claude desktop session titles so a human can
+            // eyeball-match a desktop session to its goal (file IO, throttled, off-main).
+            if tick % 30 == 0 { stampSessionTitles()
+                WorkerRegistry.shared.recordRun("title-stamp",
+                    why: "30초 주기 세션 제목 동기화", effect: "데스크톱 세션 제목에 [seq] 재기입 점검") }
+
+            // Quality check: every 30s confirm each session-linked goal's transcript is
+            // resolvable. Any missing → 데이터 싱크 오류 (red status + error log line).
+            if tick % 30 == 0 { runClaudeSyncCheck() }
+        }
+
+        // 컨디션 메이트: every 30s, the active mate reads the situation and hands the director
+        // its next Cue. Only runs while the plugin is connected; a default cue is a no-op
+        // (autonomous control). Aligned to the same 30s cadence as the worker's interval.
+        if pluginStore.isConnected("condition-mate") && tick % 30 == 0 {
+            runMateTick(isIdle: isIdle)
+        }
 
         // Total span (= 대시보드 토탈 시간) — recompute from samples periodically. The
         // value is minute-grained, so a 10s refresh is plenty and keeps file IO low.
@@ -457,10 +644,108 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         why: pendingAsk ? "AskUserQuestion으로 사람 응답 대기" : "턴 종료 후 다음 입력 대기",
                         effect: "세션 '\(goalLabel(goal))' 대기열 → 응답 대기 복원")
                 }
+            case "waiting":
+                // A live session leaves waiting via priority-1 above (its transcript grows
+                // again). One that never does — closed by the user, or superseded by a fork
+                // under a new session_id — would otherwise sit in 응답 대기 forever, so the
+                // count only grows and diverges from Claude Code's recent-session list. Past
+                // waitReap of silence, retire it to 취소(cancelled): abandoned, not done, and
+                // terminal (it won't bounce back). This is also what converges forks — the
+                // orphaned parent goes quiet and is reaped without any prompt matching.
+                if stale >= waitReap {
+                    reviewStore.setStatus(id: goal.id, status: "cancelled")
+                    WorkerLog.shared.append("session-reconcile",
+                        why: "응답 대기 \(Int(stale))초 무변경(회수 임계 \(Int(waitReap))초) — 세션 방치/포크로 판단",
+                        effect: "세션 '\(goalLabel(goal))' 응답 대기 → 취소")
+                }
             default:
-                break   // waiting stays waiting until it grows again (priority 1 resumes it)
+                break
             }
         }
+    }
+
+    // Quality check for the Claude Desktop plugin (claude-sync-check worker, 30s). For
+    // every active session-linked goal, confirm its transcript is resolvable — at the
+    // stored path or as <connectedFolder>/<sessionId>.jsonl. Any goal whose transcript
+    // is missing is a 데이터 싱크 오류: the folder moved, the session file was deleted, or
+    // the goal points at a session that isn't in the connected folder. Missing ones are
+    // logged as an error (red 상태); a clean pass clears the flag.
+    private func runClaudeSyncCheck() {
+        let fm = FileManager.default
+        let folder = pluginStore.connectedFolder("claude-desktop")
+        let root = PluginStore.claudeProjectsRoot(folder)
+
+        // Refresh per-project activity (5-level intensity) for the dashboard, then log a
+        // concise summary so the worker timeline shows what's active right now.
+        pluginStore.refreshClaudeProjects()
+        let projects = pluginStore.claudeProjects
+        let active = projects.filter { $0.inUse }                 // level 5 (≤5분)
+        let recent = projects.filter { $0.level >= 1 }            // within a week
+        let topName = projects.first.map { "\($0.name)(\(Formatting.agoLabel($0.lastActiveSec)))" } ?? "-"
+
+        // Quality: every active session-linked goal's transcript must be resolvable in the
+        // connected root (or at its stored path). Missing ones are a 데이터 싱크 오류.
+        let live = reviewStore.goals.filter {
+            !$0.sessionId.isEmpty &&
+            ($0.status == "in_progress" || $0.status == "waiting" || $0.status == "backlog")
+        }
+        var missing: [ReviewStore.Goal] = []
+        for goal in live {
+            let stored = !goal.transcriptPath.isEmpty && fm.fileExists(atPath: goal.transcriptPath)
+            let inRoot = root.map { transcriptExists(sessionId: goal.sessionId, under: $0) } ?? false
+            if !stored && !inRoot { missing.append(goal) }
+        }
+        let activitySummary = "활성 \(active.count)개 · 최근(주간) \(recent.count)개 · 최다활성 \(topName)"
+        if missing.isEmpty {
+            WorkerRegistry.shared.recordRun("claude-sync-check",
+                why: "프로젝트 \(projects.count)개 활성 점검 · 연동 목표 \(live.count)개 transcript 검사",
+                effect: "정상 — \(activitySummary) · transcript 누락 0")
+            WorkerRegistry.shared.clearError("claude-sync-check")
+        } else {
+            let labels = missing.prefix(5).map { "#\($0.seq) \(goalLabel($0))" }.joined(separator: ", ")
+            let more = missing.count > 5 ? " 외 \(missing.count - 5)건" : ""
+            WorkerRegistry.shared.recordError("claude-sync-check",
+                why: "연동 목표 \(live.count)개 중 transcript 누락 · \(activitySummary)",
+                detail: "데이터 싱크 오류 — transcript 없음: \(labels)\(more)")
+        }
+    }
+
+    // 컨디션 메이트 decision loop (mate-tick, 30s). Assemble the observation context, ask the
+    // active mate for its next Cue, and pass it to the director. The mate is the optional
+    // comrade above the executor; the director stays the executor. Stage 1 mates return a
+    // default cue (no-op), so this exercises the full seam without changing playback yet.
+    private func runMateTick(isIdle: Bool) {
+        let ctx = MateContext(
+            date: Date(),
+            activityRate: activity.activityRate,
+            isIdle: isIdle,
+            frontAppLabel: activeAppLabel,
+            phase: director.isIdleMode ? "IDLE"
+                : (director.isActive ? director.phase.rawValue : "-"),
+            targetBPM: director.targetBPM,
+            profileLabel: director.activeProfileLabel,
+            libMinBPM: library.bpmRange?.min,
+            libMaxBPM: library.bpmRange?.max
+        )
+        let mate = MateRegistry.shared.current
+        let cue = mate.decide(context: ctx)
+        director.apply(cue: cue)
+        WorkerRegistry.shared.recordRun("mate-tick",
+            why: "30초 주기 상황 평가 (\(mate.name))",
+            effect: cue.summary)
+    }
+
+    // Is <root>/<anyProject>/<sessionId>.jsonl present? (also accepts a transcript sitting
+    // directly in root, the single-project-folder case). Bounded one level deep.
+    private func transcriptExists(sessionId: String, under root: URL) -> Bool {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: root.appendingPathComponent(sessionId + ".jsonl").path) { return true }
+        let children = (try? fm.contentsOfDirectory(at: root,
+            includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
+        for dir in children where (try? dir.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            if fm.fileExists(atPath: dir.appendingPathComponent(sessionId + ".jsonl").path) { return true }
+        }
+        return false
     }
 
     // Policy 3 (.doc/session-lifecycle-policy.md): keep every session-linked goal's [seq]
@@ -510,9 +795,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the same redline-relative number the dashboard gauge tweens, for in-the-moment
         // focus and a bit of fun. Idle has no APM, so it falls through to the clock below.
         if menuBarMode == .sports && isWorking {
+            // Glide the displayed value toward the live target. Asymmetric envelope
+            // (fast attack, slower release) keeps bursts twitchy while the descent
+            // stays smooth — matching the dashboard gauge's feel. At ~20 Hz these
+            // alphas converge in a few hundred ms; snap when essentially there so the
+            // digit settles instead of crawling the last fraction.
+            let target = activity.instantAPM
+            let alpha = target >= displayedAPM ? 0.45 : 0.20
+            displayedAPM += (target - displayedAPM) * alpha
+            if abs(target - displayedAPM) < 0.5 { displayedAPM = target }
             // Pad to 4 figure-spaces (U+2007, digit-width) so the title width is fixed —
             // APM never exceeds 4 digits, so it stops growing and never jiggles.
-            let s = String(Int(activity.instantAPM))
+            let s = String(Int(displayedAPM.rounded()))
             let pad = String(repeating: "\u{2007}", count: max(0, 4 - s.count))
             button.title = " ⚡" + pad + s
             return
@@ -830,6 +1124,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reviewStore.connectSession(goalId: goalId, sessionId: sid, transcriptPath: url.path)
     }
 
+    // Open a native folder picker to connect a plugin to a project folder. Runs on the
+    // main thread (modal). The chosen folder is verified by PluginStore; an arbitrary
+    // folder (no Claude transcript inside) is recorded as 잘못된 연결, not silently OK.
+    private func connectPluginViaPicker(pluginId: String) {
+        let panel = NSOpenPanel()
+        panel.title = "플러그인 폴더 연결"
+        panel.prompt = "연결"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        // Folder-based plugins only (toggle plugins install without a picker).
+        panel.message = "Claude 루트 폴더 ~/.claude 를 선택하세요 (모든 프로젝트 세션을 연동)"
+        // Default to ~/.claude so the user lands on the root (all projects), not one project.
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude", isDirectory: true)
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        pluginStore.connect(pluginId: pluginId, folderPath: url.path)
+        pluginStore.refreshClaudeProjects()   // populate the project list right away
+        syncPluginWorkers()                    // connecting activates the plugin's workers
+    }
+
     // GET /transcript?goal=<id> -> a readable HTML rendering of the goal's transcript.
     // Returns nil (404) only when the goal id is unknown; a connected-but-missing file
     // still yields a page that explains the problem.
@@ -941,8 +1257,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var rows = ""
         for e in entries {
             let when = tf.string(from: Date(timeIntervalSince1970: Double(e.t) / 1000))
-            rows += "<tr><td class=\"t\">\(htmlEscape(when))</td>"
-                + "<td class=\"why\">\(htmlEscape(e.why))</td>"
+            let cls = e.level == "error" ? " style=\"color:#e2667d\"" : ""
+            let tag = e.level == "error" ? "⚠ " : ""
+            rows += "<tr\(cls)><td class=\"t\">\(htmlEscape(when))</td>"
+                + "<td class=\"why\">\(tag)\(htmlEscape(e.why))</td>"
                 + "<td class=\"eff\">\(htmlEscape(e.effect))</td></tr>"
         }
         let body = """
@@ -967,10 +1285,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             colorById[w.id] = palette[i % palette.count]
             nameById[w.id] = w.name
         }
-        var merged: [(t: Int, id: String, why: String, effect: String)] = []
+        var merged: [(t: Int, id: String, why: String, effect: String, level: String)] = []
         for w in workers {
             for e in WorkerLog.shared.recent(w.id, limit: 300) {
-                merged.append((e.t, w.id, e.why, e.effect))
+                merged.append((e.t, w.id, e.why, e.effect, e.level))
             }
         }
         merged.sort { $0.t > $1.t }
@@ -990,9 +1308,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let name = nameById[e.id] ?? e.id
             let dot = "<span style=\"display:inline-block;width:8px;height:8px;border-radius:50%;"
                 + "margin-right:6px;vertical-align:middle;background:\(color)\"></span>"
-            rows += "<tr><td class=\"t\">\(htmlEscape(when))</td>"
+            let rowStyle = e.level == "error" ? " style=\"color:#e2667d\"" : ""
+            let tag = e.level == "error" ? "⚠ " : ""
+            rows += "<tr\(rowStyle)><td class=\"t\">\(htmlEscape(when))</td>"
                 + "<td class=\"wk\" style=\"white-space:nowrap\">\(dot)\(htmlEscape(name))</td>"
-                + "<td class=\"why\">\(htmlEscape(e.why))</td>"
+                + "<td class=\"why\">\(tag)\(htmlEscape(e.why))</td>"
                 + "<td class=\"eff\">\(htmlEscape(e.effect))</td></tr>"
         }
         let body = """
@@ -1348,6 +1668,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "apm":\(nowAPM),"norm":\(nowNormStr),"gear":\(nowGearJSON),\
         "nextBpm":\(nowNextBpm),"nextTrack":\(nowNextTrackJSON)},\
         "review":\(reviewJSON()),\
+        "plugins":\(pluginStore.pluginsJSON()),\
         "workers":\(WorkerRegistry.shared.snapshotJSON()),\
         "samples":\(samples)}
         """
@@ -1398,7 +1719,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     + "\"status\":\(jsonString(g.status)),\"trackedSeconds\":\(g.trackedSeconds),\"startedAt\":\(started),\"waitingSince\":\(waiting),"
                     + "\"energy\":\(g.energy),\"agents\":[\(agents)],\"tokens\":\(g.tokens),\"value\":\(g.value),"
                     + "\"evidence\":[\(evidence)],\"sessionId\":\(jsonString(g.sessionId)),"
-                    + "\"targetAt\":\(target),\"completedAt\":\(completed)}"
+                    + "\"targetAt\":\(target),\"completedAt\":\(completed),"
+                    + "\"sprint\":\(g.sprint),\"released\":\(g.released),\"priority\":\(jsonString(g.priority))}"
+            }
+            .joined(separator: ",")
+        // Release log (newest first): when each commit happened + the value it produced.
+        let releases = reviewStore.releases
+            .map { rel -> String in
+                let titles = rel.titles.map { jsonString($0) }.joined(separator: ",")
+                let gids = rel.goalIds.map { jsonString($0) }.joined(separator: ",")
+                return "{\"id\":\(jsonString(rel.id)),\"sprint\":\(rel.sprint),"
+                    + "\"releasedAt\":\(rel.releasedAt.timeIntervalSince1970),\"value\":\(rel.value),"
+                    + "\"goalIds\":[\(gids)],\"titles\":[\(titles)]}"
+            }
+            .joined(separator: ",")
+        // Sprint definitions: code(YY-n) + 결과물 + 기간 + 시작/목표 날짜. closed = released.
+        let sprints = reviewStore.sprints
+            .map { s -> String in
+                let st = s.startAt.map { String($0.timeIntervalSince1970) } ?? "0"
+                let tg = s.targetAt.map { String($0.timeIntervalSince1970) } ?? "0"
+                return "{\"number\":\(s.number),\"code\":\(jsonString(s.code)),\"goalText\":\(jsonString(s.goalText)),"
+                    + "\"durationKind\":\(jsonString(s.durationKind)),\"startAt\":\(st),\"targetAt\":\(tg),\"closed\":\(s.closed)}"
+            }
+            .joined(separator: ",")
+        // AI dedup queue (the "later" pile): candidates parked for one-by-one review.
+        // Oldest first so the user works the backlog in arrival order.
+        let aiQueue = reviewStore.aiQueue
+            .map { item -> String in
+                let matches = item.matches.map { m -> String in
+                    "{\"seq\":\(m.seq),\"text\":\(jsonString(m.text)),\"why\":\(jsonString(m.why))}"
+                }.joined(separator: ",")
+                return "{\"id\":\(jsonString(item.id)),\"text\":\(jsonString(item.text)),"
+                    + "\"parent\":\(jsonString(item.parent)),\"note\":\(jsonString(item.note)),"
+                    + "\"matches\":[\(matches)],\"createdAt\":\(item.createdAt.timeIntervalSince1970)}"
             }
             .joined(separator: ",")
         let contribs = r.contributions
@@ -1408,7 +1761,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .map { "\(jsonString($0.key)):\(jsonString($0.value))" }
             .joined(separator: ",")
         func optInt(_ v: Int?) -> String { v.map(String.init) ?? "null" }
-        return "{\"goals\":[\(goals)],"
+        return "{\"goals\":[\(goals)],\"releases\":[\(releases)],\"sprints\":[\(sprints)],"
+            + "\"aiQueue\":[\(aiQueue)],"
             + "\"selfScore\":\(optInt(r.selfScore)),\"submittedSelf\":\(r.submittedSelf),"
             + "\"contributions\":{\(contribs)},\"notes\":{\(notes)},"
             + "\"aiScore\":\(optInt(r.aiScore)),\"aiNote\":\(jsonString(r.aiNote)),"
@@ -1443,23 +1797,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let obj = (body.data(using: .utf8)).flatMap {
             try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
         } ?? [:]
+        // AI dedup pass runs an external `claude -p` (seconds, blocking). Handle it HERE
+        // on the server thread — never inside the main.sync block below, or the whole UI
+        // would freeze while the model thinks. It only reads a goals snapshot, so it is
+        // safe off-main.
+        if path == "/api/goal/aiAdd" {
+            return aiDuplicateCheck(text: (obj["text"] as? String) ?? "",
+                                    parent: (obj["parent"] as? String) ?? "")
+        }
+        // Semantic search across ALL goals (including archived/released). Runs an external
+        // `claude -p` (seconds, blocking) — handle here off-main like aiAdd, never inside the
+        // main.sync block, so the UI never freezes while the model searches.
+        if path == "/api/goal/aiSearch" {
+            return aiSemanticSearch(query: (obj["query"] as? String) ?? "")
+        }
+        // Chat send runs `claude -p` (seconds) — handle off-main for the same reason.
+        if path == "/api/chat/send" {
+            return chatSend(text: (obj["text"] as? String) ?? "",
+                            images: (obj["images"] as? [[String: Any]]) ?? [],
+                            model: (obj["model"] as? String) ?? "")
+        }
+        // AI추가 중복 확인 다이얼로그 안의 대화 한 턴: 목표를 AI와 상의해 다듬는다. claude 호출.
+        if path == "/api/goal/aiChat" {
+            return aiGoalChat(candidate: (obj["candidate"] as? String) ?? "",
+                              matches: (obj["matches"] as? [[String: Any]]) ?? [],
+                              history: (obj["history"] as? [[String: Any]]) ?? [],
+                              message: (obj["message"] as? String) ?? "",
+                              images: (obj["images"] as? [[String: Any]]) ?? [],
+                              model: (obj["model"] as? String) ?? "")
+        }
         return DispatchQueue.main.sync {
             let day = reviewStore.todayKey
             switch path {
             case "/api/goal/add":
                 if let text = obj["text"] as? String {
-                    reviewStore.addGoal(text: text, parent: (obj["parent"] as? String) ?? "")
+                    let sprint = (obj["sprint"] as? NSNumber)?.intValue ?? Int((obj["sprint"] as? String) ?? "") ?? 0
+                    reviewStore.addGoal(text: text, parent: (obj["parent"] as? String) ?? "", sprint: sprint)
+                }
+            case "/api/chat/reset":
+                chatStore.reset()
+            case "/api/goal/queue/add":
+                // "later": park a flagged candidate for one-by-one review instead of
+                // adding it now (saves the energy of deciding right away).
+                if let text = obj["text"] as? String {
+                    let matches = (obj["matches"] as? [[String: Any]])?.map { m in
+                        ReviewStore.QueueMatch(seq: (m["seq"] as? NSNumber)?.intValue ?? 0,
+                                               text: (m["text"] as? String) ?? "",
+                                               why: (m["why"] as? String) ?? "")
+                    } ?? []
+                    reviewStore.addQueueItem(text: text, parent: (obj["parent"] as? String) ?? "",
+                                             note: (obj["note"] as? String) ?? "", matches: matches)
+                }
+            case "/api/goal/queue/resolve":
+                // Resolve one queued candidate: add (promote to goal), edit (rewrite text,
+                // keep queued), or skip (drop).
+                if let id = obj["id"] as? String {
+                    reviewStore.resolveQueueItem(id: id, action: (obj["action"] as? String) ?? "skip",
+                                                 text: obj["text"] as? String)
                 }
             case "/api/goal/remove":
                 if let id = obj["id"] as? String {
                     // Clean up notes/contributions for the goal and its children.
                     let removed = Set([id] + reviewStore.goals.filter { $0.parent == id }.map { $0.id })
+                    // Capture numbers before removal so we can locate attachment folders after.
+                    let removedSeqs = reviewStore.goals.filter { removed.contains($0.id) }.map { $0.seq }
                     var r = reviewStore.review(day)
                     removed.forEach { r.notes.removeValue(forKey: $0); r.contributions.removeValue(forKey: $0) }
                     reviewStore.saveReview(r, day: day)
                     reviewStore.removeGoal(id: id)
-                    // Drop any attached evidence files for the removed goal(s).
+                    // Drop attached files for the removed goal(s): the legacy UUID store and
+                    // the number-named folder's attachments/. The definition (goal.md) is kept.
                     removed.forEach { try? FileManager.default.removeItem(at: Self.evidenceDir(goalId: $0)) }
+                    removedSeqs.forEach { seq in
+                        if let dir = IssuePaths.attachmentsDir(seq: seq) {
+                            try? FileManager.default.removeItem(at: dir)
+                        }
+                    }
                 }
             case "/api/goal/note":
                 if let id = obj["id"] as? String {
@@ -1506,6 +1919,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let id = obj["id"] as? String {
                     DispatchQueue.main.async { [weak self] in self?.connectSessionViaPicker(goalId: id) }
                 }
+            case "/api/plugin/connect":
+                // Open a native folder picker so the user can attach a project folder to
+                // the plugin. Runs async on the next main-loop turn so the HTTP response
+                // returns immediately; the dashboard poll picks up the verified result.
+                if let id = obj["id"] as? String {
+                    DispatchQueue.main.async { [weak self] in self?.connectPluginViaPicker(pluginId: id) }
+                }
+            case "/api/plugin/disconnect":
+                if let id = obj["id"] as? String { pluginStore.disconnect(pluginId: id); syncPluginWorkers() }
+            case "/api/plugin/verify":
+                if let id = obj["id"] as? String { pluginStore.reverify(pluginId: id); syncPluginWorkers() }
+            case "/api/plugin/install":
+                // Toggle plugins (e.g. 컨디션 메이트): install IS the connection — no folder.
+                if let id = obj["id"] as? String { pluginStore.install(pluginId: id); syncPluginWorkers() }
+            case "/api/plugin/uninstall":
+                if let id = obj["id"] as? String { pluginStore.uninstall(pluginId: id); syncPluginWorkers() }
             case "/api/goal/energy":
                 if let id = obj["id"] as? String, let e = (obj["energy"] as? NSNumber)?.intValue {
                     reviewStore.setEnergy(id: id, energy: e)
@@ -1531,6 +1960,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let id = obj["id"] as? String, let v = (obj["value"] as? NSNumber)?.intValue {
                     reviewStore.setValue(id: id, value: v)
                 }
+            case "/api/goal/priority":
+                // Set 5-level priority. Accepts a batch ("ids":[...]) from the board's
+                // Cmd-drag paint, or a single "id" from the click picker.
+                if let p = obj["priority"] as? String {
+                    if let ids = obj["ids"] as? [String] {
+                        reviewStore.setGoalPriority(ids: ids, priority: p)
+                    } else if let id = obj["id"] as? String {
+                        reviewStore.setGoalPriority(ids: [id], priority: p)
+                    }
+                }
             case "/api/goal/target":
                 // Set/clear the planned target datetime (epoch seconds; 0/absent = clear).
                 if let id = obj["id"] as? String {
@@ -1541,15 +1980,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let id = obj["id"] as? String {
                     reviewStore.setCompletedAt(id: id, date: Self.parseEpoch(obj["completed"]))
                 }
+            case "/api/goal/sprint":
+                // Assign a goal's sprint number (0/absent = clear -> backlog).
+                if let id = obj["id"] as? String {
+                    let n = (obj["sprint"] as? NSNumber)?.intValue
+                        ?? Int((obj["sprint"] as? String) ?? "") ?? 0
+                    reviewStore.setGoalSprint(id: id, sprint: n)
+                }
+            case "/api/sprint/create":
+                reviewStore.createSprint(goalText: (obj["goalText"] as? String) ?? "",
+                                         durationKind: (obj["durationKind"] as? String) ?? "1d")
+            case "/api/sprint/update":
+                if let n = (obj["number"] as? NSNumber)?.intValue ?? Int((obj["number"] as? String) ?? "") {
+                    // Date args use Date?? semantics: key absent = leave alone; present = set/clear.
+                    let startAt: Date?? = obj.keys.contains("startAt") ? Optional(Self.parseEpoch(obj["startAt"])) : nil
+                    let targetAt: Date?? = obj.keys.contains("targetAt") ? Optional(Self.parseEpoch(obj["targetAt"])) : nil
+                    reviewStore.updateSprint(number: n,
+                                             goalText: obj["goalText"] as? String,
+                                             durationKind: obj["durationKind"] as? String,
+                                             startAt: startAt, targetAt: targetAt)
+                }
+            case "/api/sprint/delete":
+                if let n = (obj["number"] as? NSNumber)?.intValue ?? Int((obj["number"] as? String) ?? "") {
+                    reviewStore.deleteSprint(number: n)
+                }
+            case "/api/sprint/release":
+                // Commit the finished work of a sprint. sprint "all"/absent = across all
+                // sprints; otherwise the given number. Done+unreleased goals are snapshotted.
+                let sprint: Int?
+                if let s = obj["sprint"] as? String, s == "all" { sprint = nil }
+                else if let n = (obj["sprint"] as? NSNumber)?.intValue { sprint = n }
+                else if let s = obj["sprint"] as? String, let n = Int(s) { sprint = n }
+                else { sprint = nil }
+                reviewStore.releaseSprint(sprint)
+            case "/api/sprint/complete":
+                // Complete a sprint and roll forward: commit done goals, carry unfinished
+                // ones into a fresh successor (auto 24h), close the old one, advance the code.
+                if let n = (obj["number"] as? NSNumber)?.intValue ?? Int((obj["number"] as? String) ?? "") {
+                    reviewStore.completeSprint(n)
+                }
+            case "/api/release/restore":
+                // Bring a release's committed goals back into the active list.
+                if let id = obj["id"] as? String {
+                    reviewStore.restoreRelease(id: id)
+                }
             case "/api/goal/evidence/add":
                 if let id = obj["id"] as? String {
                     let kind = (obj["kind"] as? String) ?? "link"
                     if kind == "file", let dataURL = obj["data"] as? String,
                        let raw = Self.decodeDataURL(dataURL) {
-                        // Copy the upload into the app's evidence store, keyed by goal.
+                        // Copy the upload into the goal's number-named folder
+                        // (.claude/issue/goal-NN/attachments); fall back to the legacy
+                        // UUID-keyed store when the goal has no number yet (seq <= 0).
                         let name = Self.sanitizeFilename((obj["filename"] as? String) ?? "file")
                         let evId = UUID().uuidString
-                        let dir = Self.evidenceDir(goalId: id)
+                        let dir = attachmentsDir(forGoalId: id) ?? Self.evidenceDir(goalId: id)
                         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                         // Prefix with the evidence id so duplicate file names never collide.
                         let stored = evId + "-" + name
@@ -1570,6 +2055,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let id = obj["id"] as? String, let evId = obj["evidenceId"] as? String {
                     if let removed = reviewStore.removeEvidence(goalId: id, evidenceId: evId),
                        removed.kind == "file" {
+                        // Remove from whichever store holds it (new number-named folder
+                        // and/or the legacy UUID store).
+                        if let dir = attachmentsDir(forGoalId: id) {
+                            try? FileManager.default.removeItem(at: dir.appendingPathComponent(removed.filename))
+                        }
                         try? FileManager.default.removeItem(
                             at: Self.evidenceDir(goalId: id).appendingPathComponent(removed.filename))
                     }
@@ -1582,6 +2072,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 r.submittedSelf = true
                 reviewStore.saveReview(r, day: day)
+            case "/api/worker/ping":
+                // External workers (e.g. the QA agent launched by launchd) report a run
+                // here so the dashboard's 워커 상태 row reflects reality. recordRun/Error
+                // both no-op for an unregistered id, so only declared workers count.
+                //   status "error" -> red 오류 badge + error-level log line
+                //   anything else  -> clear any error, stamp a healthy run + log line
+                if let id = obj["id"] as? String {
+                    let status = (obj["status"] as? String) ?? "ok"
+                    let why = (obj["why"] as? String) ?? "외부 워커 보고"
+                    let effect = (obj["effect"] as? String) ?? ""
+                    if status == "error" {
+                        WorkerRegistry.shared.recordError(id, why: why, detail: effect)
+                    } else if status == "start" {
+                        // In-progress signal: log only, no run-count bump. Lets a slow AI
+                        // pass show activity immediately instead of looking idle until the
+                        // result lands a minute or two later.
+                        WorkerLog.shared.append(id, why: why, effect: effect)
+                    } else {
+                        WorkerRegistry.shared.clearError(id)
+                        WorkerRegistry.shared.recordRun(id, why: why, effect: effect)
+                    }
+                }
+            case "/api/worker/toggle":
+                // User on/off for a toggleable QA worker. Writes the matching *-disabled
+                // flag that the runner scripts read, and mirrors the state on the registry
+                // so the row shows 꺼짐 immediately. Only the two QA workers are toggleable.
+                if let id = obj["id"] as? String,
+                   let flag = ["qa-agent": Self.qaDisabledFlag, "qa-fix": Self.qaFixDisabledFlag,
+                               "bug-hunt": Self.bugHuntDisabledFlag][id] {
+                    let name = ["qa-fix": "QA 수정", "bug-hunt": "버그 헌트"][id] ?? "QA 점검"
+                    let enabled = (obj["enabled"] as? Bool) ?? ((obj["enabled"] as? NSNumber)?.boolValue ?? false)
+                    WorkerRegistry.shared.setEnabled(id, enabled)
+                    if enabled {
+                        try? FileManager.default.removeItem(at: flag)
+                        WorkerLog.shared.append(id, why: "사용자 토글", effect: "\(name) 켜짐")
+                    } else {
+                        try? Data().write(to: flag)
+                        WorkerLog.shared.append(id, why: "사용자 토글", effect: "\(name) 꺼짐")
+                    }
+                }
+            case "/api/qa-audit":
+                // The dashboard's self-audit (deterministic UI overflow/wrapping check)
+                // pushes its result here on every render. Persist the raw JSON so the QA
+                // runner reads exactly what a real viewport measured — no headless height
+                // cutoff, no screenshot-vision guesswork. Latest write wins.
+                try? Data(body.utf8).write(to: Self.qaAuditFile, options: .atomic)
+            case "/api/worker/run":
+                // "즉시 실행": force one scan now, bypassing the gates (even when OFF).
+                if (obj["id"] as? String) == "qa-agent" {
+                    WorkerLog.shared.append("qa-agent", why: "사용자 즉시 실행",
+                        effect: "1회 강제 스캔 시작 — 결과·토큰은 보통 1~2분 뒤 기록됩니다")
+                    triggerQARunNow()
+                }
+            case "/api/prefs/view":
+                // Remember the last-open dashboard view so the next launch reopens to it.
+                if let v = obj["view"] as? String { Settings.shared.lastView = v }
+            case "/api/prefs/donecutoff":
+                // Persist the 완료 컷오프 so it survives an app restart (the dynamic
+                // port resets the URL-hash store). 0 = 해제(show all); >0 = epoch cutoff.
+                if let n = (obj["dc"] as? NSNumber)?.doubleValue, n >= 0 {
+                    Settings.shared.doneCutoff = n
+                }
+            case "/api/prefs/ui":
+                // Persist the dashboard UI layout (보기 상태 필터 · 상위 항상 표시 · 스프린트
+                // 선택 · 접기/펼치기) so it survives an app restart. The client sends its
+                // already-serialized prefs JSON in `data`; store it verbatim and re-inject
+                // it on the next launch. An empty/missing value clears the saved layout.
+                if let s = obj["data"] as? String, !s.isEmpty {
+                    Settings.shared.uiPrefs = s
+                } else {
+                    Settings.shared.uiPrefs = nil
+                }
             case "/api/duck":
                 // Dashboard is about to play a UI sound effect; duck the BGM under it.
                 audio.duck()
@@ -1606,15 +2168,434 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return nil
     }
 
+    // MARK: AI dedup (AI추가)
+
+    // Runs an external `claude -p` pass to judge whether `text` duplicates an existing
+    // goal. BLOCKING (seconds) — call OFF the main thread (see handlePost). Returns a JSON
+    // string the dashboard consumes:
+    //   {"ok":true,"duplicate":<bool>,"matches":[{"seq":N,"text":"…","why":"…"}],"note":"…"}
+    // On any failure it returns {"ok":false,"error":"…"} so the client falls back to a
+    // plain add (the AI pass is best-effort, never a hard gate).
+    private func aiDuplicateCheck(text: String, parent: String) -> String {
+        let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty else { return "{\"ok\":false,\"error\":\"empty\"}" }
+        // Snapshot existing goals (brief hop to main for thread-safe store access).
+        let snapshot: [(seq: Int, text: String, status: String)] = DispatchQueue.main.sync {
+            reviewStore.goals.map { (seq: $0.seq, text: $0.text, status: $0.status) }
+        }
+        guard let claude = Self.resolveClaude() else {
+            return "{\"ok\":false,\"error\":\"claude-not-found\"}"
+        }
+        // Build the prompt: existing goals (skip cancelled) + the candidate; demand strict JSON.
+        let listText = snapshot.filter { $0.status != "cancelled" }
+            .map { "#\($0.seq) \($0.text)" }.joined(separator: "\n")
+        let prompt = """
+        You are a deduplication judge for a personal goal tracker. Decide whether a NEW goal \
+        duplicates or substantially overlaps any EXISTING goal (same intent, even if worded \
+        differently or in a different language).
+
+        EXISTING GOALS (one per line as "#<seq> <title>"):
+        \(listText.isEmpty ? "(none)" : listText)
+
+        NEW GOAL:
+        \(candidate)
+
+        Respond with ONLY a single JSON object, no prose, no code fences:
+        {"duplicate": true or false, "matches": [{"seq": <int of an existing goal>, "why": "<short reason in Korean>"}], "note": "<one short Korean sentence>"}
+        Use "duplicate": false with an empty "matches" array when the new goal is genuinely new.
+        """
+        // Spawn via a login shell so PATH/node resolve like the user's terminal; feed the
+        // prompt on stdin to dodge arg-length and quoting pitfalls.
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-lc", "\(Self.shellQuote(claude)) -p --output-format text 2>/dev/null"]
+        var env = ProcessInfo.processInfo.environment
+        let home = NSHomeDirectory()
+        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        p.environment = env
+        let inPipe = Pipe(), outPipe = Pipe()
+        p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
+        do { try p.run() } catch { return "{\"ok\":false,\"error\":\"spawn-failed\"}" }
+        // Watchdog: never let a hung model wedge the connection thread.
+        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 60, execute: killer)
+        inPipe.fileHandleForWriting.write(Data(prompt.utf8))
+        try? inPipe.fileHandleForWriting.close()
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        killer.cancel()
+        let raw = String(decoding: outData, as: UTF8.self)
+        // Extract the first {...} block and parse it.
+        guard let start = raw.firstIndex(of: "{"), let end = raw.lastIndex(of: "}"), start < end,
+              let parsed = try? JSONSerialization.jsonObject(with: Data(raw[start...end].utf8)) as? [String: Any]
+        else { return "{\"ok\":false,\"error\":\"parse-failed\"}" }
+        let duplicate = (parsed["duplicate"] as? Bool) ?? false
+        let note = (parsed["note"] as? String) ?? ""
+        // Enrich each match with the existing goal's current title (snapshot lookup).
+        let bySeq = Dictionary(snapshot.map { ($0.seq, $0.text) }, uniquingKeysWith: { a, _ in a })
+        let rawMatches = (parsed["matches"] as? [[String: Any]]) ?? []
+        let matches = rawMatches.compactMap { m -> String? in
+            guard let seq = (m["seq"] as? NSNumber)?.intValue else { return nil }
+            let why = (m["why"] as? String) ?? ""
+            let gtext = bySeq[seq] ?? ""
+            return "{\"seq\":\(seq),\"text\":\(jsonString(gtext)),\"why\":\(jsonString(why))}"
+        }.joined(separator: ",")
+        // A duplicate verdict is only actionable if it actually points at a known goal.
+        let dupFinal = duplicate && !matches.isEmpty
+        return "{\"ok\":true,\"duplicate\":\(dupFinal),\"matches\":[\(matches)],\"note\":\(jsonString(note))}"
+    }
+
+    // Semantic ("AI") search over ALL goals — including archived/released ones, which are
+    // hidden from every active view. Given a free-text query (a keyword, a phrase, or a loose
+    // description), the model returns every goal that overlaps in intent or topic, ranked by
+    // relevance with a short Korean reason. This is the "find in seconds what Jira makes you
+    // hunt for by hand" capability. Best-effort: any failure returns ok:false so the client
+    // can fall back to plain substring search. BLOCKING — call OFF main (see handlePost).
+    private func aiSemanticSearch(query: String) -> String {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return "{\"ok\":false,\"error\":\"empty\"}" }
+        // Snapshot ALL goals (incl. released) for a thread-safe read.
+        let snapshot: [(seq: Int, text: String, status: String, released: Bool)] = DispatchQueue.main.sync {
+            reviewStore.goals.map { (seq: $0.seq, text: $0.text, status: $0.status, released: $0.released) }
+        }
+        guard let claude = Self.resolveClaude() else {
+            return "{\"ok\":false,\"error\":\"claude-not-found\"}"
+        }
+        // Feed the full corpus (skip nothing — archived goals are the whole point) as
+        // "#<seq> <title>" lines; demand a strict JSON list of relevant seqs.
+        let listText = snapshot.map { "#\($0.seq) \($0.text)" }.joined(separator: "\n")
+        let prompt = """
+        You are a semantic search engine for a personal goal tracker. The user gives a QUERY \
+        (a keyword, phrase, or loose description). Find EVERY goal that is related to the query \
+        in meaning, intent, or topic — not just literal string matches. Match across paraphrases, \
+        synonyms, and different languages. Be generous about topical overlap but skip goals that \
+        are clearly unrelated.
+
+        GOALS (one per line as "#<seq> <title>"):
+        \(listText.isEmpty ? "(none)" : listText)
+
+        QUERY:
+        \(q)
+
+        Respond with ONLY a single JSON object, no prose, no code fences:
+        {"matches": [{"seq": <int of a matching goal>, "why": "<short Korean reason it matches>"}]}
+        Order matches from most to least relevant. Return an empty array when nothing is related.
+        """
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-lc", "\(Self.shellQuote(claude)) -p --output-format text 2>/dev/null"]
+        var env = ProcessInfo.processInfo.environment
+        let home = NSHomeDirectory()
+        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        p.environment = env
+        let inPipe = Pipe(), outPipe = Pipe()
+        p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
+        do { try p.run() } catch { return "{\"ok\":false,\"error\":\"spawn-failed\"}" }
+        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 60, execute: killer)
+        inPipe.fileHandleForWriting.write(Data(prompt.utf8))
+        try? inPipe.fileHandleForWriting.close()
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        killer.cancel()
+        let raw = String(decoding: outData, as: UTF8.self)
+        guard let start = raw.firstIndex(of: "{"), let end = raw.lastIndex(of: "}"), start < end,
+              let parsed = try? JSONSerialization.jsonObject(with: Data(raw[start...end].utf8)) as? [String: Any]
+        else { return "{\"ok\":false,\"error\":\"parse-failed\"}" }
+        // Keep only matches that point at a real goal; pass through seq + reason in rank order.
+        let known = Set(snapshot.map { $0.seq })
+        let rawMatches = (parsed["matches"] as? [[String: Any]]) ?? []
+        let matches = rawMatches.compactMap { m -> String? in
+            guard let seq = (m["seq"] as? NSNumber)?.intValue, known.contains(seq) else { return nil }
+            let why = (m["why"] as? String) ?? ""
+            return "{\"seq\":\(seq),\"why\":\(jsonString(why))}"
+        }.joined(separator: ",")
+        return "{\"ok\":true,\"matches\":[\(matches)]}"
+    }
+
+    // One conversational turn inside the AI 중복 확인 다이얼로그: the user talks with Claude
+    // to decide whether the candidate goal really duplicates existing ones AND to refine its
+    // wording before adding. Stateless — the short dialog history is passed in each call.
+    // Returns {"ok":bool,"reply":"…","suggestion":"…"} where suggestion (if present) is a
+    // refined one-line goal the UI offers to apply to the editable goal field. BLOCKING —
+    // called off-main (see handlePost).
+    private func aiGoalChat(candidate: String, matches: [[String: Any]],
+                            history: [[String: Any]], message: String,
+                            images: [[String: Any]], model: String) -> String {
+        let cand = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        var msg = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Decode + persist any attached images (reuse the chat attachments store), then
+        // reference their paths so Claude can Read them. Off-main store access via main.sync.
+        var imgPaths: [String] = []
+        if !images.isEmpty {
+            DispatchQueue.main.sync {
+                for img in images.prefix(8) {
+                    guard let b64 = img["data"] as? String, let dec = Self.decodeImageDataURL(b64) else { continue }
+                    let ext = (img["name"] as? String).map { ($0 as NSString).pathExtension } ?? "png"
+                    if let name = chatStore.saveImage(data: dec.bytes, ext: dec.ext.isEmpty ? ext : dec.ext) {
+                        imgPaths.append(chatStore.imagePath(name).path)
+                    }
+                }
+            }
+        }
+        if msg.isEmpty && !imgPaths.isEmpty { msg = "첨부한 이미지를 참고해서 목표를 다듬어줘." }
+        guard !msg.isEmpty else { return "{\"ok\":false,\"error\":\"empty\"}" }
+        guard let claude = Self.resolveClaude() else { return "{\"ok\":false,\"error\":\"claude-not-found\"}" }
+        let matchText = matches.compactMap { m -> String? in
+            guard let seq = (m["seq"] as? NSNumber)?.intValue else { return nil }
+            let t = (m["text"] as? String) ?? ""
+            let why = (m["why"] as? String) ?? ""
+            return "#\(seq) \(t)" + (why.isEmpty ? "" : " — \(why)")
+        }.joined(separator: "\n")
+        let histText = history.compactMap { h -> String? in
+            let t = ((h["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !t.isEmpty else { return nil }
+            let who = (h["role"] as? String) == "assistant" ? "AI" : "사용자"
+            return "\(who): \(t)"
+        }.joined(separator: "\n")
+        let prompt = """
+        당신은 목표 관리 도구에서 사용자가 새 목표를 다듬도록 돕는 어시스턴트입니다.
+        사용자가 추가하려는 새 목표가 기존 목표와 중복/유사할 수 있어 함께 상의해 결정합니다.
+        지침:
+        - 정말 중복이면 솔직히 말하고, 아니라면 왜 다른지 인정하세요.
+        - 더 명확하고 구체적인 한 줄 목표 문구를 제안할 수 있으면 제안하세요.
+        - 구체적인 목표 문구를 제안할 때는 답변 맨 마지막에 별도의 줄로 정확히
+          "제안: <목표 문구>" 형식으로 한 줄만 덧붙이세요. (제안이 없으면 생략)
+        - 한국어로 간결하게 답하고, 코드블록은 쓰지 마세요.
+
+        [기존 유사 목표]
+        \(matchText.isEmpty ? "(없음)" : matchText)
+
+        [현재 작성 중인 새 목표]
+        \(cand.isEmpty ? "(비어 있음)" : cand)
+
+        [지금까지의 대화]
+        \(histText.isEmpty ? "(없음)" : histText)
+
+        [사용자의 새 메시지]
+        \(msg)
+        \(imgPaths.isEmpty ? "" : "\n[첨부 이미지 — Read 도구로 확인하세요]\n" + imgPaths.map { "- \($0)" }.joined(separator: "\n"))
+        """
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        // Read-only + access to the attachments dir so the model can open attached images.
+        var args = "-p --output-format json --add-dir \(Self.shellQuote(chatStore.attachmentsDir.path)) --allowedTools Read"
+        if let m = Self.claudeModelAlias(model) { args += " --model \(Self.shellQuote(m))" }
+        p.arguments = ["-lc", "\(Self.shellQuote(claude)) \(args) 2>/dev/null"]
+        var env = ProcessInfo.processInfo.environment
+        let home = NSHomeDirectory()
+        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        p.environment = env
+        let inPipe = Pipe(), outPipe = Pipe()
+        p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
+        do { try p.run() } catch { return "{\"ok\":false,\"error\":\"spawn-failed\"}" }
+        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 120, execute: killer)
+        inPipe.fileHandleForWriting.write(Data(prompt.utf8))
+        try? inPipe.fileHandleForWriting.close()
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        killer.cancel()
+        let raw = String(decoding: outData, as: UTF8.self)
+        var reply = ""
+        if let s = raw.firstIndex(of: "{"), let e = raw.lastIndex(of: "}"), s < e,
+           let parsed = try? JSONSerialization.jsonObject(with: Data(raw[s...e].utf8)) as? [String: Any] {
+            reply = (parsed["result"] as? String) ?? ""
+        }
+        if reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            reply = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if reply.isEmpty { return "{\"ok\":false,\"error\":\"empty-reply\"}" }
+        // Extract a "제안: <text>" line (the refined goal wording), if the model included one.
+        var suggestion = ""
+        for line in reply.split(separator: "\n") {
+            let s = line.trimmingCharacters(in: .whitespaces)
+            for pfx in ["제안:", "제안 :", "📝 제안:"] where s.hasPrefix(pfx) {
+                suggestion = String(s.dropFirst(pfx.count)).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return "{\"ok\":true,\"reply\":\(jsonString(reply)),\"suggestion\":\(jsonString(suggestion))}"
+    }
+
+    // Locate the `claude` CLI. A GUI app launched from Finder inherits a minimal PATH, so
+    // probe the common install locations first, then fall back to a login-shell `command -v`.
+    private static func resolveClaude() -> String? {
+        let home = NSHomeDirectory()
+        let candidates = ["\(home)/.local/bin/claude", "/opt/homebrew/bin/claude",
+                          "/usr/local/bin/claude", "/usr/bin/claude"]
+        for c in candidates where FileManager.default.isExecutableFile(atPath: c) { return c }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-lc", "command -v claude"]
+        let out = Pipe()
+        p.standardOutput = out; p.standardError = nil
+        guard (try? p.run()) != nil else { return nil }
+        let d = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let s = String(decoding: d, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.isEmpty ? nil : s
+    }
+    // Single-quote a path for safe interpolation into a `bash -lc` command line.
+    private static func shellQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    // MARK: Chat (Claude-Desktop-style 대화)
+
+    // The conversation JSON the dashboard renders. Read on panel open + after each send.
+    func chatJSON() -> String {
+        let msgs = DispatchQueue.main.sync { chatStore.messages }
+        let items = msgs.map { m -> String in
+            let imgs = m.images.map { "\(jsonString("/chat-img/\($0)"))" }.joined(separator: ",")
+            return "{\"id\":\(jsonString(m.id)),\"role\":\(jsonString(m.role)),"
+                + "\"text\":\(jsonString(m.text)),\"images\":[\(imgs)],"
+                + "\"createdAt\":\(m.createdAt.timeIntervalSince1970)}"
+        }.joined(separator: ",")
+        return "{\"messages\":[\(items)]}"
+    }
+
+    // GET /chat-img/<filename> -> the stored attachment bytes (inline), or nil (404).
+    func serveChatImage(_ path: String) -> (Data, String, String)? {
+        let name = String(path.dropFirst("/chat-img/".count))
+            .removingPercentEncoding ?? ""
+        return DispatchQueue.main.sync { chatStore.serveImage(name: name) }
+    }
+
+    // Send one chat turn to Claude. BLOCKING (seconds) — call OFF the main thread (see
+    // handlePost). Persists the user message (+ any images), runs `claude -p` resuming the
+    // conversation's session so context is kept, persists the reply, and returns the fresh
+    // conversation JSON. On failure it still returns the conversation with an error note so
+    // the panel stays consistent.
+    private func chatSend(text: String, images: [[String: Any]], model: String) -> String {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Decode + persist images first (on main for store safety); collect stored names + paths.
+        var storedNames: [String] = []
+        var imgPaths: [String] = []
+        DispatchQueue.main.sync {
+            for img in images.prefix(8) {
+                guard let b64 = img["data"] as? String,
+                      let data = Self.decodeImageDataURL(b64) else { continue }
+                let ext = (img["name"] as? String).map { ($0 as NSString).pathExtension } ?? "png"
+                if let name = chatStore.saveImage(data: data.bytes, ext: data.ext.isEmpty ? ext : data.ext) {
+                    storedNames.append(name)
+                    imgPaths.append(chatStore.imagePath(name).path)
+                }
+            }
+        }
+        guard !body.isEmpty || !storedNames.isEmpty else { return chatJSON() }
+
+        // Record the user turn immediately so the panel shows it even if Claude is slow.
+        let (resume, addDir): (String, String) = DispatchQueue.main.sync {
+            chatStore.appendUser(text: body, images: storedNames)
+            return (chatStore.sessionId, chatStore.attachmentsDir.path)
+        }
+
+        guard let claude = Self.resolveClaude() else {
+            DispatchQueue.main.sync { _ = chatStore.appendAssistant(text: "⚠️ claude CLI를 찾지 못했습니다. (~/.local/bin/claude 등)") }
+            return chatJSON()
+        }
+
+        // Build the prompt: user text + a note pointing the model at any attached images.
+        var prompt = body
+        if !imgPaths.isEmpty {
+            let list = imgPaths.map { "- \($0)" }.joined(separator: "\n")
+            prompt += "\n\n[첨부 이미지 — Read 도구로 확인하세요]\n\(list)"
+        }
+        // Assemble the claude args: print mode, JSON output (for result + session_id),
+        // resume to keep context, optional model, and image-read access to the attach dir.
+        var args = "-p --output-format json --add-dir \(Self.shellQuote(addDir)) --allowedTools Read"
+        if !resume.isEmpty { args += " --resume \(Self.shellQuote(resume))" }
+        if let m = Self.claudeModelAlias(model) { args += " --model \(Self.shellQuote(m))" }
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-lc", "\(Self.shellQuote(claude)) \(args) 2>/dev/null"]
+        var env = ProcessInfo.processInfo.environment
+        let home = NSHomeDirectory()
+        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        p.environment = env
+        let inPipe = Pipe(), outPipe = Pipe()
+        p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
+        do { try p.run() } catch {
+            DispatchQueue.main.sync { _ = chatStore.appendAssistant(text: "⚠️ claude 실행에 실패했습니다.") }
+            return chatJSON()
+        }
+        // Watchdog: a long answer is fine, but never hang the connection forever.
+        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 180, execute: killer)
+        inPipe.fileHandleForWriting.write(Data(prompt.utf8))
+        try? inPipe.fileHandleForWriting.close()
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        killer.cancel()
+
+        // Parse {result, session_id}; fall back to raw text if it isn't the json envelope.
+        let raw = String(decoding: outData, as: UTF8.self)
+        var reply = ""
+        var newSession = ""
+        if let start = raw.firstIndex(of: "{"), let end = raw.lastIndex(of: "}"), start < end,
+           let parsed = try? JSONSerialization.jsonObject(with: Data(raw[start...end].utf8)) as? [String: Any] {
+            reply = (parsed["result"] as? String) ?? ""
+            newSession = (parsed["session_id"] as? String) ?? ""
+        }
+        if reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            reply = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if reply.isEmpty { reply = "⚠️ 응답을 받지 못했습니다. (타임아웃이거나 빈 응답)" }
+        DispatchQueue.main.sync {
+            chatStore.setSession(newSession)
+            _ = chatStore.appendAssistant(text: reply)
+        }
+        return chatJSON()
+    }
+
+    // Map the dashboard's model picker to a claude --model alias. "자동"/"" => nil (default).
+    private static func claudeModelAlias(_ key: String) -> String? {
+        switch key {
+        case "opus": return "claude-opus-4-8"
+        case "sonnet": return "claude-sonnet-4-6"
+        case "haiku": return "claude-haiku-4-5"
+        default: return nil   // 자동: let claude use its configured default
+        }
+    }
+
+    // Decode a browser image payload. Accepts a "data:image/png;base64,…" URL (preferred,
+    // carries the type) or a bare base64 string. Returns the bytes + a best-guess extension.
+    private static func decodeImageDataURL(_ s: String) -> (bytes: Data, ext: String)? {
+        var b64 = s, ext = ""
+        if s.hasPrefix("data:") {
+            guard let comma = s.firstIndex(of: ",") else { return nil }
+            let meta = s[s.index(s.startIndex, offsetBy: 5)..<comma]   // e.g. image/png;base64
+            if let slash = meta.firstIndex(of: "/") {
+                let after = meta[meta.index(after: slash)...]
+                ext = String(after.prefix { $0.isLetter || $0.isNumber })
+            }
+            if ext == "jpeg" { ext = "jpg" }
+            b64 = String(s[s.index(after: comma)...])
+        }
+        guard let data = Data(base64Encoded: b64) else { return nil }
+        return (data, ext)
+    }
+
     // MARK: Evidence files
 
-    // On-disk folder holding a goal's uploaded evidence files.
+    // Legacy on-disk folder holding a goal's uploaded files, keyed by UUID. New
+    // uploads go to the number-named folder (attachmentsDir(forGoalId:)); this
+    // remains for reading/cleaning files written before the move.
     static func evidenceDir(goalId: String) -> URL {
         AppPaths.sub("evidence").appendingPathComponent(goalId, isDirectory: true)
     }
 
+    // New attachment folder for a goal, keyed by its number (goal-NN/attachments).
+    // nil for an unnumbered goal (seq <= 0). Reads reviewStore — call on main.
+    private func attachmentsDir(forGoalId id: String) -> URL? {
+        guard let seq = reviewStore.goals.first(where: { $0.id == id })?.seq else { return nil }
+        return IssuePaths.attachmentsDir(seq: seq)
+    }
+
     // GET /evidence/<goalId>/<evidenceId> -> the stored file (bytes, MIME, name).
-    // Returns nil (404) for unknown ids or missing files.
+    // Returns nil (404) for unknown ids or missing files. Prefers the number-named
+    // folder, falling back to the legacy UUID store so older uploads keep working.
     func serveEvidence(_ path: String) -> (Data, String, String)? {
         let comps = path.split(separator: "/").map(String.init)   // ["evidence", goalId, evidenceId]
         guard comps.count >= 3, comps[0] == "evidence" else { return nil }
@@ -1622,11 +2603,171 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return DispatchQueue.main.sync {
             guard let ev = reviewStore.evidence(goalId: goalId, evidenceId: evId),
                   ev.kind == "file" else { return nil }
-            let url = Self.evidenceDir(goalId: goalId).appendingPathComponent(ev.filename)
-            guard let data = try? Data(contentsOf: url) else { return nil }
+            var data: Data? = nil
+            if let dir = attachmentsDir(forGoalId: goalId) {
+                data = try? Data(contentsOf: dir.appendingPathComponent(ev.filename))
+            }
+            if data == nil {
+                data = try? Data(contentsOf: Self.evidenceDir(goalId: goalId).appendingPathComponent(ev.filename))
+            }
+            guard let bytes = data else { return nil }
             let name = ev.title.isEmpty ? ev.filename : ev.title
-            return (data, Self.mimeType(name), name)
+            return (bytes, Self.mimeType(name), name)
         }
+    }
+
+    // MARK: Goal page (/goal?n=<NN>)
+
+    // One goal's page: number, title, key metrics, definition (goal.md) and the
+    // attachment list with add/remove/download controls. Looked up by stable seq.
+    func goalPage(_ path: String) -> String? {
+        guard let comps = URLComponents(string: "http://x" + path),
+              let raw = comps.queryItems?.first(where: { $0.name == "n" })?.value else { return nil }
+        let digits = raw.replacingOccurrences(of: "goal-", with: "").filter { $0.isNumber }
+        guard let n = Int(digits) else { return nil }
+        let goalOpt: ReviewStore.Goal? = DispatchQueue.main.sync { reviewStore.goals.first { $0.seq == n } }
+        guard let goal = goalOpt else {
+            return goalPageHTML(seq: n, title: "goal-\(n)", goalId: "", meta: "", sessionLink: "",
+                definition: "", attachments: "<p class=\"empty\">번호 \(n)에 해당하는 골이 없습니다.</p>")
+        }
+        migrateDefinitionIfNeeded(seq: n)
+        return goalPageHTML(seq: n, title: goal.text, goalId: goal.id,
+            meta: goalMetaLine(goal), sessionLink: goalSessionLink(goal), definition: renderDefinition(seq: n),
+            attachments: renderAttachments(goal))
+    }
+
+    // When a Claude session is attached to this goal, surface a clickable link to its
+    // transcript (and minute-by-minute breakdown) right under the header meta line.
+    // Empty when no session is linked, so the row simply doesn't render.
+    private func goalSessionLink(_ g: ReviewStore.Goal) -> String {
+        guard !g.sessionId.isEmpty else { return "" }
+        let gid = htmlEscape(g.id)
+        return """
+          <div class="slink">
+            <a class="chip" href="/transcript?goal=\(gid)" target="_blank" rel="noopener">🔗 세션 트랜스크립트 보기</a>
+            <a class="chip" href="/breakdown?goal=\(gid)" target="_blank" rel="noopener">📊 작업 분석</a>
+          </div>
+        """
+    }
+
+    // Consolidate a legacy flat definition (.claude/issue/goal-NN.md) into the
+    // folder (goal-NN/goal.md) on first page open. Idempotent and non-destructive
+    // (a no-op once goal.md exists).
+    private func migrateDefinitionIfNeeded(seq: Int) {
+        guard let dst = IssuePaths.definitionURL(seq: seq),
+              let legacy = IssuePaths.legacyDefinitionURL(seq: seq) else { return }
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: dst.path), fm.fileExists(atPath: legacy.path) else { return }
+        try? fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fm.moveItem(at: legacy, to: dst)
+    }
+
+    private func renderDefinition(seq: Int) -> String {
+        let fm = FileManager.default
+        var url: URL? = nil
+        if let d = IssuePaths.definitionURL(seq: seq), fm.fileExists(atPath: d.path) { url = d }
+        else if let l = IssuePaths.legacyDefinitionURL(seq: seq), fm.fileExists(atPath: l.path) { url = l }
+        guard let u = url, let data = try? Data(contentsOf: u) else {
+            let p = IssuePaths.definitionURL(seq: seq)?.path ?? ""
+            return "<p class=\"empty\">정의 문서가 없습니다. <code>\(htmlEscape(p))</code> 에 goal.md를 두면 여기 표시됩니다.</p>"
+        }
+        return "<pre class=\"def\">\(htmlEscape(String(decoding: data, as: UTF8.self)))</pre>"
+    }
+
+    private func renderAttachments(_ g: ReviewStore.Goal) -> String {
+        if g.evidence.isEmpty {
+            return "<p class=\"empty\">첨부가 없습니다. 아래에서 링크나 파일을 추가하세요.</p>"
+        }
+        var items = ""
+        for e in g.evidence {
+            let href = e.kind == "file" ? "/evidence/\(g.id)/\(e.id)" : e.url
+            let icon = e.kind == "file" ? "📄" : "🔗"
+            let title = e.title.isEmpty ? href : e.title
+            let extra = e.kind == "file" ? " download" : " target=\"_blank\" rel=\"noopener\""
+            items += "<li><a href=\"\(htmlEscape(href))\"\(extra)>\(icon) \(htmlEscape(title))</a>"
+                + "<button class=\"x\" onclick=\"rm('\(htmlEscape(e.id))')\">삭제</button></li>"
+        }
+        return "<ul class=\"atts\">\(items)</ul>"
+    }
+
+    private func goalMetaLine(_ g: ReviewStore.Goal) -> String {
+        let labels = ["backlog": "대기", "in_progress": "진행", "waiting": "대기",
+                      "stopped": "중지", "cancelled": "취소", "done": "완료"]
+        let st = labels[g.status] ?? g.status
+        let secs = g.trackedSeconds + (g.startedAt.map { max(0, Date().timeIntervalSince($0)) } ?? 0)
+        let h = Int(secs) / 3600, m = (Int(secs) % 3600) / 60
+        return "상태 \(htmlEscape(st)) · 가치 \(g.value) · 토큰 \(g.tokens)K · 작업 \(h)시간 \(m)분"
+    }
+
+    private func goalPageHTML(seq: Int, title: String, goalId: String,
+                             meta: String, sessionLink: String, definition: String, attachments: String) -> String {
+        let label = IssuePaths.label(seq: seq) ?? "goal-\(seq)"
+        let controls = goalId.isEmpty ? "" : """
+          <div class="add">
+            <input type="text" id="lk" placeholder="https://… 링크 붙여넣기" onkeydown="if(event.key==='Enter')addLink()">
+            <button onclick="addLink()">링크 추가</button>
+            <label class="filebtn">파일 첨부<input type="file" multiple style="display:none" onchange="addFiles(this)"></label>
+          </div>
+        """
+        let script = goalId.isEmpty ? "" : """
+          <script>
+          const GID=\(jsonString(goalId));
+          function post(p,b){return fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});}
+          function addLink(){const el=document.getElementById('lk');const u=el.value.trim();if(!u)return;
+            post('/api/goal/evidence/add',{id:GID,kind:'link',url:u}).then(()=>location.reload());}
+          function addFiles(input){const fs=[...input.files];if(!fs.length)return;let done=0;
+            fs.forEach(f=>{const r=new FileReader();r.onload=()=>{post('/api/goal/evidence/add',{id:GID,kind:'file',filename:f.name,data:r.result}).then(()=>{done++;if(done===fs.length)location.reload();});};r.readAsDataURL(f);});}
+          function rm(eid){if(!confirm('이 첨부를 삭제할까요?'))return;post('/api/goal/evidence/remove',{id:GID,evidenceId:eid}).then(()=>location.reload());}
+          </script>
+        """
+        return """
+        <!doctype html><html lang="ko"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>\(htmlEscape(label)) · \(htmlEscape(title))</title>
+        <style>
+          :root{--bg:#0e1116;--panel:#141821;--line:#222a36;--fg:#e6e9ef;--mut:#8a93a3;--accent:#5b8cff;--green:#9fe0a0}
+          *{box-sizing:border-box}
+          body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif}
+          header{position:sticky;top:0;background:rgba(14,17,22,.92);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:14px 20px}
+          header a.back{color:var(--accent);text-decoration:none;font-size:12px}
+          header h1{margin:6px 0 2px;font-size:17px}
+          header .num{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--line);color:var(--accent);font-variant-numeric:tabular-nums;margin-right:6px}
+          header .sub{color:var(--mut);font-size:12px}
+          header .slink{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
+          header .slink a.chip{display:inline-flex;align-items:center;gap:4px;text-decoration:none;font-size:12px;color:var(--green);border:1px solid var(--line);border-radius:999px;padding:3px 11px;background:var(--panel)}
+          header .slink a.chip:hover{border-color:var(--green)}
+          main{max-width:920px;margin:0 auto;padding:18px 20px 80px}
+          h2{font-size:13px;color:var(--mut);letter-spacing:.04em;text-transform:uppercase;margin:26px 0 8px;border-bottom:1px solid var(--line);padding-bottom:6px}
+          pre.def{white-space:pre-wrap;word-break:break-word;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;font:13px/1.7 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif;margin:0}
+          ul.atts{list-style:none;margin:0;padding:0}
+          ul.atts li{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;background:var(--panel)}
+          ul.atts a{color:var(--fg);text-decoration:none;flex:1;word-break:break-all}
+          ul.atts a:hover{color:var(--accent)}
+          button,.filebtn{background:#1b2230;border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:6px 11px;font-size:13px;cursor:pointer}
+          button:hover,.filebtn:hover{border-color:var(--accent)}
+          button.x{padding:3px 9px;font-size:12px;color:var(--mut)}
+          .add{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
+          .add input[type=text]{flex:1;min-width:220px;background:#0d1016;border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:7px 10px;font-size:13px}
+          .empty{color:var(--mut);padding:14px 0}
+          code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--mut)}
+        </style></head>
+        <body>
+          <header>
+            <a class="back" href="/">← 대시보드</a>
+            <h1><span class="num">\(htmlEscape(label))</span>\(htmlEscape(title))</h1>
+            <div class="sub">\(meta)</div>
+            \(sessionLink)
+          </header>
+          <main>
+            <h2>정의</h2>
+            \(definition)
+            <h2>첨부</h2>
+            \(attachments)
+            \(controls)
+          </main>
+          \(script)
+        </body></html>
+        """
     }
 
     // Decode a browser FileReader payload: either a "data:<mime>;base64,…" URL or

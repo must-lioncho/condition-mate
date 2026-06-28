@@ -36,6 +36,13 @@ final class ActivityMonitor {
 
     private var liveCount = 0               // events since the last live tick
     private var apmBuckets: [Int] = []      // sub-second event counts (rolling window)
+
+    // Scroll coalescing: a single physical scroll gesture (trackpad momentum, a
+    // mouse-wheel spin) fires a dense stream of .scrollWheel events. Counting
+    // each one pins the APM gauge, so we collapse a continuous burst into one
+    // activity: a scroll only counts if it arrives after a quiet gap.
+    private var lastScrollDate: Date?
+    private let scrollCoalesceGap: TimeInterval = 0.3
     private let liveInterval: TimeInterval = 0.1   // 10 Hz sampling for a twitchy gauge
     private let apmWindowSeconds: Double = 1.2      // short window => immediate rise/fall
     private let releaseAlpha: Double = 0.25 // per-tick glide when falling (smooth descent)
@@ -53,12 +60,25 @@ final class ActivityMonitor {
         ]
         if let m = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] event in
             guard let self = self else { return }
+            let now = Date()
             switch event.type {
-            case .keyDown, .flagsChanged: self.keyCount += 1
-            default:                      self.mouseCount += 1
+            case .keyDown, .flagsChanged:
+                self.keyCount += 1
+            case .scrollWheel:
+                // Collapse a continuous scroll burst into a single activity:
+                // skip events that fall within the coalescing gap of the last.
+                if let last = self.lastScrollDate, now.timeIntervalSince(last) < self.scrollCoalesceGap {
+                    self.lastScrollDate = now
+                    self.lastEventDate = now   // still "active", just not a new activity
+                    return
+                }
+                self.lastScrollDate = now
+                self.mouseCount += 1
+            default:
+                self.mouseCount += 1
             }
             self.liveCount += 1
-            self.lastEventDate = Date()
+            self.lastEventDate = now
         }) {
             monitors.append(m)
         }

@@ -70,6 +70,13 @@ final class BPMLibrary {
         return (lo, hi)
     }
 
+    // First track whose filename contains the given keyword (case-insensitive).
+    // Used for scene mapping: the user pins specific songs to specific moments
+    // (opening / settle / release) by name rather than by nearest BPM.
+    func track(matchingKeyword keyword: String) -> Track? {
+        tracks.first { $0.url.lastPathComponent.localizedCaseInsensitiveContains(keyword) }
+    }
+
     // MARK: - BPM parsing
 
     private func resolveBPM(for url: URL) -> Double? {
