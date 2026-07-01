@@ -12,3 +12,17 @@ bgm/
 # MoAI local runtime state (session logs / memory)
 .moai/logs/
 .moai/memory/
+
+# Local app data (JSON "DB": goals/stats/activity/evidence) — dev-only, never committed.
+# Set via CM_DATA_DIR (see Scripts/dev-run.sh). To be split into a real store later.
+.localdata/
+
+# E2E test dependencies
+.e2e/node_modules/
+
+# Claude Code local state (worktrees + per-machine permission overrides)
+.claude/worktrees/
+.claude/settings.local.json
+
+# Scratch file
+Untitled

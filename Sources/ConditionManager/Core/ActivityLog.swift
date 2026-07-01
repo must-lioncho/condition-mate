@@ -9,11 +9,7 @@ final class ActivityLog {
     private let retentionDays = 7
 
     init() {
-        let base = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("ConditionManager/activity", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        dir = base
+        dir = AppPaths.sub("activity")
 
         let df = DateFormatter()
         df.locale = Locale(identifier: "en_US_POSIX")

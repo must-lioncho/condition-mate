@@ -19,8 +19,16 @@ cp ".build/release/$BIN_NAME" "$APP/Contents/MacOS/$BIN_NAME"
 cp "Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-echo "==> Ad-hoc code signing"
-codesign --force --deep --sign - "$APP"
+IDENTITY="ConditionManager Dev"
+if security find-identity -p codesigning | grep -q "$IDENTITY"; then
+    echo "==> Code signing with '$IDENTITY' (stable Accessibility grant across rebuilds)"
+    codesign --force --deep --sign "$IDENTITY" "$APP"
+else
+    echo "==> Signing identity '$IDENTITY' not found — falling back to ad-hoc."
+    echo "    (Accessibility permission will be lost on every rebuild.)"
+    echo "    Run Scripts/setup-signing.sh once to fix this."
+    codesign --force --deep --sign - "$APP"
+fi
 
 echo "==> Done: $(pwd)/$APP"
 echo
