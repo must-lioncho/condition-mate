@@ -47,6 +47,15 @@ enum Formatting {
         return String(format: "%02d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
     }
 
+    // Relative "time ago" label from a seconds-elapsed count, e.g. "3분 전", "2시간 전",
+    // "5일 전". Used for project activity recency.
+    static func agoLabel(_ seconds: Int) -> String {
+        if seconds < 60 { return "\(max(0, seconds))초 전" }
+        if seconds < 3600 { return "\(seconds / 60)분 전" }
+        if seconds < 86_400 { return "\(seconds / 3600)시간 전" }
+        return "\(seconds / 86_400)일 전"
+    }
+
     // Compact status-bar label, e.g. "1024h".
     static func compactHours(_ seconds: Double) -> String {
         let h = hours(fromSeconds: seconds)

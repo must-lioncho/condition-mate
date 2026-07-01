@@ -1,0 +1,18 @@
+{
+  "name": "condition-manager-e2e",
+  "private": true,
+  "description": "Headless E2E checks for the ConditionManager dashboard (Korean IME, tier smoothing, stable goal seq, on-track rollup).",
+  "scripts": {
+    "test": "node ime.test.js && node source.test.js && node tier.test.js && node seq.test.js && node ontrack.test.js && node energy.test.js",
+    "test:ime": "node ime.test.js && node source.test.js",
+    "test:tier": "node tier.test.js",
+    "test:seq": "node seq.test.js",
+    "test:ontrack": "node ontrack.test.js",
+    "test:energy": "node energy.test.js",
+    "e2e:status": "bash ../Scripts/e2e-goal-status.sh",
+    "e2e:energy": "bash ../Scripts/e2e-energy.sh"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.0"
+  }
+}

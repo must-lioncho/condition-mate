@@ -16,30 +16,40 @@ struct ValueTier {
     static let mid      = ValueTier(key: "mid",     label: "중간", multiplier: 3)
     static let active   = ValueTier(key: "active",  label: "적극", multiplier: 5)
 
-    // Editor / deep-work apps => active.
+    // Editor / deep-work apps => active (집중).
     static let editorApps: Set<String> = [
         "com.todesktop.230313mzl4w4u92",  // Cursor
         "com.microsoft.VSCode", "com.apple.dt.Xcode",
         "com.apple.Terminal", "com.googlecode.iterm2",
         "dev.warp.Warp-Stable", "com.jetbrains.intellij", "com.sublimetext.4",
+        "com.anthropic.claudefordesktop", "com.anthropic.claude-code",  // Claude
     ]
     // Browser apps — value depends on the active site.
     static let browserApps: Set<String> = [
         "com.google.Chrome", "com.google.Chrome.canary", "com.apple.Safari",
         "com.brave.Browser", "com.microsoft.edgemac", "company.thebrowser.Browser",
     ]
-    // Docs / writing apps => mid.
+    // Docs / writing + communication apps => mid (책상).
     static let midApps: Set<String> = [
         "notion.id", "md.obsidian", "com.apple.Notes", "com.microsoft.Word",
+        // communication => desk
+        "com.tinyspeck.slackmacgap",                       // Slack
+        "ru.keepcoder.Telegram", "org.telegram.desktop",   // Telegram
+        "com.kakao.KakaoTalkMac",                          // KakaoTalk
     ]
-    // Research sites (mid) — substring match on host.
+    // Research + communication sites (mid) — substring match on host.
     static let midSites = [
         "chatgpt.com", "chat.openai.com", "gemini.google.com", "genspark.ai",
-        "perplexity.ai", "claude.ai", "bard.google.com", "poe.com", "phind.com",
+        "perplexity.ai", "bard.google.com", "poe.com", "phind.com",
         "you.com", "copilot.microsoft.com",
+        // communication web => desk
+        "slack.com", "web.telegram.org", "web.whatsapp.com",
     ]
-    // Browser-based editors (active).
-    static let activeSites = ["github.dev", "vscode.dev", "stackblitz.com", "replit.com"]
+    // Active context in a browser (집중): local dev + Claude.
+    static let activeSites = [
+        "github.dev", "vscode.dev", "stackblitz.com", "replit.com",
+        "127.0.0.1", "localhost", "claude.ai",
+    ]
 
     static func classify(bundleID: String, site: String) -> ValueTier {
         if editorApps.contains(bundleID) { return .active }
