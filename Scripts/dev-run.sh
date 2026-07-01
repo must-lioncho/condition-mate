@@ -13,7 +13,11 @@ set -euo pipefail
 
 # Project root = parent of this Scripts/ dir, regardless of where it's invoked from.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export CM_DATA_DIR="$ROOT/.localdata"
+# Goal data + runtime store now live OUTSIDE the repo, in the workspace-root work
+# folder <workspace>/.condition-manager, so the dev repo stays pure source. Because
+# this path is outside the repo, AppPaths.base AND IssuePaths.root both follow it,
+# so goal definitions (.issue) and runtime state consolidate in the work folder.
+export CM_DATA_DIR="$(cd "$ROOT/../.." && pwd)/.condition-manager"
 mkdir -p "$CM_DATA_DIR"
 cd "$ROOT"
 

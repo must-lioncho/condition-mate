@@ -92,10 +92,17 @@ enum DashboardContent {
   .relitem h4.clk{cursor:pointer;user-select:none}
   .relitem .chev{display:inline-block;color:var(--mut);font-size:11px;transition:transform .15s;margin-right:4px}
   .relitem .chev.open{transform:rotate(90deg)}
+  /* 완료 로그 섹션 헤더: 클릭으로 섹션 전체 펼침/접힘 (기본 접힘) */
+  .rellog-hd{cursor:pointer;user-select:none}
+  .rellog-hd .chev{display:inline-block;font-size:11px;transition:transform .15s;margin-right:6px}
+  .rellog-hd .chev.open{transform:rotate(90deg)}
   .relbody{display:none;margin-top:8px;border-top:1px solid var(--line);padding-top:8px}
   .relbody.open{display:block}
   .relrow{padding:4px 2px;font-size:13px}
   .relrow .gn{color:var(--mut);font-variant-numeric:tabular-nums;margin-right:6px}
+  /* Parent indicator in release log: gray = has a parent (shows parent's number), purple = is top-level. */
+  .relrow .pn{font-variant-numeric:tabular-nums;margin-right:6px;font-size:11px;border-radius:6px;padding:1px 6px;border:1px solid var(--line);color:var(--mut)}
+  .relrow .pn.top{color:#9b7bff;border-color:rgba(155,123,255,.4);background:rgba(155,123,255,.12)}
   /* Sprint board: sprint groups + backlog (Jira-style) */
   .spgrp{border:1px solid var(--line);border-radius:10px;margin:0 0 12px;background:#11151f;overflow:hidden}
   .spgrp.dropOver{border-color:var(--accent);background:rgba(91,140,255,.07)}
@@ -107,6 +114,27 @@ enum DashboardContent {
   .spgrp-hd .ttl{font-size:13px;color:var(--fg)}
   .spgrp-hd .dd{font-size:12px;color:var(--mut)}
   .spgrp-hd .dd.soon{color:#ff9db0}
+  /* PC방식 남은시간 카운트다운 칩 — 클릭하면 연장 모달. 30분 전부터 빨강(soon), 만료 시 깜빡임(over) */
+  .spgrp-hd .spcd{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:.6px;color:#9be9c9;cursor:pointer;padding:2px 9px;border-radius:7px;border:1px solid var(--line);background:#0e1320;user-select:none}
+  .spgrp-hd .spcd:hover{border-color:#3a4a7a;filter:brightness(1.12)}
+  .spgrp-hd .spcd.soon{color:#ffb3c0;border-color:#5a2738;background:rgba(120,30,50,.12)}
+  .spgrp-hd .spcd.over{color:#ff4d6a;border-color:#7a2030;background:rgba(150,25,45,.16);animation:cdblink 1s steps(1,end) infinite}
+  @keyframes cdblink{50%{opacity:.18}}
+  .spgrp-hd .spcd.muted{color:var(--mut);font-weight:500;font-size:12px}
+  /* 시간 연장 모달 */
+  .extrow{display:flex;align-items:center;justify-content:center;gap:18px;margin:16px 0}
+  .extbtn{width:46px;height:46px;border-radius:12px;border:1px solid var(--line);background:#0e1320;color:var(--fg);font-size:24px;line-height:1;cursor:pointer;font-weight:600}
+  .extbtn:hover{border-color:var(--accent);color:var(--accent)}
+  .exth{min-width:96px;text-align:center}
+  .exth b{font-size:30px;font-variant-numeric:tabular-nums}
+  .exth small{display:block;font-size:12px;color:var(--mut);margin-top:2px}
+  .extcur,.extnew{text-align:center;font-size:13px;color:var(--mut)}
+  .extnew{color:#9be9c9}
+  .extnew b,.extcur b{color:var(--fg);font-variant-numeric:tabular-nums}
+  .exthint{text-align:center;font-size:11px;color:var(--mut);margin-top:10px}
+  /* 직접 지정 행 — 절대 마감 시각을 datetime-local로 바로 설정 */
+  .extset{display:flex;flex-direction:column;align-items:center;gap:5px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+  .extset .dlab{color:var(--mut);font-size:11px}
   .spcount{display:inline-flex;gap:4px}
   .spcount span{font-size:11px;border-radius:6px;padding:1px 7px;background:#0e1320;border:1px solid var(--line);color:var(--mut);font-variant-numeric:tabular-nums}
   .spcount .ip{color:#aec4ff;border-color:#3a4a7a}
@@ -122,6 +150,17 @@ enum DashboardContent {
   .bgchev{cursor:pointer;color:var(--mut);width:14px;text-align:center;display:inline-block;font-size:11px;user-select:none}
   .bgsp{display:inline-block;width:14px}
   .bgoal .pref{margin-left:8px;font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:999px;padding:1px 7px;white-space:nowrap}
+  /* 상태 콤보 왼쪽의 부모 번호 입력칸 (예: 02 입력 → goal-02 의 자식으로). */
+  .bgoal .pin{width:54px;flex:none;text-align:center;font-size:12px;color:var(--fg);background:#0e1320;border:1px solid var(--line);border-radius:6px;padding:2px 0;margin-right:6px}
+  .bgoal .pin::placeholder{color:#4a5163}
+  .bgoal .pin:focus{outline:none;border-color:var(--accent)}
+  .bgoal .pin-sp{width:54px;flex:none;margin-right:6px;display:inline-block}
+  /* 부모 채우기(fill-down): Cmd 누르면 부모칸이 채우기 소스로 무장(hover 강조), 드래그 중 대상 행 강조 */
+  body.armparent .bgoal .pin{cursor:cell}
+  body.armparent .bgoal .pin:hover{border-color:var(--accent);box-shadow:0 0 0 2px rgba(91,140,255,.4)}
+  body.parfilling,body.parfilling *{cursor:cell !important;user-select:none}
+  .bgoal.parfill{background:rgba(91,140,255,.12);box-shadow:inset 2px 0 0 var(--accent)}
+  .bgoal.parsrc .pin{border-color:var(--accent);box-shadow:0 0 0 2px rgba(91,140,255,.55)}
   /* 우선순위 화살표 (Jira식 셰브론, 색은 currentColor) — 클릭=피커, Cmd+드래그=같은 값 페인트 */
   .pri{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;line-height:0;cursor:pointer;transition:transform .06s}
   .pri svg{display:block;pointer-events:none}
@@ -441,9 +480,17 @@ enum DashboardContent {
   .dupsug{align-self:flex-start;margin:2px 0 0 36px}
   .dupsug button{font-size:12px;padding:4px 10px}
   .duppending{align-self:flex-start;color:var(--mut);font-size:13px;padding:2px 2px 2px 36px}
+  /* AI 큐(bump out): 실행 상태 표시 + 분석 중 행 강조. */
+  .qrun{display:inline-flex;align-items:center;gap:5px;color:var(--green);font-weight:600;font-size:12px}
+  .qrun .qdot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:qpulse 1s infinite}
+  @keyframes qpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}
+  .qrow{display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line);transition:background .2s}
+  .qrow.analyzing{background:rgba(64,200,120,0.10);border-radius:6px;padding:6px 8px;border-top-color:transparent}
+  .qspin{display:inline-block;animation:cpd 1.2s infinite}
 </style>
 </head>
 <body>
+\#(SessionRail.html())
 <div class="wrap sports">
   <div class="hdr">
     <div>
@@ -501,12 +548,12 @@ enum DashboardContent {
         </span>
         <span class="infowrap">
           <button class="btn" id="aiAddBtn" onclick="aiAdd()" oncontextmenu="return toggleAiTip(event)">AI추가</button>
-          <div class="infotip" id="aiTip">번호를 보고 각 목표의 <b>부모#</b> 칸에 부모 번호를 입력하면 묶입니다 (비우면 최상위). 압축된 결과는 프리뷰에서 확인. <b>AI추가</b>는 중복을 먼저 검사합니다.</div>
+          <div class="infotip" id="aiTip">번호를 보고 각 목표의 <b>부모#</b> 칸에 부모 번호를 입력하면 묶입니다 (비우면 최상위). 압축된 결과는 프리뷰에서 확인. <b>AI추가</b>는 기다리지 않고 큐에 담아 백그라운드로 중복을 분석합니다 — 결과는 아래 <b>AI 큐</b>에서 원탭으로 확정.</div>
         </span>
         <button class="btn" onclick="addGoal()">추가</button>
       </div>
-      <div id="aiQueue"></div>
       <div id="goals"></div>
+      <div id="aiQueue"></div>
     </div>
 
     <!-- PREVIEW (REPORT) VIEW -->
@@ -559,6 +606,7 @@ enum DashboardContent {
     <div id="sprintView" style="display:none">
       <div id="sprintHost"></div>
       <div id="spModal" class="spmodal" style="display:none"><div class="modal-box" id="spModalBox"></div></div>
+      <div id="extModal" class="spmodal" style="display:none" onclick="if(event.target===this)closeExtendModal()"><div class="modal-box" id="extModalBox" style="width:min(380px,92vw)"></div></div>
     </div>
 
     <!-- ARCHIVED VIEW (전체 목록 검색 — 활성·아카이브(릴리즈) 목표를 모두 검색·검토) -->
@@ -1198,21 +1246,16 @@ function goalAddSubmit(text, ctx){
   post('/api/goal/add',o);
   return true;
 }
-// AI추가 코어: 추가 전에 중복을 먼저 검사하고, 중복이면 다이얼로그·아니면 곧장 추가한다.
-// btn은 진행 표시용. onAdded는 직접 추가했을 때, onDup은 중복 다이얼로그를 띄웠을 때 호출.
+// AI추가 코어 (bump out): 기다리지 않는다. 후보를 즉시 큐(pending)에 담고 입력창을 비운 뒤
+// 곧장 돌려준다 — 유저는 머릿속을 계속 비우면 된다. 서버 백그라운드 워커가 중복을 분석해
+// '검토 대기(ready)'로 바꾸면, 아래 큐 목록에서 원탭(추가/수정/스킵)으로 확정한다.
+// btn/onDup은 옛 시그니처 호환용으로 남겨두며 더는 쓰지 않는다.
 function goalAddAi(text, ctx, btn, onAdded, onDup){
   const t=String(text||'').trim(); if(!t) return;
-  const orig=btn?btn.textContent:''; if(btn){ btn.disabled=true; btn.textContent='AI 분석 중…'; }
-  const fallback=()=>{ goalAddSubmit(t,ctx); if(onAdded) onAdded(); };
-  fetch('/api/goal/aiAdd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})})
-    .then(r=>r.json())
-    .then(res=>{
-      if(!res||!res.ok||!res.duplicate){ fallback(); return; }   // 새 목표 → 그냥 추가
-      _dupPending={text:t,parent:(ctx&&ctx.parent)||'',sprint:(ctx&&ctx.sprint)||0,note:res.note||'',matches:res.matches||[]};
-      showDup(_dupPending); if(onDup) onDup();
-    })
-    .catch(fallback)
-    .finally(()=>{ if(btn){ btn.disabled=false; btn.textContent=orig; } });
+  const o={text:t};
+  if(ctx){ if(ctx.sprint) o.sprint=ctx.sprint; if(ctx.parent) o.parent=ctx.parent; }
+  post('/api/goal/queue/enqueue',o);   // post()가 이어서 load()까지 호출 → 큐에 즉시 반영
+  if(onAdded) onAdded();               // 입력창 비우기/모달 닫기는 즉시 (대기 0초)
 }
 function addGoal(){ const el=$('goalText'); if(goalAddSubmit(el.value,null)){ el.value=''; el.focus(); } }
 // --- AI추가: 추가 전에 claude -p가 기존 목표를 읽고 중복인지 먼저 판단한다. 중복이면
@@ -1349,26 +1392,61 @@ function dupLater(){ const p=_dupPending; if(!p){closeDup();return;}
   const text=$('dupGoalText').value.trim()||p.text;
   $('goalText').value=''; $('goalText').focus(); closeDup();
   post('/api/goal/queue/add',{text:text,parent:p.parent||'',note:p.note||'',matches:p.matches||[]}); }
-// --- AI 큐(later 보관함): 쌓인 후보를 하나씩 추가·수정·스킵 ---
-function renderAiQueue(items){
-  const host=$('aiQueue'); if(!host)return;
+// --- AI 큐(bump out): 도착 순서 그대로 한 줄로 쌓는다. 위쪽이 먼저 처리되고(분석 중·검토 대기),
+// 방금 비워낸 후보는 맨 하단에 붙는다 — "쏟아내면 아래에 쌓이고, 위에서 익는다"는 컨베이어 감각.
+// 헤더의 펄스 '실행 중' 배지로 워커가 돌고 있는지 한눈에 보인다. data.json은 oldest-first 순.
+// aiQueueBoxHTML: 큐 박스 HTML 문자열을 돌려준다(빈 목록이면 ''). 입력(목록) 뷰는 #aiQueue에
+// 전체 큐를, 스프린트 보드는 각 스프린트·백로그 섹션 하단에 해당 sprint의 큐만 끼워 넣는다. ---
+function aiQueueBoxHTML(items){
   items=items||[];
-  if(!items.length){ host.innerHTML=''; return; }
-  host.innerHTML='<div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:4px 0 10px;background:rgba(91,140,255,0.06)">'
-    +'<div style="font-weight:600;margin-bottom:6px">🤖 AI 검토 대기 '+items.length+'건 <span class="muted" style="font-weight:400;font-size:12px">— 하나씩 추가·수정·스킵</span></div>'
-    +items.map(it=>{
-      const ms=(it.matches||[]).map(m=>'#'+m.seq+' '+esc(m.text||'')).join(', ');
-      return '<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line)">'
-        +'<div style="flex:1;min-width:0"><span id="qt_'+it.id+'">'+esc(it.text)+'</span>'
-        +(it.note?'<div class="muted" style="font-size:12px">'+esc(it.note)+'</div>':'')
-        +(ms?'<div class="muted" style="font-size:12px">유사: '+ms+'</div>':'')+'</div>'
-        +'<div style="display:flex;gap:4px;flex-shrink:0">'
-        +'<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="이 목표를 추가">추가</button>'
+  if(!items.length) return '';
+  const isReady=it=>(!it.status||it.status==='ready');
+  const analyzing=items.filter(it=>it.status==='analyzing').length;
+  const pending=items.filter(it=>it.status==='pending').length;
+  const ready=items.filter(isReady).length;
+  // 헤더: 워커 실행 상태(펄스) + 큐/검토 건수.
+  const run=analyzing
+    ? '<span class="qrun"><span class="qdot"></span>실행 중</span>'
+    : (pending?'<span class="muted" style="font-size:12px">곧 시작…</span>':'');
+  const counts=[];
+  if(analyzing+pending) counts.push('큐 '+(analyzing+pending)+'건');
+  if(ready) counts.push('검토 대기 '+ready+'건');
+  let waitNo=0;   // pending 행에 "대기 N번째" 부여 (도착 순)
+  function row(it){
+    const rdy=isReady(it);
+    const ms=(it.matches||[]).map(m=>'#'+m.seq+' '+esc(m.text||'')).join(', ');
+    let meta='', cls='qrow';
+    if(it.status==='analyzing'){
+      cls='qrow analyzing';
+      meta='<div style="font-size:12px;color:var(--green)"><span class="qspin">🔄</span> AI 분석 중…</div>';
+    } else if(!rdy){
+      waitNo++;
+      meta='<div class="muted" style="font-size:12px">⏳ 대기 '+waitNo+'번째</div>';
+    } else {
+      const tag=it.duplicate
+        ? '<span style="color:#e0a458">유사 목표 있음</span>'
+        : '<span style="color:var(--green)">새 목표</span>';
+      meta='<div class="muted" style="font-size:12px">'+tag+(it.note?' · '+esc(it.note):'')+'</div>'
+        +(ms?'<div class="muted" style="font-size:12px">유사: '+ms+'</div>':'');
+    }
+    const btns=rdy
+      ? '<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="이 목표를 추가">추가</button>'
         +'<button class="btn" onclick="queueEditStart(\''+it.id+'\')" title="문구 수정">수정</button>'
         +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>'
-        +'</div></div>';
-    }).join('')+'</div>';
+      : '<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="분석을 기다리지 않고 바로 추가">바로 추가</button>'
+        +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>';
+    return '<div class="'+cls+'">'
+      +'<div style="flex:1;min-width:0"><span id="qt_'+it.id+'">'+esc(it.text)+'</span>'+meta+'</div>'
+      +'<div style="display:flex;gap:4px;flex-shrink:0">'+btns+'</div></div>';
+  }
+  return '<div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:4px 0 10px;background:rgba(91,140,255,0.06)">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+    +'<span style="font-weight:600">🤖 AI 큐</span>'+run
+    +'<span class="muted" style="font-weight:400;font-size:12px;margin-left:auto">'+(counts.join(' · ')||'대기 없음')+'</span></div>'
+    +items.map(row).join('')+'</div>';
 }
+// 입력(목록) 뷰의 전역 큐 박스: #aiQueue(목표 목록 아래)에 전체 큐를 그린다.
+function renderAiQueue(items){ const host=$('aiQueue'); if(host) host.innerHTML=aiQueueBoxHTML(items); }
 function queueAdd(id){ post('/api/goal/queue/resolve',{id:id,action:'add'}); }
 function queueSkip(id){ post('/api/goal/queue/resolve',{id:id,action:'skip'}); }
 function queueEditStart(id){
@@ -1549,6 +1627,7 @@ function boardSprint(g,goals){
 // 스프린트 콤보박스 통과 여부: '모두'면 전부, 숫자면 그 스프린트만.
 function passesSprintFilter(g,goals){ return _sprintSel.size===0 ? true : _sprintSel.has(effSprint(g,goals)); }
 function goalPasses(g,goals){
+  if(g.archived) return false;                    // 보관된 목표는 활성 목록에서 숨김(아카이브 뷰에만 노출)
   if(g.released) return false;                    // 릴리즈(커밋)된 목표는 활성 목록에서 숨김
   if(!passesSprintFilter(g,goals)) return false;  // 스프린트 콤보박스 (하드 게이트)
   if(!passesDoneCutoff(g,goals)) return false;    // 완료 컷오프는 상위 항상 표시보다 우선하는 하드 게이트
@@ -1559,6 +1638,7 @@ function getFilteredGoals(goals){ return goals.filter(g=>goalPasses(g,goals)); }
 // 스프린트 보드용 필터: 상태 토글·완료 컷오프는 적용하되, 스프린트 콤보박스는 적용하지 않는다
 // (보드 자체가 스프린트별로 그루핑하므로). 그래서 완료를 끄면 보드에서도 완료가 숨겨진다.
 function goalPassesBoard(g,goals){
+  if(g.archived) return false;
   if(g.released) return false;
   if(!passesDoneCutoff(g,goals)) return false;
   if(_showParents && hasKids(goals,g)) return true;
@@ -1857,6 +1937,16 @@ function statSel(g){
   const opts=STATUS_OPTS.map(o=>'<option value="'+o[0]+'"'+(o[0]===cur?' selected':'')+'>'+o[1]+'</option>').join('');
   return '<select class="statsel '+cur+'" title="상태 변경" onchange="setStatus(\''+g.id+'\',this.value,event)">'+opts+'</select>';
 }
+// Board variant: same picker, but the row is draggable="true" so plain mousedown on a
+// <select> would start a drag instead of opening the dropdown. ondragstart/onmousedown
+// guards let the combobox work while leaving the rest of the row draggable.
+function statSelBoard(g){
+  const cur=g.status||'backlog';
+  const opts=STATUS_OPTS.map(o=>'<option value="'+o[0]+'"'+(o[0]===cur?' selected':'')+'>'+o[1]+'</option>').join('');
+  return '<select class="statsel '+cur+'" title="상태 변경" ondragstart="return false"'
+    +' onmousedown="event.stopPropagation()" onclick="event.stopPropagation()"'
+    +' onchange="setStatus(\''+g.id+'\',this.value,event)">'+opts+'</select>';
+}
 // Children of a goal (1-level hierarchy: only top-level goals can be parents).
 function goalKids(goals,g){ return (goals||[]).filter(c=>c.parent===g.id); }
 // Derived parent status (rollup from children). null = leaf (use manual buttons).
@@ -1866,13 +1956,18 @@ function goalKids(goals,g){ return (goals||[]).filter(c=>c.parent===g.id); }
 // Purpose: managers see which parent goal is active (on track) while workers freely
 // manage the leaf tasks underneath. Derived every render, so a child going 진행
 // flips the parent to on track automatically (no stored/duplicated state).
+// Parent rollup. A parent is a long-lived history container: it is NEVER auto-completed from
+// its children. Even when every child is done it stays On Track — the user closes it MANUALLY
+// (sets the parent's own status to done) only when the work branches. Manual done wins; else
+// any activity (a child in progress, or some child done) reads as On Track; otherwise 대기.
 function derivedStatus(goals,g){
   const kids=goalKids(goals,g); if(!kids.length) return null;
+  if((g.status||'')==='done') return 'done';                              // 수동 완료(분기 마감)만 완료
   if(kids.some(c=>(c.status||'backlog')==='in_progress')) return 'on_track';
-  if(kids.every(c=>(c.status||'backlog')==='done')) return 'done';
+  if(kids.some(c=>(c.status||'backlog')==='done')) return 'on_track';     // 자동 완료 금지 — On Track 유지
   return 'backlog';
 }
-function statLabel(s){ return s==='on_track'?'on track':(s==='done'?'완료':'대기'); }
+function statLabel(s){ return s==='on_track'?'On Track':(s==='done'?'완료':'대기'); }
 function effTracked(g){ const base=g.trackedSeconds||0;
   return (g.startedAt&&g.startedAt>0)?(base+Math.max(0,(Date.now()/1000)-g.startedAt)):base; }
 function fmtDur(sec){ sec=Math.max(0,Math.floor(sec)); const h=(sec/3600)|0,m=((sec%3600)/60)|0,s=sec%60,p=n=>(n<10?'0':'')+n;
@@ -1918,12 +2013,12 @@ function num2(i){ return (i<9?'0':'')+(i+1); }
 // Stable per-goal id label (goal-NN, seq zero-padded). Assigned at creation and
 // UNCHANGED by reorder — drag only moves position, the label stays with the goal.
 function gnum(g){ const n=g.seq||0; return 'goal-'+(n<10?'0':'')+n; }
-// Clickable goal number: opens /goal?n=NN (정의 + 첨부) in a new tab. Unnumbered
-// goals (seq 0) render as a plain, non-clickable pill. stopPropagation so clicking
-// the number never triggers the row's own click handlers.
+// Clickable goal number: navigates to /goal?n=NN (정의 + 첨부) in the same tab.
+// Unnumbered goals (seq 0) render as a plain, non-clickable pill. stopPropagation so
+// clicking the number never triggers the row's own click handlers.
 function gpill(g){ const n=g.seq||0; const t=gnum(g);
   if(n<=0) return '<span class="pill" style="font-variant-numeric:tabular-nums">'+t+'</span>';
-  return '<a class="pill gp" href="/goal?n='+n+'" target="_blank" title="골 페이지 — 정의·첨부 보기" style="font-variant-numeric:tabular-nums" onclick="event.stopPropagation()">'+t+'</a>'; }
+  return '<a class="pill gp" href="/goal?n='+n+'" title="골 페이지 — 정의·첨부 보기" style="font-variant-numeric:tabular-nums" onclick="event.stopPropagation()">'+t+'</a>'; }
 // Session-link icon for a goal row. Connected -> bright chain that opens the readable
 // transcript; not connected -> dim broken chain that opens the native connect picker.
 function slinkBtn(g){
@@ -2162,7 +2257,7 @@ function gSection(t,all,r){
   const done=kids.filter(k=>(k.status||'backlog')==='done').length;
   const ds=derivedStatus(all,t);
   const collapsed=_gCollapsed.has(t.id);
-  const tag=ds==='on_track'?'<span class="otTag">on track</span>'
+  const tag=ds==='on_track'?'<span class="otTag">On Track</span>'
     :(ds==='done'?'<span class="otTag" style="border-color:var(--green);color:var(--green);background:rgba(54,192,138,.12)">완료</span>':'');
   const prog=kids.length?('자식 '+done+'/'+kids.length):'자식 없음';
   let body=vkids.length? vkids.map(k=>gChildRow(k,r)).join('')
@@ -2453,11 +2548,17 @@ function setTblSort(key){
 }
 function tblRow(g,all,idToNum){
   const es=effStatus(g,all), isChild=!!g.parent;
+  // Parents carry a derived rollup -> show the rolled-up label (On Track / 완료 / 대기),
+  // matching 목록·그룹 views; leaves show their own status.
+  const ds=derivedStatus(all,g);
+  const stCell=(ds!==null)
+    ? '<span class="ot '+ds+'">'+statLabel(ds)+'</span>'
+    : '<span class="ot '+es+'">'+tblStatLabel(es)+'</span>';
   const pnum=(g.parent&&idToNum[g.parent])?('goal-'+pad2(idToNum[g.parent])):'<span class="muted">–</span>';
   return '<tr class="'+(es==='done'?'done ':'')+(isChild?'child':'')+'" oncontextmenu="goalCtx(event,\''+g.id+'\')">'
     +'<td>'+gpill(g)+'</td>'
     +'<td>'+pnum+'</td>'
-    +'<td><span class="ot '+es+'">'+tblStatLabel(es)+'</span></td>'
+    +'<td>'+stCell+'</td>'
     +'<td class="nm">'+(isChild?'<span class="muted">└ </span>':'')+esc(g.text)+'</td>'
     +'<td>'+(g.sessionId?slinkBtn(g):'<span class="muted">–</span>')+'</td>'
     +'<td>'+ttimeHTML(g)+'</td>'
@@ -2557,6 +2658,7 @@ let _spCollapsed=new Set();  // collapsed groups (sprint number, or 'bg' for Bac
 let _bgCollapsed=new Set();  // collapsed parent goal ids (자식 접기) within a group
 let _bgSeen=new Set();       // parents already defaulted-collapsed (so the 5s re-render never re-collapses one the user opened)
 let _relOpen=new Set();      // expanded release ids (완료 로그는 기본 닫힘)
+let _relLogOpen=false;       // 완료 로그 섹션 전체 펼침 (기본 접힘 — 접히면 아이템 DOM을 아예 만들지 않아 노드 수를 줄인다)
 // 스프린트 코드(26-1) 조회 — 일일 목록의 스프 배지 등에서 사용.
 function sprintCode(n){ if(!n) return ''; const s=((_review&&_review.sprints)||[]).find(x=>x.number===n); return (s&&s.code)?s.code:('#'+n); }
 function statLabel2(s){ const m={backlog:'대기',in_progress:'진행',waiting:'응답 대기',stopped:'중지',cancelled:'취소',done:'완료'}; return m[s]||s; }
@@ -2661,13 +2763,16 @@ function renderArchivedView(r){
     const spLab=sn?('<span class="spbadge">'+esc(sprintCode(sn))+'</span>'):'';
     const st=effStatus(g,all);
     const stLab='<span class="ot '+st+'" style="font-size:11px">'+statLabel2(st)+'</span>';
-    // 아카이브 표식 + 릴리즈 시각 / 활성이면 상태만
-    const tail=g.released
-      ? ('<span class="muted" style="font-size:12px;white-space:nowrap">아카이브 · 릴리즈 '+((rel&&rel.releasedAt)?fmtDate(rel.releasedAt):'–')+'</span>'
-         +(rel?'<button class="btn" onclick="restoreRelease(\''+rel.id+'\')" title="이 릴리즈를 복원해 활성 목록으로 되돌립니다">복원</button>':''))
-      : '';
+    // 꼬리표: 보관(수동) → '보관 해제', 릴리즈(커밋) → '복원', 활성이면 없음
+    const tail=g.archived
+      ? ('<span class="muted" style="font-size:12px;white-space:nowrap">보관됨</span>'
+         +'<button class="btn" onclick="archiveGoal(\''+g.id+'\',false)" title="보관을 해제해 활성 목록으로 되돌립니다">보관 해제</button>')
+      : (g.released
+        ? ('<span class="muted" style="font-size:12px;white-space:nowrap">아카이브 · 릴리즈 '+((rel&&rel.releasedAt)?fmtDate(rel.releasedAt):'–')+'</span>'
+           +(rel?'<button class="btn" onclick="restoreRelease(\''+rel.id+'\')" title="이 릴리즈를 복원해 활성 목록으로 되돌립니다">복원</button>':''))
+        : '');
     const why=(whyOf&&whyOf[g.seq])?('<div class="muted" style="font-size:12px;margin-top:2px">↳ '+esc(whyOf[g.seq])+'</div>'):'';
-    return '<div class="goal" style="flex-wrap:wrap'+(g.released?';opacity:.72':'')+'">'
+    return '<div class="goal" style="flex-wrap:wrap'+((g.released||g.archived)?';opacity:.72':'')+'">'
       +gpill(g)+spLab+stLab
       +'<span class="g"><span class="gt">'+esc(g.text)+'</span>'+why+'</span>'
       +tail
@@ -2686,8 +2791,9 @@ function renderSprintBoard(r){
   const sprints=((r&&r.sprints)||[]).filter(s=>!s.closed).sort((a,b)=>a.number-b.number);
   const shown=all.filter(g=>goalPassesBoard(g,all));   // 상태 필터·완료 컷오프 적용 (행)
   const allLive=all.filter(g=>!g.released);            // 카운트는 전체 멤버십 기준
-  let h=sprints.map(s=>sprintGroupHTML(s,shown,allLive)).join('');
-  h+=backlogHTML(shown,allLive);
+  const aq=(r&&r.aiQueue)||[];                          // AI 큐: 섹션(sprint/backlog)별로 하단에 배치
+  let h=sprints.map(s=>sprintGroupHTML(s,shown,allLive,aq)).join('');
+  h+=backlogHTML(shown,allLive,aq);
   h+=completedLogHTML(r);
   $('sprintHost').innerHTML=h;
   if(_spModalNum!=null) fillSprintModal();   // 열려 있으면 최신 데이터로 갱신(기간 변경 시 목표일 반영)
@@ -2705,10 +2811,84 @@ function ddayHTML(t){
   const lab=days>0?('D-'+days):(days===0?'D-DAY':('D+'+(-days)));
   return '<span class="dd'+(days<=1?' soon':'')+'">'+fmtDate(t)+' · '+lab+'</span>';
 }
+// PC방 남은 시간 카운트다운. D-day 대신 실제 잔여 시간(HH:MM:SS)을 1초마다 표시해
+// 집중을 유도한다. 30분 전(1800초)부터 빨강, 만료되면 00:00:00 으로 깜빡인다.
+// 클릭하면 마감 조정 모달(연장·단축·직접 지정)이 열린다. data-target = 마감 epoch(초).
+const CD_SOON=1800;   // 30분 — 이 시점부터 빨간색
+function cdRemain(t){ return Math.floor(t-Date.now()/1000); }
+function fmtCD(sec){ sec=Math.max(0,sec); const h=(sec/3600)|0,m=((sec%3600)/60)|0,s=sec%60,p=n=>(n<10?'0':'')+n; return p(h)+':'+p(m)+':'+p(s); }
+// 남은 시간에 따른 표시 텍스트와 상태 클래스를 함께 돌려준다(틱·최초 렌더 공용).
+function cdState(t){ const r=cdRemain(t);
+  if(r<=0) return {txt:'00:00:00',soon:false,over:true};
+  return {txt:fmtCD(r),soon:r<=CD_SOON,over:false}; }
+function sprintCountdownHTML(s){
+  const t=s.targetAt||0;
+  if(!t) return '<span class="spcd muted" title="목표일 미정 — 클릭하여 설정" onclick="event.stopPropagation();openSprintModal('+s.number+')">날짜 미정</span>';
+  const c=cdState(t);
+  return '<span class="spcd'+(c.soon?' soon':'')+(c.over?' over':'')+'" data-target="'+t+'"'
+    +' title="남은 시간 — 클릭하여 마감 조정(연장·단축·직접 지정)" onclick="event.stopPropagation();openExtendModal('+s.number+')">'+c.txt+'</span>';
+}
+// 매초 모든 카운트다운 칩을 갱신한다(renderSprintBoard 사이에도 부드럽게 흐르도록).
+function tickSprintCD(){ document.querySelectorAll('.spcd[data-target]').forEach(function(el){
+  const t=+el.getAttribute('data-target')||0; if(!t) return; const c=cdState(t);
+  el.textContent=c.txt; el.classList.toggle('soon',c.soon); el.classList.toggle('over',c.over);
+}); }
+setInterval(tickSprintCD,1000);
+// --- 마감 조정 모달 (2시간 단위 연장·단축 + 직접 지정) ---
+// _extHours: 상대 조정량(시간). 양수=연장, 음수=단축, 0=변경 없음.
+// _extAbs:  직접 지정한 절대 마감(epoch 초). >0이면 상대 조정보다 우선.
+// 두 입력 모두 즉시 적용하지 않고 "조정 후" 미리보기에만 반영한 뒤, 하단 버튼에서 확정한다.
+let _extNum=null,_extHours=0,_extAbs=0;
+function openExtendModal(n){ _extNum=n; _extHours=0; _extAbs=0; fillExtendModal(); const m=$('extModal'); if(m) m.style.display='flex'; }
+function closeExtendModal(){ _extNum=null; const m=$('extModal'); if(m) m.style.display='none'; }
+function extStep(d){ _extHours=_extHours+d*2; _extAbs=0; fillExtendModal(); }   // 2시간 단위(양수 연장·음수 단축)·직접 지정 취소
+function extSprint(){ return ((_review&&_review.sprints)||[]).find(x=>x.number===_extNum); }
+function fillExtendModal(){ if(_extNum==null) return; const s=extSprint(); if(!s){ closeExtendModal(); return; } const b=$('extModalBox'); if(b) b.innerHTML=extModalForm(s); }
+// 상대 조정 기준점: 아직 남았으면 현재 마감(잔여 보존), 이미 지났으면 지금.
+function extBase(s){ const t=s.targetAt||0; return Math.max(Date.now()/1000,t); }
+// 현재 입력으로 만들어질 최종 마감(epoch). 직접 지정이 있으면 그 값, 아니면 상대 조정 결과, 둘 다 없으면 0.
+function extPreviewAt(){ const s=extSprint(); if(!s) return 0;
+  if(_extAbs) return _extAbs; if(_extHours===0) return 0; return Math.floor(extBase(s)+_extHours*3600); }
+function extDirty(){ return _extAbs>0 || _extHours!==0; }
+function extApplyLabel(){ if(_extAbs>0) return '이 시각으로 설정';
+  const mag=Math.abs(_extHours); if(_extHours>0) return mag+'시간 연장'; if(_extHours<0) return mag+'시간 단축'; return '변경 없음'; }
+// 직접 지정 입력: 값만 예약(스테이징)하고 미리보기·버튼만 부분 갱신한다. 여기서 모달을
+// 통째로 다시 그리면 입력 도중 포커스가 튕겨(분을 못 넣고 닫힘) 버리므로 재렌더하지 않는다.
+function extSetAbs(val){ _extAbs=val?Math.floor(new Date(val).getTime()/1000):0; if(_extAbs) _extHours=0;
+  const pv=$('extPrev'); if(pv){ const nt=extPreviewAt(); pv.innerHTML='조정 후 <b>'+(nt?fmtDate(nt):'변경 없음')+'</b>'; }
+  const ap=$('extApply'); if(ap){ const on=extDirty(); ap.disabled=!on; ap.style.opacity=on?'':'0.5'; ap.style.cursor=on?'':'default'; ap.textContent=extApplyLabel(); } }
+function extModalForm(s){
+  const t=s.targetAt||0, base=extBase(s);
+  const mag=Math.abs(_extHours), dir=_extHours>0?'시간 연장':(_extHours<0?'시간 단축':'변경 없음');
+  const sign=_extHours>0?'+':(_extHours<0?'−':'');
+  const on=extDirty(), pv=extPreviewAt();
+  return '<h3>스프린트 '+esc(s.code||('#'+s.number))+' 마감 조정</h3>'
+    +'<div class="extcur">현재 마감 <b>'+(t?fmtDate(t):'미정')+'</b></div>'
+    +'<div class="extrow"><button class="extbtn" onclick="extStep(-1)">−</button>'
+    +'<span class="exth"><b>'+sign+mag+'</b><small>'+dir+'</small></span>'
+    +'<button class="extbtn" onclick="extStep(1)">＋</button></div>'
+    +'<div class="extnew" id="extPrev">조정 후 <b>'+(pv?fmtDate(pv):'변경 없음')+'</b></div>'
+    +'<div class="exthint">＋ / − 2시간 단위로 연장·단축</div>'
+    +'<div class="extset"><span class="dlab">직접 지정</span>'
+    +'<input type="datetime-local" value="'+localInput(_extAbs||t||Math.floor(base))+'" oninput="extSetAbs(this.value)" onchange="extSetAbs(this.value)">'
+    +'<span class="dlab" style="font-size:10px">예: 오늘 18:30까지 마감 · 입력 후 아래 버튼으로 확정</span></div>'
+    +'<div class="line" style="margin-top:14px"><button class="btn" onclick="closeExtendModal()">취소</button><span style="flex:1"></span>'
+    +'<button class="btn primary" id="extApply" '+(on?'':'disabled style="opacity:.5;cursor:default"')
+    +' onclick="applyExtend()">'+extApplyLabel()+'</button></div>';
+}
+// 확정: 직접 지정이 있으면 그 값을, 아니면 상대 조정 결과를 마감으로 설정한다.
+function applyExtend(){ const s=extSprint(); const nt=extPreviewAt(); if(!s||!nt){ closeExtendModal(); return; }
+  post('/api/sprint/update',{number:_extNum,targetAt:nt}); closeExtendModal(); }
 // 보드용 목표 행 (드래그 가능 · 우클릭 이동). hasKids면 접기 셰브론, 자식이면 들여쓰기.
 // pref(부모 seq)>0이면 다른 그룹에 있는 부모를 참조 표시(예: Backlog로 분리한 자식).
 function bgoalRow(g,hasKids,collapsed,pref){
-  const isChild=!!g.parent, es=effStatus(g,_goals);
+  const isChild=!!g.parent;
+  // Parent goals carry a derived rollup (auto-computed from children) -> read-only badge.
+  // Leaf goals get the inline status picker so the sprint board is directly editable.
+  const ds=derivedStatus(_goals,g);
+  const statCell=(ds!==null)
+    ? '<span class="ot '+ds+'" title="자식 태스크 상태에서 자동 계산">'+statLabel(ds)+'</span>'
+    : statSelBoard(g);
   const lead=hasKids
     ? '<span class="bgchev" onclick="event.stopPropagation();toggleBgCollapse(\''+g.id+'\')" title="자식 접기/펼치기">'+(collapsed?'▸':'▾')+'</span>'
     : '<span class="bgsp"></span>';
@@ -2716,12 +2896,24 @@ function bgoalRow(g,hasKids,collapsed,pref){
   const pri=g.priority||'medium';
   const priDot='<span class="pri pri-'+pri+'" data-gid="'+g.id+'" title="우선순위: '+priLabel(pri)+' (클릭=변경 · Cmd+드래그=같은 값으로)"'
     +' ondragstart="return false" onmousedown="priDown(event,\''+g.id+'\')" onclick="priClick(event,\''+g.id+'\')">'+priSvg(pri)+'</span>';
-  return '<div class="bgoal'+(isChild?' child':'')+'" draggable="true"'
-    +' oncontextmenu="goalCtx(event,\''+g.id+'\')" onmouseenter="priRowEnter(\''+g.id+'\')"'
+  // 상태 콤보 왼쪽의 부모 번호 입력칸. 부모를 가질 수 없는 행(자식을 둔 부모 목표)은
+  // 정렬용 빈칸만 둔다. Cmd+누른 채 여기서 시작하면 아래로 '채우기'(pinDown), 그냥 클릭은 타이핑.
+  const pcell = hasKids
+    ? '<span class="pin-sp"></span>'
+    : (function(){
+        const p=g.parent?byId(_goals,g.parent):null;
+        const psn=p?pad2(p.seq||0):'';
+        return '<input class="pin" type="text" inputmode="numeric" draggable="false" value="'+psn+'"'
+          +' placeholder="부모#" title="번호 입력 (예: 02 → goal-02의 자식) · Cmd+드래그로 아래 행에 채우기 · 비우면 최상위"'
+          +' onmousedown="pinDown(event,\''+g.id+'\')" onclick="event.stopPropagation()" ondblclick="event.stopPropagation()"'
+          +' onkeydown="if(event.key===\'Enter\')this.blur()" onchange="setParentByNumber(\''+g.id+'\',this.value)">';
+      })();
+  return '<div class="bgoal'+(isChild?' child':'')+'" data-id="'+g.id+'" draggable="true"'
+    +' oncontextmenu="goalCtx(event,\''+g.id+'\')" onmouseenter="priRowEnter(\''+g.id+'\');pinRowEnter(\''+g.id+'\')"'
     +' ondragstart="spDragStart(event,\''+g.id+'\')" ondragend="spDragEnd(event)">'
-    +lead+'<span class="grip">⠿</span>'+priDot+gpill(g)
-    +'<span class="t">'+esc(g.text)+pr+'</span>'
-    +'<span class="ot '+es+'">'+statLabel2(es)+'</span></div>';
+    +lead+'<span class="grip" title="드래그=스프린트 이동 · 우클릭=메뉴 · 부모#칸에서 Cmd+드래그=부모 채우기">⠿</span>'+priDot+gpill(g)
+    +'<span class="t gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+pr+'</span>'
+    +pcell+statCell+'</div>';
 }
 // 그룹 본문: 같은 그룹 안의 부모-자식을 트리로 렌더(자식 접기 가능, 1단계 계층).
 // 부모가 이 그룹에 없는 자식(분리된 자식)은 최상위로 그리되 부모 번호를 참조 표시한다.
@@ -2739,18 +2931,19 @@ function groupBodyHTML(rows){
   }).join('');
 }
 // 스프린트 그룹 (드롭 타깃)
-function sprintGroupHTML(s,shown,allLive){
+function sprintGroupHTML(s,shown,allLive,aq){
   const rows=shown.filter(g=>boardSprint(g,_goals)===s.number);
   const members=allLive.filter(g=>boardSprint(g,_goals)===s.number);   // 카운트는 전체 멤버
-  const body=rows.length?groupBodyHTML(rows)
-    :('<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'여기로 목표를 끌어다 놓기')+'</div>');
+  const q=aiQueueBoxHTML((aq||[]).filter(it=>(it.sprint||0)===s.number));   // 이 스프린트로 담긴 큐 → 하단
+  const body=(rows.length?groupBodyHTML(rows)
+    :(q?'':'<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'여기로 목표를 끌어다 놓기')+'</div>'))+q;
   const col=_spCollapsed.has(s.number);
   return '<div class="spgrp'+(col?' collapsed':'')+'" ondragover="spOver(event)" ondragleave="spLeave(event)" ondrop="spDrop(event,'+s.number+')">'
     +'<div class="spgrp-hd">'
       +'<span class="spchev" onclick="toggleSpCollapse('+s.number+')" title="펼치기/접기">▾</span>'
       +'<span class="pill sp">'+esc(s.code||('#'+s.number))+'</span>'
       +'<span class="ttl">'+(s.goalText?esc(s.goalText):'<span class="muted">예상 결과 미정</span>')+'</span>'
-      +ddayHTML(s.targetAt)+'<span style="flex:1"></span>'+countsHTML(members)
+      +sprintCountdownHTML(s)+'<span style="flex:1"></span>'+countsHTML(members)
       +'<button class="btn" onclick="addGoalToSprint('+s.number+')" title="이 스프린트에 목표 바로 추가">＋ 목표</button>'
       +'<button class="btn rel" onclick="releaseSprintGroup('+s.number+')">Complete sprint</button>'
       +'<button class="btn" onclick="spMenu(event,'+s.number+')" title="자세히 (편집·삭제)">⋯</button>'
@@ -2759,11 +2952,12 @@ function sprintGroupHTML(s,shown,allLive){
   +'</div>';
 }
 // Backlog (미배정) — Create sprint 버튼 포함
-function backlogHTML(shown,allLive){
+function backlogHTML(shown,allLive,aq){
   const rows=shown.filter(g=>boardSprint(g,_goals)===0);
   const members=allLive.filter(g=>boardSprint(g,_goals)===0);
-  const body=rows.length?groupBodyHTML(rows)
-    :('<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'미배정 목표가 없습니다')+'</div>');
+  const q=aiQueueBoxHTML((aq||[]).filter(it=>(it.sprint||0)===0));   // 백로그로 담긴 큐 → 하단
+  const body=(rows.length?groupBodyHTML(rows)
+    :(q?'':'<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'미배정 목표가 없습니다')+'</div>'))+q;
   const col=_spCollapsed.has('bg');
   return '<div class="spgrp bg'+(col?' collapsed':'')+'" ondragover="spOver(event)" ondragleave="spLeave(event)" ondrop="spDrop(event,0)">'
     +'<div class="spgrp-hd"><span class="spchev" onclick="toggleSpCollapse(\'bg\')" title="펼치기/접기">▾</span>'
@@ -2774,23 +2968,39 @@ function backlogHTML(shown,allLive){
     +'<div class="spgrp-body">'+body+'</div>'
   +'</div>';
 }
-// 완료된 스프린트 (릴리즈 커밋 로그) — 기본 닫힘, 헤더 클릭으로 펼침
+// 완료된 스프린트 (릴리즈 커밋 로그) — 기본 닫힘, 헤더 클릭으로 펼침.
+// 섹션이 접혀 있으면 릴리즈 아이템을, 아이템이 접혀 있으면 그 목표 행을 아예 만들지 않는다(지연 렌더링).
+// display:none 으로 숨기면 노드가 DOM에 그대로 남으므로, 실제 노드 수를 줄이려면 innerHTML 자체를 비워야 한다.
 function completedLogHTML(r){
   const rels=(r&&r.releases)||[]; if(!rels.length) return '';
+  const hdr='<h3 class="rellog-hd'+(_relLogOpen?' open':'')
+    +'" onclick="toggleRelLog()" style="font-size:13px;color:var(--mut);margin:18px 0 8px;border-top:1px solid var(--line);padding-top:14px">'
+    +'<span class="chev'+(_relLogOpen?' open':'')+'">▸</span>완료된 스프린트 (릴리즈 로그) '
+    +'<span class="muted" style="font-weight:400">('+rels.length+')</span></h3>';
+  if(!_relLogOpen) return hdr;   // 섹션 접힘: 헤더만 렌더 — 릴리즈 아이템 DOM을 만들지 않는다
   const goalById={}; ((r&&r.goals)||[]).forEach(g=>{ goalById[g.id]=g; });
   const sgoalOf={}; ((r&&r.sprints)||[]).forEach(s=>{ sgoalOf[s.number]=s.goalText||''; });
   const codeOf={}; ((r&&r.sprints)||[]).forEach(s=>{ codeOf[s.number]=s.code||('#'+s.number); });
   const items=rels.map(function(rel){
     const when=rel.releasedAt?fmtDate(rel.releasedAt):'—';
-    const head=(rel.sprint>0)
-      ? ((codeOf[rel.sprint]||('#'+rel.sprint))+(sgoalOf[rel.sprint]?(' · '+esc(sgoalOf[rel.sprint])):''))
-      : '미배정';
+    // Prefer the release's own snapshot code (unique per release); fall back to the sprint's
+    // current code for legacy records saved before per-release codes existed.
+    const code=rel.code||((rel.sprint>0)?(codeOf[rel.sprint]||('#'+rel.sprint)):'');
+    const gtext=(rel.sprint>0&&sgoalOf[rel.sprint])?(' · '+esc(sgoalOf[rel.sprint])):'';
+    const head=code?(code+gtext):'미배정';
     const open=_relOpen.has(rel.id);
     const ids=rel.goalIds||[], titles=rel.titles||[];
-    const rows=titles.length ? titles.map(function(t,i){
+    // 접힌 아이템은 행을 만들지 않는다 — 펼칠 때(open) 재렌더에서 생성되어 DOM 노드를 아낀다.
+    const rows=!open ? '' : (titles.length ? titles.map(function(t,i){
       const g=goalById[ids[i]]; const gn=g?('<span class="gn">goal-'+pad2(g.seq||0)+'</span>'):'';
-      return '<div class="relrow">'+gn+'✓ '+esc(t)+'</div>';
-    }).join('') : '<div class="muted" style="font-size:12px">목표 없음</div>';
+      // Parent indicator: child goals show the parent's number (gray); top-level goals show a purple "부모" badge.
+      let pn='';
+      if(g){
+        if(g.parent){ const p=goalById[g.parent]; pn='<span class="pn" title="상위 목표">'+(p?('goal-'+pad2(p.seq||0)):'상위')+'</span>'; }
+        else { pn='<span class="pn top" title="최상위 목표">부모</span>'; }
+      }
+      return '<div class="relrow">'+pn+gn+'✓ '+esc(t)+'</div>';
+    }).join('') : '<div class="muted" style="font-size:12px">목표 없음</div>');
     return '<div class="relitem">'
       +'<h4 class="clk" onclick="toggleRel(\''+rel.id+'\')">'
         +'<span><span class="chev'+(open?' open':'')+'">▸</span>'+head+' · '+when
@@ -2799,7 +3009,7 @@ function completedLogHTML(r){
         +'<button class="btn" onclick="event.stopPropagation();restoreRelease(\''+rel.id+'\')">복원</button></span></h4>'
       +'<div class="relbody'+(open?' open':'')+'">'+rows+'</div></div>';
   }).join('');
-  return '<h3 style="font-size:13px;color:var(--mut);margin:18px 0 8px;border-top:1px solid var(--line);padding-top:14px">완료된 스프린트 (릴리즈 로그)</h3>'+items;
+  return hdr+items;
 }
 
 // --- 우선순위 (5단계) : 색 점 클릭=피커 · Cmd+드래그=같은 값으로 페인트 ---
@@ -2867,10 +3077,10 @@ function priClick(e,id){
 }
 function setPriority(id,p){ priApplyDom(id,p); post('/api/goal/priority',{id:id,priority:p}); }
 
-// --- 드래그 배정 ---
+// --- 드래그 배정 (스프린트/Backlog 그룹 이동) ---
 let _spDrag=null;
-function spDragStart(e,id){ if(e.metaKey||e.ctrlKey){ e.preventDefault(); return false; } _spDrag=id; e.currentTarget.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; }
-function spDragEnd(e){ e.currentTarget.classList.remove('dragging'); document.querySelectorAll('.spgrp.dropOver').forEach(x=>x.classList.remove('dropOver')); }
+function spDragStart(e,id){ _spDrag=id; e.currentTarget.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; }
+function spDragEnd(e){ e.currentTarget.classList.remove('dragging'); document.querySelectorAll('.spgrp.dropOver').forEach(x=>x.classList.remove('dropOver')); _spDrag=null; }
 function spOver(e){ e.preventDefault(); e.currentTarget.classList.add('dropOver'); }
 function spLeave(e){ e.currentTarget.classList.remove('dropOver'); }
 function spDrop(e,n){ e.preventDefault(); e.currentTarget.classList.remove('dropOver');
@@ -2880,6 +3090,44 @@ function spDrop(e,n){ e.preventDefault(); e.currentTarget.classList.remove('drop
     post('/api/goal/sprint',{id:_spDrag,sprint:val});
   }
   _spDrag=null;
+}
+
+// --- 부모 채우기(fill-down): 부모#칸에서 Cmd+드래그로 아래 행에 같은 부모를 칠한다 ---
+// 우선순위 페인트와 같은 패턴. 드래그 도중에는 재렌더하지 않고(그러면 mouseenter 체인이
+// 끊김) 칸 값만 낙관적으로 바꾼 뒤, mouseup에서 전체 id를 한 번의 요청으로 커밋한다.
+let _fill=null;        // {parent:부모id(''=해제), seq:표시번호} — null이면 비활성
+let _filled=null;      // 이번에 칠한 goal id 집합
+function bgRowEl(id){ return document.querySelector('.bgoal[data-id="'+id+'"]'); }
+// 채울 대상 판정: 자기 자신을 부모로 불가, 자식 가진 목표(2단계 방지)·릴리즈는 스킵.
+function fillOk(g){ return g && g.id!==_fill.parent && !g.released && !g.archived && !(_goals||[]).some(k=>k.parent===g.id); }
+function pinDown(e,id){
+  if(!(e.metaKey||e.ctrlKey)){ e.stopPropagation(); return; }   // Cmd 아니면 타이핑 포커스(행 드래그만 차단)
+  e.preventDefault(); e.stopPropagation();                       // 포커스·네이티브 드래그 차단
+  const g=byId(_goals,id); if(!g) return;
+  const p=g.parent?byId(_goals,g.parent):null;
+  _fill={parent:g.parent||'', seq:p?(p.seq||0):0};
+  _filled=new Set();
+  document.body.classList.add('parfilling');
+  const src=bgRowEl(id); if(src) src.classList.add('parsrc');
+  document.addEventListener('mouseup',pinUp);
+  pinPaint(id);
+}
+function pinPaint(id){
+  if(!_fill||_filled.has(id)) return;
+  const g=byId(_goals,id); if(!fillOk(g)) return;
+  _filled.add(id);
+  const row=bgRowEl(id); if(row){ const pin=row.querySelector('.pin');
+    if(pin) pin.value=_fill.parent?pad2(_fill.seq):''; row.classList.add('parfill'); }
+}
+function pinRowEnter(id){ if(_fill) pinPaint(id); }
+function pinUp(){
+  document.removeEventListener('mouseup',pinUp);
+  document.body.classList.remove('parfilling');
+  const ids=_filled?[..._filled].filter(id=>id!==_fill.parent):[];
+  const parent=_fill?_fill.parent:'';
+  _fill=null; _filled=null;
+  if(ids.length) post('/api/goal/parent',{ids:ids,parent:parent});   // 폴링이 새 계층으로 재렌더
+  else if(_review) renderSprintBoard(_review);                        // 아무것도 안 칠했으면 원복
 }
 
 // --- 접기 (그룹/자식) ---
@@ -2953,9 +3201,24 @@ function goalCtx(e,id){ e.preventDefault(); e.stopPropagation();
   html+=sprints.map(s=>'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToSprint(\''+id+'\','+s.number+')">'+esc(s.code||('#'+s.number))+(s.goalText?(' · '+esc(s.goalText)):'')+'</button>').join('');
   html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">부모(계층)</div>'
     +'<button class="popitem" onmousedown="event.stopPropagation();openParentPicker(\''+id+'\')">부모 설정 / 해제 ▸</button>';
+  const isParent=(_goals||[]).some(k=>k.parent===id);
+  // 보관: 활성 목록에서 치우고 아카이브 뷰로 보낸다(자식도 함께). 되돌리기는 아카이브 뷰의 '보관 해제'.
+  html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">보관</div>'
+    +'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();archiveGoal(\''+id+'\',true)">아카이브로 보관'+(isParent?' (하위 포함)':'')+'</button>';
+  // Parents are never auto-completed from their children (they are a living history container).
+  // Give the user the MANUAL close/reopen switch here — used only at a branch point.
+  if(isParent){
+    const manualDone=(g&&(g.status||'')==='done');
+    html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">부모 상태 (수동)</div>'
+      +(manualDone
+        ? '<button class="popitem" onmousedown="event.stopPropagation();hidePopup();setStatus(\''+id+'\',\'backlog\')">On Track으로 되돌리기</button>'
+        : '<button class="popitem" onmousedown="event.stopPropagation();hidePopup();setStatus(\''+id+'\',\'done\')">완료로 표시 (분기 마감)</button>');
+  }
   showPopup(e.clientX,e.clientY,html);
 }
 function moveGoalToSprint(id,n){ post('/api/goal/sprint',{id:id,sprint:n}); }
+// 보관 / 보관 해제 — 서버가 자식까지 함께 보관 처리한다. 활성 뷰에서 사라지고 아카이브 뷰로 이동.
+function archiveGoal(id,on){ post('/api/goal/archive',{id:id,archived:!!on}); }
 
 // --- 부모 선택기 (검색 + Unlink + 후보 목록) — 팝업 내용 교체, 닫히지 않음 ---
 let _ppId=null;
@@ -2973,7 +3236,7 @@ function renderParentList(q){
   const el=$('ppList'); if(!el) return;
   q=String(q||'').toLowerCase().trim();
   // 후보: 최상위(부모 없음)·릴리즈 안 됨·자기 자신 제외 (백엔드가 2단계 중첩은 재차 검증)
-  const cands=(_goals||[]).filter(g=>g.id!==_ppId && !g.parent && !g.released);
+  const cands=(_goals||[]).filter(g=>g.id!==_ppId && !g.parent && !g.released && !g.archived);
   // 정렬 우선순위: ① 마지막 선택 부모(전역 1개) → ② 현재(열린) 스프린트 부모(스프린트 번호·보드 순)
   //              → ③ 나머지. 동일 그룹 안에서는 원래 _goals 순서를 유지한다.
   const pinned=ppLastParent();
@@ -3023,6 +3286,7 @@ function releaseSprintGroup(n){ if(!confirm('이 스프린트를 완료합니다
 
 // 완료 로그 펼침/복원
 function toggleRel(id){ if(_relOpen.has(id))_relOpen.delete(id); else _relOpen.add(id); if(_review) renderSprintBoard(_review); }
+function toggleRelLog(){ _relLogOpen=!_relLogOpen; if(_review) renderSprintBoard(_review); }   // 섹션 전체 펼침/접힘
 function restoreRelease(id){ post('/api/release/restore',{id:id}); }
 // 오른쪽 위 Complete sprint 버튼: 현재 스프린트 필터의 완료 목표를 커밋한다.
 function releaseCurrentSprint(){
@@ -3074,7 +3338,7 @@ function renderReport(d,r,conf,prov){
   if(!tops.length) html+='<div class="muted">'+(anyStatusActive()?'필터에 해당하는 목표가 없습니다.':'목표가 없습니다. 입력 뷰에서 추가하세요.')+'</div>';
   tops.forEach(t=>{
     const ds=derivedStatus(goals,t);
-    const tag=ds==='on_track'?'<span class="otTag">on track</span>':(ds==='done'?'<span class="otTag" style="border-color:var(--green);color:var(--green);background:rgba(54,192,138,.12)">완료</span>':'');
+    const tag=ds==='on_track'?'<span class="otTag">On Track</span>':(ds==='done'?'<span class="otTag" style="border-color:var(--green);color:var(--green);background:rgba(54,192,138,.12)">완료</span>':'');
     html+='<h3 style="margin:12px 0 4px">'+esc(t.text)+tag+'</h3>';
     if(gnote(r,t.id)) html+='<div class="muted" style="margin-bottom:4px">'+esc(gnote(r,t.id))+'</div>';
     html+=evReportHtml(t);
@@ -3298,6 +3562,10 @@ load();
 setInterval(load,5000);
 setInterval(liveTick,100);
 window.addEventListener('resize', load);
+// 부모 채우기 무장: Cmd(또는 Ctrl)를 누르는 동안 부모#칸이 채우기 소스로 강조된다.
+document.addEventListener('keydown',function(e){ if(e.key==='Meta'||e.key==='Control') document.body.classList.add('armparent'); });
+document.addEventListener('keyup',  function(e){ if(e.key==='Meta'||e.key==='Control') document.body.classList.remove('armparent'); });
+window.addEventListener('blur',function(){ document.body.classList.remove('armparent'); });
 // Run the QA self-audit independently of load(), so it still fires (and re-measures on
 // resize) even if a render path hiccups. Cheap; only POSTs when the finding set changes.
 setInterval(publishQaAudit, 7000);

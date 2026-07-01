@@ -40,6 +40,8 @@ sid="$(field session_id)"
 #   3. ~/Library/Application Support/ConditionManager - the production default
 if [ -n "$CM_DATA_DIR" ]; then
   data_dir="$CM_DATA_DIR"
+elif [ -n "$CLAUDE_PROJECT_DIR" ] && [ -d "$CLAUDE_PROJECT_DIR/../../.condition-manager" ]; then
+  data_dir="$(cd "$CLAUDE_PROJECT_DIR/../.." && pwd)/.condition-manager"
 elif [ -n "$CLAUDE_PROJECT_DIR" ] && [ -d "$CLAUDE_PROJECT_DIR/.localdata" ]; then
   data_dir="$CLAUDE_PROJECT_DIR/.localdata"
 else
@@ -117,12 +119,27 @@ print(out.replace(chr(10), " ").strip())
   fi
 fi
 
+# Wait kind (only meaningful for the `wait`/Notification event): split the human-wait into
+#   permission - 확인 요청: the agent needs the user to approve a tool. Claude Code's
+#                Notification message reads like "needs your permission to use …".
+#   decision   - 의사결정 요청: an open question / idle "waiting for your input".
+# The dashboard colors these differently in the left rail (blue vs amber). An ended turn
+# (idle/Stop) carries no message and is treated as a decision-style wait by the server.
+wait_kind=""
+if [ "$event" = "wait" ]; then
+  msg="$(field message)"
+  case "$msg" in
+    *permission*|*Permission*|*approve*|*Approve*) wait_kind="permission" ;;
+    *) wait_kind="decision" ;;
+  esac
+fi
+
 # JSON-escape free-text fields (backslash + double-quote) before embedding; aiTitle and
-# the path are free text so they can contain quotes. sid/event are safe tokens.
+# the path are free text so they can contain quotes. sid/event/wait_kind are safe tokens.
 jesc(){ printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 esc_text="$(jesc "$text")"
 esc_path="$(jesc "$tpath")"
-body="{\"sessionId\":\"$sid\",\"event\":\"$event\",\"text\":\"$esc_text\",\"transcriptPath\":\"$esc_path\"}"
+body="{\"sessionId\":\"$sid\",\"event\":\"$event\",\"text\":\"$esc_text\",\"transcriptPath\":\"$esc_path\",\"waitKind\":\"$wait_kind\"}"
 
 curl -s -m 1 -X POST "http://127.0.0.1:$port/api/session/event" \
   -H 'Content-Type: application/json' \
