@@ -1438,15 +1438,42 @@ function aiQueueBoxHTML(items){
       meta='<div class="muted" style="font-size:12px">'+tag+(it.note?' · '+esc(it.note):'')+'</div>'
         +(ms?'<div class="muted" style="font-size:12px">유사: '+ms+'</div>':'');
     }
-    const btns=rdy
-      ? '<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="이 목표를 추가">추가</button>'
-        +'<button class="btn" onclick="queueEditStart(\''+it.id+'\')" title="문구 수정">수정</button>'
-        +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>'
-      : '<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="분석을 기다리지 않고 바로 추가">바로 추가</button>'
+    // 프롬프트 다듬기 패널: 이 항목이 활성일 때만 (입력 or 생성 중).
+    const uiOn=(_qUI&&_qUI.id===it.id);
+    let panel='';
+    if(uiOn && _qUI.mode==='gen'){
+      panel='<div style="border:1px dashed #33406a;border-radius:8px;padding:8px 10px;margin-top:6px;background:#101627">'
+        +'<span style="color:var(--green);font-size:13px"><span class="qspin">🔄</span> 새 결과 생성 중…</span></div>';
+    } else if(uiOn){
+      panel='<div style="border:1px dashed #33406a;border-radius:8px;padding:8px 10px;margin-top:6px;background:#101627">'
+        +'<div style="font-size:11px;color:#9db4ff;margin-bottom:5px">프롬프트 — 이 결과를 어떻게 바꿀까요?</div>'
+        +'<textarea id="qp_'+it.id+'" oninput="if(_qUI)_qUI.prompt=this.value" placeholder="예: 목표 문구를 &#39;스크립트화&#39;로 바꾸고 매일 자동 발송까지 포함해줘" '
+        +'style="width:100%;background:#0f131b;color:var(--fg);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;font:13px/1.5 inherit;outline:none;resize:vertical;min-height:52px">'+esc(_qUI.prompt||'')+'</textarea>'
+        +'<div style="display:flex;gap:6px;margin-top:6px"><button class="btn" onclick="queuePromptGen(\''+it.id+'\')">생성</button>'
+        +'<button class="btn" onclick="queuePromptCancel()">취소</button></div></div>';
+    }
+    // 우측 버튼: 상태별. 프롬프트 패널이 열려 있으면 액션은 패널이 가진다.
+    let btns;
+    if(!rdy){
+      btns='<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="분석을 기다리지 않고 바로 추가">바로 추가</button>'
         +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>';
+    } else if(uiOn){
+      btns='';
+    } else if(_qJustRefined===it.id){
+      // 방금 프롬프트로 다듬어진 새 결과 — 맞으면 진행, 아니면 다시 프롬프트.
+      btns='<button class="btn primary" onclick="queueProceed(\''+it.id+'\')" title="이 결과로 목표를 추가">이 결과로 진행</button>'
+        +'<button class="btn" onclick="queuePromptStart(\''+it.id+'\')" title="아직 아니면 다시 프롬프트">다시 프롬프트</button>'
+        +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>';
+    } else {
+      btns='<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="이 목표를 추가">추가</button>'
+        +'<button class="btn" onclick="queuePromptStart(\''+it.id+'\')" title="프롬프트로 결과를 다시 생성">프롬프트</button>'
+        +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>';
+    }
+    const newBadge=(_qJustRefined===it.id)
+      ? '<span style="font-size:11px;padding:1px 7px;border-radius:20px;background:#0f2a1e;color:var(--green);border:1px solid #1e4a35;margin-right:6px">새 결과</span>' : '';
     return '<div class="'+cls+'">'
-      +'<div style="flex:1;min-width:0"><span id="qt_'+it.id+'">'+esc(it.text)+'</span>'+meta+'</div>'
-      +'<div style="display:flex;gap:4px;flex-shrink:0">'+btns+'</div></div>';
+      +'<div style="flex:1;min-width:0">'+newBadge+'<span id="qt_'+it.id+'">'+esc(it.text)+'</span>'+meta+panel+'</div>'
+      +'<div style="display:flex;gap:4px;flex-shrink:0;align-items:flex-start">'+btns+'</div></div>';
   }
   return '<div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:4px 0 10px;background:rgba(91,140,255,0.06)">'
     +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
@@ -1454,10 +1481,30 @@ function aiQueueBoxHTML(items){
     +'<span class="muted" style="font-weight:400;font-size:12px;margin-left:auto">'+(counts.join(' · ')||'대기 없음')+'</span></div>'
     +items.map(row).join('')+'</div>';
 }
+// === 큐 프롬프트 다듬기 상태 ===
+// _qUI: 프롬프트 입력/생성 중 패널 상태 {id, mode:'prompt'|'gen', prompt}
+// _qJustRefined: 방금 프롬프트로 다듬어진 항목 id — '새 결과'로 강조하고 진행/다시 프롬프트를 띄운다.
+let _qUI=null, _qJustRefined='', _lastAiQueue=[];
 // 입력(목록) 뷰의 전역 큐 박스: #aiQueue(목표 목록 아래)에 전체 큐를 그린다.
-function renderAiQueue(items){ const host=$('aiQueue'); if(host) host.innerHTML=aiQueueBoxHTML(items); }
+function renderAiQueue(items){ _lastAiQueue=items||[]; const host=$('aiQueue'); if(host) host.innerHTML=aiQueueBoxHTML(items);
+  // 프롬프트 입력 중이면 재렌더 후 텍스트박스에 포커스를 되돌린다(캐럿 끝으로).
+  if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } } }
+function rerenderAiQueue(){ renderAiQueue(_lastAiQueue); }
 function queueAdd(id){ post('/api/goal/queue/resolve',{id:id,action:'add'}); }
-function queueSkip(id){ post('/api/goal/queue/resolve',{id:id,action:'skip'}); }
+function queueSkip(id){ _qJustRefined=''; post('/api/goal/queue/resolve',{id:id,action:'skip'}); }
+// 프롬프트 열기 → 입력 → 생성(서버 refine) → 새 결과. 맞으면 진행(queueProceed), 아니면 다시.
+function queuePromptStart(id){ _qJustRefined=''; _qUI={id:id,mode:'prompt',prompt:''}; rerenderAiQueue();
+  const t=$('qp_'+id); if(t) t.focus(); }
+function queuePromptCancel(){ _qUI=null; rerenderAiQueue(); }
+function queuePromptGen(id){
+  const t=$('qp_'+id); const prompt=((t?t.value:((_qUI&&_qUI.prompt)||''))||'').trim();
+  if(!prompt){ if(t) t.focus(); return; }
+  _qUI={id:id,mode:'gen',prompt:prompt}; rerenderAiQueue();
+  fetch('/api/goal/queue/refine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,prompt:prompt})})
+    .then(r=>r.json()).then(res=>{ _qUI=null; if(res&&res.ok){ _qJustRefined=id; } else { alert('다듬기에 실패했습니다 (claude 미설치/오류). 잠시 후 다시 시도하세요.'); } load(); })
+    .catch(()=>{ _qUI=null; load(); });
+}
+function queueProceed(id){ _qJustRefined=''; queueAdd(id); }
 function queueEditStart(id){
   const span=$('qt_'+id); if(!span||span._editing)return; span._editing=true;
   const cur=span.textContent;

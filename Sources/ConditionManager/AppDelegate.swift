@@ -1957,6 +1957,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                               images: (obj["images"] as? [[String: Any]]) ?? [],
                               model: (obj["model"] as? String) ?? "")
         }
+        // 큐 프롬프트 다듬기: 유저 프롬프트로 큐 항목을 다시 생성한다. claude 호출(수초, blocking)이라
+        // main.sync 밖에서 처리한다. 성공 시 항목 텍스트+설명을 갱신하고 새 결과를 돌려준다.
+        if path == "/api/goal/queue/refine" {
+            let id = (obj["id"] as? String) ?? ""
+            let prompt = (obj["prompt"] as? String) ?? ""
+            guard !id.isEmpty, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return "{\"ok\":false,\"error\":\"empty\"}"
+            }
+            // 현재 항목 텍스트 스냅샷 (스레드 안전하게 main에서).
+            let cur: String? = DispatchQueue.main.sync {
+                reviewStore.aiQueue.first(where: { $0.id == id })?.text
+            }
+            guard let current = cur else { return "{\"ok\":false,\"error\":\"not-found\"}" }
+            let v = aiRefineGoal(current: current, prompt: prompt)
+            guard v.ok else { return "{\"ok\":false,\"error\":\"unavailable\"}" }
+            let saved = DispatchQueue.main.sync {
+                reviewStore.refineQueueItem(id: id, text: v.text, note: v.note)
+            }
+            guard saved else { return "{\"ok\":false,\"error\":\"gone\"}" }
+            return "{\"ok\":true,\"text\":\(jsonString(v.text)),\"note\":\(jsonString(v.note))}"
+        }
         return DispatchQueue.main.sync {
             let day = reviewStore.todayKey
             switch path {
@@ -2478,6 +2499,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "{\"seq\":\($0.seq),\"text\":\(jsonString($0.text)),\"why\":\(jsonString($0.why))}"
         }.joined(separator: ",")
         return "{\"ok\":true,\"duplicate\":\(v.duplicate),\"matches\":[\(matches)],\"note\":\(jsonString(v.note))}"
+    }
+
+    // Prompt-refine a single queued goal: given the CURRENT goal text and a free-text user
+    // INSTRUCTION, rewrite the goal to satisfy the instruction and explain what changed. Runs
+    // an external `claude -p` (seconds, BLOCKING) — call OFF main. ok=false on any failure so
+    // the client keeps the current text unchanged (best-effort). Returns (ok, text, note).
+    private func aiRefineGoal(current: String, prompt: String) -> (ok: Bool, text: String, note: String) {
+        let cur = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ins = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cur.isEmpty, !ins.isEmpty else { return (false, "", "") }
+        guard let claude = Self.resolveClaude() else { return (false, "", "") }
+        let promptText = """
+        You refine a single goal statement for a personal goal tracker, following the user's \
+        instruction. Keep the result a single concise, actionable goal line in Korean (no list, \
+        no prose). Preserve the original intent unless the instruction says otherwise.
+
+        CURRENT GOAL:
+        \(cur)
+
+        USER INSTRUCTION (how to change it):
+        \(ins)
+
+        Respond with ONLY a single JSON object, no prose, no code fences:
+        {"text": "<the rewritten goal, one line, Korean>", "note": "<one short Korean sentence explaining what changed>"}
+        """
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-lc", "\(Self.shellQuote(claude)) -p --output-format text 2>/dev/null"]
+        var env = ProcessInfo.processInfo.environment
+        let home = NSHomeDirectory()
+        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        p.environment = env
+        let inPipe = Pipe(), outPipe = Pipe()
+        p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
+        do { try p.run() } catch { return (false, "", "") }
+        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 60, execute: killer)
+        inPipe.fileHandleForWriting.write(Data(promptText.utf8))
+        try? inPipe.fileHandleForWriting.close()
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        killer.cancel()
+        let raw = String(decoding: outData, as: UTF8.self)
+        guard let start = raw.firstIndex(of: "{"), let end = raw.lastIndex(of: "}"), start < end,
+              let parsed = try? JSONSerialization.jsonObject(with: Data(raw[start...end].utf8)) as? [String: Any],
+              let text = (parsed["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty
+        else { return (false, "", "") }
+        let note = (parsed["note"] as? String) ?? ""
+        return (true, text, note)
     }
 
     // Semantic ("AI") search over ALL goals — including archived/released ones, which are

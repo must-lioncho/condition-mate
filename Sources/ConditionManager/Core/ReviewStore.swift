@@ -516,6 +516,23 @@ final class ReviewStore {
         saveQueue()
     }
 
+    // Prompt-refine: replace a queued candidate's text (and refinement note) with a
+    // model-rewritten result, keeping it queued as "ready" for another review round.
+    // The user drives this by giving a free-text prompt; the loop repeats until they
+    // accept (추가) or drop (스킵). No-op if the item was resolved while the refine ran.
+    // Returns true on success so the caller can report accordingly. Call on main.
+    @discardableResult
+    func refineQueueItem(id: String, text: String, note: String) -> Bool {
+        guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return false }
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return false }
+        aiQueue[idx].text = t
+        aiQueue[idx].note = note
+        aiQueue[idx].status = "ready"
+        saveQueue()
+        return true
+    }
+
     // True when any candidate still needs analysis — used to decide whether to (re)kick
     // the worker (e.g. on launch, to resume items left pending by a previous run).
     var hasPendingAnalysis: Bool { aiQueue.contains { $0.status == "pending" } }
