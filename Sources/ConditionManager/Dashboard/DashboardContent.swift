@@ -1414,7 +1414,16 @@ function aiQueueBoxHTML(items){
   let waitNo=0;   // pending 행에 "대기 N번째" 부여 (도착 순)
   function row(it){
     const rdy=isReady(it);
-    const ms=(it.matches||[]).map(m=>'#'+m.seq+' '+esc(m.text||'')).join(', ');
+    // 매치의 번호(#seq)는 클릭하면 골 페이지(/goal?n=NN)로 이동해 그 목표 내용을 확인한다.
+    // why가 있으면 링크 title(툴팁)로 붙인다. stopPropagation으로 행/버튼 핸들러와 충돌 방지.
+    const ms=(it.matches||[]).map(m=>{
+      const n=m.seq||0;
+      const tip=m.why?' title='+JSON.stringify(String(m.why)):'';
+      const num=n>0
+        ? '<a href="/goal?n='+n+'"'+tip+' onclick="event.stopPropagation()" style="color:var(--accent);text-decoration:none;font-variant-numeric:tabular-nums">#'+n+'</a>'
+        : '#'+n;
+      return num+' '+esc(m.text||'');
+    }).join(', ');
     let meta='', cls='qrow';
     if(it.status==='analyzing'){
       cls='qrow analyzing';
