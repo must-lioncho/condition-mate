@@ -9,6 +9,7 @@
  * with your own account.
  */
 
+import "./env.js"; // must run before modules that read process.env
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

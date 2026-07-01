@@ -12,6 +12,8 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 if [ -n "${CM_DATA_DIR:-}" ]; then
   data_dir="$CM_DATA_DIR"
+elif [ -d "$PROJECT_DIR/../../.condition-manager" ]; then
+  data_dir="$(cd "$PROJECT_DIR/../.." && pwd)/.condition-manager"
 elif [ -d "$PROJECT_DIR/.localdata" ]; then
   data_dir="$PROJECT_DIR/.localdata"
 else

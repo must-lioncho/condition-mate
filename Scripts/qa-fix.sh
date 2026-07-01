@@ -26,6 +26,7 @@ goal_src="$PROJECT_DIR/.claude/issue/goal-${nn}.md"
 
 # --- data dir + port (mirror qa-scan.sh) -----------------------------------------
 if [ -n "${CM_DATA_DIR:-}" ]; then data_dir="$CM_DATA_DIR"
+elif [ -d "$PROJECT_DIR/../../.condition-manager" ]; then data_dir="$(cd "$PROJECT_DIR/../.." && pwd)/.condition-manager"
 elif [ -d "$PROJECT_DIR/.localdata" ]; then data_dir="$PROJECT_DIR/.localdata"
 else data_dir="$HOME/Library/Application Support/ConditionManager"; fi
 port=""; [ -f "$data_dir/dashboard.port" ] && port="$(tr -dc '0-9' < "$data_dir/dashboard.port")"

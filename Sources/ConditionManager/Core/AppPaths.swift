@@ -38,7 +38,7 @@ enum AppPaths {
 
     // Repo working-tree root when running a dev build (binary under <root>/.build/),
     // else nil for a packaged/installed app. Used by IssuePaths to keep per-goal
-    // folders (definition + attachments) git-tracked under <root>/.claude/issue.
+    // folders (definition + attachments) git-tracked under <root>/.issue.
     static var projectRoot: URL? {
         guard let root = devProjectRoot else { return nil }
         return URL(fileURLWithPath: root, isDirectory: true)
