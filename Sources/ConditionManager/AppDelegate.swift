@@ -1820,7 +1820,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return "{\"id\":\(jsonString(item.id)),\"text\":\(jsonString(item.text)),"
                     + "\"parent\":\(jsonString(item.parent)),\"sprint\":\(item.sprint),"
                     + "\"status\":\(jsonString(item.status)),\"duplicate\":\(item.duplicate),"
-                    + "\"note\":\(jsonString(item.note)),"
+                    + "\"note\":\(jsonString(item.note)),\"refining\":\(!item.refineSession.isEmpty),"
                     + "\"matches\":[\(matches)],\"createdAt\":\(item.createdAt.timeIntervalSince1970)}"
             }
             .joined(separator: ",")
@@ -1965,18 +1965,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard !id.isEmpty, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return "{\"ok\":false,\"error\":\"empty\"}"
             }
-            // 현재 항목 텍스트 스냅샷 (스레드 안전하게 main에서).
-            let cur: String? = DispatchQueue.main.sync {
-                reviewStore.aiQueue.first(where: { $0.id == id })?.text
+            // 항목 스냅샷: 현재 텍스트 + 유사 목표(첫 턴 컨텍스트) + 이어갈 세션 id (스레드 안전하게 main에서).
+            let snap: (text: String, matches: [ReviewStore.QueueMatch], session: String)? = DispatchQueue.main.sync {
+                guard let it = reviewStore.aiQueue.first(where: { $0.id == id }) else { return nil }
+                return (it.text, it.matches, it.refineSession)
             }
-            guard let current = cur else { return "{\"ok\":false,\"error\":\"not-found\"}" }
-            let v = aiRefineGoal(current: current, prompt: prompt)
+            guard let s = snap else { return "{\"ok\":false,\"error\":\"not-found\"}" }
+            let v = aiRefineGoal(current: s.text, matches: s.matches, prompt: prompt, resumeSession: s.session)
             guard v.ok else { return "{\"ok\":false,\"error\":\"unavailable\"}" }
             let saved = DispatchQueue.main.sync {
-                reviewStore.refineQueueItem(id: id, text: v.text, note: v.note)
+                reviewStore.refineQueueItem(id: id, text: v.text, note: v.note, session: v.session)
             }
             guard saved else { return "{\"ok\":false,\"error\":\"gone\"}" }
-            return "{\"ok\":true,\"text\":\(jsonString(v.text)),\"note\":\(jsonString(v.note))}"
+            return "{\"ok\":true,\"text\":\(jsonString(v.text)),\"note\":\(jsonString(v.note)),\"session\":\(jsonString(v.session))}"
         }
         return DispatchQueue.main.sync {
             let day = reviewStore.todayKey
@@ -2501,53 +2502,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return "{\"ok\":true,\"duplicate\":\(v.duplicate),\"matches\":[\(matches)],\"note\":\(jsonString(v.note))}"
     }
 
-    // Prompt-refine a single queued goal: given the CURRENT goal text and a free-text user
-    // INSTRUCTION, rewrite the goal to satisfy the instruction and explain what changed. Runs
-    // an external `claude -p` (seconds, BLOCKING) — call OFF main. ok=false on any failure so
-    // the client keeps the current text unchanged (best-effort). Returns (ok, text, note).
-    private func aiRefineGoal(current: String, prompt: String) -> (ok: Bool, text: String, note: String) {
+    // Prompt-refine a single queued goal as a CONTINUING conversation. The refine loop
+    // (프롬프트 → 생성 → 새 결과 → 다시 프롬프트) resumes ONE claude session per item, so each
+    // new instruction builds on the prior turns and the similar-goal context instead of
+    // starting fresh — better goal wording AND better context management. On the FIRST turn
+    // (resumeSession empty) we seed the session with the current goal + the similar goals;
+    // later turns pass only the new instruction and `--resume <session>`. Uses
+    // `--output-format json` to capture BOTH the model reply and the session_id to resume.
+    // Runs `claude -p` (seconds, BLOCKING) — call OFF main. ok=false on any failure so the
+    // client keeps the current text unchanged (best-effort). Returns (ok, text, note, session).
+    private func aiRefineGoal(current: String, matches: [ReviewStore.QueueMatch], prompt: String,
+                              resumeSession: String) -> (ok: Bool, text: String, note: String, session: String) {
         let cur = current.trimmingCharacters(in: .whitespacesAndNewlines)
         let ins = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cur.isEmpty, !ins.isEmpty else { return (false, "", "") }
-        guard let claude = Self.resolveClaude() else { return (false, "", "") }
-        let promptText = """
-        You refine a single goal statement for a personal goal tracker, following the user's \
-        instruction. Keep the result a single concise, actionable goal line in Korean (no list, \
-        no prose). Preserve the original intent unless the instruction says otherwise.
+        guard !cur.isEmpty, !ins.isEmpty else { return (false, "", "", resumeSession) }
+        guard let claude = Self.resolveClaude() else { return (false, "", "", resumeSession) }
+        let jsonRule = "Respond with ONLY a single JSON object, no prose, no code fences: "
+            + "{\"text\": \"<the current best goal, one line, Korean>\", \"note\": \"<one short Korean sentence on what changed this turn>\"}"
+        // First turn seeds full context; resumed turns carry it in the session, so send only
+        // the new instruction (+ the JSON rule, since headless turns don't keep a system prompt).
+        let promptText: String
+        if resumeSession.isEmpty {
+            let sim = matches.isEmpty ? "(none)" :
+                matches.map { "#\($0.seq) \($0.text)\($0.why.isEmpty ? "" : " — \($0.why)")" }.joined(separator: "\n")
+            promptText = """
+            We will refine ONE goal for a personal goal tracker across a MULTI-TURN session. Each of my \
+            messages is an instruction to improve the goal; keep all prior context and the similar goals \
+            below in mind so we avoid duplication and manage context well. Keep the goal a single concise, \
+            actionable line in Korean.
 
-        CURRENT GOAL:
-        \(cur)
+            CURRENT GOAL:
+            \(cur)
 
-        USER INSTRUCTION (how to change it):
-        \(ins)
+            SIMILAR EXISTING GOALS (context — reuse/relate, don't duplicate):
+            \(sim)
 
-        Respond with ONLY a single JSON object, no prose, no code fences:
-        {"text": "<the rewritten goal, one line, Korean>", "note": "<one short Korean sentence explaining what changed>"}
-        """
+            FIRST INSTRUCTION:
+            \(ins)
+
+            \(jsonRule)
+            """
+        } else {
+            promptText = "다음 지시로 목표를 이어서 다듬어줘: \(ins)\n\n\(jsonRule)"
+        }
+        var args = "-p --output-format json"
+        if !resumeSession.isEmpty { args += " --resume \(Self.shellQuote(resumeSession))" }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
-        p.arguments = ["-lc", "\(Self.shellQuote(claude)) -p --output-format text 2>/dev/null"]
+        p.arguments = ["-lc", "\(Self.shellQuote(claude)) \(args) 2>/dev/null"]
         var env = ProcessInfo.processInfo.environment
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
         p.environment = env
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
-        do { try p.run() } catch { return (false, "", "") }
+        do { try p.run() } catch { return (false, "", "", resumeSession) }
         let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 60, execute: killer)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 90, execute: killer)
         inPipe.fileHandleForWriting.write(Data(promptText.utf8))
         try? inPipe.fileHandleForWriting.close()
         let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         killer.cancel()
+        // Outer envelope: {result, session_id}. `result` holds the model's own {text, note} JSON.
         let raw = String(decoding: outData, as: UTF8.self)
-        guard let start = raw.firstIndex(of: "{"), let end = raw.lastIndex(of: "}"), start < end,
-              let parsed = try? JSONSerialization.jsonObject(with: Data(raw[start...end].utf8)) as? [String: Any],
-              let text = (parsed["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty
-        else { return (false, "", "") }
-        let note = (parsed["note"] as? String) ?? ""
-        return (true, text, note)
+        guard let s = raw.firstIndex(of: "{"), let e = raw.lastIndex(of: "}"), s < e,
+              let env2 = try? JSONSerialization.jsonObject(with: Data(raw[s...e].utf8)) as? [String: Any]
+        else { return (false, "", "", resumeSession) }
+        let session = (env2["session_id"] as? String) ?? resumeSession
+        let result = (env2["result"] as? String) ?? ""
+        // Parse the inner {text, note} out of the model reply.
+        guard let is0 = result.firstIndex(of: "{"), let ie = result.lastIndex(of: "}"), is0 < ie,
+              let inner = try? JSONSerialization.jsonObject(with: Data(result[is0...ie].utf8)) as? [String: Any],
+              let text = (inner["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty
+        else { return (false, "", "", session) }
+        let note = (inner["note"] as? String) ?? ""
+        return (true, text, note, session)
     }
 
     // Semantic ("AI") search over ALL goals — including archived/released ones, which are

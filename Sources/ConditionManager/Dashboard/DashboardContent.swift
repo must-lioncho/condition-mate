@@ -1435,7 +1435,8 @@ function aiQueueBoxHTML(items){
       const tag=it.duplicate
         ? '<span style="color:#e0a458">유사 목표 있음</span>'
         : '<span style="color:var(--green)">새 목표</span>';
-      meta='<div class="muted" style="font-size:12px">'+tag+(it.note?' · '+esc(it.note):'')+'</div>'
+      const sess=it.refining?'<span style="color:#9db4ff"> · 🔗 세션 이어감</span>':'';
+      meta='<div class="muted" style="font-size:12px">'+tag+(it.note?' · '+esc(it.note):'')+sess+'</div>'
         +(ms?'<div class="muted" style="font-size:12px">유사: '+ms+'</div>':'');
     }
     // 프롬프트 다듬기 패널: 이 항목이 활성일 때만 (입력 or 생성 중).
@@ -1446,7 +1447,7 @@ function aiQueueBoxHTML(items){
         +'<span style="color:var(--green);font-size:13px"><span class="qspin">🔄</span> 새 결과 생성 중…</span></div>';
     } else if(uiOn){
       panel='<div style="border:1px dashed #33406a;border-radius:8px;padding:8px 10px;margin-top:6px;background:#101627">'
-        +'<div style="font-size:11px;color:#9db4ff;margin-bottom:5px">프롬프트 — 이 결과를 어떻게 바꿀까요?</div>'
+        +'<div style="font-size:11px;color:#9db4ff;margin-bottom:5px">'+(it.refining?'프롬프트 — 이 세션을 이어서 더 낫게 (지시를 계속 쌓으세요)':'프롬프트 — 이 세션에서 목표를 다듬습니다')+'</div>'
         +'<textarea id="qp_'+it.id+'" oninput="if(_qUI)_qUI.prompt=this.value" placeholder="예: 목표 문구를 &#39;스크립트화&#39;로 바꾸고 매일 자동 발송까지 포함해줘" '
         +'style="width:100%;background:#0f131b;color:var(--fg);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;font:13px/1.5 inherit;outline:none;resize:vertical;min-height:52px">'+esc(_qUI.prompt||'')+'</textarea>'
         +'<div style="display:flex;gap:6px;margin-top:6px"><button class="btn" onclick="queuePromptGen(\''+it.id+'\')">생성</button>'

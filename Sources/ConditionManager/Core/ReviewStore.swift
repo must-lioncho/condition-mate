@@ -296,13 +296,19 @@ final class ReviewStore {
         // already analyzed when they hit the old "later" pile), so they behave as before.
         var status: String = "ready"
         var duplicate: Bool = false      // AI verdict: candidate overlaps an existing goal
+        // Claude session id for the prompt-refine CONVERSATION on this item. The refine
+        // loop (프롬프트 → 생성 → 새 결과 → 다시 프롬프트) continues ONE session so each new
+        // prompt builds on the prior turns and the similar-goal context, instead of starting
+        // fresh every time. Empty until the first refine; then resumed via `claude --resume`.
+        var refineSession: String = ""
 
-        enum CodingKeys: String, CodingKey { case id, text, parent, sprint, note, matches, createdAt, status, duplicate }
+        enum CodingKeys: String, CodingKey { case id, text, parent, sprint, note, matches, createdAt, status, duplicate, refineSession }
         init(id: String, text: String, parent: String = "", sprint: Int = 0, note: String = "",
-             matches: [QueueMatch] = [], createdAt: Date, status: String = "ready", duplicate: Bool = false) {
+             matches: [QueueMatch] = [], createdAt: Date, status: String = "ready", duplicate: Bool = false,
+             refineSession: String = "") {
             self.id = id; self.text = text; self.parent = parent; self.sprint = sprint
             self.note = note; self.matches = matches; self.createdAt = createdAt
-            self.status = status; self.duplicate = duplicate
+            self.status = status; self.duplicate = duplicate; self.refineSession = refineSession
         }
         init(from dec: Decoder) throws {
             let c = try dec.container(keyedBy: CodingKeys.self)
@@ -315,6 +321,7 @@ final class ReviewStore {
             createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
             status = try c.decodeIfPresent(String.self, forKey: .status) ?? "ready"
             duplicate = try c.decodeIfPresent(Bool.self, forKey: .duplicate) ?? false
+            refineSession = try c.decodeIfPresent(String.self, forKey: .refineSession) ?? ""
         }
     }
 
@@ -522,13 +529,14 @@ final class ReviewStore {
     // accept (추가) or drop (스킵). No-op if the item was resolved while the refine ran.
     // Returns true on success so the caller can report accordingly. Call on main.
     @discardableResult
-    func refineQueueItem(id: String, text: String, note: String) -> Bool {
+    func refineQueueItem(id: String, text: String, note: String, session: String = "") -> Bool {
         guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return false }
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return false }
         aiQueue[idx].text = t
         aiQueue[idx].note = note
         aiQueue[idx].status = "ready"
+        if !session.isEmpty { aiQueue[idx].refineSession = session }   // keep the conversation id to resume next round
         saveQueue()
         return true
     }
