@@ -1490,7 +1490,14 @@ let _qUI=null, _qJustRefined='', _lastAiQueue=[];
 function renderAiQueue(items){ _lastAiQueue=items||[]; const host=$('aiQueue'); if(host) host.innerHTML=aiQueueBoxHTML(items);
   // 프롬프트 입력 중이면 재렌더 후 텍스트박스에 포커스를 되돌린다(캐럿 끝으로).
   if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } } }
-function rerenderAiQueue(){ renderAiQueue(_lastAiQueue); }
+// 큐 박스는 입력 뷰(#aiQueue)뿐 아니라 스프린트 뷰(보드 하단)에도 렌더된다. 프롬프트 열기/취소
+// 같은 즉시 상태 변화는 '지금 보고 있는 뷰'를 바로 다시 그려야 한다 — 안 그러면 5초 폴링을
+// 기다리게 되어 반응이 느리게 느껴진다. 재렌더 후 입력 중이면 텍스트박스 포커스를 복원한다.
+function rerenderAiQueue(){
+  if(_view==='sprint' && _review) renderSprintView(_review);
+  else renderAiQueue(_lastAiQueue);
+  if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } }
+}
 function queueAdd(id){ post('/api/goal/queue/resolve',{id:id,action:'add'}); }
 function queueSkip(id){ _qJustRefined=''; post('/api/goal/queue/resolve',{id:id,action:'skip'}); }
 // 프롬프트 열기 → 입력 → 생성(서버 refine) → 새 결과. 맞으면 진행(queueProceed), 아니면 다시.
