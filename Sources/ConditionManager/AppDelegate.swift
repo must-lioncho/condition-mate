@@ -65,6 +65,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if path.hasPrefix("/api/cli/sessions") {
                 return self?.cliSessionsJSON()
             }
+            if path.hasPrefix("/api/skills") {
+                return self?.skillsJSON()
+            }
+            if path.hasPrefix("/history.json") {
+                return self?.dashboardHistory(path)
+            }
             return nil
         },
         sse: { [weak self] path, channel in self?.handleChat2Stream(path, channel) }
@@ -1742,6 +1748,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         """
     }
 
+    // GET /history.json?days=N -> compact per-day samples for the 히스토리 tab.
+    // The browser runs the same carry-forward + timeBuckets + deep-focus logic on
+    // each day, so daily 총/책상/집중 and 초집중 sessions match the today view exactly.
+    func dashboardHistory(_ path: String) -> String {
+        let daysStr = URLComponents(string: "http://x" + path)?.queryItems?
+            .first(where: { $0.name == "days" })?.value ?? ""
+        let days = Int(daysStr) ?? 180
+        return "{\"days\":\(activityLog.historyJSON(days: days))}"
+    }
+
     // Tiny real-time payload for the APM gauge, polled at 1 Hz (separate from the
     // heavier 5s /data.json so the needle moves like a game HUD).
     func liveData() -> String {
@@ -1788,7 +1804,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     + "\"energy\":\(g.energy),\"agents\":[\(agents)],\"tokens\":\(g.tokens),\"value\":\(g.value),"
                     + "\"evidence\":[\(evidence)],\"sessionId\":\(jsonString(g.sessionId)),"
                     + "\"targetAt\":\(target),\"completedAt\":\(completed),"
-                    + "\"sprint\":\(g.sprint),\"released\":\(g.released),\"archived\":\(g.archived),\"priority\":\(jsonString(g.priority))}"
+                    + "\"sprint\":\(g.sprint),\"bump\":\(g.bump),\"released\":\(g.released),\"archived\":\(g.archived),\"priority\":\(jsonString(g.priority))}"
             }
             .joined(separator: ",")
         // Release log (newest first): when each commit happened + the value it produced.
@@ -1821,6 +1837,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     + "\"parent\":\(jsonString(item.parent)),\"sprint\":\(item.sprint),"
                     + "\"status\":\(jsonString(item.status)),\"duplicate\":\(item.duplicate),"
                     + "\"note\":\(jsonString(item.note)),\"refining\":\(!item.refineSession.isEmpty),"
+                    + "\"refineSession\":\(jsonString(item.refineSession)),"
                     + "\"matches\":[\(matches)],\"createdAt\":\(item.createdAt.timeIntervalSince1970)}"
             }
             .joined(separator: ",")
@@ -1863,6 +1880,256 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // POST router (runs on the server queue; mutations hop to main for safety).
+    // ===== 스킬 목록 (rail의 "스킬" 메뉴) =====
+    // The user's skills live in ~/.claude/skills; each subfolder holding a SKILL.md is
+    // one skill. We surface name / last-updated / author for the rail's skills overlay so
+    // the user can see what's installed without memorizing folder names.
+    // Default ".claude" root under the home dir when the user has not configured one.
+    private var skillsRootDefault: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude", isDirectory: true)
+    }
+    // Configurable base ".claude" folder (set on the skills page). Falls back to ~/.claude.
+    // Skills are read from its /skills subfolder, so the on-disk layout is unchanged.
+    private var skillsRoot: URL {
+        let s = (Settings.shared.skillsRoot ?? "").trimmingCharacters(in: .whitespaces)
+        guard !s.isEmpty else { return skillsRootDefault }
+        return URL(fileURLWithPath: (s as NSString).expandingTildeInPath, isDirectory: true)
+    }
+    private var skillsDir: URL {
+        skillsRoot.appendingPathComponent("skills", isDirectory: true)
+    }
+
+    func skillsJSON() -> String {
+        let fm = FileManager.default
+        let dir = skillsDir
+        var items: [[String: Any]] = []
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .isDirectoryKey]
+        let entries = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys,
+                                                   options: [.skipsHiddenFiles])) ?? []
+        for url in entries {
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            guard isDir else { continue }
+            let skillMd = url.appendingPathComponent("SKILL.md")
+            guard fm.fileExists(atPath: skillMd.path) else { continue }   // a skill must have SKILL.md
+            let text = (try? String(contentsOf: skillMd, encoding: .utf8)) ?? ""
+            let meta = Self.parseSkillFrontmatter(text, fallbackName: url.lastPathComponent)
+            // The one-line summary the user sees/edits: an explicit `summary:` field if
+            // present, otherwise the first sentence of the (long) triggering description.
+            let summary = meta.summary.isEmpty ? Self.firstSentence(meta.desc) : meta.summary
+            // "Updated" = the more recent of the folder and its SKILL.md, so edits to the
+            // manifest OR any bundled file both bump the date the user sees.
+            let dMod = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let mMod = (try? skillMd.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let updated = max(dMod, mMod)
+            items.append([
+                "name": meta.name,
+                "folder": url.lastPathComponent,
+                "desc": meta.desc,
+                "summary": summary,
+                "hasSummary": !meta.summary.isEmpty,
+                "author": meta.author,
+                "updated": Self.koShortDate(updated),
+                "updatedTs": updated.timeIntervalSince1970,
+            ])
+        }
+        items.sort { (($0["updatedTs"] as? Double) ?? 0) > (($1["updatedTs"] as? Double) ?? 0) }
+        // `root` is the configurable ".claude" folder; `dir` is its /skills subfolder actually
+        // scanned. The skills page shows `root` (editable) and lists from `dir`.
+        let payload: [String: Any] = ["dir": dir.path, "root": skillsRoot.path,
+                                      "isDefault": Settings.shared.skillsRoot?.isEmpty ?? true,
+                                      "skills": items]
+        let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    func revealSkill(name: String) -> String {
+        let base = skillsDir
+        // Guard against path traversal: only a bare folder name is honored; anything with a
+        // slash or ".." falls back to revealing the skills root.
+        let safe = name.trimmingCharacters(in: .whitespaces)
+        let target = (!safe.isEmpty && !safe.contains("/") && !safe.contains(".."))
+            ? base.appendingPathComponent(safe, isDirectory: true) : base
+        DispatchQueue.main.async {
+            let fm = FileManager.default
+            if fm.fileExists(atPath: target.path) {
+                NSWorkspace.shared.activateFileViewerSelecting([target])
+            } else {
+                // Folder may not exist yet (no skills installed) — create it so Finder opens.
+                try? fm.createDirectory(at: base, withIntermediateDirectories: true)
+                NSWorkspace.shared.activateFileViewerSelecting([base])
+            }
+        }
+        return "{\"ok\":true}"
+    }
+
+    // Set (or reset) the base ".claude" folder whose /skills holds the user's skills. A
+    // blank folder resets to the ~/.claude default. Returns the refreshed skills listing so
+    // the page updates the folder line AND the list in one round-trip.
+    func setSkillsFolder(folder: String) -> String {
+        let trimmed = folder.trimmingCharacters(in: .whitespacesAndNewlines)
+        Settings.shared.skillsRoot = trimmed.isEmpty ? nil : (trimmed as NSString).expandingTildeInPath
+        return skillsJSON()
+    }
+
+    // Open a native folder picker so the user can choose the ".claude" root. The panel runs
+    // modally on main (a direct user action, so a brief block is fine); on choose, the path
+    // is persisted. Returns the refreshed skills listing (unchanged if cancelled).
+    func pickSkillsFolder() -> String {
+        var chosen: String?
+        DispatchQueue.main.sync {
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.allowsMultipleSelection = false
+            panel.prompt = "선택"
+            panel.message = "스킬이 들어있는 .claude 폴더를 선택하세요 (하위 skills 폴더를 읽습니다)"
+            panel.directoryURL = skillsRoot
+            if panel.runModal() == .OK, let url = panel.url { chosen = url.path }
+        }
+        if let c = chosen { Settings.shared.skillsRoot = c }
+        return skillsJSON()
+    }
+
+    // Pull name / description / author out of a SKILL.md YAML frontmatter block. Kept
+    // deliberately small — only the top-level `key: value` lines between the leading `---`
+    // fences, plus folded/indented continuation lines for a multi-line description.
+    static func parseSkillFrontmatter(_ text: String, fallbackName: String)
+        -> (name: String, desc: String, summary: String, author: String) {
+        var name = "", desc = "", summary = "", author = ""
+        let lines = text.components(separatedBy: "\n")
+        guard let first = lines.first, first.trimmingCharacters(in: .whitespaces) == "---" else {
+            return (fallbackName, "", "", "사용자")
+        }
+        var i = 1
+        while i < lines.count {
+            let raw = lines[i]
+            if raw.trimmingCharacters(in: .whitespaces) == "---" { break }   // end of frontmatter
+            // Only parse top-level keys (no leading indent); indented lines are handled as
+            // continuations of the key that opened them (used for folded descriptions).
+            if let colon = raw.firstIndex(of: ":"), !raw.hasPrefix(" ") && !raw.hasPrefix("\t") {
+                let key = String(raw[raw.startIndex..<colon]).trimmingCharacters(in: .whitespaces)
+                var val = String(raw[raw.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+                // Folded/literal scalar (`>-`, `>`, `|`): gather the following indented lines.
+                if val == ">-" || val == ">" || val == "|" || val == "|-" || val.isEmpty {
+                    var parts: [String] = []
+                    var j = i + 1
+                    while j < lines.count {
+                        let cont = lines[j]
+                        if cont.hasPrefix(" ") || cont.hasPrefix("\t") {
+                            parts.append(cont.trimmingCharacters(in: .whitespaces)); j += 1
+                        } else { break }
+                    }
+                    if !parts.isEmpty { val = parts.joined(separator: " "); i = j - 1 }
+                }
+                // Unwrap a quoted scalar: a double-quoted value is unescaped (\" -> ", \\ -> \)
+                // so a summary the user typed with quotes round-trips cleanly; a single-quoted
+                // or bare value just has its surrounding quotes stripped.
+                var clean = val
+                if clean.count >= 2 && clean.hasPrefix("\"") && clean.hasSuffix("\"") {
+                    clean = String(clean.dropFirst().dropLast())
+                        .replacingOccurrences(of: "\\\"", with: "\"")
+                        .replacingOccurrences(of: "\\\\", with: "\\")
+                } else if clean.count >= 2 && clean.hasPrefix("'") && clean.hasSuffix("'") {
+                    clean = String(clean.dropFirst().dropLast())
+                } else {
+                    clean = clean.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                }
+                switch key {
+                case "name": name = clean
+                case "description": desc = clean
+                case "summary": summary = clean
+                case "author": author = clean
+                default: break
+                }
+            }
+            i += 1
+        }
+        if name.isEmpty { name = fallbackName }
+        if author.isEmpty { author = "사용자" }   // ~/.claude/skills entries are user-authored
+        return (name, desc, summary, author)
+    }
+
+    // First sentence (or a short truncation) of a long description — the fallback shown
+    // when a skill has no explicit `summary:` yet.
+    static func firstSentence(_ s: String) -> String {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return "" }
+        if let r = t.range(of: ". ") { return String(t[t.startIndex..<r.lowerBound]) + "." }
+        if t.count > 100 {
+            let idx = t.index(t.startIndex, offsetBy: 100)
+            return String(t[t.startIndex..<idx]).trimmingCharacters(in: .whitespaces) + "…"
+        }
+        return t
+    }
+
+    // Write (or replace) the top-level `summary:` line in a skill's SKILL.md frontmatter.
+    // We only ever touch that single line, so the (long, folded) `description:` used for
+    // triggering is left intact. Called from POST /api/skills/summary.
+    func setSkillSummary(folder: String, summary: String) -> String {
+        let safe = folder.trimmingCharacters(in: .whitespaces)
+        guard !safe.isEmpty, !safe.contains("/"), !safe.contains("..") else { return "{\"ok\":false}" }
+        let md = skillsDir.appendingPathComponent(safe, isDirectory: true)
+            .appendingPathComponent("SKILL.md")
+        guard var text = try? String(contentsOf: md, encoding: .utf8) else { return "{\"ok\":false}" }
+        let oneLine = summary.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        let escaped = oneLine.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let newLine = "summary: \"\(escaped)\""
+        var lines = text.components(separatedBy: "\n")
+
+        // No frontmatter at all -> prepend a minimal block.
+        guard let openIdx = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) else {
+            text = "---\n\(newLine)\n---\n\n" + text
+            try? text.write(to: md, atomically: true, encoding: .utf8)
+            return "{\"ok\":true}"
+        }
+        var closeIdx: Int? = nil
+        var k = openIdx + 1
+        while k < lines.count { if lines[k].trimmingCharacters(in: .whitespaces) == "---" { closeIdx = k; break }; k += 1 }
+        guard let close = closeIdx else { return "{\"ok\":false}" }
+
+        // Replace an existing top-level `summary:` (plus any folded continuation lines)…
+        var replaced = false
+        var i = openIdx + 1
+        while i < close {
+            let raw = lines[i]
+            if !raw.hasPrefix(" "), !raw.hasPrefix("\t"), let colon = raw.firstIndex(of: ":"),
+               String(raw[raw.startIndex..<colon]).trimmingCharacters(in: .whitespaces) == "summary" {
+                var end = i + 1
+                while end < close && (lines[end].hasPrefix(" ") || lines[end].hasPrefix("\t")) { end += 1 }
+                lines.replaceSubrange(i..<end, with: [newLine])
+                replaced = true
+                break
+            }
+            i += 1
+        }
+        // …or insert right after `name:` (falling back to just inside the opening fence).
+        if !replaced {
+            var insertAt = openIdx + 1
+            var j = openIdx + 1
+            while j < close {
+                let raw = lines[j]
+                if !raw.hasPrefix(" "), !raw.hasPrefix("\t"), let colon = raw.firstIndex(of: ":"),
+                   String(raw[raw.startIndex..<colon]).trimmingCharacters(in: .whitespaces) == "name" {
+                    insertAt = j + 1; break
+                }
+                j += 1
+            }
+            lines.insert(newLine, at: insertAt)
+        }
+        let out = lines.joined(separator: "\n")
+        try? out.write(to: md, atomically: true, encoding: .utf8)
+        return "{\"ok\":true}"
+    }
+
+    // Korean short date, matching Claude Code's skill list ("26. 7. 3.").
+    static func koShortDate(_ d: Date) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: d)
+        let yy = (c.year ?? 2000) % 100
+        return "\(yy). \(c.month ?? 1). \(c.day ?? 1)."
+    }
+
     func handlePost(_ path: String, _ body: String) -> String {
         let obj = (body.data(using: .utf8)).flatMap {
             try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
@@ -1874,6 +2141,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if path == "/api/goal/aiAdd" {
             return aiDuplicateCheck(text: (obj["text"] as? String) ?? "",
                                     parent: (obj["parent"] as? String) ?? "")
+        }
+        // Reveal the skills folder (or one skill's folder) in Finder. Pure side effect
+        // (no model, no goal state), so it is safe to handle here off-main.
+        if path == "/api/skills/reveal" {
+            return revealSkill(name: (obj["name"] as? String) ?? "")
+        }
+        // Save the user-edited one-line summary into the skill's SKILL.md. Pure file I/O.
+        if path == "/api/skills/summary" {
+            return setSkillSummary(folder: (obj["folder"] as? String) ?? "",
+                                   summary: (obj["summary"] as? String) ?? "")
+        }
+        // Change (or reset) the skills base folder. Pure settings + directory scan.
+        if path == "/api/skills/folder" {
+            return setSkillsFolder(folder: (obj["folder"] as? String) ?? "")
+        }
+        // Native folder picker for the skills base folder (opens on main).
+        if path == "/api/skills/folder/pick" {
+            return pickSkillsFolder()
         }
         // Semantic search across ALL goals (including archived/released). Runs an external
         // `claude -p` (seconds, blocking) — handle here off-main like aiAdd, never inside the
@@ -1979,13 +2264,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard saved else { return "{\"ok\":false,\"error\":\"gone\"}" }
             return "{\"ok\":true,\"text\":\(jsonString(v.text)),\"note\":\(jsonString(v.note)),\"session\":\(jsonString(v.session))}"
         }
+        // 큐 항목의 다듬기 세션을 터미널에서 `claude --resume`으로 바로 연다. 세션은 앱 cwd에서
+        // 생성되므로 같은 cwd로 이동해 이어붙인다. 세션이 아직 없으면(첫 refine 전) 실패한다.
+        if path == "/api/goal/queue/cli" {
+            let id = (obj["id"] as? String) ?? ""
+            guard !id.isEmpty else { return "{\"ok\":false,\"error\":\"empty\"}" }
+            let session: String? = DispatchQueue.main.sync {
+                reviewStore.aiQueue.first(where: { $0.id == id })?.refineSession
+            }
+            guard let sess = session, !sess.isEmpty else { return "{\"ok\":false,\"error\":\"no-session\"}" }
+            guard openClaudeResume(session: sess) else { return "{\"ok\":false,\"error\":\"launch-failed\"}" }
+            return "{\"ok\":true,\"session\":\(jsonString(sess))}"
+        }
         return DispatchQueue.main.sync {
             let day = reviewStore.todayKey
             switch path {
             case "/api/goal/add":
                 if let text = obj["text"] as? String {
                     let sprint = (obj["sprint"] as? NSNumber)?.intValue ?? Int((obj["sprint"] as? String) ?? "") ?? 0
-                    reviewStore.addGoal(text: text, parent: (obj["parent"] as? String) ?? "", sprint: sprint)
+                    let bump = (obj["bump"] as? NSNumber)?.boolValue ?? (obj["bump"] as? Bool) ?? false
+                    reviewStore.addGoal(text: text, parent: (obj["parent"] as? String) ?? "", sprint: sprint, bump: bump)
                 }
             case "/api/chat/reset":
                 chatStore.reset()
@@ -2173,6 +2471,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let n = (obj["sprint"] as? NSNumber)?.intValue
                         ?? Int((obj["sprint"] as? String) ?? "") ?? 0
                     reviewStore.setGoalSprint(id: id, sprint: n)
+                }
+            case "/api/goal/bump":
+                // Move a goal in/out of the Bump out inbox (raw idea tier below Backlog).
+                if let id = obj["id"] as? String {
+                    let on = (obj["bump"] as? NSNumber)?.boolValue ?? (obj["bump"] as? Bool) ?? true
+                    reviewStore.setGoalBump(id: id, bump: on)
                 }
             case "/api/sprint/create":
                 reviewStore.createSprint(goalText: (obj["goalText"] as? String) ?? "",
@@ -2546,6 +2850,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // `--output-format json` to capture BOTH the model reply and the session_id to resume.
     // Runs `claude -p` (seconds, BLOCKING) — call OFF main. ok=false on any failure so the
     // client keeps the current text unchanged (best-effort). Returns (ok, text, note, session).
+    // Opens Terminal.app at the app's cwd and runs `claude --resume <session>` so the user can
+    // continue the very conversation the refine loop built, interactively in a real shell. The
+    // session was created in this process's cwd, so we cd there first (claude scopes sessions by
+    // directory). Best-effort: returns false if Terminal/claude can't be resolved or launched.
+    @discardableResult
+    private func openClaudeResume(session: String) -> Bool {
+        guard let claude = Self.resolveClaude() else { return false }
+        let cwd = FileManager.default.currentDirectoryPath
+        // The shell command Terminal will run. shellQuote guards path/session; PATH mirrors the
+        // headless refine call so `claude` resolves the same way outside our injected env.
+        let cmd = "cd \(Self.shellQuote(cwd)) && \(Self.shellQuote(claude)) --resume \(Self.shellQuote(session))"
+        // Embed as an AppleScript string literal: escape backslashes then double-quotes.
+        let asLit = cmd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "tell application \"Terminal\"\nactivate\ndo script \"\(asLit)\"\nend tell"
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        p.arguments = ["-e", script]
+        do { try p.run() } catch { return false }
+        p.waitUntilExit()
+        return p.terminationStatus == 0
+    }
+
     private func aiRefineGoal(current: String, matches: [ReviewStore.QueueMatch], prompt: String,
                               resumeSession: String) -> (ok: Bool, text: String, note: String, session: String) {
         let cur = current.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -4026,47 +4352,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return (intro, sections)
     }
 
-    // Turn `goal-NN` references in already-HTML-escaped text into clickable links to that
-    // goal's page (/goal?n=NN). Lets a goal doc cross-link to related/derived goals — e.g.
-    // an archived-history goal and its source goal point at each other — so the user follows
-    // links instead of hunting folders. Leading zeros are stripped for the query (goal-01 -> 1).
-    // The boundary lookarounds keep "goalNN" / "agoal-1" / "goal-1a" from matching.
-    private static let goalRefRegex = try? NSRegularExpression(
-        pattern: "(?<![A-Za-z0-9])goal-([0-9]+)(?![0-9A-Za-z])", options: [.caseInsensitive])
-    private func linkifyGoals(_ escaped: String) -> String {
-        guard let re = Self.goalRefRegex else { return escaped }
-        let ns = escaped as NSString
-        let matches = re.matches(in: escaped, range: NSRange(location: 0, length: ns.length))
-        guard !matches.isEmpty else { return escaped }
-        var out = ""
-        var last = 0
-        for m in matches {
-            let full = ns.substring(with: m.range)
-            let n = Int(ns.substring(with: m.range(at: 1))) ?? 0
-            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
-            out += "<a class=\"goallink\" href=\"/goal?n=\(n)\" title=\"\(full) 페이지로 이동\">\(full)</a>"
-            last = m.range.location + m.range.length
-        }
-        out += ns.substring(with: NSRange(location: last, length: ns.length - last))
-        return out
-    }
-    // HTML-escape a goal-doc body, then make any `goal-NN` reference clickable.
-    private func escapeAndLinkGoals(_ text: String) -> String { linkifyGoals(htmlEscape(text)) }
-
     // Render a goal doc as the four canonical section cards (in policy order), each with
     // its purpose hint. Recognized headings are matched by keyword; missing ones show a
     // placeholder; any extra headings are appended after. A doc with no headings at all
     // (legacy free-form) falls back to a single raw block so old goals still read fine.
+    //
+    // Each body is emitted as an HTML-escaped `.mdbody` block: the raw markdown lives as the
+    // element's text, and the client renders it to formatted HTML (marked.js) on load, then
+    // linkifies `goal-NN` references. The edit textarea still loads the raw markdown from the
+    // API, so the input screen keeps showing plain markdown while the read view is a preview.
     private func renderGoalDoc(_ md: String) -> String {
         let (intro, secs) = splitSections(md)
         if secs.isEmpty {
             let t = md.trimmingCharacters(in: .whitespacesAndNewlines)
-            return "<pre class=\"def\">\(escapeAndLinkGoals(t))</pre>"
+            return "<div class=\"mdbody\">\(htmlEscape(t))</div>"
         }
         var used = Set<Int>()
         var html = ""
         if !intro.isEmpty {
-            html += "<section class=\"seccard\"><pre class=\"def\">\(escapeAndLinkGoals(intro))</pre></section>"
+            html += "<section class=\"seccard\"><div class=\"mdbody\">\(htmlEscape(intro))</div></section>"
         }
         for canon in Self.goalSectionHints {
             var bodyHTML = "<p class=\"hint\">아직 작성되지 않았습니다 — 오른쪽 메신저로 대화하며 채워 보세요.</p>"
@@ -4078,7 +4382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if body.isEmpty {
                         bodyHTML = "<p class=\"hint\">(비어 있음)</p>"
                     } else {
-                        bodyHTML = "<pre class=\"def\">\(escapeAndLinkGoals(body))</pre>"
+                        bodyHTML = "<div class=\"mdbody\">\(htmlEscape(body))</div>"
                         filled = true
                     }
                     break
@@ -4088,7 +4392,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         for i in secs.indices where !used.contains(i) {
             let body = secs[i].1
-            let bodyHTML = body.isEmpty ? "" : "<pre class=\"def\">\(escapeAndLinkGoals(body))</pre>"
+            let bodyHTML = body.isEmpty ? "" : "<div class=\"mdbody\">\(htmlEscape(body))</div>"
             html += goalSecCard(title: secs[i].0, hint: "", bodyHTML: bodyHTML, empty: body.isEmpty)
         }
         return html
@@ -4378,6 +4682,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .replace(/javascript:/gi,''); }
           function md(text){ if(window.marked){ try{ return sanitize(window.marked.parse(text||'',{breaks:true})); }catch(e){} }
             return esc(text||'').replace(/\\n/g,'<br>'); }
+          // Run cb once marked.js has loaded from the CDN, or after a short wait (fallback:
+          // md() then degrades to plain text). Keeps the read view from flashing raw markdown.
+          function whenMarked(cb,n){ if(window.marked){cb();return;} if((n||0)>60){cb();return;}
+            setTimeout(function(){ whenMarked(cb,(n||0)+1); },50); }
+          // Wrap every `goal-NN` reference inside an element's rendered text in a link to that
+          // goal's page (/goal?n=NN). Walks text nodes only, skips text already inside an <a>,
+          // and leaves "goalNN"/"agoal-1"/"goal-1a" alone (word boundaries).
+          function linkifyGoals(root){
+            var w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,null), nodes=[];
+            while(w.nextNode()){ nodes.push(w.currentNode); }
+            var re=/(^|[^A-Za-z0-9])goal-([0-9]+)(?![0-9A-Za-z])/gi;
+            nodes.forEach(function(node){
+              if(node.parentNode&&node.parentNode.closest&&node.parentNode.closest('a')) return;
+              var t=node.nodeValue; if(!/goal-[0-9]/i.test(t)) return;
+              var frag=document.createDocumentFragment(), last=0, m; re.lastIndex=0;
+              while((m=re.exec(t))){
+                var pre=m[1], num=m[2], full='goal-'+num, start=m.index+pre.length;
+                frag.appendChild(document.createTextNode(t.slice(last,start)));
+                var a=document.createElement('a'); a.className='goallink';
+                a.href='/goal?n='+parseInt(num,10); a.title=full+' 페이지로 이동'; a.textContent=full;
+                frag.appendChild(a); last=start+full.length;
+              }
+              frag.appendChild(document.createTextNode(t.slice(last)));
+              node.parentNode.replaceChild(frag,node);
+            });
+          }
+          // Turn each `.mdbody` block (raw markdown carried as its text) into a rendered
+          // preview: parse with marked, then linkify goal references. The edit textarea is
+          // unaffected — it still loads plain markdown from the API.
+          function renderMdBodies(){
+            var els=document.querySelectorAll('.mdbody:not(.rendered)');
+            if(!els.length) return;
+            whenMarked(function(){
+              els.forEach(function(el){
+                el.innerHTML=md(el.textContent); linkifyGoals(el); el.classList.add('rendered');
+              });
+            });
+          }
           function bubble(role,text,pending,live){
             var w=document.createElement('div'); w.className='msg '+role+(pending?' pending':'');
             var b=document.createElement('div'); b.className='bub';
@@ -4677,7 +5019,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               .catch(function(){ alert('저장에 실패했습니다.'); });
           }
           document.addEventListener('DOMContentLoaded',function(){
-            loadMarked(); loadChat(); openStream();
+            loadMarked(); renderMdBodies(); loadChat(); openStream();
             // Make each empty 핵심 버전 section card click-to-write (gated on the editor existing).
             var cd=document.getElementById('coreDisplay');
             if(cd&&document.getElementById('coreEditor')){
@@ -4886,9 +5228,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           h2.atth:hover{color:var(--fg)}
           h2.atth .att-toggle{font-size:11px;color:var(--accent);text-transform:none;letter-spacing:0}
           .hint{color:var(--mut);font-size:13px;margin:0}
-          pre.def{white-space:pre-wrap;word-break:break-word;background:#0d1016;border:1px solid var(--line);border-radius:8px;padding:14px;font:13px/1.7 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif;margin:0}
-          pre.def a.goallink{color:var(--accent);text-decoration:none;border-bottom:1px dashed var(--accent);font-variant-numeric:tabular-nums}
-          pre.def a.goallink:hover{border-bottom-style:solid}
+          /* Read-view markdown preview. Raw markdown is carried as text and rendered on load;
+             before render, keep whitespace so the brief pre-render state stays legible. */
+          .mdbody{word-break:break-word;font:13.5px/1.75 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif;color:var(--fg)}
+          .mdbody:not(.rendered){white-space:pre-wrap;color:var(--mut)}
+          .mdbody>*:first-child{margin-top:0}
+          .mdbody>*:last-child{margin-bottom:0}
+          .mdbody h1,.mdbody h2,.mdbody h3,.mdbody h4{margin:18px 0 8px;line-height:1.35;color:var(--fg);border:none;text-transform:none;letter-spacing:0}
+          .mdbody h1{font-size:19px} .mdbody h2{font-size:16px;padding:0} .mdbody h3{font-size:14px} .mdbody h4{font-size:13px;color:var(--mut)}
+          .mdbody p{margin:8px 0}
+          .mdbody ul,.mdbody ol{margin:8px 0;padding-left:22px}
+          .mdbody li{margin:3px 0}
+          .mdbody li input[type=checkbox]{margin-right:6px;vertical-align:middle}
+          /* Task-list items: drop the redundant bullet (the checkbox is the marker), and
+             strike through + dim a checked item so "done" reads in a glance and the eye
+             lands on what's left. */
+          .mdbody li:has(input[type=checkbox]){list-style:none}
+          .mdbody li:has(input[type=checkbox]:checked){color:var(--mut);text-decoration:line-through;text-decoration-color:var(--mut)}
+          .mdbody a{color:var(--accent);text-decoration:none}
+          .mdbody a:hover{text-decoration:underline}
+          .mdbody strong{color:var(--fg);font-weight:650}
+          .mdbody code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--green);background:#0d1016;border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+          .mdbody pre{background:#0d1016;border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:10px 0}
+          .mdbody pre code{background:none;border:none;padding:0;color:var(--fg)}
+          .mdbody blockquote{margin:10px 0;padding:4px 14px;border-left:3px solid var(--line);color:var(--mut)}
+          .mdbody hr{border:none;border-top:1px solid var(--line);margin:16px 0}
+          .mdbody table{border-collapse:collapse;margin:10px 0;font-size:13px}
+          .mdbody th,.mdbody td{border:1px solid var(--line);padding:6px 10px;text-align:left}
+          .mdbody th{color:var(--mut);font-weight:500}
+          .mdbody a.goallink{color:var(--accent);text-decoration:none;border-bottom:1px dashed var(--accent);font-variant-numeric:tabular-nums}
+          .mdbody a.goallink:hover{border-bottom-style:solid}
           ul.atts{list-style:none;margin:0;padding:0}
           ul.atts li{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;background:var(--panel)}
           ul.atts a{color:var(--fg);text-decoration:none;flex:1;word-break:break-all}

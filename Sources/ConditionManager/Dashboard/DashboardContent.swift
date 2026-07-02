@@ -11,7 +11,7 @@ import Foundation
 enum DashboardContent {
     static func html(lastView: String = "input", doneCutoff: Double? = nil, uiPrefs: String? = nil) -> String {
         // Clamp to a known view key so the injected JS literal can never be malformed.
-        let valid: Set<String> = ["input", "group", "table", "token", "schedule", "preview", "sprint", "archived"]
+        let valid: Set<String> = ["input", "group", "table", "token", "schedule", "preview", "sprint", "archived", "history"]
         let view = valid.contains(lastView) ? lastView : "input"
         // Server-persisted 완료 컷오프 as a JS literal: an integer epoch (0 = 해제) when the
         // user has set one, else "DC_DEFAULT" so the client keeps its built-in default.
@@ -528,6 +528,7 @@ enum DashboardContent {
 
   <div id="viewTabs" class="viewtabs"></div>
   <div class="panel">
+    <div id="goalFilters">
     <!-- SHARED STATUS FILTER — one bar drives 목록·그룹·프리뷰 alike -->
     <div class="row" style="margin:0 0 8px;gap:6px">
       <button class="btn combo" id="flt_status_combo" onclick="openStatusFilter(event)" title="표시할 상태를 선택 (다중 선택)">보기<span class="cbadge" id="flt_status_cnt" style="display:none">0</span> <span class="cv">▾</span></button>
@@ -541,6 +542,7 @@ enum DashboardContent {
              onchange="setDoneSince(this.value)" title="이 시각 이전에 완료된 목표는 숨깁니다 (완료 외 상태는 영향 없음)">
       <button class="btn" id="flt_donesince_clear" onclick="clearDoneSince()" title="완료 컷오프 해제 (모든 완료 표시)">해제</button>
     </div>
+    </div><!-- /#goalFilters -->
     <!-- INPUT VIEW -->
     <div id="inputView">
       <div class="row">목표 추가:
@@ -625,6 +627,37 @@ enum DashboardContent {
       <div id="archivedList"></div>
     </div>
 
+    <!-- HISTORY VIEW (히스토리 — 날짜별 집중도 + 초집중 세션 + 시간대 분석) -->
+    <div id="historyView" style="display:none">
+      <div class="row" style="margin:0 0 8px;gap:6px;align-items:center;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">기간</span>
+        <button class="btn" id="hr_today" onclick="setHistRange('today')" title="오늘 하루">오늘</button>
+        <button class="btn" id="hr_yesterday" onclick="setHistRange('yesterday')" title="어제 하루">어제</button>
+        <button class="btn" id="hr_7d" onclick="setHistRange('7d')" title="최근 7일">7일</button>
+        <button class="btn" id="hr_1m" onclick="setHistRange('1m')" title="최근 한 달">한달</button>
+        <button class="btn" id="hr_3m" onclick="setHistRange('3m')" title="최근 3달">3달</button>
+        <input type="date" id="histFrom" class="btn" onchange="onHistDate()" style="color-scheme:dark;padding:5px 8px" title="시작 날짜">
+        <span class="muted" style="font-size:12px">~</span>
+        <input type="date" id="histTo" class="btn" onchange="onHistDate()" style="color-scheme:dark;padding:5px 8px" title="끝 날짜">
+        <button class="btn" onclick="loadHistory(true)" style="margin-left:auto" title="히스토리 새로고침">새로고침</button>
+      </div>
+      <div class="row" style="margin:0 0 10px;gap:6px;align-items:center;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">초집중 기준 (끊김 없이 이어진 집중)</span>
+        <button class="btn" id="df15" onclick="setDeepMin(15)" title="15분 이상 이어진 집중을 초집중으로">15분+</button>
+        <button class="btn" id="df25" onclick="setDeepMin(25)" title="25분 이상 이어진 집중을 초집중으로">25분+</button>
+        <button class="btn" id="df45" onclick="setDeepMin(45)" title="45분 이상 이어진 집중을 초집중으로">45분+</button>
+        <span class="muted" id="histRange" style="font-size:12px;margin-left:auto">불러오는 중…</span>
+      </div>
+      <div id="histSummary" class="cards" style="margin:0 0 12px"></div>
+      <h2 style="margin:16px 0 6px">초집중 시간대 · 언제 몰입하나</h2>
+      <div class="panel" style="margin:0 0 14px">
+        <canvas id="dfHours" style="height:120px"></canvas>
+        <div class="muted" style="font-size:11px;margin-top:6px" id="dfHoursCap">시간대별 초집중 누적 — 막대가 높을수록 그 시간에 자주 몰입합니다.</div>
+      </div>
+      <h2 style="margin:16px 0 6px">날짜별 기록 (최신순)</h2>
+      <div id="histDays"><div class="empty">불러오는 중…</div></div>
+    </div>
+
   </div>
 
   <!-- 스포츠 모드에선 통째로 숨기고 렌더(로딩)도 건너뛴다 (요약·차트·타임라인·주요앱·BGM·워커) -->
@@ -697,7 +730,13 @@ enum DashboardContent {
 <div class="overlay" id="dupModal">
   <div class="modal" id="dupDrop">
     <div class="hdr"><h1 style="margin:0" id="dupTitle">🤖 AI 중복 확인</h1>
-      <button class="btn" onclick="closeDup()">닫기</button></div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn" id="dupCliBtn" style="display:none" title="이 다듬기 세션을 터미널에서 claude --resume 으로 바로 엽니다"
+                onclick="openDupCli(this)">CLI에서 열기</button>
+        <button class="btn" id="dupSessBtn" style="display:none" title="이 다듬기 세션의 claude 세션 ID를 복사합니다 (CLI에서 --resume 으로 이어쓰기)"
+                onclick="copyDupSession(this)">세션 ID 복사</button>
+        <button class="btn" onclick="closeDup()">닫기</button>
+      </div></div>
     <p class="muted" id="dupNote">유사한 목표가 이미 있습니다. AI와 상의해 다듬은 뒤 추가하세요.</p>
     <div style="margin:6px 0 4px;font-size:13px;color:var(--mut)">추가하려는 목표 <span class="muted" style="font-size:11px">(직접 수정하거나 AI 제안을 적용할 수 있어요)</span></div>
     <input type="text" id="dupGoalText" class="btn" style="width:100%;font-weight:600;padding:8px 10px;margin-bottom:10px"
@@ -733,11 +772,11 @@ enum DashboardContent {
     <div class="hdr"><h1 style="margin:0;font-size:16px">목표 추가 <span class="muted" id="gaWhere" style="font-size:13px;font-weight:400"></span></h1>
       <button class="btn" onclick="closeGoalAdd()">닫기</button></div>
     <div class="row">
-      <input type="text" id="gaText" placeholder="목표/디테일 입력 후 Enter (계속 추가)" style="flex:1;min-width:200px">
-      <button class="btn" id="gaAiBtn" onclick="gaAi()" title="추가 전에 AI가 비슷한 목표가 있는지 먼저 검사합니다">AI추가</button>
-      <button class="btn primary" onclick="gaAdd()">추가</button>
+      <input type="text" id="gaText" placeholder="목표/디테일 입력 후 Enter (AI추가로 계속 추가)" style="flex:1;min-width:200px">
+      <button class="btn primary" id="gaAiBtn" onclick="gaAi()" title="추가 전에 AI가 비슷한 목표가 있는지 먼저 검사합니다">AI추가</button>
+      <button class="btn" onclick="gaAdd()">추가</button>
     </div>
-    <div class="muted" style="font-size:12px;margin-top:8px">Enter로 계속 추가할 수 있습니다. <b>AI추가</b>는 비슷한 목표가 있는지 먼저 확인합니다.</div>
+    <div class="muted" style="font-size:12px;margin-top:8px"><b>Enter</b>를 누르면 <b>AI추가</b>로 담깁니다 — 비슷한 목표가 있는지 먼저 확인하며, 창은 열린 채 계속 추가할 수 있습니다. 바로 추가하려면 <b>추가</b> 버튼을 누르세요.</div>
   </div>
 </div>
 <script>
@@ -1207,6 +1246,147 @@ function categoryBadge(seg){
   return '<span class="chip" style="margin:0;border-color:'+color+';color:'+color+'">'+label+' ×'+(seg.mult||1)+'</span>';
 }
 
+// ===== 히스토리 (날짜별 집중도 + 초집중 세션 + 시간대 분석) =====
+// 서버 /history.json 은 날짜별 압축 샘플({t,active,tier,meeting,mult,app})을 준다.
+// 오늘 화면과 '똑같은' withCarryForward + timeBuckets 를 날짜마다 돌려 총/책상/집중을
+// 구하고(단일 진실 공급원), 그 위에서 '지속 시간 기준' 초집중 세션을 잡는다.
+let _histData=null, _histLoading=false, _histRendered=false, _dfMin=25;
+// 기간 필터: 시작~끝 날짜(로컬 YYYY-MM-DD). 퀵버튼(1일/3일/7일/한달/3달)과 직접 입력 모두 지원.
+// 데이터는 하루 단위라 서버 재요청 없이 클라이언트에서 날짜 범위로 걸러 렌더한다.
+let _histStart='', _histEnd='', _histPreset='3m', _histFetchedDays=0, _histRangeSig='';
+function histDayStr(d){ const y=d.getFullYear(),m=d.getMonth()+1,dd=d.getDate();
+  return y+'-'+(m<10?'0':'')+m+'-'+(dd<10?'0':'')+dd; }
+function daysBetween(a,b){ return Math.round((new Date(b+'T00:00:00')-new Date(a+'T00:00:00'))/86400000); }
+// 프리셋 → 시작 날짜(끝은 대부분 오늘, '어제'만 예외). 일 단위는 오늘 포함이라 (n-1)일 빼고, 월 단위는 같은 날짜 기준.
+function histPresetStart(preset){
+  const n=new Date(), s=new Date(n.getFullYear(),n.getMonth(),n.getDate());
+  if(preset==='yesterday') s.setDate(s.getDate()-1);
+  else if(preset==='7d') s.setDate(s.getDate()-6);
+  else if(preset==='1m') s.setMonth(s.getMonth()-1);
+  else if(preset==='3m') s.setMonth(s.getMonth()-3);
+  return histDayStr(s);   // 'today'면 오늘 그대로
+}
+function syncHistInputs(){ const a=$('histFrom'),b=$('histTo'); if(a)a.value=_histStart; if(b)b.value=_histEnd; }
+function reflectRangeBtn(){ ['today','yesterday','7d','1m','3m'].forEach(k=>{ const b=$('hr_'+k); if(b) b.classList.toggle('primary', k===_histPreset); }); }
+function setHistRange(preset){
+  _histPreset=preset;
+  _histStart=histPresetStart(preset);
+  // '어제'는 끝도 어제로 고정, 나머지는 오늘까지.
+  _histEnd=(preset==='yesterday') ? _histStart : histDayStr(new Date());
+  syncHistInputs(); loadHistory();
+}
+function onHistDate(){
+  const a=$('histFrom'),b=$('histTo'); if(!a||!b) return;
+  if(a.value) _histStart=a.value; if(b.value) _histEnd=b.value;
+  if(_histStart>_histEnd){ const t=_histStart; _histStart=_histEnd; _histEnd=t; syncHistInputs(); }
+  _histPreset='';                  // 직접 입력하면 퀵버튼 선택 해제
+  loadHistory();
+}
+// 모든 시각은 이 기기의 로컬 타임존 기준(오늘 화면과 동일). 혼동 없게 화면에 명시한다.
+// 하드코딩이 아니라 감지: Asia/Seoul이면 KST, 아니면 그 지역 이름 + UTC 오프셋.
+function tzLabel(){
+  const off=-new Date().getTimezoneOffset()/60;
+  let z=''; try{ z=Intl.DateTimeFormat().resolvedOptions().timeZone; }catch(e){}
+  const nm=(z==='Asia/Seoul')?'KST':(z||'현지');
+  return nm+' (UTC'+(off>=0?'+':'')+(Number.isInteger(off)?off:off.toFixed(1))+')';
+}
+function setDeepMin(m){ _dfMin=m; reflectDeepBtn(); if(_histData) renderHistory(); }
+function reflectDeepBtn(){ [15,25,45].forEach(k=>{ const b=$('df'+k); if(b) b.classList.toggle('primary', k===_dfMin); }); }
+function loadHistory(force){
+  if(!_histStart){ _histPreset='3m'; _histEnd=histDayStr(new Date()); _histStart=histPresetStart('3m'); syncHistInputs(); }  // 최초 진입 기본값: 3달
+  reflectDeepBtn(); reflectRangeBtn();
+  if(_histLoading) return;
+  const todayStr=histDayStr(new Date());
+  const need=Math.max(1, daysBetween(_histStart, todayStr)+1);   // 시작~오늘을 덮을 일수(서버는 최신 N일을 준다)
+  const sig=_histStart+'_'+_histEnd;
+  if(_histData && !force && need<=_histFetchedDays){ if(!_histRendered || _histRangeSig!==sig) renderHistory(); return; }   // 캐시 우선 — 범위 안 바뀌면 폴링 재호출은 무비용
+  _histLoading=true;
+  const r=$('histRange'); if(r) r.textContent='불러오는 중…';
+  fetch('/history.json?days='+need).then(x=>x.json()).then(j=>{
+    _histData=(j&&j.days)||[]; _histFetchedDays=need; _histLoading=false; renderHistory();
+  }).catch(()=>{ _histLoading=false; const e=$('histDays'); if(e) e.innerHTML='<div class="empty">불러오지 못했습니다</div>'; });
+}
+// 지속 시간 기준 초집중: carry-forward 후 _cat==='focus'가 끊김 없이(샘플 간 <=2분) 이어진
+// 구간의 길이가 기준(_dfMin) 이상이면 한 세션. carry-forward가 이미 <=10분 짧은 끊김을
+// 집중으로 메우므로, 잠깐의 딴짓(설정 확인 등)은 세션을 깨지 않는다.
+function deepFocusSessions(ss){
+  const runs=[]; let cur=null;
+  ss.forEach(s=>{
+    if(s._cat==='focus'){
+      if(cur && (s.t-cur.endT)<=120){ cur.endT=s.t; cur.mins++; cur.apps[s.app||'-']=(cur.apps[s.app||'-']||0)+1; }
+      else { if(cur) runs.push(cur); cur={startT:s.t,endT:s.t,mins:1,apps:{}}; cur.apps[s.app||'-']=1; }
+    } else if(cur){ runs.push(cur); cur=null; }
+  });
+  if(cur) runs.push(cur);
+  return runs.filter(x=>x.mins>=_dfMin).map(x=>({startT:x.startT,endT:x.endT,mins:x.mins,
+    app:Object.entries(x.apps).sort((a,b)=>b[1]-a[1])[0][0]}));
+}
+function histCard(k,v,cap){ return '<div class="card"><div class="k">'+esc(k)+'</div><div class="v">'+esc(v)+'</div>'+(cap?'<div class="cap">'+esc(cap)+'</div>':'')+'</div>'; }
+function renderHistory(){
+  _histRendered=true; _histRangeSig=_histStart+'_'+_histEnd; reflectDeepBtn(); reflectRangeBtn();
+  // 캐시된 전체에서 선택 범위(_histStart~_histEnd)만 골라 렌더. 날짜 문자열(YYYY-MM-DD)은 사전순=시간순.
+  const data=(_histData||[]).filter(d=> d.day>=_histStart && d.day<=_histEnd);
+  const r=$('histRange'); if(r) r.textContent=(data.length? (data.length+'일 기록') : '기간 내 기록 없음')+' · 시각 '+tzLabel()+' 기준';
+  const rows=[]; const hourMin=new Array(24).fill(0);
+  let totFocus=0, totSessions=0, focusDays=0;
+  data.forEach(d=>{
+    const ss=withCarryForward(d.samples||[]);
+    const b=timeBuckets(ss);
+    const sess=deepFocusSessions(ss);
+    if(b.focus>0) focusDays++;
+    totFocus+=b.focus; totSessions+=sess.length;
+    sess.forEach(x=>{ for(let t=x.startT;t<=x.endT;t+=60){ hourMin[new Date(t*1000).getHours()]++; } });
+    rows.push({day:d.day,b,sess});
+  });
+  const sumH=$('histSummary');
+  if(sumH) sumH.innerHTML=
+     histCard('기록 일수', data.length+'일')
+    +histCard('총 집중', fmtH(totFocus))
+    +histCard('총 초집중', totSessions+'회', _dfMin+'분+ 몰입 세션')
+    +histCard('집중일 평균', focusDays? fmtH(Math.round(totFocus/focusDays)) : '–', '집중한 날 하루 평균');
+  drawDfHours(hourMin);
+  const host=$('histDays');
+  if(!rows.length){ if(host) host.innerHTML='<div class="empty">선택한 기간('+_histStart+' ~ '+_histEnd+')에 기록이 없습니다</div>'; return; }
+  host.innerHTML=rows.map(dayRowHtml).join('');
+}
+function dayRowHtml(r){
+  const b=r.b, mx=Math.max(b.total,1);
+  // 중첩 막대: 책상(주황) 위에 집중(초록). 책상은 집중을 포함하므로 집중을 겹쳐 그린다.
+  const w=v=>Math.round(100*v/mx);
+  const bar='<div style="position:relative;background:#2a2f3a;border-radius:4px;height:9px;width:160px;flex:0 0 auto">'
+    +'<div style="position:absolute;left:0;top:0;height:9px;border-radius:4px;width:'+w(b.desk)+'%;background:#e8a13a"></div>'
+    +'<div style="position:absolute;left:0;top:0;height:9px;border-radius:4px;width:'+w(b.focus)+'%;background:#36c08a"></div></div>';
+  const chips=r.sess.length? r.sess.map(x=>'<span class="chip" style="margin:0;border-color:#36c08a;color:#36c08a">'
+      +hhmm(x.startT)+'–'+hhmm(x.endT)+' · '+fmtH(x.mins)+' · '+esc(x.app)+'</span>').join(' ')
+    : '<span class="muted" style="font-size:11px">초집중 없음</span>';
+  const wd=['일','월','화','수','목','금','토'][new Date(r.day+'T00:00:00').getDay()];
+  return '<div class="panel" style="margin:0 0 8px;padding:10px 14px">'
+    +'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+    +'<b style="font-variant-numeric:tabular-nums;min-width:118px">'+esc(r.day)+' ('+wd+')</b>'
+    +'<span class="muted" style="font-size:12px;min-width:180px">총 '+fmtH(b.total)+' · 책상 '+fmtH(b.desk)+' · 집중 '+fmtH(b.focus)+'</span>'
+    +bar
+    +'<span class="chip" style="margin:0;border-color:#36c08a;color:#36c08a">초집중 '+r.sess.length+'회</span>'
+    +'</div>'
+    +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'+chips+'</div>'
+    +'</div>';
+}
+function drawDfHours(hourMin){
+  const c=$('dfHours'); if(!c) return;
+  const dpr=window.devicePixelRatio||1, W=c.clientWidth||600, H=120;
+  c.width=W*dpr; c.height=H*dpr; const g=c.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const max=Math.max(1,...hourMin), pad=16, bw=(W-pad)/24;
+  for(let h=0;h<24;h++){
+    const bh=(H-pad)*(hourMin[h]/max);
+    g.fillStyle = hourMin[h]>0 ? '#36c08a' : '#222834';
+    g.fillRect(pad+h*bw+1, (H-pad)-bh, Math.max(1,bw-2), bh);
+    if(h%3===0){ g.fillStyle='#6b7688'; g.font='9px -apple-system,sans-serif'; g.fillText((h<10?'0':'')+h, pad+h*bw, H-3); }
+  }
+  const cap=$('dfHoursCap');
+  if(cap) cap.textContent = (max>0 ? ('시간대별 초집중 누적 — 가장 자주 몰입하는 시간대: '+(hourMin.indexOf(max)<10?'0':'')+hourMin.indexOf(max)+'시 전후')
+                                  : '아직 초집중 기록이 없습니다. 집중(에디터·개발) 상태가 '+_dfMin+'분 이상 이어지면 여기 쌓입니다.')
+                            + ' · 시각 '+tzLabel()+' 기준';
+}
+
 // --- Value-confirmation pipeline + report ---
 function provisionalHours(samples){ return samples.reduce((a,s)=>a+(s.active||0)*(s.mult||1),0)/3600; }
 function post(path,obj){ return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj||{})}).then(()=>load()); }
@@ -1222,8 +1402,11 @@ function goalKey(e){ if(e.key!=='Enter')return; if(_composing){_pendingAdd=true;
 })();
 // Group-mode top add bar: same IME-safe Enter (bindImeEnter is hoisted).
 (function(){ bindImeEnter(document.getElementById('gAddText'), function(){ gAdd(); }); })();
-// Reusable goal-add modal input: same IME-safe Enter as the always-on bar.
-(function(){ bindImeEnter(document.getElementById('gaText'), function(){ gaAdd(); }); })();
+// Reusable goal-add modal input: Enter routes to AI추가 (queue) so a bare Enter runs the
+// dup-check pipeline. Keep the modal open (clear + refocus) to preserve "계속 추가".
+(function(){ bindImeEnter(document.getElementById('gaText'), function(){
+  const inp=$('gaText'); goalAddAi(inp.value,_gaCtx,$('gaAiBtn'),()=>{ inp.value=''; inp.focus(); },()=>{ inp.value=''; inp.focus(); });
+}); })();
 // --- 재사용 목표 추가 모달 — 스프린트 보드의 모든 추가 진입점이 이 모달 하나를 연다. ---
 let _gaCtx={sprint:0,parent:'',bump:false};   // 현재 추가 대상 (0/''=Backlog 최상위, bump=Bump out 인박스)
 function openGoalAdd(opts){
@@ -1283,6 +1466,9 @@ function showDup(p){
   // 큐 항목 다듬기 모드(queueId 있음)면 안내·버튼 라벨을 그 맥락으로 바꾼다. 새 목표 추가 모드면 기존 그대로.
   const isQ=!!(p&&p.queueId);
   const tt=$('dupTitle'); if(tt) tt.textContent = isQ?'🤖 AI 큐 다듬기':'🤖 AI 중복 확인';
+  const sid=(p&&p.refineSession)||'';
+  const sb=$('dupSessBtn'); if(sb){ sb.style.display = sid?'':'none'; sb.textContent='세션 ID 복사'; }
+  const cbi=$('dupCliBtn'); if(cbi){ cbi.style.display = sid?'':'none'; cbi.textContent='CLI에서 열기'; }
   $('dupNote').textContent = isQ
     ? '이 큐 항목을 AI와 대화하며 다듬으세요 (이미지 붙여넣기·끌어다놓기 가능). 다듬은 뒤 진행하거나 큐에 반영합니다.'
     : '유사한 목표가 있습니다. AI와 상의해 다듬은 뒤 추가하세요.';
@@ -1525,7 +1711,7 @@ function queueSkip(id){ _qJustRefined=''; post('/api/goal/queue/resolve',{id:id,
 // '큐에 반영'(문구만 갱신하고 계속 대기).
 function queuePromptChat(id){
   const it=((_review&&_review.aiQueue)||_lastAiQueue||[]).find(x=>x.id===id); if(!it) return;
-  _dupPending={queueId:id, text:it.text||'', parent:it.parent||'', sprint:it.sprint||0, note:it.note||'', matches:it.matches||[]};
+  _dupPending={queueId:id, text:it.text||'', parent:it.parent||'', sprint:it.sprint||0, note:it.note||'', matches:it.matches||[], refineSession:it.refineSession||''};
   showDup(_dupPending);
 }
 // 프롬프트 열기 → 입력 → 생성(서버 refine) → 새 결과. 맞으면 진행(queueProceed), 아니면 다시.
@@ -2144,7 +2330,7 @@ function pad2(n){ return (n<10?'0':'')+n; }
 const VIEW_DEFS=[
   {k:'input',t:'목록'},{k:'group',t:'그룹'},{k:'table',t:'테이블'},
   {k:'token',t:'토큰'},{k:'schedule',t:'일정'},{k:'preview',t:'프리뷰'},
-  {k:'sprint',t:'스프린트'},{k:'archived',t:'아카이브'}
+  {k:'sprint',t:'스프린트'},{k:'archived',t:'아카이브'},{k:'history',t:'히스토리'}
 ];
 const VIEW_LABEL={}; VIEW_DEFS.forEach(d=>{ VIEW_LABEL[d.k]=d.t; });
 const VIEW_KEYS=VIEW_DEFS.map(d=>d.k);
@@ -2208,6 +2394,11 @@ function applyView(){
   spv.style.display=(_view==='sprint')?'':'none';
   av.style.display =(_view==='archived')?'':'none';
   pv.style.display =(_view==='preview')?'':'none';
+  const hv=$('historyView'); if(hv) hv.style.display=(_view==='history')?'':'none';
+  // 히스토리 탭에선 오늘 전용 요소(목표 필터 바 · 아래 상세 섹션)를 숨겨 화면을 비운다.
+  // 벗어나면 인라인 display를 지워 CSS(스포츠 모드 등)가 다시 관장하게 둔다.
+  const gf=$('goalFilters'); if(gf) gf.style.display=(_view==='history')?'none':'';
+  const ds=$('detailSections'); if(ds) ds.style.display=(_view==='history')?'none':'';
   markActiveTab();
 }
 // Fill ONLY the active view's input DOM. 목록/그룹 render the same goals with the same
@@ -2221,6 +2412,7 @@ function fillActiveView(r){
   else if(_view==='token'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderTokenView(r); }
   else if(_view==='sprint'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderSprintView(r); }
   else if(_view==='archived'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderArchivedView(r); }
+  else if(_view==='history'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; loadHistory(); }   // 자체 엔드포인트(/history.json)에서 로드 — 캐시되어 재호출은 무비용
   else { $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; }   // preview: report only
 }
 // ===== Group-mode input: sticky add bar (active parent) + collapsible parent sections =====
@@ -2395,6 +2587,15 @@ function renderGroupSections(r){
   if(_gRefocus){ const el=host.querySelector('.gsec-add input[data-parent="'+_gRefocus+'"]'); _gRefocus=''; if(el) el.focus(); }
 }
 function copyMd(b){ if(navigator.clipboard) navigator.clipboard.writeText(_md); const o=b.textContent; b.textContent='복사됨'; setTimeout(()=>{b.textContent=o;},1200); }
+// 열려 있는 큐 다듬기 항목의 claude 세션 ID를 클립보드로 복사. CLI에서 `claude --resume <id>` 로 이어쓸 수 있다.
+function copyDupSession(b){ const sid=(_dupPending&&_dupPending.refineSession)||''; if(!sid){ b.textContent='세션 없음'; setTimeout(()=>{b.textContent='세션 ID 복사';},1200); return; }
+  if(navigator.clipboard) navigator.clipboard.writeText(sid); b.textContent='복사됨'; setTimeout(()=>{b.textContent='세션 ID 복사';},1200); }
+// 열려 있는 큐 항목의 다듬기 세션을 터미널에서 `claude --resume`으로 바로 연다(백엔드가 Terminal.app 실행).
+function openDupCli(b){ const id=(_dupPending&&_dupPending.queueId)||''; if(!id) return; const o='CLI에서 열기'; b.disabled=true; b.textContent='여는 중…';
+  fetch('/api/goal/queue/cli',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})})
+    .then(r=>r.json()).then(j=>{ b.textContent=j&&j.ok?'열림':'실패'; })
+    .catch(()=>{ b.textContent='실패'; })
+    .finally(()=>{ setTimeout(()=>{ b.disabled=false; b.textContent=o; },1200); }); }
 function gnote(r,id){ return (r.notes&&r.notes[id])||''; }
 
 // ===== 일정관리 (schedule / resource management) =====
@@ -2963,7 +3164,7 @@ function extModalForm(s){
     +'<div class="extnew" id="extPrev">조정 후 <b>'+(pv?fmtDate(pv):'변경 없음')+'</b></div>'
     +'<div class="exthint">＋ / − 2시간 단위로 연장·단축</div>'
     +'<div class="extset"><span class="dlab">직접 지정</span>'
-    +'<input type="datetime-local" value="'+localInput(_extAbs||t||Math.floor(base))+'" oninput="extSetAbs(this.value)" onchange="extSetAbs(this.value)">'
+    +'<input type="datetime-local" value="'+localInput(_extAbs||t||Math.floor(base))+'" oninput="extSetAbs(this.value)" onchange="extSetAbs(this.value)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();extSetAbs(this.value);applyExtend();}">'
     +'<span class="dlab" style="font-size:10px">예: 오늘 18:30까지 마감 · 입력 후 아래 버튼으로 확정</span></div>'
     +'<div class="line" style="margin-top:14px"><button class="btn" onclick="closeExtendModal()">취소</button><span style="flex:1"></span>'
     +'<button class="btn primary" id="extApply" '+(on?'':'disabled style="opacity:.5;cursor:default"')

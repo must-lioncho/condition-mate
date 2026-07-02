@@ -83,6 +83,13 @@ final class ReviewStore {
         // committed via the 릴리즈 action: it is hidden from the active list and recorded
         // in a Release (releaseId), and a 복원 clears both flags to bring it back.
         var sprint: Int = 0
+        // Bump out (아이디어 인박스). The raw brain-dump tier that sits BELOW Backlog: a
+        // freshly-thrown, un-organized idea lands here first, then gets promoted up to
+        // Backlog (나중에 할 것) and eventually into a Sprint (지금 할 것). Orthogonal to
+        // `sprint` on purpose — a bumped goal belongs to no sprint yet (sprint stays 0),
+        // so this flag alone decides the Bump out bucket regardless of parent inheritance.
+        // Assigning a real bucket (setGoalSprint) clears it — 정리되면 인박스에서 빠진다.
+        var bump: Bool = false
         var released: Bool = false
         var releaseId: String = ""
 
@@ -105,7 +112,7 @@ final class ReviewStore {
              evidence: [Evidence] = [], sessionId: String = "", transcriptPath: String = "",
              linkedSessions: [String] = [],
              targetAt: Date? = nil, completedAt: Date? = nil,
-             sprint: Int = 0, released: Bool = false, releaseId: String = "",
+             sprint: Int = 0, bump: Bool = false, released: Bool = false, releaseId: String = "",
              archived: Bool = false,
              priority: String = "medium") {
             self.id = id; self.seq = seq; self.text = text; self.parent = parent
@@ -115,7 +122,7 @@ final class ReviewStore {
             self.evidence = evidence; self.sessionId = sessionId; self.transcriptPath = transcriptPath
             self.linkedSessions = linkedSessions
             self.targetAt = targetAt; self.completedAt = completedAt
-            self.sprint = sprint; self.released = released; self.releaseId = releaseId
+            self.sprint = sprint; self.bump = bump; self.released = released; self.releaseId = releaseId
             self.archived = archived
             self.priority = priority
         }
@@ -125,7 +132,7 @@ final class ReviewStore {
         // key (it ignores default values), wiping every goal on load — so decode each
         // optional-with-default field via decodeIfPresent and fall back to its default.
         enum CodingKeys: String, CodingKey {
-            case id, seq, text, parent, status, trackedSeconds, startedAt, waitingSince, waitKind, energy, agents, tokens, value, evidence, sessionId, transcriptPath, linkedSessions, targetAt, completedAt, sprint, released, releaseId, archived, priority
+            case id, seq, text, parent, status, trackedSeconds, startedAt, waitingSince, waitKind, energy, agents, tokens, value, evidence, sessionId, transcriptPath, linkedSessions, targetAt, completedAt, sprint, bump, released, releaseId, archived, priority
         }
         init(from dec: Decoder) throws {
             let c = try dec.container(keyedBy: CodingKeys.self)
@@ -149,6 +156,7 @@ final class ReviewStore {
             targetAt = try c.decodeIfPresent(Date.self, forKey: .targetAt)
             completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
             sprint = try c.decodeIfPresent(Int.self, forKey: .sprint) ?? 0
+            bump = try c.decodeIfPresent(Bool.self, forKey: .bump) ?? false
             released = try c.decodeIfPresent(Bool.self, forKey: .released) ?? false
             releaseId = try c.decodeIfPresent(String.self, forKey: .releaseId) ?? ""
             archived = try c.decodeIfPresent(Bool.self, forKey: .archived) ?? false
@@ -456,10 +464,12 @@ final class ReviewStore {
         }
         if let data = try? JSONEncoder().encode(goals) { try? data.write(to: goalsURL, options: .atomic) }
     }
-    func addGoal(text: String, parent: String = "", sprint: Int = 0) {
+    func addGoal(text: String, parent: String = "", sprint: Int = 0, bump: Bool = false) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
-        goals.append(Goal(id: UUID().uuidString, seq: nextSeq(), text: t, parent: parent, sprint: max(0, sprint)))
+        // A bumped goal is an un-sorted idea — it belongs to no sprint yet (sprint stays 0).
+        goals.append(Goal(id: UUID().uuidString, seq: nextSeq(), text: t, parent: parent,
+                          sprint: bump ? 0 : max(0, sprint), bump: bump))
         saveGoals()
     }
     func removeGoal(id: String) {
@@ -640,6 +650,17 @@ final class ReviewStore {
     func setGoalSprint(id: String, sprint: Int) {
         guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
         goals[idx].sprint = max(-1, sprint)
+        goals[idx].bump = false   // 정리해 스프린트/Backlog로 배정하면 Bump out 인박스에서 빠진다
+        saveGoals()
+    }
+
+    // Move a goal into (bump=true) or out of (bump=false) the Bump out inbox — the raw
+    // idea pile below Backlog. Bumping clears sprint membership (an idea belongs to no
+    // sprint yet); un-bumping drops it into Backlog (sprint 0) to be organized next.
+    func setGoalBump(id: String, bump: Bool) {
+        guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
+        goals[idx].bump = bump
+        if bump { goals[idx].sprint = 0 }
         saveGoals()
     }
 
@@ -990,11 +1011,14 @@ final class ReviewStore {
         }
         if !tpath.isEmpty { goals[idx].transcriptPath = tpath }   // remember where to read
 
-        // A user-held goal (중지/취소) is authoritative. The session hooks still refresh its
-        // label/transcript above, but must NOT resurrect its status or bank time: the loop
-        // skips these, so an incoming active/idle/end can never silently pull a stopped or
-        // cancelled goal back into the queue. Only a manual setStatus moves it out of the hold.
-        if goals[idx].status == "stopped" || goals[idx].status == "cancelled" {
+        // A user-held goal (완료/중지/취소) is authoritative. The session hooks still refresh
+        // its label/transcript above, but must NOT resurrect its status or bank time: the loop
+        // skips these, so an incoming active/idle/end/start can never silently pull a done,
+        // stopped, or cancelled goal back into the queue. done is included because a manual
+        // 완료 is a terminal user decision — without this a live session's next event (e.g.
+        // "start" → backlog) reopens it, so a just-completed goal reverts to 대기 on refresh.
+        // Only a manual setStatus moves any of these out of the hold.
+        if goals[idx].status == "done" || goals[idx].status == "stopped" || goals[idx].status == "cancelled" {
             saveGoals(); return
         }
 
