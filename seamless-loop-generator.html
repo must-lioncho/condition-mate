@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>무한루프 음원 생성기</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#141924; --border:#242c3a;
+    --text:#e6ecf7; --muted:#8b98ad; --accent:#6ef2c1; --accent2:#8ec5ff;
+    --radius:8px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; min-height:100vh; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+    display:flex; flex-direction:column; align-items:center; padding:40px 20px;
+  }
+  .wrap{width:100%; max-width:560px;}
+  header{margin-bottom:28px;}
+  h1{font-size:24px; font-weight:600; margin:0 0 6px;}
+  .sub{color:var(--muted); font-size:14px; line-height:1.6; margin:0;}
+  .card{background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:22px; display:flex; flex-direction:column; gap:16px;}
+  #drop{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; text-align:center;
+    border:1.5px dashed var(--border); border-radius:12px; padding:28px 18px; cursor:pointer; color:var(--muted);
+    background:rgba(255,255,255,.02); transition:border-color .15s;}
+  #drop:hover{border-color:var(--accent2);}
+  #drop .big{color:var(--text); font-weight:500;}
+  #drop .ico{font-size:32px; line-height:1;}
+  #info{display:none; font-size:13px; color:var(--muted);}
+  #info b{color:var(--text); font-weight:500;}
+  .row{display:flex; flex-wrap:wrap; align-items:center; gap:16px;}
+  label.ctl{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted);}
+  input[type=range]{accent-color:var(--accent); width:130px;}
+  select{font-size:13px; padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg); color:var(--text);}
+  .num{color:var(--text); font-variant-numeric:tabular-nums;}
+  canvas{width:100%; height:80px; border-radius:8px; background:#070a0f; display:none;}
+  .actions{display:flex; flex-wrap:wrap; align-items:center; gap:10px;}
+  button{font-size:14px; font-weight:500; border-radius:var(--radius); padding:10px 18px; cursor:pointer; border:1px solid var(--border); display:inline-flex; align-items:center; gap:6px;}
+  #genBtn{background:var(--accent); color:#05231a; border-color:var(--accent); opacity:.4;}
+  #genBtn:not(:disabled){opacity:1;}
+  #genBtn:disabled{cursor:not-allowed;}
+  #dlBtn{background:transparent; color:var(--text); display:none;}
+  #dlBtn:hover{border-color:var(--accent2);}
+  audio{display:none; width:100%; margin-top:2px;}
+  #status{font-size:12px; color:var(--muted); min-height:16px;}
+  .presets{display:flex; flex-wrap:wrap; gap:8px;}
+  .presets .lbl{width:100%; font-size:12px; color:var(--muted);}
+  .chip{font-size:12px; font-weight:500; padding:7px 12px; border-radius:20px; background:var(--bg);
+    border:1px solid var(--border); color:var(--text); cursor:pointer; transition:border-color .15s;}
+  .chip:hover{border-color:var(--accent2);}
+  .divider{height:1px; background:var(--border); margin:2px 0;}
+  footer{margin-top:22px; font-size:12px; color:var(--muted); text-align:center; line-height:1.6;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>무한루프 음원 생성기</h1>
+    <p class="sub">오디오를 올리면 이음새 없이 무한 반복되는 파일을 만들어 드립니다. 모든 처리는 브라우저 안에서 이뤄지며, 파일은 어디에도 전송되지 않습니다.</p>
+  </header>
+
+  <div class="card">
+    <label id="drop" for="fileIn">
+      <span class="ico">⤒</span>
+      <span><span class="big">오디오 파일 선택</span> 또는 여기로 드래그</span>
+      <span style="font-size:12px;">mp3 · wav · m4a · aac · ogg</span>
+      <input id="fileIn" type="file" accept="audio/*" style="display:none;">
+    </label>
+
+    <div class="presets">
+      <span class="lbl">또는 내장 프리셋으로 바로 체험</span>
+      <button class="chip" data-preset="white">화이트 노이즈</button>
+      <button class="chip" data-preset="brown">브라운 노이즈</button>
+      <button class="chip" data-preset="rain">빗소리</button>
+      <button class="chip" data-preset="tone">440Hz 톤</button>
+    </div>
+
+    <div id="info"></div>
+
+    <div class="row">
+      <label class="ctl">크로스페이드
+        <input id="cross" type="range" min="0.1" max="3" step="0.05" value="0.6">
+        <span id="crossVal" class="num">0.60s</span>
+      </label>
+      <label class="ctl">길이
+        <select id="len">
+          <option value="0">루프 1회 (최소)</option>
+          <option value="60">1분</option>
+          <option value="180">3분</option>
+          <option value="600">10분</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="row">
+      <label class="ctl">볼륨
+        <input id="vol" type="range" min="0" max="1.5" step="0.05" value="1">
+        <span id="volVal" class="num">100%</span>
+      </label>
+      <label class="ctl">
+        <input id="fade" type="checkbox" style="accent-color:var(--accent);"> 페이드 인/아웃
+        <input id="fadeSec" type="range" min="0.5" max="8" step="0.5" value="2" disabled>
+        <span id="fadeVal" class="num">2.0s</span>
+      </label>
+    </div>
+
+    <canvas id="wave" width="1080" height="160"></canvas>
+
+    <div class="actions">
+      <button id="genBtn" disabled>무한 루프 생성</button>
+      <button id="dlBtn" disabled>다운로드 (.wav)</button>
+    </div>
+
+    <audio id="prev" controls loop></audio>
+    <div id="status"></div>
+  </div>
+
+  <footer>끝부분을 시작부분에 등파워 크로스페이드로 겹쳐 딸깍임 없는 완벽한 루프를 만듭니다.</footer>
+</div>
+
+<script>
+(function(){
+  var AC=window.AudioContext||window.webkitAudioContext;
+  var fileIn=document.getElementById('fileIn'),drop=document.getElementById('drop');
+  var info=document.getElementById('info'),status=document.getElementById('status');
+  var crossR=document.getElementById('cross'),crossVal=document.getElementById('crossVal');
+  var lenSel=document.getElementById('len');
+  var volR=document.getElementById('vol'),volVal=document.getElementById('volVal');
+  var fadeChk=document.getElementById('fade'),fadeR=document.getElementById('fadeSec'),fadeVal=document.getElementById('fadeVal');
+  var genBtn=document.getElementById('genBtn'),dlBtn=document.getElementById('dlBtn');
+  var prev=document.getElementById('prev'),wave=document.getElementById('wave'),wctx=wave.getContext('2d');
+  var srcBuf=null, loopCh=null, loopRate=44100, baseName='loop';
+
+  crossR.oninput=function(){crossVal.textContent=(+crossR.value).toFixed(2)+'s';};
+  volR.oninput=function(){volVal.textContent=Math.round(+volR.value*100)+'%';};
+  fadeR.oninput=function(){fadeVal.textContent=(+fadeR.value).toFixed(1)+'s';};
+  fadeChk.onchange=function(){fadeR.disabled=!fadeChk.checked;};
+
+  var PRESETS={
+    white:{name:'화이트 노이즈'}, brown:{name:'브라운 노이즈'},
+    rain:{name:'빗소리'}, tone:{name:'440Hz 톤'}
+  };
+  function makePreset(kind){
+    var rate=44100, dur=4, N=rate*dur, out=new Float32Array(N);
+    if(kind==='tone'){
+      for(var i=0;i<N;i++) out[i]=Math.sin(2*Math.PI*440*i/rate)*0.5;
+    } else if(kind==='brown'){
+      var last=0;
+      for(var i=0;i<N;i++){var w=Math.random()*2-1; last=(last+0.02*w)/1.02; out[i]=last*3.2;}
+    } else if(kind==='rain'){
+      var lp=0;
+      for(var i=0;i<N;i++){
+        var w=Math.random()*2-1; lp=lp*0.96+w*0.04;
+        var drop=Math.random()<0.0016?(Math.random()*2-1)*0.7:0;
+        out[i]=(lp*2.4+drop)*0.5;
+      }
+    } else { // white
+      for(var i=0;i<N;i++) out[i]=(Math.random()*2-1)*0.4;
+    }
+    var ac=new AC(), buf=ac.createBuffer(1,N,rate);
+    buf.copyToChannel(out,0); ac.close();
+    return buf;
+  }
+  document.querySelectorAll('.chip').forEach(function(btn){
+    btn.onclick=function(){
+      var kind=btn.getAttribute('data-preset');
+      srcBuf=makePreset(kind); baseName=kind;
+      dlBtn.style.display='none';prev.style.display='none';wave.style.display='none';loopCh=null;
+      info.style.display='block';
+      info.innerHTML='<b>프리셋: '+PRESETS[kind].name+'</b> · '+fmt(srcBuf.duration)+' · 1ch · '+srcBuf.sampleRate+'Hz';
+      genBtn.disabled=false;
+      status.textContent='프리셋 준비 완료. 크로스페이드를 정하고 생성하세요.';
+    };
+  });
+
+  drop.addEventListener('dragover',function(e){e.preventDefault();drop.style.borderColor='#8ec5ff';});
+  drop.addEventListener('dragleave',function(){drop.style.borderColor='';});
+  drop.addEventListener('drop',function(e){e.preventDefault();drop.style.borderColor='';if(e.dataTransfer.files[0])load(e.dataTransfer.files[0]);});
+  fileIn.onchange=function(){if(fileIn.files[0])load(fileIn.files[0]);};
+
+  function fmt(s){var m=Math.floor(s/60),x=(s%60).toFixed(1);return m+':'+(x<10?'0':'')+x;}
+
+  function load(file){
+    baseName=file.name.replace(/\.[^.]+$/,'')||'loop';
+    status.textContent='디코딩 중...';
+    dlBtn.style.display='none';prev.style.display='none';wave.style.display='none';loopCh=null;
+    var fr=new FileReader();
+    fr.onload=function(){
+      var ac=new AC();
+      ac.decodeAudioData(fr.result.slice(0)).then(function(buf){
+        srcBuf=buf;
+        info.style.display='block';
+        info.innerHTML='<b>'+file.name+'</b> · '+fmt(buf.duration)+' · '+buf.numberOfChannels+'ch · '+buf.sampleRate+'Hz';
+        genBtn.disabled=false;
+        status.textContent='준비 완료. 크로스페이드를 정하고 생성하세요.';
+        ac.close();
+      }).catch(function(){status.textContent='디코딩 실패: 지원되지 않는 형식일 수 있습니다.';ac.close();});
+    };
+    fr.readAsArrayBuffer(file);
+  }
+
+  genBtn.onclick=function(){
+    if(!srcBuf)return;
+    status.textContent='크로스페이드 처리 중...';
+    setTimeout(function(){
+      var cross=+crossR.value, N=srcBuf.length, rate=srcBuf.sampleRate, vol=+volR.value;
+      var c=Math.min(Math.floor(cross*rate), Math.floor(N/2));
+      var L=N-c, chs=srcBuf.numberOfChannels;
+      loopCh=[];loopRate=rate;
+      for(var ch=0;ch<chs;ch++){
+        var inp=srcBuf.getChannelData(ch), out=new Float32Array(L);
+        for(var i=0;i<L;i++){
+          if(i<c){
+            var a=i/c, gH=Math.sin(a*Math.PI/2), gT=Math.cos(a*Math.PI/2);
+            out[i]=(inp[i]*gH + inp[i+L]*gT)*vol;
+          } else out[i]=inp[i]*vol;
+        }
+        loopCh.push(out);
+      }
+      drawWave(loopCh,L);
+      var blob=encodeWav(loopCh,rate,1);
+      prev.src=URL.createObjectURL(blob);
+      prev.style.display='block';dlBtn.style.display='inline-flex';dlBtn.disabled=false;
+      status.textContent='완성 · 루프 길이 '+fmt(L/rate)+' · 미리듣기는 무한 반복됩니다.';
+    },20);
+  };
+
+  dlBtn.onclick=function(){
+    if(!loopCh)return;
+    var loopSec=loopCh[0].length/loopRate, target=+lenSel.value;
+    var reps= target>0 ? Math.max(1,Math.round(target/loopSec)) : 1;
+    status.textContent='파일 생성 중 ('+reps+'회 반복)...';
+    setTimeout(function(){
+      var fadeS= fadeChk.checked ? +fadeR.value : 0;
+      var blob=encodeWav(loopCh,loopRate,reps,fadeS);
+      var a=document.createElement('a');
+      a.href=URL.createObjectURL(blob);
+      a.download=baseName+'-loop.wav';
+      document.body.appendChild(a);a.click();a.remove();
+      status.textContent='다운로드 완료 · '+(blob.size/1048576).toFixed(1)+'MB · '+fmt(loopSec*reps);
+    },20);
+  };
+
+  function drawWave(chs,L){
+    wave.style.display='block';
+    var w=wave.width,h=wave.height;wctx.fillStyle='#070a0f';wctx.fillRect(0,0,w,h);
+    wctx.strokeStyle='#6ef2c1';wctx.lineWidth=1;wctx.beginPath();
+    var d=chs[0],step=Math.max(1,Math.ceil(L/w));
+    for(var x=0;x<w;x++){
+      var mn=1,mx=-1;
+      for(var i=x*step;i<(x+1)*step&&i<L;i++){if(d[i]<mn)mn=d[i];if(d[i]>mx)mx=d[i];}
+      wctx.moveTo(x,h/2+mn*h/2);wctx.lineTo(x,h/2+mx*h/2);
+    }
+    wctx.stroke();
+  }
+
+  function encodeWav(chs,rate,reps,fadeS){
+    var n=chs.length, L=chs[0].length, frames=L*reps;
+    var bytes=frames*n*2, buf=new ArrayBuffer(44+bytes), v=new DataView(buf), p=0;
+    function s(str){for(var i=0;i<str.length;i++)v.setUint8(p++,str.charCodeAt(i));}
+    function u32(x){v.setUint32(p,x,true);p+=4;} function u16(x){v.setUint16(p,x,true);p+=2;}
+    s('RIFF');u32(36+bytes);s('WAVE');s('fmt ');u32(16);u16(1);u16(n);u32(rate);u32(rate*n*2);u16(n*2);u16(16);
+    s('data');u32(bytes);
+    var out=new Int16Array(buf,44);
+    var fadeN=Math.min(Math.floor((fadeS||0)*rate), Math.floor(frames/2));
+    for(var r=0;r<reps;r++){
+      for(var i=0;i<L;i++){
+        var g=1, pos=r*L+i;
+        if(fadeN>0){
+          if(pos<fadeN) g=pos/fadeN;
+          else if(pos>=frames-fadeN) g=(frames-pos)/fadeN;
+        }
+        for(var ch=0;ch<n;ch++){
+          var x=Math.max(-1,Math.min(1,chs[ch][i]*g));
+          out[pos*n+ch]=x<0?x*0x8000:x*0x7FFF;
+        }
+      }
+    }
+    return new Blob([buf],{type:'audio/wav'});
+  }
+})();
+</script>
+</body>
+</html>

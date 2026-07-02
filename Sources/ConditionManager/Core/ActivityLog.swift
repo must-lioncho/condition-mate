@@ -1,12 +1,14 @@
 import Foundation
 
 // Per-minute activity timeline. One compact JSON line per minute, in a daily
-// file. 1440 lines/day max => a few dozen KB; old files pruned after a week.
+// file. 1440 lines/day max => a few dozen KB. Files are kept effectively
+// forever (the 히스토리 tab reads them back); the very high retention cap only
+// bounds truly ancient files so the directory can't grow without any limit.
 final class ActivityLog {
 
     private let dir: URL
     private let dayFormatter: DateFormatter
-    private let retentionDays = 7
+    private let retentionDays = 3650   // ~10 years => practically unlimited history
 
     init() {
         dir = AppPaths.sub("activity")
@@ -73,6 +75,44 @@ final class ActivityLog {
         }
         out += "\""
         return out
+    }
+
+    // Compact per-day samples for the 히스토리 tab. Returns a JSON array, newest
+    // day first, of {"day":"YYYY-MM-DD","samples":[{t,active,tier,meeting,mult,app}]}.
+    // Only the fields the dashboard's carry-forward + timeBuckets + deep-focus
+    // logic needs are re-emitted, so many days stay a light payload (the browser
+    // runs the very same JS as the "today" view, keeping one source of truth).
+    func historyJSON(days: Int) -> String {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return "[]" }
+        var dayList: [String] = []
+        for url in files {
+            let name = url.lastPathComponent
+            guard name.hasPrefix("activity-"), name.hasSuffix(".jsonl") else { continue }
+            dayList.append(String(name.dropFirst("activity-".count).dropLast(".jsonl".count)))
+        }
+        dayList.sort(by: >)                                   // newest first
+        let take = Array(dayList.prefix(max(1, days)))
+        var out: [String] = []
+        for day in take {
+            let url = dir.appendingPathComponent("activity-\(day).jsonl")
+            guard let raw = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            var rows: [String] = []
+            for line in raw.split(separator: "\n") {
+                guard let data = line.data(using: .utf8),
+                      let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                let t = (o["t"] as? Int) ?? 0
+                let active = (o["active"] as? Int) ?? 0
+                let mult = (o["mult"] as? Int) ?? 1
+                let meeting = (o["meeting"] as? Bool) ?? false
+                let tier = (o["tier"] as? String) ?? "소극"
+                let app = (o["app"] as? String) ?? "-"
+                rows.append("{\"t\":\(t),\"active\":\(active),\"mult\":\(mult),"
+                    + "\"meeting\":\(meeting),\"tier\":\(jsonString(tier)),\"app\":\(jsonString(app))}")
+            }
+            out.append("{\"day\":\(jsonString(day)),\"samples\":[\(rows.joined(separator: ","))]}")
+        }
+        return "[" + out.joined(separator: ",") + "]"
     }
 
     // Today's samples parsed as dictionaries (for the abuse filter).

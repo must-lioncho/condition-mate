@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>부모 채우기 — 마우스 드래그 테스트</title>
+<style>
+  :root{
+    --bg:#0b0e15; --fg:#e7ecf3; --mut:#8b93a7; --line:#222a3a;
+    --accent:#5b8cff; --green:#3fbd7a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;user-select:none}
+  .wrap{max-width:1100px;margin:0 auto;padding:18px;display:grid;grid-template-columns:1fr 320px;gap:18px}
+  h1{font-size:18px;margin:0 0 4px}
+  .lead{color:var(--mut);font-size:13px;margin:0 0 14px}
+  .help{background:#11151f;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:13px}
+  .help b{color:var(--accent)}
+  .help kbd{background:#0e1320;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:12px}
+  .spgrp{border:1px solid var(--line);border-radius:10px;margin:0 0 12px;background:#11151f;overflow:hidden}
+  .spgrp.dropOver{border-color:var(--accent);background:rgba(91,140,255,.07)}
+  .spgrp.bg{border-style:dashed}
+  .spgrp-hd{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  .spgrp-hd b{font-size:13px}
+  .pill{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:1px 9px;color:var(--mut)}
+  .pill.sp{background:#172238;border-color:#2c3f66;color:#aec4ff}
+  .spgrp-body{padding:6px 10px;min-height:38px}
+  .spgrp-body .empty{color:var(--mut);font-size:12px;padding:8px 2px}
+  .bgoal{display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);cursor:grab}
+  .bgoal:last-child{border-bottom:none}
+  .bgoal.dragging{opacity:.4}
+  .bgoal.child{padding-left:24px;background:rgba(255,255,255,.015)}
+  .bgoal .grip{color:#3a4150}
+  .bgoal .gn{font-size:12px;color:var(--mut);border:1px solid var(--line);border-radius:999px;padding:1px 8px;white-space:nowrap}
+  .bgoal .t{flex:1;min-width:60px}
+  .bgchev{cursor:pointer;color:var(--mut);width:14px;text-align:center;display:inline-block;font-size:11px;user-select:none}
+  .bgsp{display:inline-block;width:14px}
+  .bgoal .pin{width:54px;flex:none;text-align:center;font-size:12px;color:var(--fg);background:#0e1320;border:1px solid var(--line);border-radius:6px;padding:2px 0;margin-right:6px}
+  .bgoal .pin::placeholder{color:#4a5163}
+  .bgoal .pin:focus{outline:none;border-color:var(--accent)}
+  .bgoal .pin-sp{width:54px;flex:none;margin-right:6px;display:inline-block}
+  .stat{font-size:12px;color:var(--mut);border:1px solid var(--line);border-radius:6px;padding:1px 8px}
+  /* --- 채우기(fill-down) 상태 --- */
+  /* Cmd 누르면 부모칸이 '채우기 소스'로 무장 — 마우스 올리면 셀이 선택(강조)됨 */
+  body.armparent .bgoal .pin{cursor:cell}
+  body.armparent .bgoal .pin:hover{border-color:var(--accent);box-shadow:0 0 0 2px rgba(91,140,255,.4)}
+  body.parfilling{cursor:cell}
+  body.parfilling *{cursor:cell !important}
+  .bgoal.parfill{background:rgba(91,140,255,.12);box-shadow:inset 2px 0 0 var(--accent)}
+  .bgoal.parsrc .pin{border-color:var(--accent);box-shadow:0 0 0 2px rgba(91,140,255,.5)}
+  .panel{position:sticky;top:18px;align-self:start}
+  .card{background:#11151f;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px}
+  .card h2{font-size:13px;margin:0 0 8px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  .tree{font-size:13px;line-height:1.7}
+  .tree .p{color:var(--fg)}
+  .tree .c{color:var(--mut);padding-left:16px}
+  .tree .c::before{content:'└ ';color:#3a4150}
+  #log{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--mut);max-height:260px;overflow:auto;white-space:pre-wrap}
+  #log .ok{color:var(--green)}
+  #log .no{color:#ff9db0}
+  .btn{background:#0e1320;border:1px solid var(--line);border-radius:7px;color:var(--fg);padding:5px 10px;font-size:12px;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div>
+    <h1>부모 채우기 — 마우스 드래그 테스트</h1>
+    <p class="lead">스프레드시트 '채우기 핸들'처럼, 부모 하나를 잡고 아래로 긁으면 여러 행에 한 번에 채워집니다.</p>
+    <div class="help">
+      <div><b>이게 핵심 →</b> <kbd>⌘ Cmd</kbd> 누른 채 <b>부모# 칸</b>에 마우스를 올리면 그 셀이 선택(강조)되고, 누른 채로 <b>아래로 드래그</b>하면 지나가는 행에 그 부모 번호가 쭉 채워집니다.</div>
+      <div style="margin-top:6px;color:var(--mut)">먼저 어느 행의 부모#에 번호를 넣거나(예: <kbd>02</kbd>), 이미 부모가 있는 셀에서 시작하세요. 값이 빈 셀에서 시작하면 지나간 행들의 부모가 <b>해제</b>됩니다.</div>
+      <div style="margin-top:6px;color:var(--mut)">자식을 이미 가진 목표는 채우기에서 건너뜁니다.</div>
+    </div>
+    <div id="board"></div>
+  </div>
+  <div class="panel">
+    <div class="card">
+      <h2>현재 계층</h2>
+      <div class="tree" id="tree"></div>
+    </div>
+    <div class="card">
+      <h2>이벤트 로그</h2>
+      <div id="log"></div>
+      <div style="margin-top:8px"><button class="btn" onclick="reset()">초기화</button></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SPRINTS=[{number:1,code:'26-1'},{number:0,code:'BG'}];
+let goals=[];
+function seed(){
+  goals=[
+    {id:'a',seq:2,  text:'부모 후보 A — 결제 모듈',       parent:'', sprint:1, released:false},
+    {id:'b',seq:5,  text:'부모 후보 B — 대시보드',         parent:'', sprint:1, released:false},
+    {id:'c',seq:11, text:'로그인 화면',                    parent:'', sprint:1, released:false},
+    {id:'d',seq:12, text:'토큰 갱신',                      parent:'', sprint:1, released:false},
+    {id:'e',seq:13, text:'세션 만료 처리',                 parent:'', sprint:1, released:false},
+    {id:'f',seq:21, text:'차트 위젯',                      parent:'', sprint:0, released:false},
+    {id:'g',seq:22, text:'필터 콤보',                      parent:'', sprint:0, released:false},
+    {id:'h',seq:23, text:'테이블 정렬',                    parent:'', sprint:0, released:false},
+  ];
+}
+seed();
+function byId(id){ return goals.find(x=>x.id===id)||null; }
+function bySeq(n){ return goals.find(x=>x.seq===n)||null; }
+function pad2(n){ return (n<10?'0':'')+n; }
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function hasKids(id){ return goals.some(g=>g.parent===id); }
+function lab(id){ const g=byId(id); return g?('goal-'+pad2(g.seq)):id; }
+
+// 부모 지정 (백엔드 setParent 규칙과 동일하게 검증). silent=true면 로그·렌더 생략(일괄용).
+function setParent(id,parentId,silent){
+  const idx=goals.findIndex(g=>g.id===id); if(idx<0||id===parentId) return false;
+  if(!parentId){ goals[idx].parent=''; if(!silent){ logLine('해제: '+lab(id)+' → 최상위','ok'); render(); } return true; }
+  const p=byId(parentId);
+  if(!p||p.parent||p.released){ if(!silent){ logLine('거부: '+lab(parentId)+'는 부모가 될 수 없음','no'); render(); } return false; }
+  if(hasKids(id)){ if(!silent){ logLine('거부: '+lab(id)+'는 자식이 있어 묶을 수 없음','no'); render(); } return false; }
+  goals[idx].parent=parentId;
+  if(!silent){ logLine('묶기: '+lab(id)+' → 부모 '+lab(parentId),'ok'); render(); }
+  return true;
+}
+function setParentByNumber(id,numStr){
+  const s=(numStr||'').trim();
+  if(!s){ setParent(id,''); return; }
+  const n=parseInt(s.replace(/[^0-9]/g,''),10);
+  const tgt=bySeq(n);
+  if(!tgt||tgt.id===id){ logLine('거부: goal-'+pad2(n)+' 없음/자기참조','no'); render(); return; }
+  setParent(id,tgt.id);
+}
+
+// ---- 렌더 ----
+function bgoalRow(g,kids){
+  const isChild=!!g.parent;
+  const lead=kids ? '<span class="bgchev">▾</span>' : '<span class="bgsp"></span>';
+  const pcell = kids
+    ? '<span class="pin-sp"></span>'
+    : (function(){ const p=g.parent?byId(g.parent):null; const psn=p?pad2(p.seq):'';
+        return '<input class="pin" type="text" inputmode="numeric" draggable="false" value="'+psn+'"'
+          +' placeholder="부모#" title="Cmd+드래그로 아래에 채우기 · 또는 직접 입력"'
+          +' onmousedown="pinDown(event,\''+g.id+'\')"'
+          +' onkeydown="if(event.key===\'Enter\')this.blur()" onchange="setParentByNumber(\''+g.id+'\',this.value)">'; })();
+  return '<div class="bgoal'+(isChild?' child':'')+'" data-id="'+g.id+'" draggable="true"'
+    +' onmouseenter="pinRowEnter(\''+g.id+'\')"'
+    +' ondragstart="spDragStart(event,\''+g.id+'\')" ondragend="spDragEnd(event)">'
+    +lead+'<span class="grip" title="드래그=스프린트 이동">⠿</span>'
+    +'<span class="gn">goal-'+pad2(g.seq)+'</span>'
+    +'<span class="t">'+esc(g.text)+'</span>'
+    +pcell+'<span class="stat">대기</span></div>';
+}
+function groupBody(rows){
+  if(!rows.length) return '<div class="empty">여기로 목표를 끌어다 놓기</div>';
+  const inSet=new Set(rows.map(g=>g.id));
+  const kids={}; rows.forEach(g=>{ if(g.parent&&inSet.has(g.parent)) (kids[g.parent]=kids[g.parent]||[]).push(g); });
+  const tops=rows.filter(g=>!g.parent||!inSet.has(g.parent));
+  return tops.map(g=>{ const ch=kids[g.id]||[];
+    return bgoalRow(g,ch.length>0)+ch.map(c=>bgoalRow(c,false)).join(''); }).join('');
+}
+function boardSprint(g){ if(g.parent){ const p=byId(g.parent); return p?boardSprint(p):0; } return g.sprint||0; }
+function render(){
+  document.getElementById('board').innerHTML=SPRINTS.map(s=>{
+    const rows=goals.filter(g=>boardSprint(g)===s.number);
+    const isBg=s.number===0;
+    return '<div class="spgrp'+(isBg?' bg':'')+'" ondragover="spOver(event)" ondragleave="spLeave(event)" ondrop="spDrop(event,'+s.number+')">'
+      +'<div class="spgrp-hd">'+(isBg?'<b>Backlog</b>':('<span class="pill sp">'+s.code+'</span><b>스프린트 '+s.number+'</b>'))+'</div>'
+      +'<div class="spgrp-body">'+groupBody(rows)+'</div></div>';
+  }).join('');
+  renderTree();
+}
+function renderTree(){
+  const tops=goals.filter(g=>!g.parent);
+  document.getElementById('tree').innerHTML=tops.map(p=>{
+    const ch=goals.filter(g=>g.parent===p.id);
+    return '<div class="p">goal-'+pad2(p.seq)+' '+esc(p.text)+'</div>'
+      +ch.map(c=>'<div class="c">goal-'+pad2(c.seq)+' '+esc(c.text)+'</div>').join('');
+  }).join('');
+}
+function logLine(msg,cls){
+  const el=document.getElementById('log');
+  const t=new Date().toLocaleTimeString('ko-KR',{hour12:false});
+  el.innerHTML='<div class="'+(cls||'')+'">['+t+'] '+esc(msg)+'</div>'+el.innerHTML;
+}
+function reset(){ seed(); document.getElementById('log').innerHTML=''; logLine('초기화됨'); render(); }
+
+// ============================================================
+//  채우기(fill-down) — 우선순위 페인트와 동일한 패턴
+//  Cmd+부모칸 mousedown → 그 셀의 부모값을 잡고, 아래로 드래그하며
+//  지나가는 행에 낙관적으로 값을 칠한 뒤 mouseup에서 일괄 커밋.
+//  (드래그 도중 re-render 하지 않아야 mouseenter 체인이 끊기지 않음)
+// ============================================================
+document.addEventListener('keydown',e=>{ if(e.key==='Meta'||e.key==='Control') document.body.classList.add('armparent'); });
+document.addEventListener('keyup',  e=>{ if(e.key==='Meta'||e.key==='Control') document.body.classList.remove('armparent'); });
+window.addEventListener('blur',()=>document.body.classList.remove('armparent'));
+
+let _fill=null;       // {parentId, seqLabel}  — 채워 넣을 값 (parentId ''=해제)
+let _painted=null;    // 이번에 칠한 goal id 집합
+function rowEl(id){ return document.querySelector('.bgoal[data-id="'+id+'"]'); }
+function pinDown(e,id){
+  if(!(e.metaKey||e.ctrlKey)){ e.stopPropagation(); return; }   // Cmd 아니면 그냥 타이핑 포커스
+  e.preventDefault(); e.stopPropagation();                       // 포커스·행 드래그 차단
+  const g=byId(id); if(!g) return;
+  _fill={parentId:g.parent||'', seqLabel:g.parent?('goal-'+pad2(byId(g.parent).seq)):'해제'};
+  _painted=new Set();
+  document.body.classList.add('parfilling');
+  const src=rowEl(id); if(src) src.classList.add('parsrc');
+  document.addEventListener('mouseup',pinUp);
+  paint(id);   // 소스 자신도 대상(값 동일이라 실질 no-op일 수 있음)
+}
+function paint(id){
+  if(!_fill||_painted.has(id)) return;
+  const g=byId(id); if(!g) return;
+  if(g.id===_fill.parentId) return;                 // 자기 자신을 부모로 불가
+  if(goals.some(k=>k.parent===g.id)) return;         // 자식 가진 목표는 스킵
+  _painted.add(id);
+  // 낙관적 DOM: 해당 행 pin 값만 갱신(전체 재렌더 X → 드래그 유지)
+  const row=rowEl(id); if(row){ const pin=row.querySelector('.pin');
+    if(pin) pin.value=_fill.parentId?pad2(byId(_fill.parentId).seq):'';
+    row.classList.add('parfill'); }
+}
+function pinRowEnter(id){ if(_fill) paint(id); }
+function pinUp(){
+  document.removeEventListener('mouseup',pinUp);
+  document.body.classList.remove('parfilling');
+  let n=0;
+  if(_fill&&_painted){ _painted.forEach(id=>{ if(id!==_fill.parentId && setParent(id,_fill.parentId,true)) n++; }); }
+  const lbl=_fill?_fill.seqLabel:'';
+  render();
+  logLine('채우기 완료: '+n+'개 → 부모 '+lbl, n?'ok':'');
+  _fill=null; _painted=null;
+}
+
+// ---- 스프린트 이동 (그냥 드래그) ----
+let _spDrag=null;
+function spDragStart(e,id){ _spDrag=id; e.currentTarget.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; }
+function spDragEnd(e){ e.currentTarget.classList.remove('dragging'); document.querySelectorAll('.spgrp.dropOver').forEach(x=>x.classList.remove('dropOver')); _spDrag=null; }
+function spOver(e){ e.preventDefault(); e.currentTarget.classList.add('dropOver'); }
+function spLeave(e){ e.currentTarget.classList.remove('dropOver'); }
+function spDrop(e,n){ e.preventDefault(); e.currentTarget.classList.remove('dropOver');
+  if(_spDrag!=null){ const g=byId(_spDrag);
+    if(g){ if(n===0&&g.parent) g.parent=''; g.sprint=n; logLine('이동: '+lab(_spDrag)+' → '+(n===0?'Backlog':('스프린트 '+n))); render(); } }
+  _spDrag=null;
+}
+
+render();
+logLine('준비됨 — 부모# 칸에 번호를 넣고, Cmd 누른 채 아래로 긁어보세요');
+</script>
+</body>
+</html>
