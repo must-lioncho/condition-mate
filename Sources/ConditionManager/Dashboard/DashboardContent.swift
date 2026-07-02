@@ -107,6 +107,9 @@ enum DashboardContent {
   .spgrp{border:1px solid var(--line);border-radius:10px;margin:0 0 12px;background:#11151f;overflow:hidden}
   .spgrp.dropOver{border-color:var(--accent);background:rgba(91,140,255,.07)}
   .spgrp.bg{border-style:dashed}
+  /* Bump out (아이디어 인박스): 가장 날 것의 하위 티어 — 더 흐린 점선으로 '정리 전'임을 표시 */
+  .spgrp.bump{border-style:dashed;border-color:#2a3346;background:#0d111a}
+  .spgrp.bump .spgrp-hd b{color:#8fa0bf}
   .spchev{cursor:pointer;color:var(--mut);font-size:12px;transition:transform .15s;user-select:none;width:14px;text-align:center}
   .spgrp.collapsed .spchev{transform:rotate(-90deg)}
   .spgrp.collapsed .spgrp-body,.spgrp.collapsed .spedit{display:none}
@@ -693,7 +696,7 @@ enum DashboardContent {
      나중 큐에 쌓아둘지(later) 고른다. -->
 <div class="overlay" id="dupModal">
   <div class="modal" id="dupDrop">
-    <div class="hdr"><h1 style="margin:0">🤖 AI 중복 확인</h1>
+    <div class="hdr"><h1 style="margin:0" id="dupTitle">🤖 AI 중복 확인</h1>
       <button class="btn" onclick="closeDup()">닫기</button></div>
     <p class="muted" id="dupNote">유사한 목표가 이미 있습니다. AI와 상의해 다듬은 뒤 추가하세요.</p>
     <div style="margin:6px 0 4px;font-size:13px;color:var(--mut)">추가하려는 목표 <span class="muted" style="font-size:11px">(직접 수정하거나 AI 제안을 적용할 수 있어요)</span></div>
@@ -717,7 +720,7 @@ enum DashboardContent {
       <input type="file" id="dupFile" accept="image/*" multiple style="display:none" onchange="dupPicked(this.files)">
     </div>
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
-      <button class="btn" onclick="dupLater()" title="지금은 결정하지 않고 아래 큐에 쌓아둡니다 — 나중에 하나씩 검토">later (큐에 보관)</button>
+      <button class="btn" id="dupLaterBtn" onclick="dupLater()" title="지금은 결정하지 않고 아래 큐에 쌓아둡니다 — 나중에 하나씩 검토">later (큐에 보관)</button>
       <button class="btn" id="dupConfirmBtn" onclick="dupConfirm()" title="위 '추가하려는 목표' 문구로 지금 추가합니다">confirm (지금 추가)</button>
     </div>
   </div>
@@ -1222,10 +1225,10 @@ function goalKey(e){ if(e.key!=='Enter')return; if(_composing){_pendingAdd=true;
 // Reusable goal-add modal input: same IME-safe Enter as the always-on bar.
 (function(){ bindImeEnter(document.getElementById('gaText'), function(){ gaAdd(); }); })();
 // --- 재사용 목표 추가 모달 — 스프린트 보드의 모든 추가 진입점이 이 모달 하나를 연다. ---
-let _gaCtx={sprint:0,parent:''};   // 현재 추가 대상 (0/''=Backlog 최상위)
+let _gaCtx={sprint:0,parent:'',bump:false};   // 현재 추가 대상 (0/''=Backlog 최상위, bump=Bump out 인박스)
 function openGoalAdd(opts){
   opts=opts||{};
-  _gaCtx={sprint:opts.sprint||0,parent:opts.parent||''};
+  _gaCtx={sprint:opts.sprint||0,parent:opts.parent||'',bump:!!opts.bump};
   const where=$('gaWhere'); if(where) where.textContent=opts.label?('· '+opts.label):'';
   const inp=$('gaText'); if(inp) inp.value='';
   const m=$('gaModal'); if(m) m.classList.add('on');
@@ -1242,7 +1245,7 @@ function gaAi(){ goalAddAi($('gaText').value,_gaCtx,$('gaAiBtn'),()=>closeGoalAd
 function goalAddSubmit(text, ctx){
   const t=String(text||'').trim(); if(!t) return false;
   const o={text:t};
-  if(ctx){ if(ctx.sprint) o.sprint=ctx.sprint; if(ctx.parent) o.parent=ctx.parent; }
+  if(ctx){ if(ctx.sprint) o.sprint=ctx.sprint; if(ctx.parent) o.parent=ctx.parent; if(ctx.bump) o.bump=true; }
   post('/api/goal/add',o);
   return true;
 }
@@ -1254,10 +1257,12 @@ function goalAddAi(text, ctx, btn, onAdded, onDup){
   const t=String(text||'').trim(); if(!t) return;
   const o={text:t};
   if(ctx){ if(ctx.sprint) o.sprint=ctx.sprint; if(ctx.parent) o.parent=ctx.parent; }
-  post('/api/goal/queue/enqueue',o);   // post()가 이어서 load()까지 호출 → 큐에 즉시 반영
+  post('/api/goal/queue/enqueue',o);   // post()가 이어서 load()까지 호출 → 큐에 즉시 반영 (AI 큐는 그 자체가 bump out 파이프라인)
   if(onAdded) onAdded();               // 입력창 비우기/모달 닫기는 즉시 (대기 0초)
 }
-function addGoal(){ const el=$('goalText'); if(goalAddSubmit(el.value,null)){ el.value=''; el.focus(); } }
+// 상단 항상 보이는 빠른 추가바 = 머릿속 덤프의 주 입구. 정리되지 않은 새 목표는 기본으로
+// Bump out 인박스에 담아, 나중에 Backlog·Sprint로 끌어올린다(승격 파이프라인).
+function addGoal(){ const el=$('goalText'); if(goalAddSubmit(el.value,{bump:true})){ el.value=''; el.focus(); } }
 // --- AI추가: 추가 전에 claude -p가 기존 목표를 읽고 중복인지 먼저 판단한다. 중복이면
 // later(큐 보관)/confirm(지금 추가) 다이얼로그를 띄우고, 아니면 곧장 추가한다. AI 호출이
 // 실패/미설치여도 게이트가 아니므로 평소처럼 추가한다(베스트 에포트). ---
@@ -1275,7 +1280,16 @@ let _dupImages=[];      // [{name, dataURL}] staged attachments for the next dup
 let _dupBusy=false;     // an aiChat turn is in flight
 let _dupWired=false;
 function showDup(p){
-  $('dupNote').textContent='유사한 목표가 있습니다. AI와 상의해 다듬은 뒤 추가하세요.';
+  // 큐 항목 다듬기 모드(queueId 있음)면 안내·버튼 라벨을 그 맥락으로 바꾼다. 새 목표 추가 모드면 기존 그대로.
+  const isQ=!!(p&&p.queueId);
+  const tt=$('dupTitle'); if(tt) tt.textContent = isQ?'🤖 AI 큐 다듬기':'🤖 AI 중복 확인';
+  $('dupNote').textContent = isQ
+    ? '이 큐 항목을 AI와 대화하며 다듬으세요 (이미지 붙여넣기·끌어다놓기 가능). 다듬은 뒤 진행하거나 큐에 반영합니다.'
+    : '유사한 목표가 있습니다. AI와 상의해 다듬은 뒤 추가하세요.';
+  const cb=$('dupConfirmBtn'); if(cb){ cb.textContent = isQ?'이 결과로 진행':'confirm (지금 추가)';
+    cb.title = isQ?'다듬은 문구로 이 항목을 목표로 추가합니다':"위 '추가하려는 목표' 문구로 지금 추가합니다"; }
+  const lb=$('dupLaterBtn'); if(lb){ lb.textContent = isQ?'큐에 반영':'later (큐에 보관)';
+    lb.title = isQ?'다듬은 문구로 큐 항목만 갱신하고 계속 대기시킵니다':'지금은 결정하지 않고 아래 큐에 쌓아둡니다'; }
   $('dupGoalText').value=p.text;       // 편집 가능한 "추가하려는 목표" (이게 실제로 추가됨)
   $('dupMatches').innerHTML=(p.matches||[]).map(m=>
     '<div style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;margin-bottom:6px">'
@@ -1385,12 +1399,18 @@ function closeDup(){ $('dupModal').classList.remove('on'); _dupPending=null; _du
 // 대화로 다듬은 결과가 그대로 반영되도록.
 function dupConfirm(){ const p=_dupPending; if(!p){closeDup();return;}
   const text=$('dupGoalText').value.trim(); if(!text){ $('dupGoalText').focus(); return; }
-  $('goalText').value=''; $('goalText').focus(); closeDup();
+  closeDup();
+  // 큐 항목 모드: 다듬은 문구로 그 항목을 목표로 승격(add). 새 목표 모드: 그냥 추가.
+  if(p.queueId){ post('/api/goal/queue/resolve',{id:p.queueId,action:'add',text:text}); return; }
+  const gt=$('goalText'); if(gt){ gt.value=''; gt.focus(); }
   const o={text:text,parent:p.parent||''}; if(p.sprint) o.sprint=p.sprint;   // 스프린트 보드에서 시작한 추가면 대상 유지
   post('/api/goal/add',o); }
 function dupLater(){ const p=_dupPending; if(!p){closeDup();return;}
   const text=$('dupGoalText').value.trim()||p.text;
-  $('goalText').value=''; $('goalText').focus(); closeDup();
+  closeDup();
+  // 큐 항목 모드: 다듬은 문구로 큐 항목만 갱신(edit, 계속 대기). 새 목표 모드: 큐에 새로 보관.
+  if(p.queueId){ post('/api/goal/queue/resolve',{id:p.queueId,action:'edit',text:text}); return; }
+  const gt=$('goalText'); if(gt){ gt.value=''; gt.focus(); }
   post('/api/goal/queue/add',{text:text,parent:p.parent||'',note:p.note||'',matches:p.matches||[]}); }
 // --- AI 큐(bump out): 도착 순서 그대로 한 줄로 쌓는다. 위쪽이 먼저 처리되고(분석 중·검토 대기),
 // 방금 비워낸 후보는 맨 하단에 붙는다 — "쏟아내면 아래에 쌓이고, 위에서 익는다"는 컨베이어 감각.
@@ -1467,7 +1487,7 @@ function aiQueueBoxHTML(items){
         +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>';
     } else {
       btns='<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="이 목표를 추가">추가</button>'
-        +'<button class="btn" onclick="queuePromptStart(\''+it.id+'\')" title="프롬프트로 결과를 다시 생성">프롬프트</button>'
+        +'<button class="btn" onclick="queuePromptChat(\''+it.id+'\')" title="AI와 대화하며 다듬기 (이미지 붙여넣기 가능)">프롬프트</button>'
         +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>';
     }
     const newBadge=(_qJustRefined===it.id)
@@ -1500,6 +1520,14 @@ function rerenderAiQueue(){
 }
 function queueAdd(id){ post('/api/goal/queue/resolve',{id:id,action:'add'}); }
 function queueSkip(id){ _qJustRefined=''; post('/api/goal/queue/resolve',{id:id,action:'skip'}); }
+// 큐 항목 다듬기: 기존 AI 대화 다이얼로그(이미지 붙여넣기·드래그·다중턴 대화 지원)를 이 항목의
+// 컨텍스트(현재 문구 + 유사 목표 + AI 판정)로 연다. 다듬은 뒤 '이 결과로 진행'(목표 추가) 또는
+// '큐에 반영'(문구만 갱신하고 계속 대기).
+function queuePromptChat(id){
+  const it=((_review&&_review.aiQueue)||_lastAiQueue||[]).find(x=>x.id===id); if(!it) return;
+  _dupPending={queueId:id, text:it.text||'', parent:it.parent||'', sprint:it.sprint||0, note:it.note||'', matches:it.matches||[]};
+  showDup(_dupPending);
+}
 // 프롬프트 열기 → 입력 → 생성(서버 refine) → 새 결과. 맞으면 진행(queueProceed), 아니면 다시.
 function queuePromptStart(id){ _qJustRefined=''; _qUI={id:id,mode:'prompt',prompt:''}; rerenderAiQueue();
   const t=$('qp_'+id); if(t) t.focus(); }
@@ -2718,7 +2746,7 @@ function renderTokenView(r){
 // ===== 스프린트 뷰 — Jira식 백로그 보드 (스프린트 그룹 + Backlog + 완료 로그) =====
 const DUR_OPTS=[['1d','1일'],['2d','2일'],['3d','3일'],['1w','1주'],['2w','2주'],['1m','1달']];
 function durLabel(k){ const o=DUR_OPTS.find(x=>x[0]===k); return o?o[1]:k; }
-let _spCollapsed=new Set();  // collapsed groups (sprint number, or 'bg' for Backlog)
+let _spCollapsed=new Set();  // collapsed groups (sprint number, 'bg' for Backlog, or 'bump' for Bump out)
 let _bgCollapsed=new Set();  // collapsed parent goal ids (자식 접기) within a group
 let _bgSeen=new Set();       // parents already defaulted-collapsed (so the 5s re-render never re-collapses one the user opened)
 let _relOpen=new Set();      // expanded release ids (완료 로그는 기본 닫힘)
@@ -2858,6 +2886,7 @@ function renderSprintBoard(r){
   const aq=(r&&r.aiQueue)||[];                          // AI 큐: 섹션(sprint/backlog)별로 하단에 배치
   let h=sprints.map(s=>sprintGroupHTML(s,shown,allLive,aq)).join('');
   h+=backlogHTML(shown,allLive,aq);
+  h+=bumpHTML(shown,allLive);          // Backlog 아래: 정리 전 아이디어 인박스
   h+=completedLogHTML(r);
   $('sprintHost').innerHTML=h;
   if(_spModalNum!=null) fillSprintModal();   // 열려 있으면 최신 데이터로 갱신(기간 변경 시 목표일 반영)
@@ -2996,8 +3025,8 @@ function groupBodyHTML(rows){
 }
 // 스프린트 그룹 (드롭 타깃)
 function sprintGroupHTML(s,shown,allLive,aq){
-  const rows=shown.filter(g=>boardSprint(g,_goals)===s.number);
-  const members=allLive.filter(g=>boardSprint(g,_goals)===s.number);   // 카운트는 전체 멤버
+  const rows=shown.filter(g=>!g.bump&&boardSprint(g,_goals)===s.number);
+  const members=allLive.filter(g=>!g.bump&&boardSprint(g,_goals)===s.number);   // 카운트는 전체 멤버 (Bump out 제외)
   const q=aiQueueBoxHTML((aq||[]).filter(it=>(it.sprint||0)===s.number));   // 이 스프린트로 담긴 큐 → 하단
   const body=(rows.length?groupBodyHTML(rows)
     :(q?'':'<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'여기로 목표를 끌어다 놓기')+'</div>'))+q;
@@ -3015,10 +3044,10 @@ function sprintGroupHTML(s,shown,allLive,aq){
     +'<div class="spgrp-body">'+body+'</div>'
   +'</div>';
 }
-// Backlog (미배정) — Create sprint 버튼 포함
+// Backlog (미배정) — Create sprint 버튼 포함. Bump out 인박스 아이템은 여기서 제외.
 function backlogHTML(shown,allLive,aq){
-  const rows=shown.filter(g=>boardSprint(g,_goals)===0);
-  const members=allLive.filter(g=>boardSprint(g,_goals)===0);
+  const rows=shown.filter(g=>!g.bump&&boardSprint(g,_goals)===0);
+  const members=allLive.filter(g=>!g.bump&&boardSprint(g,_goals)===0);
   const q=aiQueueBoxHTML((aq||[]).filter(it=>(it.sprint||0)===0));   // 백로그로 담긴 큐 → 하단
   const body=(rows.length?groupBodyHTML(rows)
     :(q?'':'<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'미배정 목표가 없습니다')+'</div>'))+q;
@@ -3027,8 +3056,25 @@ function backlogHTML(shown,allLive,aq){
     +'<div class="spgrp-hd"><span class="spchev" onclick="toggleSpCollapse(\'bg\')" title="펼치기/접기">▾</span>'
       +'<b>Backlog</b><span class="muted" style="font-size:12px">미배정</span>'
       +'<span style="flex:1"></span>'+countsHTML(members)
-      +'<button class="btn" onclick="addGoalToBacklog()" title="목표를 추가합니다 (입력·AI추가 모듈)">＋ 목표 추가</button>'
+      +'<button class="btn" onclick="addGoalToBacklog()" title="목표를 추가합니다 (입력·AI추가 모듈)">＋ 목표</button>'
       +'<button class="btn primary" onclick="createSprintNow()">＋ Create sprint</button></div>'
+    +'<div class="spgrp-body">'+body+'</div>'
+  +'</div>';
+}
+// Bump out (아이디어 인박스) — Backlog 아래. 머릿속에서 막 꺼낸 날 것의 아이디어가 처음
+// 담기는 곳(정리 전). 여기서 다듬어 Backlog·Sprint로 끌어올린다(위로 승격). g.bump 로만
+// 판정 — 부모 상속·sprint 값과 무관하게 항상 이 버킷에 모인다.
+function bumpHTML(shown,allLive){
+  const rows=shown.filter(g=>g.bump);
+  const members=allLive.filter(g=>g.bump);
+  const body=(rows.length?groupBodyHTML(rows)
+    :'<div class="empty">'+(members.length?'필터에 맞는 아이디어가 없습니다 (상태 필터 확인)':'머릿속 아이디어를 여기로 던져두기 — 위 입력창이 기본으로 담깁니다')+'</div>');
+  const col=_spCollapsed.has('bump');
+  return '<div class="spgrp bump'+(col?' collapsed':'')+'" ondragover="spOver(event)" ondragleave="spLeave(event)" ondrop="spDropBump(event)">'
+    +'<div class="spgrp-hd"><span class="spchev" onclick="toggleSpCollapse(\'bump\')" title="펼치기/접기">▾</span>'
+      +'<b>Bump out</b><span class="muted" style="font-size:12px">아이디어</span>'
+      +'<span style="flex:1"></span>'+countsHTML(members)
+      +'<button class="btn" onclick="addGoalToBump()" title="머릿속 아이디어를 인박스에 담기 (정리 전)">＋ 목표</button></div>'
     +'<div class="spgrp-body">'+body+'</div>'
   +'</div>';
 }
@@ -3155,6 +3201,11 @@ function spDrop(e,n){ e.preventDefault(); e.currentTarget.classList.remove('drop
   }
   _spDrag=null;
 }
+// Bump out 버킷 드롭: 끌어온 목표를 아이디어 인박스로 내린다(sprint 해제).
+function spDropBump(e){ e.preventDefault(); e.currentTarget.classList.remove('dropOver');
+  if(_spDrag!=null) post('/api/goal/bump',{id:_spDrag,bump:true});
+  _spDrag=null;
+}
 
 // --- 부모 채우기(fill-down): 부모#칸에서 Cmd+드래그로 아래 행에 같은 부모를 칠한다 ---
 // 우선순위 페인트와 같은 패턴. 드래그 도중에는 재렌더하지 않고(그러면 mouseenter 체인이
@@ -3263,6 +3314,8 @@ function goalCtx(e,id){ e.preventDefault(); e.stopPropagation();
   html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">스프린트로 이동</div>'
     +'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToSprint(\''+id+'\','+bg+')">Backlog'+((g&&g.parent)?' (부모와 분리)':'')+'</button>';
   html+=sprints.map(s=>'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToSprint(\''+id+'\','+s.number+')">'+esc(s.code||('#'+s.number))+(s.goalText?(' · '+esc(s.goalText)):'')+'</button>').join('');
+  // 정리 전 아이디어로 내리기 — 이미 Bump out에 있으면 숨긴다.
+  if(!(g&&g.bump)) html+='<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToBump(\''+id+'\')">Bump out (아이디어로 내리기)</button>';
   html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">부모(계층)</div>'
     +'<button class="popitem" onmousedown="event.stopPropagation();openParentPicker(\''+id+'\')">부모 설정 / 해제 ▸</button>';
   const isParent=(_goals||[]).some(k=>k.parent===id);
@@ -3278,9 +3331,16 @@ function goalCtx(e,id){ e.preventDefault(); e.stopPropagation();
         ? '<button class="popitem" onmousedown="event.stopPropagation();hidePopup();setStatus(\''+id+'\',\'backlog\')">On Track으로 되돌리기</button>'
         : '<button class="popitem" onmousedown="event.stopPropagation();hidePopup();setStatus(\''+id+'\',\'done\')">완료로 표시 (분기 마감)</button>');
   }
+  // 삭제: 되돌릴 수 없는 파괴적 동작. 자식이 있으면 함께 삭제되므로 확인을 받는다.
+  html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">삭제</div>'
+    +'<button class="popitem danger" onmousedown="event.stopPropagation();hidePopup();deleteGoalNow(\''+id+'\','+(isParent?'true':'false')+')">삭제'+(isParent?' (하위 포함)':'')+'</button>';
   showPopup(e.clientX,e.clientY,html);
 }
+// 우클릭 메뉴 전용: 삭제 전 확인. 자식이 있으면 함께 삭제됨을 알린다.
+function deleteGoalNow(id,hasChildren){ if(!confirm(hasChildren?'이 작업 항목과 모든 하위 항목을 삭제합니다. 되돌릴 수 없습니다.':'이 작업 항목을 삭제합니다. 되돌릴 수 없습니다.')) return; removeGoal(id); }
 function moveGoalToSprint(id,n){ post('/api/goal/sprint',{id:id,sprint:n}); }
+// Bump out 인박스로 내리기(정리 전 아이디어로). 서버가 sprint를 0으로 비운다.
+function moveGoalToBump(id){ post('/api/goal/bump',{id:id,bump:true}); }
 // 보관 / 보관 해제 — 서버가 자식까지 함께 보관 처리한다. 활성 뷰에서 사라지고 아카이브 뷰로 이동.
 function archiveGoal(id,on){ post('/api/goal/archive',{id:id,archived:!!on}); }
 
@@ -3339,6 +3399,8 @@ function closeSprintModal(){ _spModalNum=null; const m=$('spModal'); if(m) m.sty
 function addGoalToSprint(n){ const s=((_review&&_review.sprints)||[]).find(x=>x.number===n); openGoalAdd({sprint:n,label:(s&&s.code)||('#'+n)}); }
 // Backlog(미배정)에 목표 추가 — 같은 재사용 모듈, 대상만 Backlog.
 function addGoalToBacklog(){ openGoalAdd({sprint:0,label:'Backlog'}); }
+// Bump out(아이디어 인박스)에 담기 — 같은 재사용 모듈, 대상만 Bump out.
+function addGoalToBump(){ openGoalAdd({bump:true,label:'Bump out'}); }
 function createSprintNow(){ post('/api/sprint/create',{goalText:'',durationKind:'1d'}); }   // 자동 코드(26-N), Backlog 비움
 function updateSprintGoal(n,v){ post('/api/sprint/update',{number:n,goalText:String(v||'')}); }
 function setSprintDur(n,k){ post('/api/sprint/update',{number:n,durationKind:k}); }   // 목표 날짜는 서버가 재계산
