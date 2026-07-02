@@ -207,10 +207,11 @@ final class DashboardServer {
             }
         } else if method == "GET" && (path.hasPrefix("/api/goal/chat") || path.hasPrefix("/api/goal/definition")
                                       || path.hasPrefix("/api/goal/sessions") || path.hasPrefix("/api/sessions/recent")
-                                      || path.hasPrefix("/api/cli/sessions")) {
+                                      || path.hasPrefix("/api/cli/sessions") || path.hasPrefix("/api/skills")
+                                      || path.hasPrefix("/history.json")) {
             // Per-goal chat, the raw core/detail definition text, the goal's linked-session
-            // list, and the recent-session picker feed (all keyed by ?seq=). Dynamic, so
-            // routed via apiGet.
+            // list, the recent-session picker feed (all keyed by ?seq=), and the 히스토리
+            // tab's per-day activity feed. Dynamic, so routed via apiGet.
             let json = self.apiGet(path) ?? "{\"messages\":[]}"
             send(conn, status: "200 OK", contentType: "application/json; charset=utf-8",
                  body: Data(json.utf8), extra: "")

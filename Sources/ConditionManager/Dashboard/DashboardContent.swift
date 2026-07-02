@@ -11,7 +11,7 @@ import Foundation
 enum DashboardContent {
     static func html(lastView: String = "input", doneCutoff: Double? = nil, uiPrefs: String? = nil) -> String {
         // Clamp to a known view key so the injected JS literal can never be malformed.
-        let valid: Set<String> = ["input", "group", "table", "token", "schedule", "preview", "sprint", "archived"]
+        let valid: Set<String> = ["input", "group", "table", "token", "schedule", "preview", "sprint", "archived", "history"]
         let view = valid.contains(lastView) ? lastView : "input"
         // Server-persisted 완료 컷오프 as a JS literal: an integer epoch (0 = 해제) when the
         // user has set one, else "DC_DEFAULT" so the client keeps its built-in default.
@@ -107,6 +107,9 @@ enum DashboardContent {
   .spgrp{border:1px solid var(--line);border-radius:10px;margin:0 0 12px;background:#11151f;overflow:hidden}
   .spgrp.dropOver{border-color:var(--accent);background:rgba(91,140,255,.07)}
   .spgrp.bg{border-style:dashed}
+  /* Bump out (아이디어 인박스): 가장 날 것의 하위 티어 — 더 흐린 점선으로 '정리 전'임을 표시 */
+  .spgrp.bump{border-style:dashed;border-color:#2a3346;background:#0d111a}
+  .spgrp.bump .spgrp-hd b{color:#8fa0bf}
   .spchev{cursor:pointer;color:var(--mut);font-size:12px;transition:transform .15s;user-select:none;width:14px;text-align:center}
   .spgrp.collapsed .spchev{transform:rotate(-90deg)}
   .spgrp.collapsed .spgrp-body,.spgrp.collapsed .spedit{display:none}
@@ -525,6 +528,7 @@ enum DashboardContent {
 
   <div id="viewTabs" class="viewtabs"></div>
   <div class="panel">
+    <div id="goalFilters">
     <!-- SHARED STATUS FILTER — one bar drives 목록·그룹·프리뷰 alike -->
     <div class="row" style="margin:0 0 8px;gap:6px">
       <button class="btn combo" id="flt_status_combo" onclick="openStatusFilter(event)" title="표시할 상태를 선택 (다중 선택)">보기<span class="cbadge" id="flt_status_cnt" style="display:none">0</span> <span class="cv">▾</span></button>
@@ -538,6 +542,7 @@ enum DashboardContent {
              onchange="setDoneSince(this.value)" title="이 시각 이전에 완료된 목표는 숨깁니다 (완료 외 상태는 영향 없음)">
       <button class="btn" id="flt_donesince_clear" onclick="clearDoneSince()" title="완료 컷오프 해제 (모든 완료 표시)">해제</button>
     </div>
+    </div><!-- /#goalFilters -->
     <!-- INPUT VIEW -->
     <div id="inputView">
       <div class="row">목표 추가:
@@ -622,6 +627,37 @@ enum DashboardContent {
       <div id="archivedList"></div>
     </div>
 
+    <!-- HISTORY VIEW (히스토리 — 날짜별 집중도 + 초집중 세션 + 시간대 분석) -->
+    <div id="historyView" style="display:none">
+      <div class="row" style="margin:0 0 8px;gap:6px;align-items:center;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">기간</span>
+        <button class="btn" id="hr_today" onclick="setHistRange('today')" title="오늘 하루">오늘</button>
+        <button class="btn" id="hr_yesterday" onclick="setHistRange('yesterday')" title="어제 하루">어제</button>
+        <button class="btn" id="hr_7d" onclick="setHistRange('7d')" title="최근 7일">7일</button>
+        <button class="btn" id="hr_1m" onclick="setHistRange('1m')" title="최근 한 달">한달</button>
+        <button class="btn" id="hr_3m" onclick="setHistRange('3m')" title="최근 3달">3달</button>
+        <input type="date" id="histFrom" class="btn" onchange="onHistDate()" style="color-scheme:dark;padding:5px 8px" title="시작 날짜">
+        <span class="muted" style="font-size:12px">~</span>
+        <input type="date" id="histTo" class="btn" onchange="onHistDate()" style="color-scheme:dark;padding:5px 8px" title="끝 날짜">
+        <button class="btn" onclick="loadHistory(true)" style="margin-left:auto" title="히스토리 새로고침">새로고침</button>
+      </div>
+      <div class="row" style="margin:0 0 10px;gap:6px;align-items:center;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">초집중 기준 (끊김 없이 이어진 집중)</span>
+        <button class="btn" id="df15" onclick="setDeepMin(15)" title="15분 이상 이어진 집중을 초집중으로">15분+</button>
+        <button class="btn" id="df25" onclick="setDeepMin(25)" title="25분 이상 이어진 집중을 초집중으로">25분+</button>
+        <button class="btn" id="df45" onclick="setDeepMin(45)" title="45분 이상 이어진 집중을 초집중으로">45분+</button>
+        <span class="muted" id="histRange" style="font-size:12px;margin-left:auto">불러오는 중…</span>
+      </div>
+      <div id="histSummary" class="cards" style="margin:0 0 12px"></div>
+      <h2 style="margin:16px 0 6px">초집중 시간대 · 언제 몰입하나</h2>
+      <div class="panel" style="margin:0 0 14px">
+        <canvas id="dfHours" style="height:120px"></canvas>
+        <div class="muted" style="font-size:11px;margin-top:6px" id="dfHoursCap">시간대별 초집중 누적 — 막대가 높을수록 그 시간에 자주 몰입합니다.</div>
+      </div>
+      <h2 style="margin:16px 0 6px">날짜별 기록 (최신순)</h2>
+      <div id="histDays"><div class="empty">불러오는 중…</div></div>
+    </div>
+
   </div>
 
   <!-- 스포츠 모드에선 통째로 숨기고 렌더(로딩)도 건너뛴다 (요약·차트·타임라인·주요앱·BGM·워커) -->
@@ -693,8 +729,14 @@ enum DashboardContent {
      나중 큐에 쌓아둘지(later) 고른다. -->
 <div class="overlay" id="dupModal">
   <div class="modal" id="dupDrop">
-    <div class="hdr"><h1 style="margin:0">🤖 AI 중복 확인</h1>
-      <button class="btn" onclick="closeDup()">닫기</button></div>
+    <div class="hdr"><h1 style="margin:0" id="dupTitle">🤖 AI 중복 확인</h1>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn" id="dupCliBtn" style="display:none" title="이 다듬기 세션을 터미널에서 claude --resume 으로 바로 엽니다"
+                onclick="openDupCli(this)">CLI에서 열기</button>
+        <button class="btn" id="dupSessBtn" style="display:none" title="이 다듬기 세션의 claude 세션 ID를 복사합니다 (CLI에서 --resume 으로 이어쓰기)"
+                onclick="copyDupSession(this)">세션 ID 복사</button>
+        <button class="btn" onclick="closeDup()">닫기</button>
+      </div></div>
     <p class="muted" id="dupNote">유사한 목표가 이미 있습니다. AI와 상의해 다듬은 뒤 추가하세요.</p>
     <div style="margin:6px 0 4px;font-size:13px;color:var(--mut)">추가하려는 목표 <span class="muted" style="font-size:11px">(직접 수정하거나 AI 제안을 적용할 수 있어요)</span></div>
     <input type="text" id="dupGoalText" class="btn" style="width:100%;font-weight:600;padding:8px 10px;margin-bottom:10px"
@@ -717,7 +759,7 @@ enum DashboardContent {
       <input type="file" id="dupFile" accept="image/*" multiple style="display:none" onchange="dupPicked(this.files)">
     </div>
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
-      <button class="btn" onclick="dupLater()" title="지금은 결정하지 않고 아래 큐에 쌓아둡니다 — 나중에 하나씩 검토">later (큐에 보관)</button>
+      <button class="btn" id="dupLaterBtn" onclick="dupLater()" title="지금은 결정하지 않고 아래 큐에 쌓아둡니다 — 나중에 하나씩 검토">later (큐에 보관)</button>
       <button class="btn" id="dupConfirmBtn" onclick="dupConfirm()" title="위 '추가하려는 목표' 문구로 지금 추가합니다">confirm (지금 추가)</button>
     </div>
   </div>
@@ -730,11 +772,11 @@ enum DashboardContent {
     <div class="hdr"><h1 style="margin:0;font-size:16px">목표 추가 <span class="muted" id="gaWhere" style="font-size:13px;font-weight:400"></span></h1>
       <button class="btn" onclick="closeGoalAdd()">닫기</button></div>
     <div class="row">
-      <input type="text" id="gaText" placeholder="목표/디테일 입력 후 Enter (계속 추가)" style="flex:1;min-width:200px">
-      <button class="btn" id="gaAiBtn" onclick="gaAi()" title="추가 전에 AI가 비슷한 목표가 있는지 먼저 검사합니다">AI추가</button>
-      <button class="btn primary" onclick="gaAdd()">추가</button>
+      <input type="text" id="gaText" placeholder="목표/디테일 입력 후 Enter (AI추가로 계속 추가)" style="flex:1;min-width:200px">
+      <button class="btn primary" id="gaAiBtn" onclick="gaAi()" title="추가 전에 AI가 비슷한 목표가 있는지 먼저 검사합니다">AI추가</button>
+      <button class="btn" onclick="gaAdd()">추가</button>
     </div>
-    <div class="muted" style="font-size:12px;margin-top:8px">Enter로 계속 추가할 수 있습니다. <b>AI추가</b>는 비슷한 목표가 있는지 먼저 확인합니다.</div>
+    <div class="muted" style="font-size:12px;margin-top:8px"><b>Enter</b>를 누르면 <b>AI추가</b>로 담깁니다 — 비슷한 목표가 있는지 먼저 확인하며, 창은 열린 채 계속 추가할 수 있습니다. 바로 추가하려면 <b>추가</b> 버튼을 누르세요.</div>
   </div>
 </div>
 <script>
@@ -1204,6 +1246,147 @@ function categoryBadge(seg){
   return '<span class="chip" style="margin:0;border-color:'+color+';color:'+color+'">'+label+' ×'+(seg.mult||1)+'</span>';
 }
 
+// ===== 히스토리 (날짜별 집중도 + 초집중 세션 + 시간대 분석) =====
+// 서버 /history.json 은 날짜별 압축 샘플({t,active,tier,meeting,mult,app})을 준다.
+// 오늘 화면과 '똑같은' withCarryForward + timeBuckets 를 날짜마다 돌려 총/책상/집중을
+// 구하고(단일 진실 공급원), 그 위에서 '지속 시간 기준' 초집중 세션을 잡는다.
+let _histData=null, _histLoading=false, _histRendered=false, _dfMin=25;
+// 기간 필터: 시작~끝 날짜(로컬 YYYY-MM-DD). 퀵버튼(1일/3일/7일/한달/3달)과 직접 입력 모두 지원.
+// 데이터는 하루 단위라 서버 재요청 없이 클라이언트에서 날짜 범위로 걸러 렌더한다.
+let _histStart='', _histEnd='', _histPreset='3m', _histFetchedDays=0, _histRangeSig='';
+function histDayStr(d){ const y=d.getFullYear(),m=d.getMonth()+1,dd=d.getDate();
+  return y+'-'+(m<10?'0':'')+m+'-'+(dd<10?'0':'')+dd; }
+function daysBetween(a,b){ return Math.round((new Date(b+'T00:00:00')-new Date(a+'T00:00:00'))/86400000); }
+// 프리셋 → 시작 날짜(끝은 대부분 오늘, '어제'만 예외). 일 단위는 오늘 포함이라 (n-1)일 빼고, 월 단위는 같은 날짜 기준.
+function histPresetStart(preset){
+  const n=new Date(), s=new Date(n.getFullYear(),n.getMonth(),n.getDate());
+  if(preset==='yesterday') s.setDate(s.getDate()-1);
+  else if(preset==='7d') s.setDate(s.getDate()-6);
+  else if(preset==='1m') s.setMonth(s.getMonth()-1);
+  else if(preset==='3m') s.setMonth(s.getMonth()-3);
+  return histDayStr(s);   // 'today'면 오늘 그대로
+}
+function syncHistInputs(){ const a=$('histFrom'),b=$('histTo'); if(a)a.value=_histStart; if(b)b.value=_histEnd; }
+function reflectRangeBtn(){ ['today','yesterday','7d','1m','3m'].forEach(k=>{ const b=$('hr_'+k); if(b) b.classList.toggle('primary', k===_histPreset); }); }
+function setHistRange(preset){
+  _histPreset=preset;
+  _histStart=histPresetStart(preset);
+  // '어제'는 끝도 어제로 고정, 나머지는 오늘까지.
+  _histEnd=(preset==='yesterday') ? _histStart : histDayStr(new Date());
+  syncHistInputs(); loadHistory();
+}
+function onHistDate(){
+  const a=$('histFrom'),b=$('histTo'); if(!a||!b) return;
+  if(a.value) _histStart=a.value; if(b.value) _histEnd=b.value;
+  if(_histStart>_histEnd){ const t=_histStart; _histStart=_histEnd; _histEnd=t; syncHistInputs(); }
+  _histPreset='';                  // 직접 입력하면 퀵버튼 선택 해제
+  loadHistory();
+}
+// 모든 시각은 이 기기의 로컬 타임존 기준(오늘 화면과 동일). 혼동 없게 화면에 명시한다.
+// 하드코딩이 아니라 감지: Asia/Seoul이면 KST, 아니면 그 지역 이름 + UTC 오프셋.
+function tzLabel(){
+  const off=-new Date().getTimezoneOffset()/60;
+  let z=''; try{ z=Intl.DateTimeFormat().resolvedOptions().timeZone; }catch(e){}
+  const nm=(z==='Asia/Seoul')?'KST':(z||'현지');
+  return nm+' (UTC'+(off>=0?'+':'')+(Number.isInteger(off)?off:off.toFixed(1))+')';
+}
+function setDeepMin(m){ _dfMin=m; reflectDeepBtn(); if(_histData) renderHistory(); }
+function reflectDeepBtn(){ [15,25,45].forEach(k=>{ const b=$('df'+k); if(b) b.classList.toggle('primary', k===_dfMin); }); }
+function loadHistory(force){
+  if(!_histStart){ _histPreset='3m'; _histEnd=histDayStr(new Date()); _histStart=histPresetStart('3m'); syncHistInputs(); }  // 최초 진입 기본값: 3달
+  reflectDeepBtn(); reflectRangeBtn();
+  if(_histLoading) return;
+  const todayStr=histDayStr(new Date());
+  const need=Math.max(1, daysBetween(_histStart, todayStr)+1);   // 시작~오늘을 덮을 일수(서버는 최신 N일을 준다)
+  const sig=_histStart+'_'+_histEnd;
+  if(_histData && !force && need<=_histFetchedDays){ if(!_histRendered || _histRangeSig!==sig) renderHistory(); return; }   // 캐시 우선 — 범위 안 바뀌면 폴링 재호출은 무비용
+  _histLoading=true;
+  const r=$('histRange'); if(r) r.textContent='불러오는 중…';
+  fetch('/history.json?days='+need).then(x=>x.json()).then(j=>{
+    _histData=(j&&j.days)||[]; _histFetchedDays=need; _histLoading=false; renderHistory();
+  }).catch(()=>{ _histLoading=false; const e=$('histDays'); if(e) e.innerHTML='<div class="empty">불러오지 못했습니다</div>'; });
+}
+// 지속 시간 기준 초집중: carry-forward 후 _cat==='focus'가 끊김 없이(샘플 간 <=2분) 이어진
+// 구간의 길이가 기준(_dfMin) 이상이면 한 세션. carry-forward가 이미 <=10분 짧은 끊김을
+// 집중으로 메우므로, 잠깐의 딴짓(설정 확인 등)은 세션을 깨지 않는다.
+function deepFocusSessions(ss){
+  const runs=[]; let cur=null;
+  ss.forEach(s=>{
+    if(s._cat==='focus'){
+      if(cur && (s.t-cur.endT)<=120){ cur.endT=s.t; cur.mins++; cur.apps[s.app||'-']=(cur.apps[s.app||'-']||0)+1; }
+      else { if(cur) runs.push(cur); cur={startT:s.t,endT:s.t,mins:1,apps:{}}; cur.apps[s.app||'-']=1; }
+    } else if(cur){ runs.push(cur); cur=null; }
+  });
+  if(cur) runs.push(cur);
+  return runs.filter(x=>x.mins>=_dfMin).map(x=>({startT:x.startT,endT:x.endT,mins:x.mins,
+    app:Object.entries(x.apps).sort((a,b)=>b[1]-a[1])[0][0]}));
+}
+function histCard(k,v,cap){ return '<div class="card"><div class="k">'+esc(k)+'</div><div class="v">'+esc(v)+'</div>'+(cap?'<div class="cap">'+esc(cap)+'</div>':'')+'</div>'; }
+function renderHistory(){
+  _histRendered=true; _histRangeSig=_histStart+'_'+_histEnd; reflectDeepBtn(); reflectRangeBtn();
+  // 캐시된 전체에서 선택 범위(_histStart~_histEnd)만 골라 렌더. 날짜 문자열(YYYY-MM-DD)은 사전순=시간순.
+  const data=(_histData||[]).filter(d=> d.day>=_histStart && d.day<=_histEnd);
+  const r=$('histRange'); if(r) r.textContent=(data.length? (data.length+'일 기록') : '기간 내 기록 없음')+' · 시각 '+tzLabel()+' 기준';
+  const rows=[]; const hourMin=new Array(24).fill(0);
+  let totFocus=0, totSessions=0, focusDays=0;
+  data.forEach(d=>{
+    const ss=withCarryForward(d.samples||[]);
+    const b=timeBuckets(ss);
+    const sess=deepFocusSessions(ss);
+    if(b.focus>0) focusDays++;
+    totFocus+=b.focus; totSessions+=sess.length;
+    sess.forEach(x=>{ for(let t=x.startT;t<=x.endT;t+=60){ hourMin[new Date(t*1000).getHours()]++; } });
+    rows.push({day:d.day,b,sess});
+  });
+  const sumH=$('histSummary');
+  if(sumH) sumH.innerHTML=
+     histCard('기록 일수', data.length+'일')
+    +histCard('총 집중', fmtH(totFocus))
+    +histCard('총 초집중', totSessions+'회', _dfMin+'분+ 몰입 세션')
+    +histCard('집중일 평균', focusDays? fmtH(Math.round(totFocus/focusDays)) : '–', '집중한 날 하루 평균');
+  drawDfHours(hourMin);
+  const host=$('histDays');
+  if(!rows.length){ if(host) host.innerHTML='<div class="empty">선택한 기간('+_histStart+' ~ '+_histEnd+')에 기록이 없습니다</div>'; return; }
+  host.innerHTML=rows.map(dayRowHtml).join('');
+}
+function dayRowHtml(r){
+  const b=r.b, mx=Math.max(b.total,1);
+  // 중첩 막대: 책상(주황) 위에 집중(초록). 책상은 집중을 포함하므로 집중을 겹쳐 그린다.
+  const w=v=>Math.round(100*v/mx);
+  const bar='<div style="position:relative;background:#2a2f3a;border-radius:4px;height:9px;width:160px;flex:0 0 auto">'
+    +'<div style="position:absolute;left:0;top:0;height:9px;border-radius:4px;width:'+w(b.desk)+'%;background:#e8a13a"></div>'
+    +'<div style="position:absolute;left:0;top:0;height:9px;border-radius:4px;width:'+w(b.focus)+'%;background:#36c08a"></div></div>';
+  const chips=r.sess.length? r.sess.map(x=>'<span class="chip" style="margin:0;border-color:#36c08a;color:#36c08a">'
+      +hhmm(x.startT)+'–'+hhmm(x.endT)+' · '+fmtH(x.mins)+' · '+esc(x.app)+'</span>').join(' ')
+    : '<span class="muted" style="font-size:11px">초집중 없음</span>';
+  const wd=['일','월','화','수','목','금','토'][new Date(r.day+'T00:00:00').getDay()];
+  return '<div class="panel" style="margin:0 0 8px;padding:10px 14px">'
+    +'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+    +'<b style="font-variant-numeric:tabular-nums;min-width:118px">'+esc(r.day)+' ('+wd+')</b>'
+    +'<span class="muted" style="font-size:12px;min-width:180px">총 '+fmtH(b.total)+' · 책상 '+fmtH(b.desk)+' · 집중 '+fmtH(b.focus)+'</span>'
+    +bar
+    +'<span class="chip" style="margin:0;border-color:#36c08a;color:#36c08a">초집중 '+r.sess.length+'회</span>'
+    +'</div>'
+    +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'+chips+'</div>'
+    +'</div>';
+}
+function drawDfHours(hourMin){
+  const c=$('dfHours'); if(!c) return;
+  const dpr=window.devicePixelRatio||1, W=c.clientWidth||600, H=120;
+  c.width=W*dpr; c.height=H*dpr; const g=c.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const max=Math.max(1,...hourMin), pad=16, bw=(W-pad)/24;
+  for(let h=0;h<24;h++){
+    const bh=(H-pad)*(hourMin[h]/max);
+    g.fillStyle = hourMin[h]>0 ? '#36c08a' : '#222834';
+    g.fillRect(pad+h*bw+1, (H-pad)-bh, Math.max(1,bw-2), bh);
+    if(h%3===0){ g.fillStyle='#6b7688'; g.font='9px -apple-system,sans-serif'; g.fillText((h<10?'0':'')+h, pad+h*bw, H-3); }
+  }
+  const cap=$('dfHoursCap');
+  if(cap) cap.textContent = (max>0 ? ('시간대별 초집중 누적 — 가장 자주 몰입하는 시간대: '+(hourMin.indexOf(max)<10?'0':'')+hourMin.indexOf(max)+'시 전후')
+                                  : '아직 초집중 기록이 없습니다. 집중(에디터·개발) 상태가 '+_dfMin+'분 이상 이어지면 여기 쌓입니다.')
+                            + ' · 시각 '+tzLabel()+' 기준';
+}
+
 // --- Value-confirmation pipeline + report ---
 function provisionalHours(samples){ return samples.reduce((a,s)=>a+(s.active||0)*(s.mult||1),0)/3600; }
 function post(path,obj){ return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj||{})}).then(()=>load()); }
@@ -1219,13 +1402,16 @@ function goalKey(e){ if(e.key!=='Enter')return; if(_composing){_pendingAdd=true;
 })();
 // Group-mode top add bar: same IME-safe Enter (bindImeEnter is hoisted).
 (function(){ bindImeEnter(document.getElementById('gAddText'), function(){ gAdd(); }); })();
-// Reusable goal-add modal input: same IME-safe Enter as the always-on bar.
-(function(){ bindImeEnter(document.getElementById('gaText'), function(){ gaAdd(); }); })();
+// Reusable goal-add modal input: Enter routes to AI추가 (queue) so a bare Enter runs the
+// dup-check pipeline. Keep the modal open (clear + refocus) to preserve "계속 추가".
+(function(){ bindImeEnter(document.getElementById('gaText'), function(){
+  const inp=$('gaText'); goalAddAi(inp.value,_gaCtx,$('gaAiBtn'),()=>{ inp.value=''; inp.focus(); },()=>{ inp.value=''; inp.focus(); });
+}); })();
 // --- 재사용 목표 추가 모달 — 스프린트 보드의 모든 추가 진입점이 이 모달 하나를 연다. ---
-let _gaCtx={sprint:0,parent:''};   // 현재 추가 대상 (0/''=Backlog 최상위)
+let _gaCtx={sprint:0,parent:'',bump:false};   // 현재 추가 대상 (0/''=Backlog 최상위, bump=Bump out 인박스)
 function openGoalAdd(opts){
   opts=opts||{};
-  _gaCtx={sprint:opts.sprint||0,parent:opts.parent||''};
+  _gaCtx={sprint:opts.sprint||0,parent:opts.parent||'',bump:!!opts.bump};
   const where=$('gaWhere'); if(where) where.textContent=opts.label?('· '+opts.label):'';
   const inp=$('gaText'); if(inp) inp.value='';
   const m=$('gaModal'); if(m) m.classList.add('on');
@@ -1242,7 +1428,7 @@ function gaAi(){ goalAddAi($('gaText').value,_gaCtx,$('gaAiBtn'),()=>closeGoalAd
 function goalAddSubmit(text, ctx){
   const t=String(text||'').trim(); if(!t) return false;
   const o={text:t};
-  if(ctx){ if(ctx.sprint) o.sprint=ctx.sprint; if(ctx.parent) o.parent=ctx.parent; }
+  if(ctx){ if(ctx.sprint) o.sprint=ctx.sprint; if(ctx.parent) o.parent=ctx.parent; if(ctx.bump) o.bump=true; }
   post('/api/goal/add',o);
   return true;
 }
@@ -1254,10 +1440,12 @@ function goalAddAi(text, ctx, btn, onAdded, onDup){
   const t=String(text||'').trim(); if(!t) return;
   const o={text:t};
   if(ctx){ if(ctx.sprint) o.sprint=ctx.sprint; if(ctx.parent) o.parent=ctx.parent; }
-  post('/api/goal/queue/enqueue',o);   // post()가 이어서 load()까지 호출 → 큐에 즉시 반영
+  post('/api/goal/queue/enqueue',o);   // post()가 이어서 load()까지 호출 → 큐에 즉시 반영 (AI 큐는 그 자체가 bump out 파이프라인)
   if(onAdded) onAdded();               // 입력창 비우기/모달 닫기는 즉시 (대기 0초)
 }
-function addGoal(){ const el=$('goalText'); if(goalAddSubmit(el.value,null)){ el.value=''; el.focus(); } }
+// 상단 항상 보이는 빠른 추가바 = 머릿속 덤프의 주 입구. 정리되지 않은 새 목표는 기본으로
+// Bump out 인박스에 담아, 나중에 Backlog·Sprint로 끌어올린다(승격 파이프라인).
+function addGoal(){ const el=$('goalText'); if(goalAddSubmit(el.value,{bump:true})){ el.value=''; el.focus(); } }
 // --- AI추가: 추가 전에 claude -p가 기존 목표를 읽고 중복인지 먼저 판단한다. 중복이면
 // later(큐 보관)/confirm(지금 추가) 다이얼로그를 띄우고, 아니면 곧장 추가한다. AI 호출이
 // 실패/미설치여도 게이트가 아니므로 평소처럼 추가한다(베스트 에포트). ---
@@ -1275,7 +1463,19 @@ let _dupImages=[];      // [{name, dataURL}] staged attachments for the next dup
 let _dupBusy=false;     // an aiChat turn is in flight
 let _dupWired=false;
 function showDup(p){
-  $('dupNote').textContent='유사한 목표가 있습니다. AI와 상의해 다듬은 뒤 추가하세요.';
+  // 큐 항목 다듬기 모드(queueId 있음)면 안내·버튼 라벨을 그 맥락으로 바꾼다. 새 목표 추가 모드면 기존 그대로.
+  const isQ=!!(p&&p.queueId);
+  const tt=$('dupTitle'); if(tt) tt.textContent = isQ?'🤖 AI 큐 다듬기':'🤖 AI 중복 확인';
+  const sid=(p&&p.refineSession)||'';
+  const sb=$('dupSessBtn'); if(sb){ sb.style.display = sid?'':'none'; sb.textContent='세션 ID 복사'; }
+  const cbi=$('dupCliBtn'); if(cbi){ cbi.style.display = sid?'':'none'; cbi.textContent='CLI에서 열기'; }
+  $('dupNote').textContent = isQ
+    ? '이 큐 항목을 AI와 대화하며 다듬으세요 (이미지 붙여넣기·끌어다놓기 가능). 다듬은 뒤 진행하거나 큐에 반영합니다.'
+    : '유사한 목표가 있습니다. AI와 상의해 다듬은 뒤 추가하세요.';
+  const cb=$('dupConfirmBtn'); if(cb){ cb.textContent = isQ?'이 결과로 진행':'confirm (지금 추가)';
+    cb.title = isQ?'다듬은 문구로 이 항목을 목표로 추가합니다':"위 '추가하려는 목표' 문구로 지금 추가합니다"; }
+  const lb=$('dupLaterBtn'); if(lb){ lb.textContent = isQ?'큐에 반영':'later (큐에 보관)';
+    lb.title = isQ?'다듬은 문구로 큐 항목만 갱신하고 계속 대기시킵니다':'지금은 결정하지 않고 아래 큐에 쌓아둡니다'; }
   $('dupGoalText').value=p.text;       // 편집 가능한 "추가하려는 목표" (이게 실제로 추가됨)
   $('dupMatches').innerHTML=(p.matches||[]).map(m=>
     '<div style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;margin-bottom:6px">'
@@ -1385,12 +1585,18 @@ function closeDup(){ $('dupModal').classList.remove('on'); _dupPending=null; _du
 // 대화로 다듬은 결과가 그대로 반영되도록.
 function dupConfirm(){ const p=_dupPending; if(!p){closeDup();return;}
   const text=$('dupGoalText').value.trim(); if(!text){ $('dupGoalText').focus(); return; }
-  $('goalText').value=''; $('goalText').focus(); closeDup();
+  closeDup();
+  // 큐 항목 모드: 다듬은 문구로 그 항목을 목표로 승격(add). 새 목표 모드: 그냥 추가.
+  if(p.queueId){ post('/api/goal/queue/resolve',{id:p.queueId,action:'add',text:text}); return; }
+  const gt=$('goalText'); if(gt){ gt.value=''; gt.focus(); }
   const o={text:text,parent:p.parent||''}; if(p.sprint) o.sprint=p.sprint;   // 스프린트 보드에서 시작한 추가면 대상 유지
   post('/api/goal/add',o); }
 function dupLater(){ const p=_dupPending; if(!p){closeDup();return;}
   const text=$('dupGoalText').value.trim()||p.text;
-  $('goalText').value=''; $('goalText').focus(); closeDup();
+  closeDup();
+  // 큐 항목 모드: 다듬은 문구로 큐 항목만 갱신(edit, 계속 대기). 새 목표 모드: 큐에 새로 보관.
+  if(p.queueId){ post('/api/goal/queue/resolve',{id:p.queueId,action:'edit',text:text}); return; }
+  const gt=$('goalText'); if(gt){ gt.value=''; gt.focus(); }
   post('/api/goal/queue/add',{text:text,parent:p.parent||'',note:p.note||'',matches:p.matches||[]}); }
 // --- AI 큐(bump out): 도착 순서 그대로 한 줄로 쌓는다. 위쪽이 먼저 처리되고(분석 중·검토 대기),
 // 방금 비워낸 후보는 맨 하단에 붙는다 — "쏟아내면 아래에 쌓이고, 위에서 익는다"는 컨베이어 감각.
@@ -1414,7 +1620,16 @@ function aiQueueBoxHTML(items){
   let waitNo=0;   // pending 행에 "대기 N번째" 부여 (도착 순)
   function row(it){
     const rdy=isReady(it);
-    const ms=(it.matches||[]).map(m=>'#'+m.seq+' '+esc(m.text||'')).join(', ');
+    // 매치의 번호(#seq)는 클릭하면 골 페이지(/goal?n=NN)로 이동해 그 목표 내용을 확인한다.
+    // why가 있으면 링크 title(툴팁)로 붙인다. stopPropagation으로 행/버튼 핸들러와 충돌 방지.
+    const ms=(it.matches||[]).map(m=>{
+      const n=m.seq||0;
+      const tip=m.why?' title='+JSON.stringify(String(m.why)):'';
+      const num=n>0
+        ? '<a href="/goal?n='+n+'"'+tip+' onclick="event.stopPropagation()" style="color:var(--accent);text-decoration:none;font-variant-numeric:tabular-nums">#'+n+'</a>'
+        : '#'+n;
+      return num+' '+esc(m.text||'');
+    }).join(', ');
     let meta='', cls='qrow';
     if(it.status==='analyzing'){
       cls='qrow analyzing';
@@ -1426,18 +1641,46 @@ function aiQueueBoxHTML(items){
       const tag=it.duplicate
         ? '<span style="color:#e0a458">유사 목표 있음</span>'
         : '<span style="color:var(--green)">새 목표</span>';
-      meta='<div class="muted" style="font-size:12px">'+tag+(it.note?' · '+esc(it.note):'')+'</div>'
+      const sess=it.refining?'<span style="color:#9db4ff"> · 🔗 세션 이어감</span>':'';
+      meta='<div class="muted" style="font-size:12px">'+tag+(it.note?' · '+esc(it.note):'')+sess+'</div>'
         +(ms?'<div class="muted" style="font-size:12px">유사: '+ms+'</div>':'');
     }
-    const btns=rdy
-      ? '<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="이 목표를 추가">추가</button>'
-        +'<button class="btn" onclick="queueEditStart(\''+it.id+'\')" title="문구 수정">수정</button>'
-        +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>'
-      : '<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="분석을 기다리지 않고 바로 추가">바로 추가</button>'
+    // 프롬프트 다듬기 패널: 이 항목이 활성일 때만 (입력 or 생성 중).
+    const uiOn=(_qUI&&_qUI.id===it.id);
+    let panel='';
+    if(uiOn && _qUI.mode==='gen'){
+      panel='<div style="border:1px dashed #33406a;border-radius:8px;padding:8px 10px;margin-top:6px;background:#101627">'
+        +'<span style="color:var(--green);font-size:13px"><span class="qspin">🔄</span> 새 결과 생성 중…</span></div>';
+    } else if(uiOn){
+      panel='<div style="border:1px dashed #33406a;border-radius:8px;padding:8px 10px;margin-top:6px;background:#101627">'
+        +'<div style="font-size:11px;color:#9db4ff;margin-bottom:5px">'+(it.refining?'프롬프트 — 이 세션을 이어서 더 낫게 (지시를 계속 쌓으세요)':'프롬프트 — 이 세션에서 목표를 다듬습니다')+'</div>'
+        +'<textarea id="qp_'+it.id+'" oninput="if(_qUI)_qUI.prompt=this.value" placeholder="예: 목표 문구를 &#39;스크립트화&#39;로 바꾸고 매일 자동 발송까지 포함해줘" '
+        +'style="width:100%;background:#0f131b;color:var(--fg);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;font:13px/1.5 inherit;outline:none;resize:vertical;min-height:52px">'+esc(_qUI.prompt||'')+'</textarea>'
+        +'<div style="display:flex;gap:6px;margin-top:6px"><button class="btn" onclick="queuePromptGen(\''+it.id+'\')">생성</button>'
+        +'<button class="btn" onclick="queuePromptCancel()">취소</button></div></div>';
+    }
+    // 우측 버튼: 상태별. 프롬프트 패널이 열려 있으면 액션은 패널이 가진다.
+    let btns;
+    if(!rdy){
+      btns='<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="분석을 기다리지 않고 바로 추가">바로 추가</button>'
         +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>';
+    } else if(uiOn){
+      btns='';
+    } else if(_qJustRefined===it.id){
+      // 방금 프롬프트로 다듬어진 새 결과 — 맞으면 진행, 아니면 다시 프롬프트.
+      btns='<button class="btn primary" onclick="queueProceed(\''+it.id+'\')" title="이 결과로 목표를 추가">이 결과로 진행</button>'
+        +'<button class="btn" onclick="queuePromptStart(\''+it.id+'\')" title="아직 아니면 다시 프롬프트">다시 프롬프트</button>'
+        +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>';
+    } else {
+      btns='<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="이 목표를 추가">추가</button>'
+        +'<button class="btn" onclick="queuePromptChat(\''+it.id+'\')" title="AI와 대화하며 다듬기 (이미지 붙여넣기 가능)">프롬프트</button>'
+        +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>';
+    }
+    const newBadge=(_qJustRefined===it.id)
+      ? '<span style="font-size:11px;padding:1px 7px;border-radius:20px;background:#0f2a1e;color:var(--green);border:1px solid #1e4a35;margin-right:6px">새 결과</span>' : '';
     return '<div class="'+cls+'">'
-      +'<div style="flex:1;min-width:0"><span id="qt_'+it.id+'">'+esc(it.text)+'</span>'+meta+'</div>'
-      +'<div style="display:flex;gap:4px;flex-shrink:0">'+btns+'</div></div>';
+      +'<div style="flex:1;min-width:0">'+newBadge+'<span id="qt_'+it.id+'">'+esc(it.text)+'</span>'+meta+panel+'</div>'
+      +'<div style="display:flex;gap:4px;flex-shrink:0;align-items:flex-start">'+btns+'</div></div>';
   }
   return '<div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:4px 0 10px;background:rgba(91,140,255,0.06)">'
     +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
@@ -1445,10 +1688,45 @@ function aiQueueBoxHTML(items){
     +'<span class="muted" style="font-weight:400;font-size:12px;margin-left:auto">'+(counts.join(' · ')||'대기 없음')+'</span></div>'
     +items.map(row).join('')+'</div>';
 }
+// === 큐 프롬프트 다듬기 상태 ===
+// _qUI: 프롬프트 입력/생성 중 패널 상태 {id, mode:'prompt'|'gen', prompt}
+// _qJustRefined: 방금 프롬프트로 다듬어진 항목 id — '새 결과'로 강조하고 진행/다시 프롬프트를 띄운다.
+let _qUI=null, _qJustRefined='', _lastAiQueue=[];
 // 입력(목록) 뷰의 전역 큐 박스: #aiQueue(목표 목록 아래)에 전체 큐를 그린다.
-function renderAiQueue(items){ const host=$('aiQueue'); if(host) host.innerHTML=aiQueueBoxHTML(items); }
+function renderAiQueue(items){ _lastAiQueue=items||[]; const host=$('aiQueue'); if(host) host.innerHTML=aiQueueBoxHTML(items);
+  // 프롬프트 입력 중이면 재렌더 후 텍스트박스에 포커스를 되돌린다(캐럿 끝으로).
+  if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } } }
+// 큐 박스는 입력 뷰(#aiQueue)뿐 아니라 스프린트 뷰(보드 하단)에도 렌더된다. 프롬프트 열기/취소
+// 같은 즉시 상태 변화는 '지금 보고 있는 뷰'를 바로 다시 그려야 한다 — 안 그러면 5초 폴링을
+// 기다리게 되어 반응이 느리게 느껴진다. 재렌더 후 입력 중이면 텍스트박스 포커스를 복원한다.
+function rerenderAiQueue(){
+  if(_view==='sprint' && _review) renderSprintView(_review);
+  else renderAiQueue(_lastAiQueue);
+  if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } }
+}
 function queueAdd(id){ post('/api/goal/queue/resolve',{id:id,action:'add'}); }
-function queueSkip(id){ post('/api/goal/queue/resolve',{id:id,action:'skip'}); }
+function queueSkip(id){ _qJustRefined=''; post('/api/goal/queue/resolve',{id:id,action:'skip'}); }
+// 큐 항목 다듬기: 기존 AI 대화 다이얼로그(이미지 붙여넣기·드래그·다중턴 대화 지원)를 이 항목의
+// 컨텍스트(현재 문구 + 유사 목표 + AI 판정)로 연다. 다듬은 뒤 '이 결과로 진행'(목표 추가) 또는
+// '큐에 반영'(문구만 갱신하고 계속 대기).
+function queuePromptChat(id){
+  const it=((_review&&_review.aiQueue)||_lastAiQueue||[]).find(x=>x.id===id); if(!it) return;
+  _dupPending={queueId:id, text:it.text||'', parent:it.parent||'', sprint:it.sprint||0, note:it.note||'', matches:it.matches||[], refineSession:it.refineSession||''};
+  showDup(_dupPending);
+}
+// 프롬프트 열기 → 입력 → 생성(서버 refine) → 새 결과. 맞으면 진행(queueProceed), 아니면 다시.
+function queuePromptStart(id){ _qJustRefined=''; _qUI={id:id,mode:'prompt',prompt:''}; rerenderAiQueue();
+  const t=$('qp_'+id); if(t) t.focus(); }
+function queuePromptCancel(){ _qUI=null; rerenderAiQueue(); }
+function queuePromptGen(id){
+  const t=$('qp_'+id); const prompt=((t?t.value:((_qUI&&_qUI.prompt)||''))||'').trim();
+  if(!prompt){ if(t) t.focus(); return; }
+  _qUI={id:id,mode:'gen',prompt:prompt}; rerenderAiQueue();
+  fetch('/api/goal/queue/refine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,prompt:prompt})})
+    .then(r=>r.json()).then(res=>{ _qUI=null; if(res&&res.ok){ _qJustRefined=id; } else { alert('다듬기에 실패했습니다 (claude 미설치/오류). 잠시 후 다시 시도하세요.'); } load(); })
+    .catch(()=>{ _qUI=null; load(); });
+}
+function queueProceed(id){ _qJustRefined=''; queueAdd(id); }
 function queueEditStart(id){
   const span=$('qt_'+id); if(!span||span._editing)return; span._editing=true;
   const cur=span.textContent;
@@ -2052,7 +2330,7 @@ function pad2(n){ return (n<10?'0':'')+n; }
 const VIEW_DEFS=[
   {k:'input',t:'목록'},{k:'group',t:'그룹'},{k:'table',t:'테이블'},
   {k:'token',t:'토큰'},{k:'schedule',t:'일정'},{k:'preview',t:'프리뷰'},
-  {k:'sprint',t:'스프린트'},{k:'archived',t:'아카이브'}
+  {k:'sprint',t:'스프린트'},{k:'archived',t:'아카이브'},{k:'history',t:'히스토리'}
 ];
 const VIEW_LABEL={}; VIEW_DEFS.forEach(d=>{ VIEW_LABEL[d.k]=d.t; });
 const VIEW_KEYS=VIEW_DEFS.map(d=>d.k);
@@ -2116,6 +2394,11 @@ function applyView(){
   spv.style.display=(_view==='sprint')?'':'none';
   av.style.display =(_view==='archived')?'':'none';
   pv.style.display =(_view==='preview')?'':'none';
+  const hv=$('historyView'); if(hv) hv.style.display=(_view==='history')?'':'none';
+  // 히스토리 탭에선 오늘 전용 요소(목표 필터 바 · 아래 상세 섹션)를 숨겨 화면을 비운다.
+  // 벗어나면 인라인 display를 지워 CSS(스포츠 모드 등)가 다시 관장하게 둔다.
+  const gf=$('goalFilters'); if(gf) gf.style.display=(_view==='history')?'none':'';
+  const ds=$('detailSections'); if(ds) ds.style.display=(_view==='history')?'none':'';
   markActiveTab();
 }
 // Fill ONLY the active view's input DOM. 목록/그룹 render the same goals with the same
@@ -2129,6 +2412,7 @@ function fillActiveView(r){
   else if(_view==='token'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderTokenView(r); }
   else if(_view==='sprint'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderSprintView(r); }
   else if(_view==='archived'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderArchivedView(r); }
+  else if(_view==='history'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; loadHistory(); }   // 자체 엔드포인트(/history.json)에서 로드 — 캐시되어 재호출은 무비용
   else { $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; }   // preview: report only
 }
 // ===== Group-mode input: sticky add bar (active parent) + collapsible parent sections =====
@@ -2303,6 +2587,15 @@ function renderGroupSections(r){
   if(_gRefocus){ const el=host.querySelector('.gsec-add input[data-parent="'+_gRefocus+'"]'); _gRefocus=''; if(el) el.focus(); }
 }
 function copyMd(b){ if(navigator.clipboard) navigator.clipboard.writeText(_md); const o=b.textContent; b.textContent='복사됨'; setTimeout(()=>{b.textContent=o;},1200); }
+// 열려 있는 큐 다듬기 항목의 claude 세션 ID를 클립보드로 복사. CLI에서 `claude --resume <id>` 로 이어쓸 수 있다.
+function copyDupSession(b){ const sid=(_dupPending&&_dupPending.refineSession)||''; if(!sid){ b.textContent='세션 없음'; setTimeout(()=>{b.textContent='세션 ID 복사';},1200); return; }
+  if(navigator.clipboard) navigator.clipboard.writeText(sid); b.textContent='복사됨'; setTimeout(()=>{b.textContent='세션 ID 복사';},1200); }
+// 열려 있는 큐 항목의 다듬기 세션을 터미널에서 `claude --resume`으로 바로 연다(백엔드가 Terminal.app 실행).
+function openDupCli(b){ const id=(_dupPending&&_dupPending.queueId)||''; if(!id) return; const o='CLI에서 열기'; b.disabled=true; b.textContent='여는 중…';
+  fetch('/api/goal/queue/cli',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})})
+    .then(r=>r.json()).then(j=>{ b.textContent=j&&j.ok?'열림':'실패'; })
+    .catch(()=>{ b.textContent='실패'; })
+    .finally(()=>{ setTimeout(()=>{ b.disabled=false; b.textContent=o; },1200); }); }
 function gnote(r,id){ return (r.notes&&r.notes[id])||''; }
 
 // ===== 일정관리 (schedule / resource management) =====
@@ -2654,7 +2947,7 @@ function renderTokenView(r){
 // ===== 스프린트 뷰 — Jira식 백로그 보드 (스프린트 그룹 + Backlog + 완료 로그) =====
 const DUR_OPTS=[['1d','1일'],['2d','2일'],['3d','3일'],['1w','1주'],['2w','2주'],['1m','1달']];
 function durLabel(k){ const o=DUR_OPTS.find(x=>x[0]===k); return o?o[1]:k; }
-let _spCollapsed=new Set();  // collapsed groups (sprint number, or 'bg' for Backlog)
+let _spCollapsed=new Set();  // collapsed groups (sprint number, 'bg' for Backlog, or 'bump' for Bump out)
 let _bgCollapsed=new Set();  // collapsed parent goal ids (자식 접기) within a group
 let _bgSeen=new Set();       // parents already defaulted-collapsed (so the 5s re-render never re-collapses one the user opened)
 let _relOpen=new Set();      // expanded release ids (완료 로그는 기본 닫힘)
@@ -2794,6 +3087,7 @@ function renderSprintBoard(r){
   const aq=(r&&r.aiQueue)||[];                          // AI 큐: 섹션(sprint/backlog)별로 하단에 배치
   let h=sprints.map(s=>sprintGroupHTML(s,shown,allLive,aq)).join('');
   h+=backlogHTML(shown,allLive,aq);
+  h+=bumpHTML(shown,allLive);          // Backlog 아래: 정리 전 아이디어 인박스
   h+=completedLogHTML(r);
   $('sprintHost').innerHTML=h;
   if(_spModalNum!=null) fillSprintModal();   // 열려 있으면 최신 데이터로 갱신(기간 변경 시 목표일 반영)
@@ -2870,7 +3164,7 @@ function extModalForm(s){
     +'<div class="extnew" id="extPrev">조정 후 <b>'+(pv?fmtDate(pv):'변경 없음')+'</b></div>'
     +'<div class="exthint">＋ / − 2시간 단위로 연장·단축</div>'
     +'<div class="extset"><span class="dlab">직접 지정</span>'
-    +'<input type="datetime-local" value="'+localInput(_extAbs||t||Math.floor(base))+'" oninput="extSetAbs(this.value)" onchange="extSetAbs(this.value)">'
+    +'<input type="datetime-local" value="'+localInput(_extAbs||t||Math.floor(base))+'" oninput="extSetAbs(this.value)" onchange="extSetAbs(this.value)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();extSetAbs(this.value);applyExtend();}">'
     +'<span class="dlab" style="font-size:10px">예: 오늘 18:30까지 마감 · 입력 후 아래 버튼으로 확정</span></div>'
     +'<div class="line" style="margin-top:14px"><button class="btn" onclick="closeExtendModal()">취소</button><span style="flex:1"></span>'
     +'<button class="btn primary" id="extApply" '+(on?'':'disabled style="opacity:.5;cursor:default"')
@@ -2932,8 +3226,8 @@ function groupBodyHTML(rows){
 }
 // 스프린트 그룹 (드롭 타깃)
 function sprintGroupHTML(s,shown,allLive,aq){
-  const rows=shown.filter(g=>boardSprint(g,_goals)===s.number);
-  const members=allLive.filter(g=>boardSprint(g,_goals)===s.number);   // 카운트는 전체 멤버
+  const rows=shown.filter(g=>!g.bump&&boardSprint(g,_goals)===s.number);
+  const members=allLive.filter(g=>!g.bump&&boardSprint(g,_goals)===s.number);   // 카운트는 전체 멤버 (Bump out 제외)
   const q=aiQueueBoxHTML((aq||[]).filter(it=>(it.sprint||0)===s.number));   // 이 스프린트로 담긴 큐 → 하단
   const body=(rows.length?groupBodyHTML(rows)
     :(q?'':'<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'여기로 목표를 끌어다 놓기')+'</div>'))+q;
@@ -2951,10 +3245,10 @@ function sprintGroupHTML(s,shown,allLive,aq){
     +'<div class="spgrp-body">'+body+'</div>'
   +'</div>';
 }
-// Backlog (미배정) — Create sprint 버튼 포함
+// Backlog (미배정) — Create sprint 버튼 포함. Bump out 인박스 아이템은 여기서 제외.
 function backlogHTML(shown,allLive,aq){
-  const rows=shown.filter(g=>boardSprint(g,_goals)===0);
-  const members=allLive.filter(g=>boardSprint(g,_goals)===0);
+  const rows=shown.filter(g=>!g.bump&&boardSprint(g,_goals)===0);
+  const members=allLive.filter(g=>!g.bump&&boardSprint(g,_goals)===0);
   const q=aiQueueBoxHTML((aq||[]).filter(it=>(it.sprint||0)===0));   // 백로그로 담긴 큐 → 하단
   const body=(rows.length?groupBodyHTML(rows)
     :(q?'':'<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'미배정 목표가 없습니다')+'</div>'))+q;
@@ -2963,8 +3257,25 @@ function backlogHTML(shown,allLive,aq){
     +'<div class="spgrp-hd"><span class="spchev" onclick="toggleSpCollapse(\'bg\')" title="펼치기/접기">▾</span>'
       +'<b>Backlog</b><span class="muted" style="font-size:12px">미배정</span>'
       +'<span style="flex:1"></span>'+countsHTML(members)
-      +'<button class="btn" onclick="addGoalToBacklog()" title="목표를 추가합니다 (입력·AI추가 모듈)">＋ 목표 추가</button>'
+      +'<button class="btn" onclick="addGoalToBacklog()" title="목표를 추가합니다 (입력·AI추가 모듈)">＋ 목표</button>'
       +'<button class="btn primary" onclick="createSprintNow()">＋ Create sprint</button></div>'
+    +'<div class="spgrp-body">'+body+'</div>'
+  +'</div>';
+}
+// Bump out (아이디어 인박스) — Backlog 아래. 머릿속에서 막 꺼낸 날 것의 아이디어가 처음
+// 담기는 곳(정리 전). 여기서 다듬어 Backlog·Sprint로 끌어올린다(위로 승격). g.bump 로만
+// 판정 — 부모 상속·sprint 값과 무관하게 항상 이 버킷에 모인다.
+function bumpHTML(shown,allLive){
+  const rows=shown.filter(g=>g.bump);
+  const members=allLive.filter(g=>g.bump);
+  const body=(rows.length?groupBodyHTML(rows)
+    :'<div class="empty">'+(members.length?'필터에 맞는 아이디어가 없습니다 (상태 필터 확인)':'머릿속 아이디어를 여기로 던져두기 — 위 입력창이 기본으로 담깁니다')+'</div>');
+  const col=_spCollapsed.has('bump');
+  return '<div class="spgrp bump'+(col?' collapsed':'')+'" ondragover="spOver(event)" ondragleave="spLeave(event)" ondrop="spDropBump(event)">'
+    +'<div class="spgrp-hd"><span class="spchev" onclick="toggleSpCollapse(\'bump\')" title="펼치기/접기">▾</span>'
+      +'<b>Bump out</b><span class="muted" style="font-size:12px">아이디어</span>'
+      +'<span style="flex:1"></span>'+countsHTML(members)
+      +'<button class="btn" onclick="addGoalToBump()" title="머릿속 아이디어를 인박스에 담기 (정리 전)">＋ 목표</button></div>'
     +'<div class="spgrp-body">'+body+'</div>'
   +'</div>';
 }
@@ -3091,6 +3402,11 @@ function spDrop(e,n){ e.preventDefault(); e.currentTarget.classList.remove('drop
   }
   _spDrag=null;
 }
+// Bump out 버킷 드롭: 끌어온 목표를 아이디어 인박스로 내린다(sprint 해제).
+function spDropBump(e){ e.preventDefault(); e.currentTarget.classList.remove('dropOver');
+  if(_spDrag!=null) post('/api/goal/bump',{id:_spDrag,bump:true});
+  _spDrag=null;
+}
 
 // --- 부모 채우기(fill-down): 부모#칸에서 Cmd+드래그로 아래 행에 같은 부모를 칠한다 ---
 // 우선순위 페인트와 같은 패턴. 드래그 도중에는 재렌더하지 않고(그러면 mouseenter 체인이
@@ -3199,6 +3515,8 @@ function goalCtx(e,id){ e.preventDefault(); e.stopPropagation();
   html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">스프린트로 이동</div>'
     +'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToSprint(\''+id+'\','+bg+')">Backlog'+((g&&g.parent)?' (부모와 분리)':'')+'</button>';
   html+=sprints.map(s=>'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToSprint(\''+id+'\','+s.number+')">'+esc(s.code||('#'+s.number))+(s.goalText?(' · '+esc(s.goalText)):'')+'</button>').join('');
+  // 정리 전 아이디어로 내리기 — 이미 Bump out에 있으면 숨긴다.
+  if(!(g&&g.bump)) html+='<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToBump(\''+id+'\')">Bump out (아이디어로 내리기)</button>';
   html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">부모(계층)</div>'
     +'<button class="popitem" onmousedown="event.stopPropagation();openParentPicker(\''+id+'\')">부모 설정 / 해제 ▸</button>';
   const isParent=(_goals||[]).some(k=>k.parent===id);
@@ -3214,9 +3532,16 @@ function goalCtx(e,id){ e.preventDefault(); e.stopPropagation();
         ? '<button class="popitem" onmousedown="event.stopPropagation();hidePopup();setStatus(\''+id+'\',\'backlog\')">On Track으로 되돌리기</button>'
         : '<button class="popitem" onmousedown="event.stopPropagation();hidePopup();setStatus(\''+id+'\',\'done\')">완료로 표시 (분기 마감)</button>');
   }
+  // 삭제: 되돌릴 수 없는 파괴적 동작. 자식이 있으면 함께 삭제되므로 확인을 받는다.
+  html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">삭제</div>'
+    +'<button class="popitem danger" onmousedown="event.stopPropagation();hidePopup();deleteGoalNow(\''+id+'\','+(isParent?'true':'false')+')">삭제'+(isParent?' (하위 포함)':'')+'</button>';
   showPopup(e.clientX,e.clientY,html);
 }
+// 우클릭 메뉴 전용: 삭제 전 확인. 자식이 있으면 함께 삭제됨을 알린다.
+function deleteGoalNow(id,hasChildren){ if(!confirm(hasChildren?'이 작업 항목과 모든 하위 항목을 삭제합니다. 되돌릴 수 없습니다.':'이 작업 항목을 삭제합니다. 되돌릴 수 없습니다.')) return; removeGoal(id); }
 function moveGoalToSprint(id,n){ post('/api/goal/sprint',{id:id,sprint:n}); }
+// Bump out 인박스로 내리기(정리 전 아이디어로). 서버가 sprint를 0으로 비운다.
+function moveGoalToBump(id){ post('/api/goal/bump',{id:id,bump:true}); }
 // 보관 / 보관 해제 — 서버가 자식까지 함께 보관 처리한다. 활성 뷰에서 사라지고 아카이브 뷰로 이동.
 function archiveGoal(id,on){ post('/api/goal/archive',{id:id,archived:!!on}); }
 
@@ -3275,6 +3600,8 @@ function closeSprintModal(){ _spModalNum=null; const m=$('spModal'); if(m) m.sty
 function addGoalToSprint(n){ const s=((_review&&_review.sprints)||[]).find(x=>x.number===n); openGoalAdd({sprint:n,label:(s&&s.code)||('#'+n)}); }
 // Backlog(미배정)에 목표 추가 — 같은 재사용 모듈, 대상만 Backlog.
 function addGoalToBacklog(){ openGoalAdd({sprint:0,label:'Backlog'}); }
+// Bump out(아이디어 인박스)에 담기 — 같은 재사용 모듈, 대상만 Bump out.
+function addGoalToBump(){ openGoalAdd({bump:true,label:'Bump out'}); }
 function createSprintNow(){ post('/api/sprint/create',{goalText:'',durationKind:'1d'}); }   // 자동 코드(26-N), Backlog 비움
 function updateSprintGoal(n,v){ post('/api/sprint/update',{number:n,goalText:String(v||'')}); }
 function setSprintDur(n,k){ post('/api/sprint/update',{number:n,durationKind:k}); }   // 목표 날짜는 서버가 재계산

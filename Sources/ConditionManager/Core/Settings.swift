@@ -38,6 +38,7 @@ final class Settings {
         static let doneCutoff     = "cm.doneCutoff"
         static let uiPrefs        = "cm.uiPrefs"
         static let conditionMate  = "cm.conditionMate"
+        static let skillsRoot     = "cm.skillsRoot"
     }
 
     // Defaults for values the user has not touched. Mirrors the old register(defaults:).
@@ -115,6 +116,14 @@ final class Settings {
     var musicFolderPath: String? {
         get { string(K.musicFolder) }
         set { set(newValue, K.musicFolder) }
+    }
+
+    // Base ".claude" folder whose /skills subfolder holds the user's skills. Empty/absent
+    // means the ~/.claude default. Configurable from the skills page so a user can keep
+    // skills in a different Claude root (e.g. a shared or per-machine location).
+    var skillsRoot: String? {
+        get { string(K.skillsRoot) }
+        set { set(newValue, K.skillsRoot) }
     }
 
     var trackedApps: [String] {
