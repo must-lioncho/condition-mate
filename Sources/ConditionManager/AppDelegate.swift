@@ -2007,7 +2007,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // it and flips it to ready for a one-tap 추가/수정/스킵 decision.
                 if let text = obj["text"] as? String {
                     let sprint = (obj["sprint"] as? NSNumber)?.intValue ?? Int((obj["sprint"] as? String) ?? "") ?? 0
-                    if reviewStore.enqueuePending(text: text, parent: (obj["parent"] as? String) ?? "", sprint: sprint) != nil {
+                    // `origin` carries the user's full raw prompt when the client has one
+                    // richer than the goal line; the store defaults it to `text` otherwise.
+                    if reviewStore.enqueuePending(text: text, parent: (obj["parent"] as? String) ?? "",
+                                                  sprint: sprint, origin: obj["origin"] as? String) != nil {
                         kickAIQueueWorker()
                     }
                 }
@@ -2406,7 +2409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return nil
             }
             guard let item = item else { break }
-            let v = aiDedupVerdict(text: item.text)
+            let v = aiDedupVerdict(text: item.text, origin: item.originPrompt)
             // ok=false (claude missing / spawn / parse failure) is NOT a gate: surface the
             // candidate as a clean, non-duplicate verdict so it still reaches the user for a
             // one-tap decision instead of getting stuck mid-queue.
@@ -2423,26 +2426,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Core dedup judge shared by the synchronous /api/goal/aiAdd route and the background
     // queue worker. Runs an external `claude -p` (seconds, BLOCKING) — call OFF main.
-    private func aiDedupVerdict(text: String) -> DedupVerdict {
+    private func aiDedupVerdict(text: String, origin: String = "") -> DedupVerdict {
         let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !candidate.isEmpty else { return DedupVerdict(ok: false, duplicate: false, note: "", matches: []) }
         // Snapshot existing goals (brief hop to main for thread-safe store access).
-        let snapshot: [(seq: Int, text: String, status: String)] = DispatchQueue.main.sync {
-            reviewStore.goals.map { (seq: $0.seq, text: $0.text, status: $0.status) }
+        let snapshot: [(seq: Int, text: String, status: String, transcriptPath: String)] = DispatchQueue.main.sync {
+            reviewStore.goals.map { (seq: $0.seq, text: $0.text, status: $0.status, transcriptPath: $0.transcriptPath) }
         }
         guard let claude = Self.resolveClaude() else {
             return DedupVerdict(ok: false, duplicate: false, note: "", matches: [])
         }
+        // Retrieval BEFORE the judge: mine the raw prompt for keywords + a time window and
+        // search session transcripts and goal files, so work buried inside a goal whose
+        // TITLE never mentions it (the goal-130 "NSS 리포트" case) still becomes a candidate.
+        let signalSource = origin.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? candidate : origin
+        let signals = RelatedGoalSearch.signals(from: signalSource)
+        let goalRefs = snapshot.map { RelatedGoalSearch.GoalRef(seq: $0.seq, title: $0.text, transcriptPath: $0.transcriptPath) }
+        let hits = RelatedGoalSearch.discover(signals: signals, goals: goalRefs, issueRoot: IssuePaths.root)
         // Build the prompt: existing goals (skip cancelled) + the candidate; demand strict JSON.
         let listText = snapshot.filter { $0.status != "cancelled" }
             .map { "#\($0.seq) \($0.text)" }.joined(separator: "\n")
+        // High-priority candidates surfaced by the search, with the matched evidence so the
+        // judge can see WHY they relate even when the title looks unrelated. Skip cancelled.
+        let titleBySeq = Dictionary(snapshot.map { ($0.seq, $0.text) }, uniquingKeysWith: { a, _ in a })
+        let cancelled = Set(snapshot.filter { $0.status == "cancelled" }.map { $0.seq })
+        let relatedLines = hits.filter { !cancelled.contains($0.seq) }.prefix(8).map { h -> String in
+            let title = (titleBySeq[h.seq] ?? "").isEmpty ? "(제목 없음)" : titleBySeq[h.seq]!
+            return "#\(h.seq) \(title) — [\(h.source)] \"\(h.snippet)\""
+        }
+        // Reframes the judge: a plain title match asks "same intent?" and misses recurring
+        // work (a goal titled "주보상패키지 지급" that in fact holds the NSS report script the
+        // user wants to run again). This tells the judge the surfaced goal ALREADY CONTAINS
+        // the prior work the new goal reuses, so a "repeat/continuation" is a match, not new.
+        let relatedText = relatedLines.isEmpty ? "" : """
+
+
+        ALREADY-EXISTS EVIDENCE — a keyword/time search over the user's own session transcripts \
+        and goal files found that the EXISTING goal(s) below ALREADY CONTAIN the prior work (the \
+        script, earlier reports, or subtasks) that this NEW goal refers to. When the new goal is \
+        phrased as repeating or reusing earlier work ("N일전에 만든 스크립트로 다시", "동일하게", \
+        "그때 만든 것으로"), it is almost never a genuinely new goal — it is a REPEAT or \
+        CONTINUATION of that existing goal's work and belongs under it as another run/subtask. In \
+        that case you MUST set "duplicate": true and include that goal in "matches", even if its \
+        title looks unrelated; "why" should say it continues/repeats that goal's existing work.
+        \(relatedLines.joined(separator: "\n"))
+        """
         let prompt = """
         You are a deduplication judge for a personal goal tracker. Decide whether a NEW goal \
         duplicates or substantially overlaps any EXISTING goal (same intent, even if worded \
         differently or in a different language).
 
         EXISTING GOALS (one per line as "#<seq> <title>"):
-        \(listText.isEmpty ? "(none)" : listText)
+        \(listText.isEmpty ? "(none)" : listText)\(relatedText)
 
         NEW GOAL:
         \(candidate)

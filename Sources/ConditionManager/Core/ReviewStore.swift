@@ -301,14 +301,21 @@ final class ReviewStore {
         // prompt builds on the prior turns and the similar-goal context, instead of starting
         // fresh every time. Empty until the first refine; then resumed via `claude --resume`.
         var refineSession: String = ""
+        // The user's ORIGINAL raw brain-dump captured at enqueue, kept verbatim even
+        // after `text` is rewritten by prompt-refine. Holds hints the one-line goal
+        // loses — content keywords and "2일전" style time cues — which the dedup search
+        // (RelatedGoalSearch) mines to find related goals whose title never mentions
+        // the work. Defaults to the candidate text when no richer prompt was supplied.
+        var originPrompt: String = ""
 
-        enum CodingKeys: String, CodingKey { case id, text, parent, sprint, note, matches, createdAt, status, duplicate, refineSession }
+        enum CodingKeys: String, CodingKey { case id, text, parent, sprint, note, matches, createdAt, status, duplicate, refineSession, originPrompt }
         init(id: String, text: String, parent: String = "", sprint: Int = 0, note: String = "",
              matches: [QueueMatch] = [], createdAt: Date, status: String = "ready", duplicate: Bool = false,
-             refineSession: String = "") {
+             refineSession: String = "", originPrompt: String = "") {
             self.id = id; self.text = text; self.parent = parent; self.sprint = sprint
             self.note = note; self.matches = matches; self.createdAt = createdAt
             self.status = status; self.duplicate = duplicate; self.refineSession = refineSession
+            self.originPrompt = originPrompt
         }
         init(from dec: Decoder) throws {
             let c = try dec.container(keyedBy: CodingKeys.self)
@@ -322,6 +329,7 @@ final class ReviewStore {
             status = try c.decodeIfPresent(String.self, forKey: .status) ?? "ready"
             duplicate = try c.decodeIfPresent(Bool.self, forKey: .duplicate) ?? false
             refineSession = try c.decodeIfPresent(String.self, forKey: .refineSession) ?? ""
+            originPrompt = try c.decodeIfPresent(String.self, forKey: .originPrompt) ?? ""
         }
     }
 
@@ -492,12 +500,15 @@ final class ReviewStore {
     // never waits on the AI. The background worker (kickAIQueueWorker) picks it up, analyzes
     // it, and flips it to "ready". Returns the new id (caller kicks the worker).
     @discardableResult
-    func enqueuePending(text: String, parent: String = "", sprint: Int = 0) -> String? {
+    func enqueuePending(text: String, parent: String = "", sprint: Int = 0, origin: String? = nil) -> String? {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return nil }
+        // Snapshot the raw prompt now so refine can't erase the hints (defaults to the
+        // candidate text when the caller has nothing richer to offer).
+        let o = (origin ?? t).trimmingCharacters(in: .whitespacesAndNewlines)
         let id = UUID().uuidString
         aiQueue.append(AIQueueItem(id: id, text: t, parent: parent, sprint: max(0, sprint),
-                                   createdAt: Date(), status: "pending"))
+                                   createdAt: Date(), status: "pending", originPrompt: o.isEmpty ? t : o))
         saveQueue()
         return id
     }
