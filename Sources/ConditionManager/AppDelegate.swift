@@ -1820,12 +1820,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // Active human seconds per day — for the 가치 mode's time-efficiency weighting.
+        let activeSec = activityLog.activeSecondsByDay(days: days)
+
         // Emit only in-window days (a long session can carry an out-of-window day), newest first.
         let minDay = dayFmt.string(from: cutoff)
         let rows = totals.keys.filter { $0 >= minDay }.sorted(by: >).map { day -> String in
             let tokK = Int((Double(totals[day] ?? 0) / 1000.0).rounded())   // tokens -> K, matches UI unit
             let sess = sessionsPerDay[day]?.count ?? 0
-            return "{\"day\":\(jsonString(day)),\"tokens\":\(totals[day] ?? 0),\"k\":\(tokK),\"sessions\":\(sess)}"
+            return "{\"day\":\(jsonString(day)),\"tokens\":\(totals[day] ?? 0),\"k\":\(tokK),"
+                + "\"sessions\":\(sess),\"activeSec\":\(activeSec[day] ?? 0)}"
         }
         return "{\"days\":[\(rows.joined(separator: ","))]}"
     }

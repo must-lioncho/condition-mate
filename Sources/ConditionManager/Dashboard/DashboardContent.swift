@@ -597,7 +597,12 @@ enum DashboardContent {
 
     <!-- TOKEN VIEW (토큰 — 완료 항목의 토큰 사용량을 완료일·스프린트로 묶어 본다) -->
     <div id="tokenView" style="display:none">
-      <div class="muted" style="font-size:12px;margin:0 0 6px"><b>일별 토큰 사용량</b> — 모든 Claude 세션 트랜스크립트(~/.claude/projects)에서 그날 실제로 쓴 토큰을 날짜별로 합산합니다. 신규 입력·출력·캐시 생성만 셉니다(캐시 재사용 제외). 아래 <b>완료 목표별</b> 섹션은 목표에 수동 기록된 토큰(대개 비어 있음)입니다.</div>
+      <div class="muted" style="font-size:12px;margin:0 0 6px"><b>일별 토큰 사용량</b> — 모든 Claude 세션 트랜스크립트(~/.claude/projects)에서 그날 실제로 쓴 토큰을 날짜별로 합산합니다. 신규 입력·출력·캐시 생성만 셉니다(캐시 재사용 제외). 아래 <b>완료 목표별</b> 섹션은 각 목표의 연결 세션 토큰입니다.</div>
+      <div class="row" style="margin:0 0 8px;gap:6px;align-items:center;flex-wrap:wrap">
+        <button class="btn primary" id="tkm_tok" onclick="setTkMode('tok')" title="세션이 실제로 쓴 토큰(K)">토큰량</button>
+        <button class="btn" id="tkm_val" onclick="setTkMode('val')" title="토큰효율·시간효율을 반영한 가치 점수">가치 ($)</button>
+        <span class="muted" id="tkModeHint" style="font-size:11px">세션이 실제로 쓴 토큰(K)</span>
+      </div>
       <div class="row" style="margin:0 0 10px;gap:6px;align-items:center;flex-wrap:wrap">
         <span class="muted" style="font-size:12px">기간</span>
         <button class="btn" id="tr_today" onclick="setTkRange('today')" title="오늘 하루">오늘</button>
@@ -2926,6 +2931,29 @@ function tkRow(g,goals){
     +'<span class="tkn" title="이 목표에 누적된 토큰">'+(g.tokens||0)+' K</span>'
     +'</div>';
 }
+// ===== 가치(value) 모델 상수 — 임시(회사 goal 연동 전). 자세한 근거는 docs/value-model.md 참고 =====
+// [2] 토큰효율: 100% 한달치 $200 Max 사용 = 10,000 가치. 100% 한달 토큰량을 60만 K(=600M, 캐시 포함)로
+//     잡아 가중치 W=10000/600000≈0.0167 가치/K. (1k 토큰이 $2000 같은 말도 안 되는 값이 되지 않게 보정.)
+// [3] 시간효율: 같은 가치를 더 적은 시간에 냈으면 더 높은 점수. 풀타임 한달(720h)에 10,000을 내는 속도를
+//     기준선(BASE_RATE)으로, 실제 (가치/시간) ÷ 기준선 = 시간효율 배수 F. F>1이면 기준보다 빠르게 생산.
+const VAL_PER_MONTH=10000, FULL_MONTH_K=600000, FULL_MONTH_H=720;
+const TK_W=VAL_PER_MONTH/FULL_MONTH_K;        // 가치/K
+const BASE_RATE=VAL_PER_MONTH/FULL_MONTH_H;   // 가치/시간 (풀타임 기준선)
+function tkValue(k){ return (k||0)*TK_W; }
+function fmtVal(v){ return '$'+Math.round(v).toLocaleString(); }
+// 표시 헬퍼: 토큰량 모드면 'N K', 가치 모드면 '$N'. 뷰 전체가 이 함수를 통해 숫자를 그린다.
+function tkAmount(k){ return (_tkMode==='val') ? fmtVal(tkValue(k)) : ((k||0)+' K'); }
+// [4] value(breadth): 부모 goal 하나에 매달린 세션(자식) 수 = 그 목표가 이룬 일의 폭. 1세션=1, 100세션=100.
+function childSessionCount(g,all){ let n=0; (all||[]).forEach(k=>{ if(k.parent===g.id) n++; }); return n; }
+let _tkMode='tok';   // 'tok' 토큰량 | 'val' 가치($)
+function reflectTkMode(){
+  const a=$('tkm_tok'),b=$('tkm_val'); if(a)a.classList.toggle('primary',_tkMode==='tok'); if(b)b.classList.toggle('primary',_tkMode==='val');
+  const h=$('tkModeHint'); if(h) h.textContent=(_tkMode==='val')
+    ? '토큰효율×시간효율 가치 (100% 한달='+fmtVal(VAL_PER_MONTH)+' · 임시 모델)'
+    : '세션이 실제로 쓴 토큰(K)';
+}
+function setTkMode(m){ _tkMode=m; reflectTkMode(); renderTokenDaily(); if(_review) renderTokenView(_review); }
+
 // ===== 일별 실토큰 타임라인 — /tokens.json(트랜스크립트 합산)에서 하루당 한 줄 =====
 // 히스토리 뷰와 같은 기간 필터(오늘·어제·7일·한달·3달 + 직접 범위). 서버는 최신 N일을 주므로
 // 캐시된 전체에서 선택 범위만 잘라 렌더 — 범위가 캐시 안이면 재fetch 없이 무비용.
@@ -2959,13 +2987,28 @@ function loadTokenDaily(force){
   }).catch(()=>{ _tkDailyLoading=false; const h=$('tokenDailyHost'); if(h) h.innerHTML='<div class="muted" style="padding:6px 0">일별 토큰을 불러오지 못했습니다</div>'; });
 }
 function renderTokenDaily(){
-  reflectTkBtn();
+  reflectTkBtn(); reflectTkMode();
   const host=$('tokenDailyHost'); if(!host) return;
   // 캐시된 전체에서 선택 범위(_tkStart~_tkEnd)만 골라 렌더. 날짜 문자열(YYYY-MM-DD)은 사전순=시간순.
   const days=(_tkDaily||[]).filter(d=> d.day>=_tkStart && d.day<=_tkEnd);
   const rng=$('tokenDailyRange');
+  const val=(_tkMode==='val');
   const totalK=days.reduce((a,d)=>a+(d.k||0),0);
-  if(rng) rng.innerHTML=(days.length? (days.length+'일 기록 · 합계 <b>'+totalK+'</b> K') : '기간 내 토큰 기록 없음')+' · 시각 '+tzLabel()+' 기준';
+  const totalVal=tkValue(totalK);
+  const totalHrs=days.reduce((a,d)=>a+(d.activeSec||0),0)/3600;
+  if(rng){
+    if(val){
+      // [3] 시간효율 배수: (가치/시간) ÷ 기준선. 시간 기록이 있어야 계산.
+      const rate=totalHrs>0? totalVal/totalHrs : 0;
+      const F=totalHrs>0? rate/BASE_RATE : 0;
+      const adj=totalVal*(F||1);
+      rng.innerHTML=(days.length? (days.length+'일 · 가치 <b>'+fmtVal(totalVal)+'</b>') : '기간 내 기록 없음')
+        +(totalHrs>0? (' · 활성 <b>'+totalHrs.toFixed(1)+'</b>h · 시간효율 <b>×'+F.toFixed(2)+'</b> → 시간보정 <b>'+fmtVal(adj)+'</b>') : ' · 활성시간 기록 없음')
+        +' · 시각 '+tzLabel()+' 기준';
+    }else{
+      rng.innerHTML=(days.length? (days.length+'일 기록 · 합계 <b>'+totalK+'</b> K') : '기간 내 토큰 기록 없음')+' · 시각 '+tzLabel()+' 기준';
+    }
+  }
   if(!days.length){ host.innerHTML='<div class="empty">선택한 기간('+_tkStart+' ~ '+_tkEnd+')에 토큰 기록이 없습니다</div>'; return; }
   const mx=Math.max(1,...days.map(d=>d.k||0));
   const todayStr=histDayStr(new Date());
@@ -2973,12 +3016,16 @@ function renderTokenDaily(){
     const k=d.k||0, w=Math.round(100*k/mx);
     const bar='<div style="position:relative;background:#2a2f3a;border-radius:4px;height:9px;width:180px;flex:0 0 auto">'
       +'<div style="position:absolute;left:0;top:0;height:9px;border-radius:4px;width:'+w+'%;background:#8f6fe3"></div></div>';
+    const hrs=(d.activeSec||0)/3600;
+    const meta=val
+      ? '<span class="muted" style="font-size:11px">세션 '+(d.sessions||0)+' · '+hrs.toFixed(1)+'h</span>'
+      : '<span class="muted" style="font-size:11px">세션 '+(d.sessions||0)+'개</span>';
     return '<div class="panel" style="margin:0 0 6px;padding:8px 14px">'
       +'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
       +'<b style="font-variant-numeric:tabular-nums;min-width:150px'+(d.day===todayStr?';color:#e8a13a':'')+'">'+esc(tkDayLabel(d.day))+'</b>'
       +bar
-      +'<b style="font-variant-numeric:tabular-nums;min-width:80px;text-align:right">'+k+' K</b>'
-      +'<span class="muted" style="font-size:11px">세션 '+(d.sessions||0)+'개</span>'
+      +'<b style="font-variant-numeric:tabular-nums;min-width:90px;text-align:right">'+tkAmount(k)+'</b>'
+      +meta
       +'</div></div>';
   }).join('');
 }
@@ -3003,20 +3050,21 @@ function renderTokenView(r){
   const dayKeys=Object.keys(byDay).sort((a,b)=>{ if(a==='')return 1; if(b==='')return -1; return a<b?1:-1; });  // 최신일 먼저
   const newestFirst=(a,b)=>(goalCompletedAt(b,all)-goalCompletedAt(a,all))||((b.seq||0)-(a.seq||0));
   // 상단 요약: 합계 + 오늘·어제 즉시 비교 (이 뷰의 핵심 질문 — "어제 얼마나 썼나").
+  // 토큰량/가치 모드에 따라 tkAmount가 'N K' 또는 '$N'으로 그린다.
   let h='<div class="tksum">'
-    +'<span><span class="k">합계</span> <span class="big">'+total+'</span> <span class="k">K · 완료 '+list.length+'개</span></span>'
-    +'<span><span class="k">오늘</span> <b>'+sumTok(coarse[0])+'</b> <span class="k">K</span></span>'
-    +'<span><span class="k">어제</span> <b>'+sumTok(coarse[1])+'</b> <span class="k">K</span></span>'
-    +'<span><span class="k">이번 주</span> <b>'+sumTok(coarse[2])+'</b> <span class="k">K</span></span>'
+    +'<span><span class="k">합계</span> <span class="big">'+tkAmount(total)+'</span> <span class="k">· 완료 '+list.length+'개</span></span>'
+    +'<span><span class="k">오늘</span> <b>'+tkAmount(sumTok(coarse[0]))+'</b></span>'
+    +'<span><span class="k">어제</span> <b>'+tkAmount(sumTok(coarse[1]))+'</b></span>'
+    +'<span><span class="k">이번 주</span> <b>'+tkAmount(sumTok(coarse[2]))+'</b></span>'
     +'</div>';
-  // 스프린트별 합계 (보이는 목록 기준, 토큰 많은 순) — "어느 스프린트에 썼나".
+  // 스프린트별 합계 (보이는 목록 기준, 많은 순) — "어느 스프린트에 썼나".
   const spTok={}; list.forEach(g=>{ const n=effSprint(g,all); spTok[n]=(spTok[n]||0)+(g.tokens||0); });
   const spRows=Object.keys(spTok).map(n=>[parseInt(n,10),spTok[n]]).sort((a,b)=>b[1]-a[1]);
   if(spRows.length){
     h+='<div class="tkspr">'+spRows.map(s=>'<span class="chip">'
-      +(s[0]?esc(sprintCode(s[0])):'스프 –')+' <b>'+s[1]+'</b> K</span>').join('')+'</div>';
+      +(s[0]?esc(sprintCode(s[0])):'스프 –')+' <b>'+tkAmount(s[1])+'</b></span>').join('')+'</div>';
   }
-  // 일별 섹션 — 하루당 한 그룹. 머리글에 날짜(요일)·완료 개수·그 날 토큰 합계. 최신일이 위.
+  // 일별 섹션 — 하루당 한 그룹. 머리글에 날짜(요일)·완료 개수·그 날 합계. 최신일이 위.
   const todayStr=histDayStr(new Date());
   dayKeys.forEach(k=>{
     const gs=byDay[k]; if(!gs.length) return;
@@ -3024,7 +3072,7 @@ function renderTokenView(r){
     const label=(k==='')?'완료 시각 미상':tkDayLabel(k);
     h+='<div class="schsec'+(k===todayStr?' today':'')+'">'
       +'<div class="schsec-hd">'+esc(label)+'<span class="cnt">'+gs.length+'개</span>'
-      +'<span class="tot">'+sumTok(gs)+' K</span></div>'
+      +'<span class="tot">'+tkAmount(sumTok(gs))+'</span></div>'
       +gs.map(g=>tkRow(g,all)).join('')+'</div>';
   });
   host.innerHTML=h;

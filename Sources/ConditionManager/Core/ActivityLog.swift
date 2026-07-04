@@ -115,6 +115,34 @@ final class ActivityLog {
         return "[" + out.joined(separator: ",") + "]"
     }
 
+    // Per-local-day active seconds (sum of each sample's `active` field). Used by the token
+    // view's 가치(value) mode to weight token value by the human time actually spent — fewer
+    // hours for the same output scores higher (time-efficiency multiplier).
+    func activeSecondsByDay(days: Int) -> [String: Int] {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return [:] }
+        var dayList: [String] = []
+        for url in files {
+            let name = url.lastPathComponent
+            guard name.hasPrefix("activity-"), name.hasSuffix(".jsonl") else { continue }
+            dayList.append(String(name.dropFirst("activity-".count).dropLast(".jsonl".count)))
+        }
+        dayList.sort(by: >)
+        var out: [String: Int] = [:]
+        for day in dayList.prefix(max(1, days)) {
+            let url = dir.appendingPathComponent("activity-\(day).jsonl")
+            guard let raw = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            var sec = 0
+            for line in raw.split(separator: "\n") {
+                guard let data = line.data(using: .utf8),
+                      let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                sec += (o["active"] as? Int) ?? 0
+            }
+            out[day] = sec
+        }
+        return out
+    }
+
     // Today's samples parsed as dictionaries (for the abuse filter).
     func todaySamplesParsed() -> [[String: Any]] {
         let json = todaySamplesJSON()
