@@ -208,7 +208,7 @@ final class DashboardServer {
         } else if method == "GET" && (path.hasPrefix("/api/goal/chat") || path.hasPrefix("/api/goal/definition")
                                       || path.hasPrefix("/api/goal/sessions") || path.hasPrefix("/api/sessions/recent")
                                       || path.hasPrefix("/api/cli/sessions") || path.hasPrefix("/api/skills")
-                                      || path.hasPrefix("/history.json")) {
+                                      || path.hasPrefix("/history.json") || path.hasPrefix("/tokens.json")) {
             // Per-goal chat, the raw core/detail definition text, the goal's linked-session
             // list, the recent-session picker feed (all keyed by ?seq=), and the 히스토리
             // tab's per-day activity feed. Dynamic, so routed via apiGet.

@@ -597,7 +597,22 @@ enum DashboardContent {
 
     <!-- TOKEN VIEW (토큰 — 완료 항목의 토큰 사용량을 완료일·스프린트로 묶어 본다) -->
     <div id="tokenView" style="display:none">
-      <div class="muted" style="font-size:12px;margin:0 0 6px">완료된 목표의 <b>토큰 사용량</b>을 <b>완료 시각</b> 기준으로 묶습니다(오늘·어제·이번 주·이전). 위의 <b>스프린트</b>·<b>완료 컷오프</b> 필터가 그대로 적용되어, 예를 들어 "어제 어느 스프린트에 토큰을 얼마나 썼는지"를 바로 볼 수 있습니다.</div>
+      <div class="muted" style="font-size:12px;margin:0 0 6px"><b>일별 토큰 사용량</b> — 모든 Claude 세션 트랜스크립트(~/.claude/projects)에서 그날 실제로 쓴 토큰을 날짜별로 합산합니다. 신규 입력·출력·캐시 생성만 셉니다(캐시 재사용 제외). 아래 <b>완료 목표별</b> 섹션은 목표에 수동 기록된 토큰(대개 비어 있음)입니다.</div>
+      <div class="row" style="margin:0 0 10px;gap:6px;align-items:center;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">기간</span>
+        <button class="btn" id="tr_today" onclick="setTkRange('today')" title="오늘 하루">오늘</button>
+        <button class="btn" id="tr_yesterday" onclick="setTkRange('yesterday')" title="어제 하루">어제</button>
+        <button class="btn" id="tr_7d" onclick="setTkRange('7d')" title="최근 7일">7일</button>
+        <button class="btn" id="tr_1m" onclick="setTkRange('1m')" title="최근 한 달">한달</button>
+        <button class="btn" id="tr_3m" onclick="setTkRange('3m')" title="최근 3달">3달</button>
+        <input type="date" id="tkFrom" class="btn" onchange="onTkDate()" style="color-scheme:dark;padding:5px 8px" title="시작 날짜">
+        <span class="muted" style="font-size:12px">~</span>
+        <input type="date" id="tkTo" class="btn" onchange="onTkDate()" style="color-scheme:dark;padding:5px 8px" title="끝 날짜">
+        <button class="btn" onclick="loadTokenDaily(true)" style="margin-left:auto" title="일별 토큰 새로고침">새로고침</button>
+      </div>
+      <div id="tokenDailyRange" class="muted" style="font-size:11px;margin:0 0 8px">불러오는 중…</div>
+      <div id="tokenDailyHost"></div>
+      <div class="muted" style="font-size:12px;margin:14px 0 6px;border-top:1px solid #222a36;padding-top:10px">완료된 목표의 <b>토큰 사용량</b>을 <b>완료 시각</b> 기준으로 묶습니다. 위의 <b>스프린트</b>·<b>완료 컷오프</b> 필터가 그대로 적용됩니다.</div>
       <div id="tokenHost"></div>
     </div>
 
@@ -2888,6 +2903,14 @@ function tkDayKey(epochSec){
   return 3;
 }
 const TK_GROUPS=[[0,'오늘'],[1,'어제'],[2,'이번 주'],[3,'이전'],[9,'완료 시각 미상']];
+// 일별 그룹용: 완료 시각(epoch초) → 'YYYY-MM-DD'(로컬), 그리고 그 날의 사람용 라벨(요일 포함).
+function tkDayStr(epochSec){ return histDayStr(new Date(epochSec*1000)); }
+function tkDayLabel(dayStr){
+  const wd=['일','월','화','수','목','금','토'][new Date(dayStr+'T00:00:00').getDay()];
+  const diff=daysBetween(dayStr, histDayStr(new Date()));   // 0=오늘, 1=어제 …
+  const rel=(diff===0)?' · 오늘':(diff===1?' · 어제':'');
+  return dayStr+' ('+wd+')'+rel;
+}
 // 읽기 전용 스프린트 코드 태그 (스프 배지와 달리 클릭 편집 없음 — id 충돌 방지).
 function tkSprintTag(g,goals){
   const n=effSprint(g,goals);
@@ -2903,9 +2926,66 @@ function tkRow(g,goals){
     +'<span class="tkn" title="이 목표에 누적된 토큰">'+(g.tokens||0)+' K</span>'
     +'</div>';
 }
+// ===== 일별 실토큰 타임라인 — /tokens.json(트랜스크립트 합산)에서 하루당 한 줄 =====
+// 히스토리 뷰와 같은 기간 필터(오늘·어제·7일·한달·3달 + 직접 범위). 서버는 최신 N일을 주므로
+// 캐시된 전체에서 선택 범위만 잘라 렌더 — 범위가 캐시 안이면 재fetch 없이 무비용.
+let _tkDaily=null, _tkDailyLoading=false, _tkFetchedDays=0;
+let _tkStart='', _tkEnd='', _tkPreset='3m';
+function syncTkInputs(){ const a=$('tkFrom'),b=$('tkTo'); if(a)a.value=_tkStart; if(b)b.value=_tkEnd; }
+function reflectTkBtn(){ ['today','yesterday','7d','1m','3m'].forEach(k=>{ const b=$('tr_'+k); if(b) b.classList.toggle('primary', k===_tkPreset); }); }
+function setTkRange(preset){
+  _tkPreset=preset;
+  _tkStart=histPresetStart(preset);
+  _tkEnd=(preset==='yesterday') ? _tkStart : histDayStr(new Date());
+  syncTkInputs(); loadTokenDaily();
+}
+function onTkDate(){
+  const a=$('tkFrom'),b=$('tkTo'); if(!a||!b) return;
+  if(a.value) _tkStart=a.value; if(b.value) _tkEnd=b.value;
+  if(_tkStart>_tkEnd){ const t=_tkStart; _tkStart=_tkEnd; _tkEnd=t; syncTkInputs(); }
+  _tkPreset='';                    // 직접 입력하면 퀵버튼 선택 해제
+  loadTokenDaily();
+}
+function loadTokenDaily(force){
+  if(!_tkStart){ _tkPreset='3m'; _tkEnd=histDayStr(new Date()); _tkStart=histPresetStart('3m'); syncTkInputs(); }  // 최초 진입 기본값: 3달
+  reflectTkBtn();
+  if(_tkDailyLoading) return;
+  const need=Math.max(1, daysBetween(_tkStart, histDayStr(new Date()))+1);   // 시작~오늘을 덮을 일수
+  if(_tkDaily && !force && need<=_tkFetchedDays){ renderTokenDaily(); return; }  // 캐시 우선
+  _tkDailyLoading=true;
+  const rng=$('tokenDailyRange'); if(rng) rng.textContent='불러오는 중…';
+  fetch('/tokens.json?days='+need).then(x=>x.json()).then(j=>{
+    _tkDaily=(j&&j.days)||[]; _tkFetchedDays=need; _tkDailyLoading=false; renderTokenDaily();
+  }).catch(()=>{ _tkDailyLoading=false; const h=$('tokenDailyHost'); if(h) h.innerHTML='<div class="muted" style="padding:6px 0">일별 토큰을 불러오지 못했습니다</div>'; });
+}
+function renderTokenDaily(){
+  reflectTkBtn();
+  const host=$('tokenDailyHost'); if(!host) return;
+  // 캐시된 전체에서 선택 범위(_tkStart~_tkEnd)만 골라 렌더. 날짜 문자열(YYYY-MM-DD)은 사전순=시간순.
+  const days=(_tkDaily||[]).filter(d=> d.day>=_tkStart && d.day<=_tkEnd);
+  const rng=$('tokenDailyRange');
+  const totalK=days.reduce((a,d)=>a+(d.k||0),0);
+  if(rng) rng.innerHTML=(days.length? (days.length+'일 기록 · 합계 <b>'+totalK+'</b> K') : '기간 내 토큰 기록 없음')+' · 시각 '+tzLabel()+' 기준';
+  if(!days.length){ host.innerHTML='<div class="empty">선택한 기간('+_tkStart+' ~ '+_tkEnd+')에 토큰 기록이 없습니다</div>'; return; }
+  const mx=Math.max(1,...days.map(d=>d.k||0));
+  const todayStr=histDayStr(new Date());
+  host.innerHTML=days.map(d=>{
+    const k=d.k||0, w=Math.round(100*k/mx);
+    const bar='<div style="position:relative;background:#2a2f3a;border-radius:4px;height:9px;width:180px;flex:0 0 auto">'
+      +'<div style="position:absolute;left:0;top:0;height:9px;border-radius:4px;width:'+w+'%;background:#8f6fe3"></div></div>';
+    return '<div class="panel" style="margin:0 0 6px;padding:8px 14px">'
+      +'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+      +'<b style="font-variant-numeric:tabular-nums;min-width:150px'+(d.day===todayStr?';color:#e8a13a':'')+'">'+esc(tkDayLabel(d.day))+'</b>'
+      +bar
+      +'<b style="font-variant-numeric:tabular-nums;min-width:80px;text-align:right">'+k+' K</b>'
+      +'<span class="muted" style="font-size:11px">세션 '+(d.sessions||0)+'개</span>'
+      +'</div></div>';
+  }).join('');
+}
 function renderTokenView(r){
   const all=(r&&r.goals)||[]; _goals=all;
   updateFilterButtons();
+  loadTokenDaily();   // 일별 실토큰 타임라인(트랜스크립트 합산) — 캐시되어 재호출은 무비용
   const host=$('tokenHost'); if(!host) return;
   // 완료된 목표만: 상태 콤보와 무관하게 done만 본다(토큰 뷰의 본분). 단, 릴리즈 숨김·스프린트
   // 콤보·완료 컷오프는 다른 뷰와 동일하게 적용해 "특정 스프린트·특정 기간"으로 좁힐 수 있게 한다.
@@ -2914,16 +2994,20 @@ function renderTokenView(r){
   if(!list.length){ host.innerHTML='<div class="muted" style="padding:8px 0">표시할 완료 목표가 없습니다 (스프린트·완료 컷오프 필터를 확인하세요).</div>'; return; }
   const sumTok=gs=>gs.reduce((a,g)=>a+(g.tokens||0),0);
   const total=sumTok(list);
-  // 완료일 그룹으로 분배.
-  const byDay={}; TK_GROUPS.forEach(d=>byDay[d[0]]=[]);
-  list.forEach(g=>{ byDay[tkDayKey(goalCompletedAt(g,all))].push(g); });
+  // 상단 요약용 거친 버킷(오늘·어제·이번 주 즉시 비교). 아래 섹션은 실제 일별로 따로 묶는다.
+  const coarse={}; TK_GROUPS.forEach(d=>coarse[d[0]]=[]);
+  list.forEach(g=>{ coarse[tkDayKey(goalCompletedAt(g,all))].push(g); });
+  // 완료일(YYYY-MM-DD)별 분배 — 히스토리 뷰처럼 하루 단위로 본다. 완료 시각 미상은 ''로 모아 맨 뒤.
+  const byDay={};
+  list.forEach(g=>{ const c=goalCompletedAt(g,all); const k=c?tkDayStr(c):''; (byDay[k]=byDay[k]||[]).push(g); });
+  const dayKeys=Object.keys(byDay).sort((a,b)=>{ if(a==='')return 1; if(b==='')return -1; return a<b?1:-1; });  // 최신일 먼저
   const newestFirst=(a,b)=>(goalCompletedAt(b,all)-goalCompletedAt(a,all))||((b.seq||0)-(a.seq||0));
   // 상단 요약: 합계 + 오늘·어제 즉시 비교 (이 뷰의 핵심 질문 — "어제 얼마나 썼나").
   let h='<div class="tksum">'
     +'<span><span class="k">합계</span> <span class="big">'+total+'</span> <span class="k">K · 완료 '+list.length+'개</span></span>'
-    +'<span><span class="k">오늘</span> <b>'+sumTok(byDay[0])+'</b> <span class="k">K</span></span>'
-    +'<span><span class="k">어제</span> <b>'+sumTok(byDay[1])+'</b> <span class="k">K</span></span>'
-    +'<span><span class="k">이번 주</span> <b>'+sumTok(byDay[2])+'</b> <span class="k">K</span></span>'
+    +'<span><span class="k">오늘</span> <b>'+sumTok(coarse[0])+'</b> <span class="k">K</span></span>'
+    +'<span><span class="k">어제</span> <b>'+sumTok(coarse[1])+'</b> <span class="k">K</span></span>'
+    +'<span><span class="k">이번 주</span> <b>'+sumTok(coarse[2])+'</b> <span class="k">K</span></span>'
     +'</div>';
   // 스프린트별 합계 (보이는 목록 기준, 토큰 많은 순) — "어느 스프린트에 썼나".
   const spTok={}; list.forEach(g=>{ const n=effSprint(g,all); spTok[n]=(spTok[n]||0)+(g.tokens||0); });
@@ -2932,12 +3016,14 @@ function renderTokenView(r){
     h+='<div class="tkspr">'+spRows.map(s=>'<span class="chip">'
       +(s[0]?esc(sprintCode(s[0])):'스프 –')+' <b>'+s[1]+'</b> K</span>').join('')+'</div>';
   }
-  // 완료일 그룹 섹션 — 비어 있는 그룹은 건너뛴다. 각 섹션 머리글에 그룹 토큰 합계.
-  TK_GROUPS.forEach(d=>{
-    const gs=byDay[d[0]]; if(!gs.length) return;
+  // 일별 섹션 — 하루당 한 그룹. 머리글에 날짜(요일)·완료 개수·그 날 토큰 합계. 최신일이 위.
+  const todayStr=histDayStr(new Date());
+  dayKeys.forEach(k=>{
+    const gs=byDay[k]; if(!gs.length) return;
     gs.sort(newestFirst);
-    h+='<div class="schsec'+(d[0]===0?' today':'')+'">'
-      +'<div class="schsec-hd">'+d[1]+'<span class="cnt">'+gs.length+'개</span>'
+    const label=(k==='')?'완료 시각 미상':tkDayLabel(k);
+    h+='<div class="schsec'+(k===todayStr?' today':'')+'">'
+      +'<div class="schsec-hd">'+esc(label)+'<span class="cnt">'+gs.length+'개</span>'
       +'<span class="tot">'+sumTok(gs)+' K</span></div>'
       +gs.map(g=>tkRow(g,all)).join('')+'</div>';
   });

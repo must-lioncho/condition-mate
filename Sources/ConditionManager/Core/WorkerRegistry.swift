@@ -128,8 +128,8 @@ final class WorkerRegistry {
 
     // A worker is "active" when it fired recently relative to its schedule. We
     // allow two intervals plus a few seconds of slack before calling it idle, so a
-    // single slow tick doesn't flip the badge. Conditional workers (the BGM
-    // director, the menu-bar bard) naturally read as idle once they stop firing.
+    // single slow tick doesn't flip the badge. Conditional workers (e.g. the BGM
+    // director) naturally read as idle once they stop firing.
     private func isActive(_ w: Worker, now: Date) -> Bool {
         guard let last = w.lastRun else { return false }
         let slack = max(3.0, w.interval * 2)

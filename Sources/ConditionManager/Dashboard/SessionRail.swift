@@ -212,7 +212,7 @@ enum SessionRail {
           .cmsk-sminput:focus{ border-color:#3d63b8 }
           .cmsk-mini{ flex:none; background:#20283a; border:1px solid #2f3a54; color:#e7ecf4; border-radius:6px;
             padding:6px 11px; font-size:12px; font-weight:600; cursor:pointer }
-          .cmsk-mini.pri{ background:#2f5bd0; border-color:#3d63b8 }
+          .cmsk-mini.cmsk-pri{ background:#2f5bd0; border-color:#3d63b8 }
           .cmsk-mini:hover{ filter:brightness(1.12) }
           .cmsk-empty{ padding:44px 14px; color:#6b7589; text-align:center }
           .cmsk-foot{ padding:12px 14px 0; color:#5d6678; font-size:12px }
@@ -328,7 +328,7 @@ enum SessionRail {
             var prev=c1.querySelector('.cmsk-edrow'); if(prev) prev.remove();
             var box=document.createElement('div'); box.className='cmsk-edrow';
             box.innerHTML='<input class="cmsk-sminput" maxlength="200" placeholder="한줄 요약을 입력…" value="'+escAttr(cur||'')+'">'
-              +'<button class="cmsk-mini pri" data-a="save">저장</button>'
+              +'<button class="cmsk-mini cmsk-pri" data-a="save">저장</button>'
               +'<button class="cmsk-mini" data-a="cancel">취소</button>';
             c1.appendChild(box);
             var inp=box.querySelector('.cmsk-sminput'); inp.focus(); inp.select();

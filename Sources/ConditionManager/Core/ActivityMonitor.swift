@@ -25,6 +25,24 @@ final class ActivityMonitor {
     // Live APM as a 0...1 fraction of the fixed redline.
     var apmNorm: Double { min(1.0, instantAPM / apmRedline) }
 
+    // Rolling 1-minute average APM (actual actions over the trailing 60s, scaled
+    // to per-minute). The menu-bar widget reads this instead of instantAPM so the
+    // number reflects a realistic sustained pace and stops flickering up and down
+    // each second — while the dashboard gauge keeps using the twitchy instant APM.
+    private(set) var averageAPM: Double = 0
+    private var minuteBuckets: [Int] = []           // per-tick event counts over the trailing minute
+    private let apmAverageSeconds: Double = 60.0
+
+    // "Condition" signal (0...1) for the menu-bar lightning gauge: the 1-minute
+    // average APM measured against an adaptive personal peak that slowly decays.
+    // Unlike apmNorm (fixed redline), this reads how hot the current pace is
+    // relative to your *own* recent best — 1.0 means "at your peak", low means
+    // "well below it". It mirrors ConditionDirector.lastNorm (activity/peak) but
+    // is computed here on the always-live sampler, so the gauge keeps moving even
+    // when BGM/디렉터 is stopped (plugin not installed, idle, untracked app).
+    private(set) var conditionNorm: Double = 0
+    private var conditionPeak: Double = 1
+
     private(set) var lastEventDate: Date = Date()
 
     private var monitors: [Any] = []
@@ -94,8 +112,9 @@ final class ActivityMonitor {
     // 10 Hz: roll sub-second event counts through a short window and recompute the
     // live APM, so the gauge rises and falls quickly against the fixed redline.
     private func liveSample() {
-        apmBuckets.append(liveCount)
+        let live = liveCount
         liveCount = 0
+        apmBuckets.append(live)
         let maxBuckets = max(1, Int((apmWindowSeconds / liveInterval).rounded()))
         if apmBuckets.count > maxBuckets { apmBuckets.removeFirst() }
         let sum = apmBuckets.reduce(0, +)
@@ -109,6 +128,17 @@ final class ActivityMonitor {
         } else {
             instantAPM += (raw - instantAPM) * releaseAlpha
         }
+
+        // Rolling 1-minute average: sum the same per-tick counts over a 60s window.
+        // Before the window fills, scale by the elapsed span so it reads correctly
+        // from the first minute. This is a plain average, no envelope, so the
+        // menu-bar number moves smoothly instead of twitching each second.
+        minuteBuckets.append(live)
+        let maxMinute = max(1, Int((apmAverageSeconds / liveInterval).rounded()))
+        if minuteBuckets.count > maxMinute { minuteBuckets.removeFirst() }
+        let mSum = minuteBuckets.reduce(0, +)
+        let mSpan = Double(minuteBuckets.count) * liveInterval
+        averageAPM = Double(mSum) * 60.0 / max(liveInterval, mSpan)
     }
 
     private func sample() {
@@ -121,6 +151,14 @@ final class ActivityMonitor {
         mouseSmoothed = mouseSmoothed * (1 - smoothingAlpha) + mousePerMin * smoothingAlpha
         keyRate = keySmoothed
         mouseRate = mouseSmoothed
+
+        // Adaptive personal peak with a slow decay (~6 min half-life at this 5s
+        // cadence) so a single burst doesn't pin the scale forever, then express
+        // the current sustained pace as a fraction of it. Floor the peak at 1 so a
+        // quiet session reads as low condition rather than dividing toward 0/0.
+        conditionPeak = max(conditionPeak * 0.99, max(averageAPM, 1))
+        conditionNorm = min(1.0, averageAPM / conditionPeak)
+
         WorkerRegistry.shared.recordRun("activity-sample",
             why: "5초 입력 집계·평활화",
             effect: "APM \(Int(instantAPM)) · ⌨ \(Int(keyRate))/분 · 🖱 \(Int(mouseRate))/분")

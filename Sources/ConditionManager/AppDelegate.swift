@@ -71,6 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if path.hasPrefix("/history.json") {
                 return self?.dashboardHistory(path)
             }
+            if path.hasPrefix("/tokens.json") {
+                return self?.dashboardTokens(path)
+            }
             return nil
         },
         sse: { [weak self] path, channel in self?.handleChat2Stream(path, channel) }
@@ -82,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var siteRefreshing = false
 
     private var statusItem: NSStatusItem!
-    private var bard: MenuBarBard!
+    private var gauge: LightningGauge!
     private var menuController: MenuController!
     private var heartbeat: Timer?
     private var tick: Int = 0
@@ -171,6 +174,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sessionSeenSize: [String: Int] = [:]
     private var sessionPendingAsk: [String: Bool] = [:]   // last tail had an unanswered AskUserQuestion
     private var sessionTurnEnded: [String: Bool] = [:]     // last tail was a finished assistant turn (awaiting human)
+    // Per-transcript token-by-day cache: parsing every ~/.claude/projects/*.jsonl on each
+    // poll would be costly, so remember (mtime, size) -> per-day token totals and re-parse a
+    // file only when it changes. Keyed by absolute path. Guarded by tokenDayLock.
+    private var tokenDayCache: [String: (mtime: Date, size: Int, days: [String: Int])] = [:]
+    private let tokenDayLock = NSLock()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         director = ConditionDirector(activity: activity, library: library, audio: audio, prefStore: trackPrefs)
@@ -186,10 +194,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // the title never jiggles as the digit count changes (ofSize 0 = default).
             button.font = .monospacedDigitSystemFont(ofSize: 0, weight: .regular)
         }
-        // Pixel-art bard: idle by default, plays a buff performance once a minute
-        // while a work session is active. Drives only the button image; the clock
-        // text is the button title (updateStatusTitle).
-        bard = MenuBarBard { [weak self] image in
+        // Lightning condition gauge: a single bolt that charges bottom-up across
+        // five stages and shifts colour with the live condition (활동/개인 최고치
+        // 비율). Drives only the button image; the APM/clock text is the button
+        // title (updateStatusTitle).
+        gauge = LightningGauge { [weak self] image in
             self?.statusItem.button?.image = image
         }
         menuController = MenuController(delegate: self)
@@ -245,7 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.saveIfNeeded()
         director.stop()
         activity.stop()
-        bard?.stop()
+        gauge?.showIdle()
         heartbeat?.invalidate()
         titleTimer?.invalidate()
     }
@@ -269,8 +278,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // not core — installing that plugin is what brings BGM online.
         r.register(id: "autosave", name: "상태 저장",
                    detail: "누적 시간 디스크 플러시", interval: 30)
-        r.register(id: "bard", name: "메뉴바 음유시인",
-                   detail: "분당 버프 애니메이션(세션 활성 시)", interval: 60)
         r.register(id: "timeline-sample", name: "타임라인 기록",
                    detail: "분 단위 활동 샘플을 대시보드 타임라인에 적립", interval: sampleInterval)
         // QA agent: an EXTERNAL automation (launchd → claude -p, see Scripts/qa-scan.sh)
@@ -836,16 +843,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatusTitle() {
         guard let button = statusItem.button else { return }
-        // 스포츠 모드: while working, show live APM (bounces up/down each heartbeat) —
-        // the same redline-relative number the dashboard gauge tweens, for in-the-moment
-        // focus and a bit of fun. Idle has no APM, so it falls through to the clock below.
+        // The lightning bolt (button image) IS the condition indicator now — it
+        // charges bottom-up across five stages from the live 활동/최고치 비율. Cheap
+        // to call every refresh; it only swaps the image when the stage changes.
+        gauge.update(norm: activity.conditionNorm, working: isWorking)
+        // 스포츠 모드: while working, show the 1-minute average APM — a realistic
+        // sustained pace rather than the twitchy instant value, so the digit no
+        // longer jumps up and down every second. The dashboard gauge still tweens
+        // the live instant APM for in-the-moment focus and fun. Idle has no APM, so
+        // it falls through to the clock below.
         if menuBarMode == .sports && isWorking {
-            // Glide the displayed value toward the live target. Asymmetric envelope
-            // (fast attack, slower release) keeps bursts twitchy while the descent
-            // stays smooth — matching the dashboard gauge's feel. At ~20 Hz these
-            // alphas converge in a few hundred ms; snap when essentially there so the
-            // digit settles instead of crawling the last fraction.
-            let target = activity.instantAPM
+            // Glide the displayed value toward the (already smooth) 1-min average.
+            // Asymmetric envelope keeps a brief rise snappy while the descent stays
+            // smooth; snap when essentially there so the digit settles instead of
+            // crawling the last fraction.
+            let target = activity.averageAPM
             let alpha = target >= displayedAPM ? 0.45 : 0.20
             displayedAPM += (target - displayedAPM) * alpha
             if abs(target - displayedAPM) < 0.5 { displayedAPM = target }
@@ -853,7 +865,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // APM never exceeds 4 digits, so it stops growing and never jiggles.
             let s = String(Int(displayedAPM.rounded()))
             let pad = String(repeating: "\u{2007}", count: max(0, 4 - s.count))
-            button.title = " ⚡" + pad + s
+            // No ⚡ glyph here — the bolt now lives in the button image (the gauge).
+            // A leading space keeps a small gap between the bolt and the number.
+            button.title = " " + pad + s
             return
         }
         // 타임 모드 (and 스포츠 while idle): the 토탈 시간 work span — the exact same
@@ -909,7 +923,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         committedProfileKey = ""
         frontStableSeconds = 0
         activeAppLabel = ""
-        bard.startBuffing()
+        // The gauge follows the live condition on the heartbeat; updateStatusTitle
+        // below refreshes it immediately so the bolt lights up on session start.
         updateStatusTitle()
     }
 
@@ -920,7 +935,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         activeAppLabel = ""
         director.pauseSession()
         store.saveIfNeeded()
-        bard.stop()
+        gauge.showIdle()
         updateStatusTitle()
     }
 
@@ -1758,6 +1773,110 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return "{\"days\":\(activityLog.historyJSON(days: days))}"
     }
 
+    // GET /tokens.json?days=N — real daily token usage summed from every Claude session
+    // transcript under ~/.claude/projects, bucketed by the local calendar day the message
+    // was written. This is the actual "how many tokens did I spend each day" timeline (the
+    // token view's goal-based g.tokens field is manually set and usually empty). Each day's
+    // total counts new input + output + cache-creation once; cache_read is excluded because
+    // it replays already-counted context every turn and would inflate totals by orders of
+    // magnitude (same convention as the per-session breakdown headline).
+    func dashboardTokens(_ path: String) -> String {
+        let daysStr = URLComponents(string: "http://x" + path)?.queryItems?
+            .first(where: { $0.name == "days" })?.value ?? ""
+        let days = max(1, Int(daysStr) ?? 90)
+        let fm = FileManager.default
+        // Only look back `days` from the start of today; a transcript touched before that
+        // window cannot contribute to any in-window day, so skip it by mtime (cheap stat).
+        let cutoff = Calendar.current.startOfDay(for: Date()).addingTimeInterval(-Double(days) * 86400)
+        let dayFmt = DateFormatter()
+        dayFmt.locale = Locale(identifier: "en_US_POSIX")
+        dayFmt.dateFormat = "yyyy-MM-dd"   // LOCAL time — same day boundary the rest of the UI uses
+
+        // Enumerate every project's *.jsonl. Missing base dir -> empty timeline.
+        guard let subs = try? fm.contentsOfDirectory(at: claudeProjectsBase,
+                includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+            return "{\"days\":[]}"
+        }
+        var files: [URL] = []
+        for dir in subs where (try? dir.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            let inner = (try? fm.contentsOfDirectory(at: dir,
+                includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey])) ?? []
+            for f in inner where f.pathExtension == "jsonl" { files.append(f) }
+        }
+
+        var totals: [String: Int] = [:]           // day -> tokens
+        var sessionsPerDay: [String: Set<String>] = [:]  // day -> distinct session files that spent tokens
+        for f in files {
+            let rv = try? f.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            let mtime = rv?.contentModificationDate ?? .distantPast
+            let size = rv?.fileSize ?? 0
+            if mtime < cutoff { continue }
+
+            let perDay = tokensByDay(file: f, mtime: mtime, size: size)
+            let sid = f.deletingPathExtension().lastPathComponent
+            for (day, tok) in perDay {
+                totals[day, default: 0] += tok
+                sessionsPerDay[day, default: []].insert(sid)
+            }
+        }
+
+        // Emit only in-window days (a long session can carry an out-of-window day), newest first.
+        let minDay = dayFmt.string(from: cutoff)
+        let rows = totals.keys.filter { $0 >= minDay }.sorted(by: >).map { day -> String in
+            let tokK = Int((Double(totals[day] ?? 0) / 1000.0).rounded())   // tokens -> K, matches UI unit
+            let sess = sessionsPerDay[day]?.count ?? 0
+            return "{\"day\":\(jsonString(day)),\"tokens\":\(totals[day] ?? 0),\"k\":\(tokK),\"sessions\":\(sess)}"
+        }
+        return "{\"days\":[\(rows.joined(separator: ","))]}"
+    }
+
+    // Parse one transcript into per-local-day token totals (input + output + cache-creation;
+    // cache_read excluded to avoid replayed-context inflation). Cached by (mtime,size) so an
+    // unchanged file is never re-parsed — the live/growing session re-parses, completed ones
+    // stay cached. Shared by the daily timeline and the per-session goal total.
+    private func tokensByDay(file: URL, mtime: Date, size: Int) -> [String: Int] {
+        let key = file.path
+        tokenDayLock.lock()
+        let cached = tokenDayCache[key]
+        tokenDayLock.unlock()
+        if let c = cached, c.mtime == mtime, c.size == size { return c.days }
+
+        var perDay: [String: Int] = [:]
+        let dayFmt = DateFormatter()
+        dayFmt.locale = Locale(identifier: "en_US_POSIX")
+        dayFmt.dateFormat = "yyyy-MM-dd"   // LOCAL time — same day boundary as the rest of the UI
+        if let data = try? Data(contentsOf: file) {
+            String(decoding: data, as: UTF8.self).enumerateLines { line, _ in
+                guard let d = line.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                      (obj["type"] as? String) == "assistant",
+                      let msg = obj["message"] as? [String: Any],
+                      let usage = msg["usage"] as? [String: Any],
+                      let tsStr = obj["timestamp"] as? String,
+                      let ts = self.parseTS(tsStr) else { return }
+                let input = (usage["input_tokens"] as? Int) ?? 0
+                let output = (usage["output_tokens"] as? Int) ?? 0
+                let cc = (usage["cache_creation_input_tokens"] as? Int) ?? 0
+                let spent = input + output + cc
+                if spent == 0 { return }
+                perDay[dayFmt.string(from: ts), default: 0] += spent
+            }
+        }
+        tokenDayLock.lock(); tokenDayCache[key] = (mtime, size, perDay); tokenDayLock.unlock()
+        return perDay
+    }
+
+    // Real token total (in K) for a goal's linked Claude session, summed from its transcript.
+    // 0 when no transcript resolves. Cached via tokensByDay, so a completed goal parses once.
+    private func sessionTokenK(for goal: ReviewStore.Goal) -> Int {
+        guard let url = resolveTranscript(goal) else { return 0 }
+        let rv = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let mtime = rv?.contentModificationDate ?? .distantPast
+        let size = rv?.fileSize ?? 0
+        let total = tokensByDay(file: url, mtime: mtime, size: size).values.reduce(0, +)
+        return Int((Double(total) / 1000.0).rounded())
+    }
+
     // Tiny real-time payload for the APM gauge, polled at 1 Hz (separate from the
     // heavier 5s /data.json so the needle moves like a game HUD).
     func liveData() -> String {
@@ -1799,9 +1918,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         + "\"title\":\(jsonString(e.title)),\"href\":\(jsonString(href)),"
                         + "\"addedAt\":\(e.addedAt.timeIntervalSince1970)}"
                 }.joined(separator: ",")
+                // Tokens: the manual g.tokens field wins when set; otherwise fall back to the
+                // real total parsed from this goal's linked session transcript (cached), so the
+                // token view shows actual usage instead of an empty 0.
+                let effTokens = g.tokens > 0 ? g.tokens : self.sessionTokenK(for: g)
                 return "{\"id\":\(jsonString(g.id)),\"seq\":\(g.seq),\"text\":\(jsonString(g.text)),\"parent\":\(jsonString(g.parent)),"
                     + "\"status\":\(jsonString(g.status)),\"trackedSeconds\":\(g.trackedSeconds),\"startedAt\":\(started),\"waitingSince\":\(waiting),"
-                    + "\"energy\":\(g.energy),\"agents\":[\(agents)],\"tokens\":\(g.tokens),\"value\":\(g.value),"
+                    + "\"energy\":\(g.energy),\"agents\":[\(agents)],\"tokens\":\(effTokens),\"value\":\(g.value),"
                     + "\"evidence\":[\(evidence)],\"sessionId\":\(jsonString(g.sessionId)),"
                     + "\"targetAt\":\(target),\"completedAt\":\(completed),"
                     + "\"sprint\":\(g.sprint),\"bump\":\(g.bump),\"released\":\(g.released),\"archived\":\(g.archived),\"priority\":\(jsonString(g.priority))}"
