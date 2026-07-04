@@ -1005,6 +1005,12 @@ final class ReviewStore {
             idx = i
             if !label.isEmpty { goals[idx].text = label }   // refresh to the current aiTitle
         } else {
+            // Backstop for the marker in the session hook: the app's own internal claude
+            // workers (dedup/semantic/triage judges, UI-QA/bug-hunt passes) run with a
+            // system prompt that echoes into the title as "You are a ...". They should be
+            // filtered at the hook (CM_INTERNAL_WORKER), but if one slips through, never
+            // MINT a new goal from that system-prompt echo — it is not a user objective.
+            if label.hasPrefix("You are ") { return }
             let title = label.isEmpty ? "Claude 세션 \(sid.prefix(8))" : label
             goals.append(Goal(id: UUID().uuidString, seq: nextSeq(), text: title, sessionId: sid))
             idx = goals.count - 1

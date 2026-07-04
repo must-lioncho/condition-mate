@@ -32,6 +32,13 @@ field() {
 sid="$(field session_id)"
 [ -z "$sid" ] && exit 0
 
+# App-internal claude workers (dedup/semantic/triage/refine/chat in AppDelegate, plus the
+# launchd QA / bug-hunt / fix agents) run under this same project dir, so these hooks fire
+# for them too and would mirror each into a noise goal titled with its system prompt
+# ("You are a ... judge/engine/pass"). Those spawns mark their environment with
+# CM_INTERNAL_WORKER=1 — never mirror them; only real user sessions become goals.
+[ -n "$CM_INTERNAL_WORKER" ] && exit 0
+
 # The data dir mirrors AppPaths.base. Resolution order, so the hook always reaches the
 # same store the app writes to:
 #   1. CM_DATA_DIR            - explicit override (tests / custom runs)

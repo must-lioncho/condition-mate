@@ -33,6 +33,11 @@ WORKER_ID="qa-agent"
 # `python3`, and `curl` resolve.
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
+# `claude -p` below runs under the project dir, where the project session hooks
+# (cc-session-hook.sh) fire. Mark the environment so the hook skips mirroring this internal
+# QA session into a dashboard goal — this script reports its own status via /api/worker/ping.
+export CM_INTERNAL_WORKER=1
+
 # Project root = two levels up from this script (…/condition-manager/Scripts/qa-scan.sh).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"

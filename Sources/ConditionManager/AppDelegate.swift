@@ -2798,6 +2798,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var env = ProcessInfo.processInfo.environment
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        // App-internal claude: these run under the project cwd, so the project's session
+        // hooks (cc-session-hook.sh) would otherwise mirror them into noise goals. The mark
+        // tells the hook to skip this session. See ReviewStore.recordSession for the backstop.
+        env["CM_INTERNAL_WORKER"] = "1"
         p.environment = env
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
@@ -2914,6 +2918,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var env = ProcessInfo.processInfo.environment
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        // App-internal claude: these run under the project cwd, so the project's session
+        // hooks (cc-session-hook.sh) would otherwise mirror them into noise goals. The mark
+        // tells the hook to skip this session. See ReviewStore.recordSession for the backstop.
+        env["CM_INTERNAL_WORKER"] = "1"
         p.environment = env
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
@@ -2983,6 +2991,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var env = ProcessInfo.processInfo.environment
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        // App-internal claude: these run under the project cwd, so the project's session
+        // hooks (cc-session-hook.sh) would otherwise mirror them into noise goals. The mark
+        // tells the hook to skip this session. See ReviewStore.recordSession for the backstop.
+        env["CM_INTERNAL_WORKER"] = "1"
         p.environment = env
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
@@ -3081,6 +3093,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var env = ProcessInfo.processInfo.environment
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        // App-internal claude: these run under the project cwd, so the project's session
+        // hooks (cc-session-hook.sh) would otherwise mirror them into noise goals. The mark
+        // tells the hook to skip this session. See ReviewStore.recordSession for the backstop.
+        env["CM_INTERNAL_WORKER"] = "1"
         p.environment = env
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
@@ -3256,6 +3272,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var env = ProcessInfo.processInfo.environment
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        // App-internal claude: these run under the project cwd, so the project's session
+        // hooks (cc-session-hook.sh) would otherwise mirror them into noise goals. The mark
+        // tells the hook to skip this session. See ReviewStore.recordSession for the backstop.
+        env["CM_INTERNAL_WORKER"] = "1"
         p.environment = env
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
@@ -3715,6 +3735,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var env = ProcessInfo.processInfo.environment
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        // App-internal claude: these run under the project cwd, so the project's session
+        // hooks (cc-session-hook.sh) would otherwise mirror them into noise goals. The mark
+        // tells the hook to skip this session. See ReviewStore.recordSession for the backstop.
+        env["CM_INTERNAL_WORKER"] = "1"
         p.environment = env
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
