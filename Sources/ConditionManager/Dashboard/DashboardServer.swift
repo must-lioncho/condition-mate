@@ -205,10 +205,40 @@ final class DashboardServer {
                 send(conn, status: "404 Not Found", contentType: "text/plain; charset=utf-8",
                      body: Data("not found".utf8), extra: "")
             }
+        } else if method == "GET" && path.hasPrefix("/api/debug/snapshot") {
+            // QA-only: PNG snapshot of the app window's WKWebView, for SPEC.html screenshots.
+            // Synchronous like every other GET here — the app blocks this thread on a semaphore
+            // while it hops to main for WKWebView.takeSnapshot (see AppDelegate.appWindowSnapshotPNG).
+            if let (bytes, ctype, _) = self.file(path) {
+                send(conn, status: "200 OK", contentType: ctype, body: bytes, extra: "")
+            } else {
+                send(conn, status: "404 Not Found", contentType: "text/plain; charset=utf-8",
+                     body: Data("snapshot unavailable (window not open, or webview not loaded)".utf8), extra: "")
+            }
+        } else if method == "GET" && path.hasPrefix("/bgm-audio/") {
+            // BGM library track: inline audio so the BGM view's player streams it same-origin.
+            // Honor HTTP Range (206) so <audio> seeking works and Safari/WebKit will start playback.
+            if let (bytes, ctype, _) = self.file(path) {
+                let total = bytes.count
+                if let (lo, hi) = Self.parseRange(headerText, total: total) {
+                    let slice = bytes.subdata(in: lo..<(hi+1))
+                    let extra = "Accept-Ranges: bytes\r\nContent-Range: bytes \(lo)-\(hi)/\(total)\r\n"
+                    send(conn, status: "206 Partial Content", contentType: ctype, body: slice, extra: extra)
+                } else {
+                    send(conn, status: "200 OK", contentType: ctype, body: bytes, extra: "Accept-Ranges: bytes\r\n")
+                }
+            } else {
+                send(conn, status: "404 Not Found", contentType: "text/plain; charset=utf-8",
+                     body: Data("not found".utf8), extra: "")
+            }
         } else if method == "GET" && (path.hasPrefix("/api/goal/chat") || path.hasPrefix("/api/goal/definition")
                                       || path.hasPrefix("/api/goal/sessions") || path.hasPrefix("/api/sessions/recent")
                                       || path.hasPrefix("/api/cli/sessions") || path.hasPrefix("/api/skills")
-                                      || path.hasPrefix("/history.json") || path.hasPrefix("/tokens.json")) {
+                                      || path.hasPrefix("/api/agents")
+                                      || path.hasPrefix("/history.json") || path.hasPrefix("/tokens.json")
+                                      || path.hasPrefix("/workers.json")
+                                      || path.hasPrefix("/api/bgm/list") || path.hasPrefix("/api/bgm/now")
+                                      || path.hasPrefix("/api/bgm/stats") || path.hasPrefix("/api/session/state")) {
             // Per-goal chat, the raw core/detail definition text, the goal's linked-session
             // list, the recent-session picker feed (all keyed by ?seq=), and the 히스토리
             // tab's per-day activity feed. Dynamic, so routed via apiGet.
@@ -227,7 +257,7 @@ final class DashboardServer {
         } else if path.hasPrefix("/data.json") {
             send(conn, status: "200 OK", contentType: "application/json; charset=utf-8",
                  body: Data(self.data().utf8), extra: "")
-        } else if method == "GET" && (path.hasPrefix("/transcript") || path.hasPrefix("/breakdown") || path.hasPrefix("/worker") || path.hasPrefix("/goal")) {
+        } else if method == "GET" && (path.hasPrefix("/transcript") || path.hasPrefix("/breakdown") || path.hasPrefix("/worker") || path.hasPrefix("/cron") || path.hasPrefix("/goal") || path.hasPrefix("/bgm-player")) {
             if let pageHTML = self.page(path) {
                 send(conn, status: "200 OK", contentType: "text/html; charset=utf-8",
                      body: Data(pageHTML.utf8), extra: "")
@@ -290,6 +320,32 @@ final class DashboardServer {
         guard let firstLine = request.split(separator: "\r\n", maxSplits: 1).first,
               let m = firstLine.split(separator: " ").first else { return "GET" }
         return String(m)
+    }
+
+    // Parse a single "Range: bytes=lo-hi" header into an inclusive, clamped byte range.
+    // Supports "lo-", "lo-hi", and suffix "-N". Returns nil when absent/unparseable so the
+    // caller falls back to a full 200 response.
+    private static func parseRange(_ request: String, total: Int) -> (Int, Int)? {
+        guard total > 0 else { return nil }
+        for line in request.split(separator: "\r\n") {
+            guard line.lowercased().hasPrefix("range:"), let eq = line.firstIndex(of: "=") else { continue }
+            let spec = line[line.index(after: eq)...].split(separator: ",").first.map(String.init) ?? ""
+            let parts = spec.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { return nil }
+            let a = parts[0].trimmingCharacters(in: .whitespaces)
+            let b = parts[1].trimmingCharacters(in: .whitespaces)
+            var lo: Int, hi: Int
+            if a.isEmpty {
+                guard let n = Int(b), n > 0 else { return nil }
+                lo = max(0, total - n); hi = total - 1
+            } else {
+                guard let s = Int(a) else { return nil }
+                lo = s; hi = b.isEmpty ? total - 1 : (Int(b) ?? total - 1)
+            }
+            lo = max(0, lo); hi = min(total - 1, hi)
+            return lo <= hi ? (lo, hi) : nil
+        }
+        return nil
     }
 
     private static func contentLength(_ header: String) -> Int {

@@ -30,5 +30,12 @@
     <!-- Reading the active browser tab's URL (per-site activity) uses Apple Events. -->
     <key>NSAppleEventsUsageDescription</key>
     <string>활성 브라우저 탭의 사이트를 읽어 활동 종류(리서치/시청)를 구분합니다.</string>
+    <!-- The BGM window's WKWebView loads the app's own loopback server over http (127.0.0.1).
+         Allow local networking so ATS does not block it. Only loopback is permitted. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
 </dict>
 </plist>

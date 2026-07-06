@@ -11,7 +11,7 @@ import Foundation
 enum DashboardContent {
     static func html(lastView: String = "input", doneCutoff: Double? = nil, uiPrefs: String? = nil) -> String {
         // Clamp to a known view key so the injected JS literal can never be malformed.
-        let valid: Set<String> = ["input", "group", "table", "token", "schedule", "preview", "sprint", "archived", "history"]
+        let valid: Set<String> = ["input", "group", "table", "token", "queue", "schedule", "preview", "sprint", "archived", "history"]
         let view = valid.contains(lastView) ? lastView : "input"
         // Server-persisted 완료 컷오프 as a JS literal: an integer epoch (0 = 해제) when the
         // user has set one, else "DC_DEFAULT" so the client keeps its built-in default.
@@ -35,6 +35,14 @@ enum DashboardContent {
   :root{--bg:#0f1115;--panel:#171a21;--line:#232733;--mut:#8b93a7;--fg:#e7ebf3;--accent:#5b8cff;--green:#36c08a;--red:#e2667d;}
   *{box-sizing:border-box} html,body{margin:0}
   body{background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,system-ui,sans-serif}
+  /* Thin, dark-theme scrollbars everywhere (chat body, modals, popups, textareas, the
+     page body itself) — WKWebView otherwise falls back to the thick default macOS bar. */
+  *{scrollbar-width:thin;scrollbar-color:#333a4a transparent}
+  *::-webkit-scrollbar{width:8px;height:8px}
+  *::-webkit-scrollbar-track{background:transparent}
+  *::-webkit-scrollbar-thumb{background:#333a4a;border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+  *::-webkit-scrollbar-thumb:hover{background:#4a5468;border:2px solid transparent;background-clip:padding-box}
+  *::-webkit-scrollbar-corner{background:transparent}
   .wrap{max-width:980px;margin:0 auto;padding:28px 20px}
   h1{font-size:18px;margin:0 0 4px}
   h2{font-size:14px;margin:22px 0 10px;color:var(--fg)}
@@ -49,9 +57,7 @@ enum DashboardContent {
   .wrap.sports .tierpanel,
   .wrap.sports .nowtext,
   /* 스포츠 모드: 필터 요약(로그성 텍스트)은 숨기고, 타임 모드에서만 디테일하게 노출 (디버깅용) */
-  .wrap.sports #flt_summary,
-  /* 스포츠 모드: 확정 가치 아래 상세 섹션(요약·차트·타임라인·주요앱·BGM·워커) 통째로 숨김 */
-  .wrap.sports #detailSections{display:none}
+  .wrap.sports #flt_summary{display:none}
   #tiers{width:100%;display:block}
   .nowline{color:var(--mut);font-size:13px;margin:4px 0 18px}
   .nowline b{color:var(--fg);font-weight:600}
@@ -147,6 +153,7 @@ enum DashboardContent {
   .bgoal{display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);cursor:grab}
   .bgoal:last-child{border-bottom:none}
   .bgoal.dragging{opacity:.4}
+  .bgoal.dropTarget{border-top:2px solid var(--accent)}
   .bgoal.child{padding-left:24px;background:rgba(255,255,255,.015)}
   .bgoal .grip{color:#3a4150}
   .bgoal .t{flex:1;min-width:60px}
@@ -280,6 +287,12 @@ enum DashboardContent {
   .hdr{display:flex;align-items:center;justify-content:space-between;gap:12px}
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto;z-index:50}
   .overlay.on{display:flex}
+  /* 작성 중이던 목표 초안(draft) 이어쓰기 칩 — 모달을 ESC로 닫아도 입력이 남아 있으면 여기서 이어서 편집 */
+  .gadraft-chip{display:none;position:fixed;right:18px;bottom:18px;z-index:49;align-items:center;gap:6px;
+    padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--fg);
+    font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.35)}
+  .gadraft-chip:hover{border-color:var(--acc,#5b8cff)}
+  .gadraft-chip .pen{font-size:14px}
   .modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;max-width:720px;width:100%;padding:24px}
   .modal h2{margin-top:18px} .modal h2:first-child{margin-top:0}
   .modal ul{margin:6px 0;padding-left:18px} .modal li{margin:3px 0}
@@ -287,6 +300,15 @@ enum DashboardContent {
   .pill{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid var(--line);margin-right:4px}
   a.pill.gp{cursor:pointer;text-decoration:none;color:inherit}
   a.pill.gp:hover{border-color:var(--accent);color:var(--accent)}
+  .pill.lkdot{cursor:default}
+  /* 링크 확인 다이얼로그의 전/후 그래픽 */
+  .lkba{display:flex;align-items:center;gap:14px}
+  .lkcol{flex:1;min-width:0}
+  .lkcap{font-size:11px;color:var(--mut);margin-bottom:5px}
+  .lkbox{border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:13px;background:#0d1016}
+  .lknest{margin-top:4px;padding-left:8px;font-size:12px}
+  .lkchip{display:inline-block;margin-left:4px;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid var(--accent);color:var(--accent)}
+  .lkarrow{color:var(--mut);font-size:18px;flex:0 0 auto}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
   input[type=text],input[type=number]{background:#0d1016;border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:6px 9px;font-size:13px}
   input[type=range]{vertical-align:middle}
@@ -489,7 +511,99 @@ enum DashboardContent {
   @keyframes qpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}
   .qrow{display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line);transition:background .2s}
   .qrow.analyzing{background:rgba(64,200,120,0.10);border-radius:6px;padding:6px 8px;border-top-color:transparent}
+  .qrow.qconfirm{background:rgba(54,192,138,0.10);border:1px solid #2a5a3c;border-radius:8px;padding:8px 10px;border-top-color:transparent;align-items:center;gap:10px}
   .qspin{display:inline-block;animation:cpd 1.2s infinite}
+  /* 검토 대기 항목: 번호를 입력하거나 클릭해 선택하는 옵션 목록. 1번은 (추천), 마지막은 직접 입력. */
+  .qchoice{margin-top:8px;display:flex;flex-direction:column;gap:5px}
+  .qopt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:8px;padding:8px 11px;cursor:pointer;background:#0f131b;transition:border-color .15s,background .15s}
+  .qopt:hover{border-color:var(--accent);background:#131a28}
+  .qopt.rec{border-color:#2a5a3c;background:rgba(54,192,138,.06)}
+  .qopt.rec:hover{border-color:var(--green)}
+  .qnum{flex-shrink:0;width:20px;height:20px;border-radius:6px;background:#1d2230;border:1px solid var(--line);color:var(--mut);font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}
+  .qopt.rec .qnum{background:#123024;border-color:#2a5a3c;color:var(--green)}
+  .qopt-body{flex:1;min-width:0}
+  .qopt-label{font-size:13px;font-weight:600;color:var(--fg)}
+  .qrec-tag{margin-left:6px;font-size:10px;font-weight:600;color:var(--green);border:1px solid #2a5a3c;border-radius:20px;padding:1px 7px;vertical-align:middle}
+  .qopt-desc{font-size:12px;color:var(--mut);margin-top:3px;line-height:1.45}
+  .qopt.qother,.qopt.qother:hover{cursor:default;border-color:var(--line);background:#0f131b}
+  .qother-input{width:100%;margin-top:6px;box-sizing:border-box;background:#0d1016;color:var(--fg);border:1px solid var(--accent);border-radius:7px;padding:7px 9px;font:13px/1.4 inherit;outline:none}
+  .qhint{font-size:11px;color:var(--mut);margin-top:7px}
+  /* AI 배치 제안: 독립/서브 배지 + 우선순위 칩 + 사유. confidence 낮으면 .dim 으로 흐리게. */
+  .qplace{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:5px 0 2px}
+  .qbadge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid var(--line);background:#1d2230;color:var(--fg);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+  .qbadge.top{border-color:#2a5a3c;background:rgba(54,192,138,.08);color:var(--green)}
+  .qbadge.sub{border-color:#33406a;background:rgba(91,140,255,.10);color:#9db4ff}
+  .qbadge.dim{opacity:.5}
+  .qprichip{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid var(--line);background:#0f131b}
+  .qplace .qrationale{width:100%;font-size:12px;color:var(--mut);line-height:1.45;margin-top:1px}
+  /* 오버라이드 패널: 배치/우선순위 직접 지정. 기본 닫힘, 링크로 토글. */
+  .qovr-toggle{font-size:11px;color:var(--accent);cursor:pointer;text-decoration:none;user-select:none}
+  .qovr-toggle:hover{text-decoration:underline}
+  .qovr{border:1px dashed #33406a;border-radius:8px;padding:8px 10px;margin-top:6px;background:#101627;display:flex;flex-direction:column;gap:7px}
+  .qovr-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+  .qovr-lbl{font-size:11px;color:var(--mut);min-width:44px}
+  .qovr select,.qovr input.qpin{background:#0d1016;color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:5px 8px;font:12px inherit;outline:none}
+  .qovr input.qpin{width:70px;font-variant-numeric:tabular-nums}
+  .qovr input.qpin:focus,.qovr select:focus{border-color:var(--accent)}
+
+  /* ===== Responsive (narrow-width) layout =====
+     The rail (SessionRail.swift) is a fixed 240px strip that reserves space via
+     `body{padding-left:var(--cmrail-w)}` — it is not a flex/grid sibling of .wrap, so
+     "stacking" it at narrow widths means collapsing it via the EXISTING cmrail-collapsed
+     mechanism (already ships a ☰ toggle + slide-out), not a new layout. Below ~720px the
+     rail auto-collapses so the content gets the full narrow width instead of losing 240px
+     of it. Above the breakpoint nothing here changes, so the desktop window layout is
+     untouched (the native window is always wide).
+     Self-check harness (runQaAudit, ~line 4106) flags th/.btn/.chip/short-td that wrap to
+     2+ lines or overflow — so tab/button bars get horizontal scroll (nowrap) here rather
+     than permitting them to wrap mid-label. */
+  @media (max-width: 720px){
+    /* Auto-collapse the fixed left rail so its reserved 240px doesn't eat the narrow
+       viewport; the existing ☰ toggle still lets the user pull it back out. */
+    body:not(.cmrail-force-open){ padding-left:0 }
+    body:not(.cmrail-force-open) .cmrail{ transform:translateX(-100%) }
+    body:not(.cmrail-force-open) .cmrail-toggle{ display:block }
+
+    .wrap{ padding:16px 12px }
+    /* Whenever the rail is collapsed — either by this narrow-width auto-collapse
+       (body:not(.cmrail-force-open)) or by the user's manual toggle (body.cmrail-collapsed) —
+       the floating sidebar-toggle button (SessionRail.swift, fixed at top:40px/left:12px to
+       clear the traffic lights) sits over the top-left of the page. Push the header down so
+       the subtitle text doesn't render underneath it. */
+    body:not(.cmrail-force-open) .wrap, body.cmrail-collapsed .wrap{ padding-top:52px }
+    /* Header: allow the title to wrap at word boundaries (never per-character) and let
+       the flex children actually shrink instead of refusing to (the per-character wrap
+       symptom is a flex child with no min-width:0 forcing overflow). */
+    .hdr{ flex-wrap:wrap; row-gap:8px }
+    .hdr, .hdr > div{ min-width:0 }
+    .hdr h1{ font-size:16px; overflow-wrap:break-word; word-break:keep-all }
+    .hdr .sub{ overflow-wrap:break-word }
+
+    .cards{ gap:8px }
+    .card{ min-width:calc(50% - 4px); flex:0 0 calc(50% - 4px) }
+
+    /* Sprint tab bar (view tabs) + sprint group header: keep every label on ONE line
+       (required by the self-check harness) by scrolling horizontally instead of
+       wrapping to a new row per tab. */
+    .viewtabs{ flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:2px }
+    .vtab{ flex:0 0 auto; white-space:nowrap }
+
+    .spgrp-hd{ flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch }
+    .spgrp-hd > *{ flex:0 0 auto; white-space:nowrap }
+
+    /* Rows built with fixed min-widths (bar names, goal text, schedule/table cells)
+       collapse to their content instead of forcing horizontal overflow. */
+    .bar .name{ width:auto; max-width:38vw }
+    .schrow .st{ min-width:0 }
+    .gchild .gt{ min-width:0 }
+    .aiwork input.agents{ width:100%; min-width:0 }
+    .modal-box{ width:94vw }
+    .modal-box .spmgoal, .spmgoal{ min-width:0 }
+  }
+  @media (max-width: 480px){
+    .card{ min-width:100%; flex:0 0 100% }
+    .hdr h1{ font-size:15px }
+  }
 </style>
 </head>
 <body>
@@ -507,27 +621,14 @@ enum DashboardContent {
     </div>
   </div>
 
-  <div class="cards" id="cards">
-    <div class="card lead"><div class="k">토탈 시간</div><div class="v" id="t_total">–</div><div class="cap">업무 스팬 (휴식·미팅 포함)</div></div>
-    <div class="card"><div class="k">책상 시간</div><div class="v" id="t_desk">–</div><div class="cap">만들기 시도 (리서치+코딩)</div></div>
-    <div class="card"><div class="k">집중 시간</div><div class="v" id="t_focus">–</div><div class="cap">몰입 (에디터)</div></div>
-    <div class="card"><div class="k">퇴근</div><div class="v" id="t_off">–</div><div class="cap">6시간+ 공백</div></div>
-    <div class="card"><div class="k">오늘 가치 (확정)</div><div class="v" id="value">–</div><div class="cap">승인 전 = 0 (아래 절차)</div></div>
-  </div>
-  <div class="panel tierpanel" style="margin:6px 0;padding:12px 16px">
-    <canvas id="tiers" style="height:18px"></canvas>
-    <div class="legend">
-      <span><span class="dot" style="background:#2a2f3a;border:1px solid #444"></span>토탈(회색=휴식·미팅)</span>
-      <span><span class="dot" style="background:#e8a13a"></span>책상</span>
-      <span><span class="dot" style="background:#36c08a"></span>집중</span>
-      <span>· 누적 <b id="total">–</b></span>
-      <span>· <span id="status">–</span></span>
-    </div>
-  </div>
-  <div class="nowline" id="now">지금: –</div>
+  <!-- 오늘 활동 요약(KPI 카드·티어 바·지금-라인)·최근 요약/차트·주요 앱 블록은
+       컨디션 관리 페이지(/bgm-player)의 컨디션맵 탭으로 이동했다 — 컨디션맵과 함께 분석.
+       #accel 게이지 호스트(스포츠 APM / 타임 카운트업)는 헤더 기능이라 여기 남긴다 —
+       예전엔 이동한 '지금:' 라인 안에 들어 있었다. 게이지 렌더러가 내부 마크업을 채운다. -->
+  <div class="nowline" id="accel" style="margin:4px 0 18px"></div>
 
   <div id="viewTabs" class="viewtabs"></div>
-  <div class="panel">
+  <div class="panel" id="goalPanel">
     <div id="goalFilters">
     <!-- SHARED STATUS FILTER — one bar drives 목록·그룹·프리뷰 alike -->
     <div class="row" style="margin:0 0 8px;gap:6px">
@@ -553,18 +654,23 @@ enum DashboardContent {
         </span>
         <span class="infowrap">
           <button class="btn" id="aiAddBtn" onclick="aiAdd()" oncontextmenu="return toggleAiTip(event)">AI추가</button>
-          <div class="infotip" id="aiTip">번호를 보고 각 목표의 <b>부모#</b> 칸에 부모 번호를 입력하면 묶입니다 (비우면 최상위). 압축된 결과는 프리뷰에서 확인. <b>AI추가</b>는 기다리지 않고 큐에 담아 백그라운드로 중복을 분석합니다 — 결과는 아래 <b>AI 큐</b>에서 원탭으로 확정.</div>
+          <div class="infotip" id="aiTip">번호를 보고 각 목표의 <b>부모#</b> 칸에 부모 번호를 입력하면 묶입니다 (비우면 최상위). 압축된 결과는 리포트에서 확인. <b>AI추가</b>는 기다리지 않고 큐에 담아 백그라운드로 중복을 분석합니다 — 결과는 <b>큐</b> 탭에서 원탭으로 확정.</div>
         </span>
         <button class="btn" onclick="addGoal()">추가</button>
       </div>
       <div id="goals"></div>
-      <div id="aiQueue"></div>
     </div>
 
-    <!-- PREVIEW (REPORT) VIEW -->
+    <!-- QUEUE VIEW (generic async job queue — sole home of the AI 큐 review UI, Phase 2) -->
+    <div id="queueView" style="display:none">
+      <div id="queueHost"></div>
+    </div>
+
+    <!-- REPORT VIEW (기간 필터는 컨디션맵과 동일한 CMTimeFilter 재사용) -->
     <div id="previewView" style="display:none">
-      <div class="row" style="justify-content:flex-end">
-        <button class="btn" onclick="copyMd()">마크다운 복사</button>
+      <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div id="reportFilter"></div>
+        <button class="btn" onclick="copyMd(this)">마크다운 복사</button>
       </div>
       <div id="report"></div>
     </div>
@@ -598,10 +704,13 @@ enum DashboardContent {
     <!-- TOKEN VIEW (토큰 — 완료 항목의 토큰 사용량을 완료일·스프린트로 묶어 본다) -->
     <div id="tokenView" style="display:none">
       <div class="muted" style="font-size:12px;margin:0 0 6px"><b>일별 토큰 사용량</b> — 모든 Claude 세션 트랜스크립트(~/.claude/projects)에서 그날 실제로 쓴 토큰을 날짜별로 합산합니다. 신규 입력·출력·캐시 생성만 셉니다(캐시 재사용 제외). 아래 <b>완료 목표별</b> 섹션은 각 목표의 연결 세션 토큰입니다.</div>
-      <div class="row" style="margin:0 0 8px;gap:6px;align-items:center;flex-wrap:wrap">
+      <div class="row" style="margin:0 0 6px;gap:6px;align-items:center;flex-wrap:wrap">
         <button class="btn primary" id="tkm_tok" onclick="setTkMode('tok')" title="세션이 실제로 쓴 토큰(K)">토큰량</button>
-        <button class="btn" id="tkm_val" onclick="setTkMode('val')" title="토큰효율·시간효율을 반영한 가치 점수">가치 ($)</button>
+        <button class="btn" id="tkm_val" onclick="setTkMode('val')" title="토큰효율·시간효율을 반영한 투입 지수(무단위 pt). 성과(가치)가 아니라 투입(비용) 측 지표">투입 지수</button>
         <span class="muted" id="tkModeHint" style="font-size:11px">세션이 실제로 쓴 토큰(K)</span>
+      </div>
+      <div class="muted" style="font-size:11px;margin:0 0 10px;padding:5px 9px;border:1px dashed #3a3550;border-radius:6px;color:#9a90c0">
+        🔒 <b>성과(가치)·ROI: 미측정</b> — 여기 숫자는 <b>투입(토큰·시간)</b>이지 <b>성과</b>가 아닙니다. 얼마나 <b>썼는지</b>만 보여줍니다. 실제 가치는 회사 goal 연동 시 활성화 (<b>ROI = 성과 ÷ 투입</b>).
       </div>
       <div class="row" style="margin:0 0 10px;gap:6px;align-items:center;flex-wrap:wrap">
         <span class="muted" style="font-size:12px">기간</span>
@@ -617,7 +726,7 @@ enum DashboardContent {
       </div>
       <div id="tokenDailyRange" class="muted" style="font-size:11px;margin:0 0 8px">불러오는 중…</div>
       <div id="tokenDailyHost"></div>
-      <div class="muted" style="font-size:12px;margin:14px 0 6px;border-top:1px solid #222a36;padding-top:10px">완료된 목표의 <b>토큰 사용량</b>을 <b>완료 시각</b> 기준으로 묶습니다. 위의 <b>스프린트</b>·<b>완료 컷오프</b> 필터가 그대로 적용됩니다.</div>
+      <div class="muted" style="font-size:12px;margin:14px 0 6px;border-top:1px solid #222a36;padding-top:10px">완료된 목표를 <b>스프린트 번호</b>로 묶습니다. 각 목표의 <b>세션 전체</b> 토큰이라, 위 일별 타임라인(그날 <b>소비량</b>)과는 기준이 다릅니다. 위의 <b>스프린트</b>·<b>완료 컷오프</b> 필터가 그대로 적용됩니다.</div>
       <div id="tokenHost"></div>
     </div>
 
@@ -653,8 +762,9 @@ enum DashboardContent {
         <span class="muted" style="font-size:12px">기간</span>
         <button class="btn" id="hr_today" onclick="setHistRange('today')" title="오늘 하루">오늘</button>
         <button class="btn" id="hr_yesterday" onclick="setHistRange('yesterday')" title="어제 하루">어제</button>
-        <button class="btn" id="hr_7d" onclick="setHistRange('7d')" title="최근 7일">7일</button>
+        <button class="btn" id="hr_7d" onclick="setHistRange('7d')" title="최근 7일">1주일</button>
         <button class="btn" id="hr_1m" onclick="setHistRange('1m')" title="최근 한 달">한달</button>
+        <button class="btn" id="hr_30d" onclick="setHistRange('30d')" title="최근 30일">30일</button>
         <button class="btn" id="hr_3m" onclick="setHistRange('3m')" title="최근 3달">3달</button>
         <input type="date" id="histFrom" class="btn" onchange="onHistDate()" style="color-scheme:dark;padding:5px 8px" title="시작 날짜">
         <span class="muted" style="font-size:12px">~</span>
@@ -678,57 +788,11 @@ enum DashboardContent {
       <div id="histDays"><div class="empty">불러오는 중…</div></div>
     </div>
 
+    <!-- 워커(백그라운드/주기 작업) 상태는 대시보드에서 분리되어 독립 /cron 페이지로 이동했다.
+         (레일의 '크론' 메뉴 → AppDelegate.cronPage) -->
+
   </div>
 
-  <!-- 스포츠 모드에선 통째로 숨기고 렌더(로딩)도 건너뛴다 (요약·차트·타임라인·주요앱·BGM·워커) -->
-  <div id="detailSections">
-  <div class="panel" style="margin-bottom:6px"><div id="summary" class="empty">최근 요약 불러오는 중…</div></div>
-
-  <div class="panel">
-    <canvas id="chart"></canvas>
-    <canvas id="strip"></canvas>
-    <div class="legend">
-      <span><span class="dot" style="background:var(--accent)"></span>전체 활동량</span>
-      <span><span class="dot" style="background:var(--green)"></span>⌨ 키보드</span>
-      <span><span class="dot" style="background:#e8a13a"></span>🖱 마우스</span>
-      <span>아래 띠: 시간대별 주 활성 앱(색상)</span>
-    </div>
-  </div>
-
-  <h2>타임라인 로그 (분 단위 · 최신순)</h2>
-  <div class="panel">
-    <table>
-      <thead><tr><th>시간</th><th>길이</th><th>앱 · 사이트</th><th>무드</th><th>BGM 트랙</th><th>활동 (⌨/🖱)</th><th>구분</th></tr></thead>
-      <tbody id="logrows"><tr><td colspan="7" class="empty">데이터 없음</td></tr></tbody>
-    </table>
-  </div>
-
-  <h2>주요 앱 (오늘)</h2>
-  <div class="panel"><div class="bars" id="appbars"><span class="empty">데이터 없음</span></div></div>
-
-  <h2>앱별 BGM (적절성 디버그)</h2>
-  <div class="panel">
-    <table>
-      <thead><tr><th>앱</th><th>주 전략</th><th>재생된 BGM 트랙 (BPM)</th><th>활성</th></tr></thead>
-      <tbody id="bgmrows"><tr><td colspan="4" class="empty">데이터 없음</td></tr></tbody>
-    </table>
-    <div class="legend"><span><span class="chip bad" style="margin:0">예시</span> = 전략 밴드를 벗어난 트랙(부적절 의심)</span></div>
-  </div>
-
-  <h2 style="display:flex;align-items:center;justify-content:space-between">워커 상태 (백그라운드 작업)
-    <a class="btn" href="/worker-log" target="_blank" style="font-size:12px;font-weight:400">전체 로그 타임라인</a></h2>
-  <div class="panel">
-    <table>
-      <thead><tr><th>워커</th><th>구분</th><th>하는 일</th><th>주기</th><th>마지막 실행</th><th>다음 실행</th><th>실행</th><th>상태</th><th>로그</th></tr></thead>
-      <tbody id="workerrows"><tr><td colspan="9" class="empty">데이터 없음</td></tr></tbody>
-    </table>
-    <div class="legend"><span><span class="chip" style="margin:0">동작 중</span> = 일정대로 실행 중 · <span class="chip bad" style="margin:0">유휴</span> = 현재 멈춤(세션 비활성 등) · <span class="chip bad" style="margin:0">오류</span> = 데이터 싱크 이상(로그 확인) · <b>구분</b> 기본=항상 실행, 플러그인=연결 시에만, 자동화=외부 스케줄러(launchd)가 주기 실행, 수동=퇴근 시 손으로 실행(주기 칸은 1회 실행 중 라운드 간격)</span></div>
-  </div>
-  </div><!-- /#detailSections -->
-
-  <div class="row" style="justify-content:center;margin-top:18px">
-    <button class="btn" id="pluginBtn" onclick="openPlugins()" title="외부 연동 플러그인 관리">🧩 플러그인</button>
-  </div>
   <div class="foot">5초마다 자동 갱신 · 127.0.0.1 로컬 전용</div>
 </div>
 
@@ -789,16 +853,22 @@ enum DashboardContent {
      공유한다. 상단 항상 보이는 입력바와 동일한 add 흐름(goalAddSubmit/goalAddAi)을 쓴다. -->
 <div class="overlay" id="gaModal">
   <div class="modal" style="max-width:560px">
-    <div class="hdr"><h1 style="margin:0;font-size:16px">목표 추가 <span class="muted" id="gaWhere" style="font-size:13px;font-weight:400"></span></h1>
-      <button class="btn" onclick="closeGoalAdd()">닫기</button></div>
+    <div class="hdr"><h1 style="margin:0;font-size:16px"><span id="gaEditIcon" style="display:none" title="작성 중이던 초안을 이어서 편집 중">✎ </span><span id="gaTitle">목표 추가</span> <span class="muted" id="gaWhere" style="font-size:13px;font-weight:400"></span></h1>
+      <button class="btn" onclick="closeGoalAdd()" title="ESC 로도 닫힙니다 — 입력한 내용은 유지됩니다">닫기</button></div>
     <div class="row">
       <input type="text" id="gaText" placeholder="목표/디테일 입력 후 Enter (AI추가로 계속 추가)" style="flex:1;min-width:200px">
       <button class="btn primary" id="gaAiBtn" onclick="gaAi()" title="추가 전에 AI가 비슷한 목표가 있는지 먼저 검사합니다">AI추가</button>
+      <button class="btn" id="gaSearchBtn" onclick="gaSearch()" title="추가하지 않고, 의미가 비슷한 기존 목표가 있는지 찾기만 합니다 (AI 큐에 결과가 뜹니다)">검색</button>
       <button class="btn" onclick="gaAdd()">추가</button>
     </div>
-    <div class="muted" style="font-size:12px;margin-top:8px"><b>Enter</b>를 누르면 <b>AI추가</b>로 담깁니다 — 비슷한 목표가 있는지 먼저 확인하며, 창은 열린 채 계속 추가할 수 있습니다. 바로 추가하려면 <b>추가</b> 버튼을 누르세요.</div>
+    <div class="muted" style="font-size:12px;margin-top:8px"><b>Enter</b>를 누르면 <b>AI추가</b>로 담깁니다 — 비슷한 목표가 있는지 먼저 확인하며, 창은 열린 채 계속 추가할 수 있습니다. <b>검색</b>은 추가하지 않고 비슷한 목표만 찾아줍니다. 바로 추가하려면 <b>추가</b> 버튼을 누르세요.</div>
   </div>
 </div>
+<!-- 작성 중이던 목표 초안 이어쓰기 칩: 모달을 ESC/닫기로 닫아도 입력이 남아 있으면 표시된다. -->
+<button class="gadraft-chip" id="gaDraftChip" onclick="resumeGoalDraft()"><span class="pen">✎</span><span>작성 중인 목표</span></button>
+<script>
+\#(CMTimeFilter.js)
+</script>
 <script>
 const $ = id => document.getElementById(id);
 const PALETTE = ['#5b8cff','#36c08a','#e8a13a','#c879e6','#e2667d','#3ac6c6','#d98c5f','#9aa4b2'];
@@ -808,9 +878,6 @@ function appColor(a){
   let h=0; for(const c of a) h=(h*31+c.charCodeAt(0))>>>0;
   const col = PALETTE[h % PALETTE.length]; colorCache[a]=col; return col;
 }
-// strategy label -> [minBPM, maxBPM]
-const BANDS = {'칠 (느긋)':[75,100],'스테디 (안정)':[100,125],'집중 (몰입)':[120,150],'하이프 (고조)':[140,175]};
-function trackBpm(t){ const m=/\[(\d{2,3})\]/.exec(t||''); return m?parseInt(m[1],10):null; }
 function fmtMin(m){ if(m>=60) return (m/60).toFixed(1)+'시간'; return m+'분'; }
 // "Accelerator" gauge: live APM (actions/min, StarCraft-style). Backend polled
 // fast (~100ms); the number + bar are driven by a damped SPRING every animation
@@ -962,9 +1029,7 @@ async function load(){
   let d;
   try { d = await (await fetch('/data.json',{cache:'no-store'})).json(); }
   catch(e){ return; }
-  $('total').textContent = d.total.label;
   const w = d.now.working;
-  $('status').innerHTML = '<span class="dot" style="background:'+(w?'var(--green)':'#555')+'"></span>'+d.now.status;
   $('date').textContent = d.date + ' · 분당 기록';
   // DEV dataset indicator: badge + top ribbon + tab title prefix when not production.
   const dev=$('devBadge');
@@ -973,32 +1038,16 @@ async function load(){
     if(!document.title.startsWith('[DEV]')) document.title='[DEV] '+document.title; }
   else { dev.style.display='none'; document.body.classList.remove('devmode'); }
   const ss = withCarryForward(d.samples);   // 10-min continuity applied
-  const b = timeBuckets(ss);
-  $('t_total').textContent = fmtH(b.total);
-  $('t_desk').textContent = fmtH(b.desk);
-  $('t_focus').textContent = fmtH(b.focus);
-  $('t_off').textContent = b.off > 0 ? fmtH(b.off) : '–';
+  const b = timeBuckets(ss);                 // still drives the gauge (타임 카운트업 기준)
   // Gauge mode: 타임 카운트업 기준(토탈 분→초) + 자동 기본값(<8h 스포츠, 8h+ 타임).
   _totalBaseSec = b.total*60; _totalBaseWall = Date.now(); _working = !!w;
   if(!_modeUserSet) setGaugeMode(b.total>=480 ? 'time' : 'sports', false);
-  drawTiers(b);
   const n=d.now;
-  const siteStr=(n.site&&n.site!=='-')?' ('+esc(n.site)+')':'';
-  $('now').innerHTML='<span class="nowtext">지금: 앱 <b>'+esc(n.app)+siteStr+'</b> &nbsp; '+tierBadge(n.tier,n.mult)
-    +' &nbsp; ⌨ '+(n.key||0)+' 🖱 '+(n.mouse||0)+' &nbsp; 전략 <b>'+esc(n.profile)+'</b> · BGM <b>'+esc(n.track)+'</b></span><span id="accel"></span>';
   setGauge(n);
   const _t0=performance.now();
   renderReview(d);   // 확정 가치/목표 — 스포츠 모드에서도 항상 렌더
-  // 스포츠 모드에선 상세 섹션은 숨겨져 있으므로 렌더(로딩) 자체를 건너뛴다.
-  // 차트·타임라인·주요앱·BGM·워커는 타임 모드로 전환할 때 비로소 채워진다.
-  if(_gaugeMode!=='sports'){
-    drawChart(ss);
-    drawStrip(ss);
-    renderSummary(ss);
-    renderTimeline(ss);
-    renderApps(ss);
-    renderWorkers(d.workers);
-  }
+  // 오늘 활동 요약·차트·주요 앱 블록은 컨디션 관리 페이지로 이동했다.
+  // 워커 상태는 독립 /cron 페이지가 /workers.json 으로 자체 폴링한다(이 대시보드는 관여하지 않음).
   _plugins = d.plugins || [];
   if($('plugins').classList.contains('on')) renderPlugins();
   _pfRenderMs=performance.now()-_t0;
@@ -1094,95 +1143,10 @@ function installPlugin(id){ post('/api/plugin/install',{id}); pluginRefresh(); }
 function uninstallPlugin(id){ if(confirm('이 플러그인을 제거할까요? (컨디션 메이트는 BGM도 함께 꺼집니다)')){ post('/api/plugin/uninstall',{id}); pluginRefresh(); } }
 function hhmm(t){ const d=new Date(t*1000); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
 
-function renderSummary(samples){
-  const el=$('summary');
-  if(!samples.length){ el.textContent='데이터 없음'; return; }
-  const lastT=samples[samples.length-1].t;
-  const recent=samples.filter(s=>s.t>=lastT-30*60 && s.app && s.app!=='-');
-  if(!recent.length){ el.textContent='최근 30분 활동 없음'; return; }
-  const apps={}; let active=0, valSec=0;
-  recent.forEach(s=>{ const e=apps[s.app]||(apps[s.app]={m:0,prof:{}}); e.m++; active+=(s.active||0);
-    valSec+=(s.active||0)*(s.mult||1);
-    if(s.profile&&s.profile!=='-') e.prof[s.profile]=(e.prof[s.profile]||0)+1; });
-  const top=Object.entries(apps).sort((a,b)=>b[1].m-a[1].m).slice(0,3).map(([a,e])=>{
-    const p=Object.entries(e.prof).sort((x,y)=>y[1]-x[1])[0];
-    const col=appColor(a);
-    return '<span class="dot" style="background:'+col+'"></span>'+esc(a)+' '+e.m+'분'+(p?' ('+esc(p[0].split(' ')[0])+')':'');
-  });
-  el.innerHTML='<b>최근 30분</b> · 작업 '+Math.round(active/60)+'분 · 가치 '+Math.round(valSec/60)+'분(가중) · '+top.join(' &nbsp; ');
-}
+// 최근 요약 렌더(renderSummary)·타임라인 로그 렌더(timelineSegments/rowHtml/
+// paintTimeline/renderTimeline)는 컨디션 관리 페이지(/bgm-player)로 이동했다 — 대시보드에선 제거.
 
-// Merge consecutive minutes sharing the same app+site+mood+track into one segment.
-function timelineSegments(samples){
-  const segs=[];
-  samples.forEach(s=>{
-    const key=(s.app||'-')+'|'+(s.site||'-')+'|'+(s.profile||'-')+'|'+(s.track||'-');
-    const last=segs[segs.length-1];
-    if(last && last.key===key && (s.t-last.endT)<=120){
-      last.endT=s.t; last.mins++; last.activeSum+=(s.active||0);
-      last.keySum+=(s.key||0); last.mouseSum+=(s.mouse||0); last.meeting=s.meeting||last.meeting;
-    } else {
-      segs.push({key,app:s.app||'-',site:s.site||'-',profile:s.profile||'-',track:s.track||'-',
-                 tier:s.tier||'소극',mult:s.mult||1,meeting:s.meeting||false,startT:s.t,endT:s.t,mins:1,
-                 activeSum:(s.active||0),keySum:(s.key||0),mouseSum:(s.mouse||0)});
-    }
-  });
-  return segs;
-}
-
-// Lazy timeline: keep all segments in memory-light form but only paint a small
-// initial slice into the DOM (the table is the heaviest part of the page). The
-// "불러오기" button reveals more on demand, so the default DOM footprint stays
-// minimal regardless of how long the log gets. _logShown survives auto-refresh
-// so an expanded view isn't collapsed every 5s.
-const LOG_INIT=30, LOG_STEP=50, LOG_MAX=600;
-let _logSegs=[], _logShown=LOG_INIT;
-function rowHtml(g){
-      const idle=(g.app==='-');
-      const col=idle?'#555':appColor(g.app);
-      const band=BANDS[g.profile];
-      const bpm=trackBpm(g.track);
-      const bad=band&&bpm!=null&&(bpm<band[0]||bpm>band[1]);
-      const trackCell=(g.track==='-')?'<span class="empty">–</span>'
-        :'<span class="chip'+(bad?' bad':'')+'" style="margin:0">'+esc(g.track)+'</span>';
-      const siteRow=(g.site&&g.site!=='-')?'<div style="color:var(--mut);font-size:11px">'+esc(g.site)+'</div>':'';
-      const k=Math.round(g.keySum/g.mins), mo=Math.round(g.mouseSum/g.mins);
-      return '<tr>'
-        +'<td style="white-space:nowrap">'+hhmm(g.startT)+'</td>'
-        +'<td style="white-space:nowrap;color:var(--mut)">'+g.mins+'분</td>'
-        +'<td style="white-space:nowrap"><span class="dot" style="background:'+col+'"></span>'+esc(g.app)+siteRow+'</td>'
-        +'<td style="white-space:nowrap">'+esc(g.profile)+'</td>'
-        +'<td>'+trackCell+'</td>'
-        +'<td style="white-space:nowrap;color:var(--mut)">⌨'+k+' 🖱'+mo+'</td>'
-        +'<td>'+categoryBadge(g)+'</td>'
-        +'</tr>';
-}
-function paintTimeline(){
-  const rows=$('logrows');
-  const total=_logSegs.length;
-  if(!total){ rows.innerHTML='<tr><td colspan="7" class="empty">데이터 없음</td></tr>'; return; }
-  const shown=Math.min(_logShown,total);
-  let html=_logSegs.slice(0,shown).map(rowHtml).join('');
-  if(shown<total){
-    const next=Math.min(LOG_STEP,total-shown);
-    html+='<tr><td colspan="7" style="text-align:center;padding:10px">'
-      +'<button class="btn" onclick="loadMoreLog()">불러오기 (+'+next+')</button>'
-      +' <span class="muted" style="font-size:11px">전체 '+total+'개 중 '+shown+'개 표시 · 메모리 절약 모드</span>'
-      +'</td></tr>';
-  } else if(total>LOG_INIT){
-    html+='<tr><td colspan="7" style="text-align:center;padding:6px"><span class="muted" style="font-size:11px">전체 '+total+'개 표시</span></td></tr>';
-  }
-  rows.innerHTML=html;
-}
-function loadMoreLog(){ _logShown=Math.min(_logShown+LOG_STEP,LOG_MAX,_logSegs.length); paintTimeline(); }
-function renderTimeline(samples){
-  _logSegs=timelineSegments(samples).reverse().slice(0,LOG_MAX);
-  // Clamp the persisted "shown" count to the new total (never below the initial).
-  _logShown=Math.max(LOG_INIT,Math.min(_logShown,_logSegs.length));
-  paintTimeline();
-}
 function esc(s){ return (s||'-').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-function minOfDay(s){ const dt=new Date(s.t*1000); return dt.getHours()*60+dt.getMinutes(); }
 function fmtH(min){ const h=Math.floor(min/60), m=min%60; return h>0? h+'시간 '+m+'분' : m+'분'; }
 const TENMIN=10*60;
 // Carry-forward (10-min continuity): a rest gap <= 10min bridged by work on BOTH
@@ -1246,25 +1210,8 @@ function timeBuckets(ss){
   }
   return {total:Math.round(total), desk, focus, off:Math.round(off)};
 }
-function drawTiers(b){
-  const c=$('tiers'),dpr=window.devicePixelRatio||1,W=c.clientWidth,H=18;
-  c.width=W*dpr;c.height=H*dpr;const g=c.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,H);
-  const max=Math.max(b.total,1), bw=v=>W*(v/max);
-  g.fillStyle='#2a2f3a'; g.fillRect(0,2,bw(b.total),14);  // total
-  g.fillStyle='#e8a13a'; g.fillRect(0,2,bw(b.desk),14);   // desk (nested)
-  g.fillStyle='#36c08a'; g.fillRect(0,2,bw(b.focus),14);  // focus (nested)
-}
-function tierColor(t){ return t==='적극'?'#36c08a':t==='중간'?'#e8a13a':'#9aa4b2'; }
-function tierBadge(t,m){ const c=tierColor(t); return '<span class="chip" style="margin:0;border-color:'+c+';color:'+c+'">'+esc(t||'소극')+' ×'+(m||1)+'</span>'; }
-// 책상/집중/휴식/미팅 구분 뱃지 (타임라인용)
-function categoryBadge(seg){
-  let label,color;
-  if(seg.meeting){label='미팅';color='#9aa4b2';}
-  else if(seg.tier==='적극'){label='집중';color='#36c08a';}
-  else if(seg.tier==='중간'){label='책상';color='#e8a13a';}
-  else {label='휴식';color='#9aa4b2';}
-  return '<span class="chip" style="margin:0;border-color:'+color+';color:'+color+'">'+label+' ×'+(seg.mult||1)+'</span>';
-}
+// 티어 바 렌더(drawTiers)·티어 색/배지(tierColor/tierBadge)는
+// 컨디션 관리 페이지(/bgm-player)로 이동했다 — 대시보드에선 제거.
 
 // ===== 히스토리 (날짜별 집중도 + 초집중 세션 + 시간대 분석) =====
 // 서버 /history.json 은 날짜별 압축 샘플({t,active,tier,meeting,mult,app})을 준다.
@@ -1274,20 +1221,12 @@ let _histData=null, _histLoading=false, _histRendered=false, _dfMin=25;
 // 기간 필터: 시작~끝 날짜(로컬 YYYY-MM-DD). 퀵버튼(1일/3일/7일/한달/3달)과 직접 입력 모두 지원.
 // 데이터는 하루 단위라 서버 재요청 없이 클라이언트에서 날짜 범위로 걸러 렌더한다.
 let _histStart='', _histEnd='', _histPreset='3m', _histFetchedDays=0, _histRangeSig='';
-function histDayStr(d){ const y=d.getFullYear(),m=d.getMonth()+1,dd=d.getDate();
-  return y+'-'+(m<10?'0':'')+m+'-'+(dd<10?'0':'')+dd; }
-function daysBetween(a,b){ return Math.round((new Date(b+'T00:00:00')-new Date(a+'T00:00:00'))/86400000); }
-// 프리셋 → 시작 날짜(끝은 대부분 오늘, '어제'만 예외). 일 단위는 오늘 포함이라 (n-1)일 빼고, 월 단위는 같은 날짜 기준.
-function histPresetStart(preset){
-  const n=new Date(), s=new Date(n.getFullYear(),n.getMonth(),n.getDate());
-  if(preset==='yesterday') s.setDate(s.getDate()-1);
-  else if(preset==='7d') s.setDate(s.getDate()-6);
-  else if(preset==='1m') s.setMonth(s.getMonth()-1);
-  else if(preset==='3m') s.setMonth(s.getMonth()-3);
-  return histDayStr(s);   // 'today'면 오늘 그대로
-}
+// 날짜 계산·프리셋·타임존은 공통 모듈(CMTimeFilter)에 위임 — 컨디션맵과 한 소스.
+function histDayStr(d){ return CMTimeFilter.dayStr(d); }
+function daysBetween(a,b){ return CMTimeFilter.daysBetween(a,b); }
+function histPresetStart(preset){ return CMTimeFilter.presetRange(preset).start; }   // 'today'면 오늘 그대로
 function syncHistInputs(){ const a=$('histFrom'),b=$('histTo'); if(a)a.value=_histStart; if(b)b.value=_histEnd; }
-function reflectRangeBtn(){ ['today','yesterday','7d','1m','3m'].forEach(k=>{ const b=$('hr_'+k); if(b) b.classList.toggle('primary', k===_histPreset); }); }
+function reflectRangeBtn(){ ['today','yesterday','7d','1m','30d','3m'].forEach(k=>{ const b=$('hr_'+k); if(b) b.classList.toggle('primary', k===_histPreset); }); }
 function setHistRange(preset){
   _histPreset=preset;
   _histStart=histPresetStart(preset);
@@ -1304,12 +1243,7 @@ function onHistDate(){
 }
 // 모든 시각은 이 기기의 로컬 타임존 기준(오늘 화면과 동일). 혼동 없게 화면에 명시한다.
 // 하드코딩이 아니라 감지: Asia/Seoul이면 KST, 아니면 그 지역 이름 + UTC 오프셋.
-function tzLabel(){
-  const off=-new Date().getTimezoneOffset()/60;
-  let z=''; try{ z=Intl.DateTimeFormat().resolvedOptions().timeZone; }catch(e){}
-  const nm=(z==='Asia/Seoul')?'KST':(z||'현지');
-  return nm+' (UTC'+(off>=0?'+':'')+(Number.isInteger(off)?off:off.toFixed(1))+')';
-}
+function tzLabel(){ return CMTimeFilter.tzLabel(); }
 function setDeepMin(m){ _dfMin=m; reflectDeepBtn(); if(_histData) renderHistory(); }
 function reflectDeepBtn(){ [15,25,45].forEach(k=>{ const b=$('df'+k); if(b) b.classList.toggle('primary', k===_dfMin); }); }
 function loadHistory(force){
@@ -1424,23 +1358,72 @@ function goalKey(e){ if(e.key!=='Enter')return; if(_composing){_pendingAdd=true;
 (function(){ bindImeEnter(document.getElementById('gAddText'), function(){ gAdd(); }); })();
 // Reusable goal-add modal input: Enter routes to AI추가 (queue) so a bare Enter runs the
 // dup-check pipeline. Keep the modal open (clear + refocus) to preserve "계속 추가".
-(function(){ bindImeEnter(document.getElementById('gaText'), function(){
-  const inp=$('gaText'); goalAddAi(inp.value,_gaCtx,$('gaAiBtn'),()=>{ inp.value=''; inp.focus(); },()=>{ inp.value=''; inp.focus(); });
-}); })();
+(function(){
+  const gt=document.getElementById('gaText');
+  bindImeEnter(gt, function(){
+    // 검색 모드면 Enter → 검색(찾기만), 아니면 Enter → AI추가(찾고+만들기).
+    if(_gaSearchMode){ gaSearch(); return; }
+    const inp=$('gaText'); goalAddAi(inp.value,_gaCtx,$('gaAiBtn'),()=>{ inp.value=''; gaClearDraft(); inp.focus(); },()=>{ inp.value=''; gaClearDraft(); inp.focus(); });
+  });
+  // ESC 로 모달을 닫는다(입력은 초안으로 보존). 조합(IME) 중 ESC 는 후보만 취소되도록 통과시킨다.
+  if(gt) gt.addEventListener('keydown',function(e){ if(e.key==='Escape' && !e.isComposing){ e.preventDefault(); closeGoalAdd(); } });
+})();
 // --- 재사용 목표 추가 모달 — 스프린트 보드의 모든 추가 진입점이 이 모달 하나를 연다. ---
 let _gaCtx={sprint:0,parent:'',bump:false};   // 현재 추가 대상 (0/''=Backlog 최상위, bump=Bump out 인박스)
+let _gaDraft='';        // ESC/닫기 시 남은 미제출 입력(초안) — 재오픈/이어쓰기 칩에서 복원한다.
+let _gaLastOpts=null;   // 마지막으로 모달을 연 opts — 이어쓰기 칩이 같은 맥락으로 다시 연다.
+let _gaSearchMode=false;// 검색(찾기만) 모드로 열렸는지 — Enter 라우팅을 검색/AI추가로 가른다.
 function openGoalAdd(opts){
   opts=opts||{};
+  _gaLastOpts=opts;
   _gaCtx={sprint:opts.sprint||0,parent:opts.parent||'',bump:!!opts.bump};
   const where=$('gaWhere'); if(where) where.textContent=opts.label?('· '+opts.label):'';
-  const inp=$('gaText'); if(inp) inp.value='';
+  // 검색 모드(opts.search): 같은 모달을 '목표 검색'으로 표시하고 검색을 주 액션으로 강조한다.
+  // 입력·큐 흐름은 동일하고 결과만 찾기만 한다. 일반(추가) 모드면 원래대로 되돌린다.
+  _gaSearchMode=!!opts.search;
+  const ttl=$('gaTitle'), inp0=$('gaText'), aiB=$('gaAiBtn'), seB=$('gaSearchBtn');
+  if(opts.search){
+    if(ttl) ttl.textContent='목표 검색';
+    if(inp0) inp0.placeholder='찾을 내용 입력 후 검색 — 비슷한 기존 목표를 찾습니다';
+    if(aiB) aiB.classList.remove('primary');
+    if(seB) seB.classList.add('primary');
+  } else {
+    if(ttl) ttl.textContent='목표 추가';
+    if(inp0) inp0.placeholder='목표/디테일 입력 후 Enter (AI추가로 계속 추가)';
+    if(aiB) aiB.classList.add('primary');
+    if(seB) seB.classList.remove('primary');
+  }
+  // 초안이 남아 있으면 복원(내용 유지) — 없으면 빈칸으로 시작.
+  const inp=$('gaText'); if(inp) inp.value=_gaDraft||'';
+  const ei=$('gaEditIcon'); if(ei) ei.style.display=(_gaDraft&&_gaDraft.trim())?'':'none';
   const m=$('gaModal'); if(m) m.classList.add('on');
-  setTimeout(()=>{ const t=$('gaText'); if(t) t.focus(); },50);
+  updateGaDraftChip();
+  setTimeout(()=>{ const t=$('gaText'); if(t){ t.focus(); const n=t.value.length; try{t.setSelectionRange(n,n);}catch(_){} } },50);
 }
-function closeGoalAdd(){ const m=$('gaModal'); if(m) m.classList.remove('on'); }
+// 닫을 때(ESC/닫기 버튼) 입력이 남아 있으면 초안으로 보존한다 — 비어 있으면 초안을 비운다.
+function closeGoalAdd(){
+  const inp=$('gaText'); _gaDraft = inp ? String(inp.value||'').trim() : '';
+  const m=$('gaModal'); if(m) m.classList.remove('on');
+  updateGaDraftChip();
+}
+// 초안이 있으면 이어쓰기 칩을 보여주고, 없거나 모달이 열려 있으면 숨긴다.
+function updateGaDraftChip(){
+  const c=$('gaDraftChip'); if(!c) return;
+  const m=$('gaModal'); const open=!!(m&&m.classList.contains('on'));
+  c.style.display=(_gaDraft&&_gaDraft.trim()&&!open)?'inline-flex':'none';
+}
+// 이어쓰기 칩 클릭 → 마지막 맥락 그대로 다시 열어 초안을 복원한다.
+function resumeGoalDraft(){ openGoalAdd(_gaLastOpts||{}); }
+// 성공적으로 담긴 뒤에는 초안을 확실히 비운다(칩·아이콘도 정리).
+function gaClearDraft(){ _gaDraft=''; updateGaDraftChip(); const ei=$('gaEditIcon'); if(ei) ei.style.display='none'; }
 // 추가 후 모달은 열어둔다(placeholder의 "계속 추가"). 닫기는 사용자가 직접.
-function gaAdd(){ const inp=$('gaText'); if(goalAddSubmit(inp.value,_gaCtx)){ inp.value=''; inp.focus(); } }
-function gaAi(){ goalAddAi($('gaText').value,_gaCtx,$('gaAiBtn'),()=>closeGoalAdd(),()=>closeGoalAdd()); }
+function gaAdd(){ const inp=$('gaText'); if(goalAddSubmit(inp.value,_gaCtx)){ inp.value=''; gaClearDraft(); inp.focus(); } }
+function gaAi(){ const inp=$('gaText'); goalAddAi(inp.value,_gaCtx,$('gaAiBtn'),()=>{ inp.value=''; gaClearDraft(); closeGoalAdd(); },()=>{ inp.value=''; gaClearDraft(); closeGoalAdd(); }); }
+// 검색(찾기만): AI추가와 동일한 큐 파이프라인을 쓰되 search:true → 워커가 dedup 분석으로 비슷한
+// 기존 목표를 찾아 AI 큐에 '검색 결과' 카드로만 보여준다 (목표 생성 없음). 입력창은 비우고 창은 닫는다.
+function gaSearch(){ const inp=$('gaText'); if(goalSearchFind(inp.value)){ inp.value=''; gaClearDraft(); closeGoalAdd(); } }
+function goalSearchFind(text){ const t=String(text||'').trim(); if(!t) return false;
+  post('/api/goal/queue/enqueue',{text:t,search:true}); return true; }
 // ===== 재사용 목표 추가 모듈 (single source of truth) =====
 // 입력창(상단 항상 보이는 바)·스프린트 보드(Backlog·각 스프린트)의 모든 "목표 추가"가
 // 이 두 코어 함수를 통해서만 추가한다. 진입점마다 미세하게 다른 add 로직을 두지 않는다.
@@ -1618,14 +1601,62 @@ function dupLater(){ const p=_dupPending; if(!p){closeDup();return;}
   if(p.queueId){ post('/api/goal/queue/resolve',{id:p.queueId,action:'edit',text:text}); return; }
   const gt=$('goalText'); if(gt){ gt.value=''; gt.focus(); }
   post('/api/goal/queue/add',{text:text,parent:p.parent||'',note:p.note||'',matches:p.matches||[]}); }
+// --- AI 배치 제안 렌더 헬퍼 -------------------------------------------------
+// 큐 항목의 placement/suggestedParentSeq/priority/confidence/rationale 를 한눈 배지로.
+// 레거시 항목은 placement:'top', suggestedParentSeq:0, priority:'medium', confidence:0 로 디코드되어
+// '독립 태스크' 배지 + 보통 우선순위로 자연스럽게 그려진다.
+// 최상위 목표 #seq → 제목 조회 (parent picker 및 서브 배지에 쓴다). 없으면 ''.
+function topGoalTitle(seq){ const g=(_goals||[]).find(x=>!x.parent && (x.seq||0)===seq); return g?(g.text||''):''; }
+// 우선순위 칩(색상은 .pri-* currentColor 재사용) — 화살표 아이콘 + 한국어 라벨.
+function qPriChip(pri){ const p=pri||'medium';
+  return '<span class="qprichip pri-'+p+'" title="AI 추천 우선순위">'+priSvg(p)+priLabel(p)+'</span>'; }
+// 배치 배지: top=독립 태스크(초록), sub=서브 → #seq 제목(파랑). confidence<0.5 면 흐리게(.dim).
+function qPlaceBadge(it){
+  const place=it.placement||'top';
+  const dim=((it.confidence!=null?it.confidence:0)<0.5)?' dim':'';
+  if(place==='sub' && (it.suggestedParentSeq||0)>0){
+    const pn=it.suggestedParentSeq, t=topGoalTitle(pn);
+    const ttl=t?(' '+esc(t)):'';
+    return '<span class="qbadge sub'+dim+'" title="AI 제안: #'+pn+' 아래 서브로">서브 → #'+pn+ttl+'</span>';
+  }
+  return '<span class="qbadge top'+dim+'" title="AI 제안: 독립(최상위) 태스크로">독립 태스크</span>';
+}
+// 배지줄: 배치 배지 + 우선순위 칩 + 사유 한 줄. verdict 카드 상단에 깐다.
+function qPlacementLine(it){
+  const rat=it.rationale?('<div class="qrationale">'+esc(it.rationale)+'</div>'):'';
+  return '<div class="qplace">'+qPlaceBadge(it)+qPriChip(it.priority||'medium')+rat+'</div>';
+}
+// 오버라이드 패널 HTML: 배치(독립/서브 #부모) + 우선순위 직접 지정. '적용' → queueOverrideApply.
+// 최상위 목표만 부모 후보(1-level 규칙) — select 로 고르거나 #번호 직접 입력. 백엔드도 규칙을 강제하므로
+// parentFallback 이 최종 안전망이다.
+function qOverrideHTML(it){
+  const tops=(_goals||[]).filter(g=>!g.parent && (g.seq||0)>0).sort((a,b)=>(a.seq||0)-(b.seq||0));
+  const curParent=(it.placement==='sub'?(it.suggestedParentSeq||0):0);
+  const parentOpts=['<option value="0"'+(curParent===0?' selected':'')+'>독립 (최상위)</option>']
+    .concat(tops.map(g=>'<option value="'+g.seq+'"'+(curParent===(g.seq||0)?' selected':'')+'>#'+g.seq+' '+esc(g.text||'')+'</option>')).join('');
+  const curPri=it.priority||'medium';
+  const priOpts=PRI_ORDER.map(p=>'<option value="'+p+'"'+(p===curPri?' selected':'')+'>'+priLabel(p)+'</option>').join('');
+  return '<div class="qovr" id="qovr_'+it.id+'" style="display:none">'
+    +'<div class="qovr-row"><span class="qovr-lbl">배치</span>'
+      +'<select id="qovrp_'+it.id+'" onchange="qOvrPickParent(\''+it.id+'\')">'+parentOpts+'</select>'
+      +'<input class="qpin" id="qovrn_'+it.id+'" type="text" inputmode="numeric" placeholder="#부모" '
+        +'value="'+(curParent>0?curParent:'')+'" title="최상위 목표 번호 직접 입력 (0/빈칸=독립)" '
+        +'oninput="qOvrSyncSelect(\''+it.id+'\')" onclick="event.stopPropagation()"></div>'
+    +'<div class="qovr-row"><span class="qovr-lbl">우선순위</span>'
+      +'<select id="qovrpri_'+it.id+'">'+priOpts+'</select></div>'
+    +'<div class="qovr-row"><button class="btn primary" onclick="queueOverrideApply(\''+it.id+'\')">이 설정으로 승격</button>'
+      +'<button class="btn" onclick="qOverrideToggle(\''+it.id+'\')">취소</button></div></div>';
+}
 // --- AI 큐(bump out): 도착 순서 그대로 한 줄로 쌓는다. 위쪽이 먼저 처리되고(분석 중·검토 대기),
 // 방금 비워낸 후보는 맨 하단에 붙는다 — "쏟아내면 아래에 쌓이고, 위에서 익는다"는 컨베이어 감각.
 // 헤더의 펄스 '실행 중' 배지로 워커가 돌고 있는지 한눈에 보인다. data.json은 oldest-first 순.
 // aiQueueBoxHTML: 큐 박스 HTML 문자열을 돌려준다(빈 목록이면 ''). 입력(목록) 뷰는 #aiQueue에
 // 전체 큐를, 스프린트 보드는 각 스프린트·백로그 섹션 하단에 해당 sprint의 큐만 끼워 넣는다. ---
-function aiQueueBoxHTML(items){
+function aiQueueBoxHTML(items,withConfirm){
   items=items||[];
-  if(!items.length) return '';
+  // 확인 카드는 목록 뷰(전역 큐)에서만 그린다 — 스프린트 뷰는 섹션마다 이 함수를 부르므로 중복 방지.
+  const confirmIds=withConfirm?Object.keys(_qConfirm||{}):[];
+  if(!items.length && !confirmIds.length) return '';
   const isReady=it=>(!it.status||it.status==='ready');
   const analyzing=items.filter(it=>it.status==='analyzing').length;
   const pending=items.filter(it=>it.status==='pending').length;
@@ -1637,9 +1668,59 @@ function aiQueueBoxHTML(items){
   const counts=[];
   if(analyzing+pending) counts.push('큐 '+(analyzing+pending)+'건');
   if(ready) counts.push('검토 대기 '+ready+'건');
+  // 추가 직후 확인 카드(초록): '열기' 링크 + 남은 초. 서버엔 이미 없으므로 클라이언트 상태로만 그린다.
+  function confirmRow(id){
+    const c=_qConfirm[id]; if(!c) return '';
+    const where=c.parentSeq?('#'+c.parentSeq+' 아래 '):'';
+    const ttl=c.text?esc(c.text):'항목';
+    // parentFallback: 서브 부착이 거부되어 최상위로 들어간 경우 안내 한 줄.
+    const fb=c.fallback?'<div class="qhint" style="color:#e0a458">상위 목표 아래 넣을 수 없어 최상위로 추가됨</div>':'';
+    return '<div class="qrow qconfirm">'
+      +'<div style="flex:1;min-width:0">'
+      +'<div style="font-size:13px"><span style="color:var(--green);font-weight:600">✓ 추가됨</span> '
+      +'<span class="muted">'+where+'#'+c.seq+'</span> · '+ttl+'</div>'
+      +fb
+      +'<div class="qhint">'+c.sec+'초 후 큐에서 사라집니다 · 지금 열어보세요</div></div>'
+      +'<div style="display:flex;gap:6px;flex-shrink:0;align-items:center">'
+      +'<a class="btn primary" href="/goal?n='+c.seq+'" style="text-decoration:none">열기 →</a>'
+      +'<button class="btn" onclick="dismissQueueConfirm(\''+id+'\')" title="지금 닫기">닫기</button></div></div>';
+  }
   let waitNo=0;   // pending 행에 "대기 N번째" 부여 (도착 순)
   function row(it){
     const rdy=isReady(it);
+    // 검색(찾기만) 카드: AI목표와 같은 dedup 분석을 돌리되 결과는 비슷한 기존 목표만 보여준다.
+    // 분석 중/대기면 진행 상태를, 완료면 찾은 목표를 이유와 함께 나열하고, 액션은 '닫기'뿐(생성 없음).
+    if(it.findOnly){
+      const q='<span id="qt_'+it.id+'">🔍 '+esc(it.text)+'</span>';
+      const closeBtn='<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="검색 결과 닫기">닫기</button>';
+      if(it.status==='analyzing'){
+        return '<div class="qrow analyzing"><div style="flex:1;min-width:0">'+q
+          +'<div style="font-size:12px;color:var(--green)"><span class="qspin">🔄</span> 비슷한 목표 찾는 중…</div></div></div>';
+      }
+      if(!rdy){ waitNo++;
+        return '<div class="qrow"><div style="flex:1;min-width:0">'+q
+          +'<div class="muted" style="font-size:12px">⏳ 대기 '+waitNo+'번째</div></div>'
+          +'<div style="display:flex;gap:4px;flex-shrink:0">'+closeBtn+'</div></div>';
+      }
+      const hits=(it.matches||[]).filter(m=>(m.seq||0)>0);
+      let list;
+      if(hits.length){
+        list=hits.map(m=>{ const n=m.seq;
+          const why=m.why?'<div class="qopt-desc">'+esc(m.why)+'</div>':'';
+          return '<div class="qopt" onclick="location.href=\'/goal?n='+n+'\'" style="cursor:pointer">'
+            +'<div class="qopt-body"><div class="qopt-label"><a href="/goal?n='+n+'" onclick="event.stopPropagation()" style="color:var(--accent);text-decoration:none">#'+n+'</a> '+esc(m.text||'')+'</div>'+why+'</div></div>';
+        }).join('');
+      } else {
+        list='<div class="muted" style="font-size:12px;margin-top:4px">비슷한 기존 목표를 찾지 못했습니다.</div>';
+      }
+      const cnt=hits.length?('비슷한 목표 '+hits.length+'건'):'결과 없음';
+      const note=it.note?'<div class="muted" style="font-size:12px;margin-top:2px">'+esc(it.note)+'</div>':'';
+      return '<div class="qrow" style="flex-direction:column;align-items:stretch">'
+        +'<div style="display:flex;align-items:flex-start;gap:8px">'
+        +'<div style="flex:1;min-width:0">'+q+'<div class="muted" style="font-size:12px">'+cnt+'</div>'+note+'</div>'
+        +'<div style="flex-shrink:0">'+closeBtn+'</div></div>'
+        +'<div class="qchoice" style="margin-top:6px">'+list+'</div></div>';
+    }
     // 매치의 번호(#seq)는 클릭하면 골 페이지(/goal?n=NN)로 이동해 그 목표 내용을 확인한다.
     // why가 있으면 링크 title(툴팁)로 붙인다. stopPropagation으로 행/버튼 핸들러와 충돌 방지.
     const ms=(it.matches||[]).map(m=>{
@@ -1650,7 +1731,7 @@ function aiQueueBoxHTML(items){
         : '#'+n;
       return num+' '+esc(m.text||'');
     }).join(', ');
-    let meta='', cls='qrow';
+    let meta='', cls='qrow', choice='';
     if(it.status==='analyzing'){
       cls='qrow analyzing';
       meta='<div style="font-size:12px;color:var(--green)"><span class="qspin">🔄</span> AI 분석 중…</div>';
@@ -1692,30 +1773,172 @@ function aiQueueBoxHTML(items){
         +'<button class="btn" onclick="queuePromptStart(\''+it.id+'\')" title="아직 아니면 다시 프롬프트">다시 프롬프트</button>'
         +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>';
     } else {
-      btns='<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="이 목표를 추가">추가</button>'
-        +'<button class="btn" onclick="queuePromptChat(\''+it.id+'\')" title="AI와 대화하며 다듬기 (이미지 붙여넣기 가능)">프롬프트</button>'
-        +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>';
+      // 검토 대기: 우측 버튼 대신 번호 선택 UI(추천 1번 + 대안 + 기타 직접입력)로 렌더.
+      btns='';
+      // 1번은 (추천): kind에 따라 다르다 — 반복이면 '부모 아래 추가', 새 목표면 '추가', 진짜 중복이면 '스킵'.
+      const seqs=(it.matches||[]).filter(m=>m.seq>0).map(m=>'#'+m.seq);
+      const note=it.note?esc(it.note):'';
+      const m0=(it.matches||[]).find(function(m){return m.seq>0;});   // 반복/중복이 매달릴 부모 목표
+      const pN=m0?m0.seq:0, pTitle=m0?esc(m0.text||''):'';
+      const kind=it.kind||(it.duplicate?'duplicate':'new');
+      let opts;
+      if(kind==='recurring' && pN>0){
+        // 반복 작업: 기존 목표의 또 다른 회차 → 그 아래에 태스크로 붙이는 것을 추천.
+        const why=(note?note+' ':'')+'#'+pN+' '+pTitle+'의 반복 작업이라, 그 아래 이번 회차로 추가하는 것을 추천합니다.';
+        opts=[{a:'under',arg:pN,label:'#'+pN+' 아래에 이번 회차 추가',rec:true,desc:why},
+              {a:'add',label:'별도 새 목표로 추가',desc:'#'+pN+'와 무관하게 최상위 목표로 추가합니다.'},
+              {a:'skip',label:'스킵',desc:'이번 회차는 추적하지 않고 버립니다.'}];
+      } else if(kind==='duplicate'){
+        // 진짜 중복: 같은 목표가 이미 있어 새로 추가할 실익이 없음 → 스킵 추천.
+        const why=(seqs.length?'유사 목표 '+seqs.join(', ')+'가 이미 같은 목표를 담고 있습니다. ':'')+(note?note+' ':'')+'새로 추가해도 얻는 게 없어 스킵을 추천합니다.';
+        opts=[{a:'skip',label:'스킵',rec:true,desc:why}];
+        if(pN>0) opts.push({a:'under',arg:pN,label:'#'+pN+' 아래에 추가',desc:'그래도 별도 실행으로 남기려면 그 목표 아래에 넣습니다.'});
+        opts.push({a:'add',label:'별도 목표로 추가',desc:'그래도 독립 목표로 추가합니다.'});
+      } else {
+        // 새 목표: AI 배치 제안(placement)을 그대로 수용해 한 번에 승격하는 것을 추천.
+        // placement==='sub' 면 '#부모 아래 서브로', 'top' 이면 '독립 태스크로'. 어느 쪽이든 1번(승격)은
+        // parentSeq/priority override 없이 add 만 보내 백엔드가 AI 제안을 적용하게 한다.
+        const isSub=(it.placement==='sub' && (it.suggestedParentSeq||0)>0);
+        const pn=it.suggestedParentSeq||0, pt=isSub?topGoalTitle(pn):'';
+        const rat=it.rationale?(esc(it.rationale)):(note||'기존 목표와 겹치지 않는 새 목표라 추가를 추천합니다.');
+        const primLabel=isSub?('승격 — 서브 → #'+pn+(pt?' '+esc(pt):'')):'승격 — 독립 태스크';
+        opts=[{a:'add',label:primLabel,rec:true,desc:'AI 제안('+(isSub?('#'+pn+' 아래 · '):'독립 · ')+priLabel(it.priority||'medium')+' 우선순위)대로 한 번에 추가합니다. '+rat},
+              {a:'override',label:'배치·우선순위 바꾸기',desc:'AI 제안 대신 부모(독립/서브)와 우선순위를 직접 정해 승격합니다.'},
+              {a:'prompt',label:'프롬프트 열기',desc:'이미지 지원 AI 챗으로 이 항목을 직접 다듬습니다.'},
+              {a:'skip',label:'스킵',desc:'이 제안을 버립니다.'}];
+      }
+      let n=0;
+      const rows=opts.map(function(o){ n++;
+        const argAttr=(o.arg!=null?' data-arg="'+o.arg+'"':'');
+        const call=(o.arg!=null?'queueChoose(\''+it.id+'\',\''+o.a+'\','+o.arg+')':'queueChoose(\''+it.id+'\',\''+o.a+'\')');
+        return '<div class="qopt'+(o.rec?' rec':'')+'" data-n="'+n+'" data-action="'+o.a+'"'+argAttr+' onclick="'+call+'">'
+          +'<div class="qnum">'+n+'</div>'
+          +'<div class="qopt-body"><div class="qopt-label">'+o.label+(o.rec?'<span class="qrec-tag">추천</span>':'')+'</div>'
+          +'<div class="qopt-desc">'+o.desc+'</div></div></div>';
+      }).join(''); n++;
+      // 마지막 번호: 직접 입력(기타). 짧은 지시를 넣고 Enter를 누르면 그 문구로 즉시 다듬는다.
+      // 보관해 둔 입력값을 value로 되살린다(속성 안전 이스케이프 — esc()는 따옴표 미처리+빈값을 '-'로 바꿔 부적합).
+      const ov=(_qOther[it.id]||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      const other='<div class="qopt qother" data-n="'+n+'" data-action="other">'
+        +'<div class="qnum">'+n+'</div>'
+        +'<div class="qopt-body"><div class="qopt-label">기타 (직접 지시)</div>'
+        +'<input id="qother_'+it.id+'" data-qid="'+it.id+'" class="qother-input" value="'+ov+'" placeholder="예: 문구를 &#39;스크립트화&#39;로 바꾸고 자동 발송까지 포함해줘 — Enter 제출" '
+        +'oninput="_qOther[\''+it.id+'\']=this.value" onclick="event.stopPropagation()"></div></div>';
+      const tip=(ready===1?'번호를 입력하거나 항목을 클릭하세요':'항목을 클릭하세요');
+      const links=(ms?'유사: '+ms+' · ':'')+tip;
+      // 새 목표 카드에는 AI 배치 제안 배지줄(placement/priority/rationale) + 오버라이드 패널을 얹는다.
+      // 반복/중복 카드는 이미 부모(#seq) 컨텍스트가 옵션에 녹아 있어 배지줄을 생략한다.
+      const placeLine=(kind!=='recurring' && kind!=='duplicate')?qPlacementLine(it):'';
+      const ovr=(kind!=='recurring' && kind!=='duplicate')?qOverrideHTML(it):'';
+      choice=placeLine+'<div class="qchoice" data-qid="'+it.id+'">'+rows+other+'</div>'+ovr+'<div class="qhint">'+links+'</div>';
+      meta='';   // 기존 태그/노트/유사 줄은 추천 사유로 접어 넣었으므로 비운다
     }
     const newBadge=(_qJustRefined===it.id)
       ? '<span style="font-size:11px;padding:1px 7px;border-radius:20px;background:#0f2a1e;color:var(--green);border:1px solid #1e4a35;margin-right:6px">새 결과</span>' : '';
     return '<div class="'+cls+'">'
-      +'<div style="flex:1;min-width:0">'+newBadge+'<span id="qt_'+it.id+'">'+esc(it.text)+'</span>'+meta+panel+'</div>'
+      +'<div style="flex:1;min-width:0">'+newBadge+'<span id="qt_'+it.id+'">'+esc(it.text)+'</span>'+meta+panel+choice+'</div>'
       +'<div style="display:flex;gap:4px;flex-shrink:0;align-items:flex-start">'+btns+'</div></div>';
   }
+  const confirmHTML=confirmIds.map(confirmRow).join('');
+  const rightInfo=counts.join(' · ')||(confirmIds.length?'':'대기 없음');
   return '<div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:4px 0 10px;background:rgba(91,140,255,0.06)">'
     +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
     +'<span style="font-weight:600">🤖 AI 큐</span>'+run
-    +'<span class="muted" style="font-weight:400;font-size:12px;margin-left:auto">'+(counts.join(' · ')||'대기 없음')+'</span></div>'
-    +items.map(row).join('')+'</div>';
+    +'<span class="muted" style="font-weight:400;font-size:12px;margin-left:auto">'+rightInfo+'</span></div>'
+    +confirmHTML+items.map(row).join('')+'</div>';
 }
 // === 큐 프롬프트 다듬기 상태 ===
 // _qUI: 프롬프트 입력/생성 중 패널 상태 {id, mode:'prompt'|'gen', prompt}
 // _qJustRefined: 방금 프롬프트로 다듬어진 항목 id — '새 결과'로 강조하고 진행/다시 프롬프트를 띄운다.
 let _qUI=null, _qJustRefined='', _lastAiQueue=[];
-// 입력(목록) 뷰의 전역 큐 박스: #aiQueue(목표 목록 아래)에 전체 큐를 그린다.
-function renderAiQueue(items){ _lastAiQueue=items||[]; const host=$('aiQueue'); if(host) host.innerHTML=aiQueueBoxHTML(items);
+// _qOther: 기타(직접 지시) 입력칸에 친 값을 항목 id별로 보관 → 5초 폴링 재렌더가 innerHTML을
+// 갈아끼워도 value로 다시 그려 넣어 입력이 사라지지 않게 한다(프롬프트 textarea의 _qUI.prompt와 동일 취지).
+let _qOther={};
+// _qConfirm: 추가(1번 등)로 목표가 생긴 직후의 클라이언트 전용 확인 카드. 서버는 이미 큐에서
+// 항목을 지웠으므로, 새로 만든 목표의 #seq로 '열기' 링크와 5초 카운트다운을 이 상태로 그린다.
+// id → {seq, parentSeq, text, sec}. 0이 되면 카드를 지워 큐를 완전히 사라지게 한다.
+let _qConfirm={}, _qConfirmTimers={};
+// 큐 탭(#queueHost)의 유일한 렌더러. Phase 2: dedup 리뷰 UI가 입력 뷰에서 큐 탭으로 완전히
+// 이전됐다. 두 섹션으로 그린다 — (1) dedup 리뷰(추가/수정/스킵·5초 확인·다시 프롬프트, 기존
+// aiQueueBoxHTML 그대로), (2) 그 외 잡 결과 카드(linkmap/report — resultHTML 보기/다운로드,
+// 오류면 재시도/닫기). 큐가 비면 정의된 빈 상태를 보여준다.
+function renderAiQueue(items){ _lastAiQueue=items||[]; const host=$('queueHost'); if(!host) return;
+  // 재렌더 전에 기타 입력칸의 포커스/캐럿 위치를 기억 → 폴링 재렌더에도 타이핑이 끊기지 않게 복원.
+  const af=document.activeElement;
+  const qo=(af&&af.classList&&af.classList.contains('qother-input'))?{id:af.getAttribute('data-qid'),pos:af.selectionStart}:null;
+  const all=items||[];
+  const dedup=all.filter(it=>(it.jobKind||'dedup')==='dedup');   // 레거시/디코더 기본값 → dedup
+  const jobs=all.filter(it=>(it.jobKind||'dedup')!=='dedup');
+  const confirmActive=Object.keys(_qConfirm||{}).length>0;
+  const dedupHTML=aiQueueBoxHTML(dedup,true);   // true: 확인 카드는 이 전역 큐 박스에만 그린다
+  const jobsHTML=jobs.map(queueJobCardHTML).join('');
+  // 빈 상태: dedup·잡·확인 카드가 모두 없을 때만.
+  if(!dedupHTML && !jobsHTML && !confirmActive){
+    host.innerHTML='<div class="muted" style="padding:18px 4px;text-align:center;line-height:1.6">'
+      +'큐가 비어 있습니다 — <b>AI추가</b>로 후보를 던지거나 내보내기를 실행하면 여기에 쌓입니다.</div>';
+    return;
+  }
+  let html='';
+  if(dedupHTML || confirmActive) html+='<div class="queue-section">'+dedupHTML+'</div>';
+  if(jobsHTML) html+='<div class="queue-section" style="margin-top:12px"><div class="muted" style="font-size:12px;margin:2px 0 6px">작업 결과</div>'+jobsHTML+'</div>';
+  host.innerHTML=html;
   // 프롬프트 입력 중이면 재렌더 후 텍스트박스에 포커스를 되돌린다(캐럿 끝으로).
-  if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } } }
+  if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } }
+  if(qo&&qo.id){ const t=$('qother_'+qo.id); if(t){ t.focus(); try{ const p=(qo.pos==null?t.value.length:qo.pos); t.setSelectionRange(p,p); }catch(e){} } } }
+// 큐 탭 진입점: 최신 review의 aiQueue로 큐 탭을 그린다. fillActiveView에서 호출.
+function renderQueueTab(r){ renderAiQueue((r&&r.aiQueue)||_lastAiQueue||[]); }
+// 비-dedup 잡(linkmap/report…) 카드 하나. 상태 배지 + 결과(resultHTML) 보기/다운로드, 또는 오류+재시도/닫기.
+function queueJobCardHTML(it){
+  const title=esc(it.title||it.text||'(작업)');
+  const st=it.status||'ready';
+  const badge=st==='analyzing'
+    ? '<span class="qrun"><span class="qdot"></span>실행 중</span>'
+    : (st==='pending'
+        ? '<span class="muted" style="font-size:12px">대기</span>'
+        : (it.error?'<span style="color:#e0a458;font-size:12px">오류</span>':'<span style="color:var(--green);font-size:12px">완료</span>'));
+  let body='';
+  if(st==='ready' && it.error){
+    body='<div class="muted" style="font-size:12px;color:#e0a458;margin-top:4px">'+esc(it.error)+'</div>'
+      +'<div style="display:flex;gap:6px;margin-top:6px">'
+      +'<button class="btn" onclick="queueRetry(\''+it.id+'\')">재시도</button>'
+      +'<button class="btn" onclick="queueRemove(\''+it.id+'\')">닫기</button></div>';
+  } else if(st==='ready' && it.resultHTML){
+    // linkmap 잡: 노드-링크 지도 + 요약 + 압축 내보내기를 카드에 인라인으로 펼쳐 보여준다.
+    // (resultHTML은 서버가 만든 자기완결 HTML 조각 — /data.json aiQueue로 전달됨.)
+    const inline=(it.jobKind==='linkmap')
+      ? '<div style="margin-top:8px;padding:12px;background:#101420;border:1px solid #222838;border-radius:10px;overflow-x:auto">'+it.resultHTML+'</div>'
+      : '';
+    body=inline+'<div style="display:flex;gap:6px;margin-top:6px">'
+      +'<button class="btn primary" onclick="queueView(\''+it.id+'\')">보기</button>'
+      +'<button class="btn" onclick="queueDownload(\''+it.id+'\')">다운로드</button>'
+      +'<button class="btn" onclick="queueRemove(\''+it.id+'\')">닫기</button></div>';
+  } else if(st==='ready'){
+    body='<div class="muted" style="font-size:12px;margin-top:4px">결과가 비어 있습니다.</div>'
+      +'<div style="display:flex;gap:6px;margin-top:6px">'
+      +'<button class="btn" onclick="queueRetry(\''+it.id+'\')">재시도</button>'
+      +'<button class="btn" onclick="queueRemove(\''+it.id+'\')">닫기</button></div>';
+  }
+  return '<div class="qrow" style="align-items:flex-start"><div style="flex:1;min-width:0">'
+    +'<div style="font-size:13px">'+title+' <span style="margin-left:6px">'+badge+'</span></div>'
+    +body+'</div></div>';
+}
+// 잡 결과 카드 액션.
+function queueRetry(id){ post('/api/queue/retry',{id:id}); }
+function queueRemove(id){ post('/api/queue/remove',{id:id}); }
+function queueView(id){ const it=(_lastAiQueue||[]).find(x=>x.id===id); if(!it||!it.resultHTML) return;
+  const w=window.open('','_blank'); if(w){ w.document.write(it.resultHTML); w.document.close(); } }
+function queueDownload(id){ const it=(_lastAiQueue||[]).find(x=>x.id===id); if(!it||!it.resultHTML) return;
+  const blob=new Blob([it.resultHTML],{type:'text/html'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=((it.title||it.text||'result').replace(/[^\w가-힣.-]+/g,'_'))+'.html';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
+// 내보내기(Phase 3): 인라인 렌더 대신 linkmap 잡을 큐에 던지고(fire-and-forget) 큐 탭으로 전환한다.
+// 백그라운드 워커가 루트 goal의 링크 체인을 걸어 노드-링크 지도 + 링크-aware 압축 내보내기를 만들어
+// 큐 카드로 올린다. 결과는 큐 탭에서 보기/다운로드/재시도.
+function exportLinkmap(id){
+  post('/api/queue/enqueue-linkmap',{root:id});
+  setView('queue');
+}
 // 큐 박스는 입력 뷰(#aiQueue)뿐 아니라 스프린트 뷰(보드 하단)에도 렌더된다. 프롬프트 열기/취소
 // 같은 즉시 상태 변화는 '지금 보고 있는 뷰'를 바로 다시 그려야 한다 — 안 그러면 5초 폴링을
 // 기다리게 되어 반응이 느리게 느껴진다. 재렌더 후 입력 중이면 텍스트박스 포커스를 복원한다.
@@ -1724,8 +1947,99 @@ function rerenderAiQueue(){
   else renderAiQueue(_lastAiQueue);
   if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } }
 }
-function queueAdd(id){ post('/api/goal/queue/resolve',{id:id,action:'add'}); }
+// 추가(1번/바로추가/이 결과로 진행): fire-and-forget이 아니라 응답의 새 #seq를 받아 확인 카드로
+// 전환한다. parentSeq가 있으면 그 목표 아래(반복 회차)로 들어간다.
+// 승격(add): opts로 AI 제안을 덮어쓸 수 있다.
+//  - parentSeq: 숫자면 그 값(0=명시적 최상위)을 override로 보낸다. 생략(undefined)이면 AI 제안(suggestedParentSeq) 수용.
+//  - priority: 있으면 override로 보낸다. 생략이면 AI 제안 우선순위 수용.
+// 옛 시그니처 queueAdd(id, parentSeq) 는 두 번째 인자를 parentSeq override로 그대로 받는다.
+function queueAdd(id,parentSeq,priority){
+  _qJustRefined='';
+  const it=((_review&&_review.aiQueue)||_lastAiQueue||[]).find(x=>x.id===id);
+  const label=it?it.text:'';
+  const body={id:id,action:'add'};
+  if(parentSeq!=null) body.parentSeq=parentSeq;   // 0 도 명시적 최상위 override로 보낸다
+  if(priority) body.priority=priority;
+  fetch('/api/goal/queue/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(res=>{
+      if(res&&res.ok&&res.seq){
+        // parentFallback: 서브 부착이 1-level 트리 규칙에 막혀 최상위로 추가된 경우 — 확인 카드에 안내를 얹는다.
+        startQueueConfirm(id,res.seq,(res.parentSeq!=null?res.parentSeq:(parentSeq||0)),label,!!(res&&res.parentFallback));
+      }
+      load();
+    })
+    .catch(()=>load());
+}
 function queueSkip(id){ _qJustRefined=''; post('/api/goal/queue/resolve',{id:id,action:'skip'}); }
+// --- 오버라이드 패널: 배치/우선순위를 직접 지정해 승격 ---
+// 패널 열고 닫기(폴링 재렌더가 innerHTML을 갈아끼워도 다시 열려면 링크를 다시 눌러야 하므로, 열림 상태는 굳이 보존하지 않음 — 가벼움 유지).
+function qOverrideToggle(id){ const p=$('qovr_'+id); if(!p) return;
+  p.style.display=(p.style.display==='none'||!p.style.display)?'flex':'none';
+  if(p.style.display==='flex'){ const n=$('qovrn_'+id); if(n) n.focus(); } }
+// select(부모 목표)로 고르면 #번호 입력칸을 동기화.
+function qOvrPickParent(id){ const s=$('qovrp_'+id), n=$('qovrn_'+id); if(!s||!n) return;
+  const v=parseInt(s.value,10)||0; n.value=(v>0?v:''); }
+// #번호 직접 입력 시 select 를 동기화(그 번호가 최상위 목록에 있으면 선택, 없으면 독립으로).
+function qOvrSyncSelect(id){ const s=$('qovrp_'+id), n=$('qovrn_'+id); if(!s||!n) return;
+  const v=parseInt(n.value,10)||0; let has=false;
+  for(let i=0;i<s.options.length;i++){ if((parseInt(s.options[i].value,10)||0)===v){ s.selectedIndex=i; has=true; break; } }
+  if(!has) s.value='0';   // 최상위 목록에 없는 번호는 서브로 못 다니, 독립으로 표시(백엔드도 fallback)
+}
+// 오버라이드 승격: 선택한 parentSeq(0=독립) + priority 를 명시적으로 보낸다 → 백엔드가 AI 제안 대신 이 값을 적용.
+function queueOverrideApply(id){
+  const n=$('qovrn_'+id), pri=$('qovrpri_'+id);
+  const parentSeq=n?(parseInt(n.value,10)||0):0;   // 빈칸/0 → 명시적 최상위
+  const priority=pri?pri.value:'';
+  queueAdd(id,parentSeq,priority);
+}
+// 추가 직후 확인 카드: '열기' 링크 + 5초 카운트다운. 5초간 아무것도 안 하면 카드를 지워 큐를 없앤다.
+function startQueueConfirm(id,seq,parentSeq,label,fallback){
+  _qConfirm[id]={seq:seq,parentSeq:parentSeq||0,text:label||'',sec:5,fallback:!!fallback};
+  if(_qConfirmTimers[id]) clearInterval(_qConfirmTimers[id]);
+  _qConfirmTimers[id]=setInterval(function(){
+    const c=_qConfirm[id];
+    if(!c){ clearInterval(_qConfirmTimers[id]); delete _qConfirmTimers[id]; return; }
+    c.sec--;
+    if(c.sec<=0){ dismissQueueConfirm(id); } else { rerenderAiQueue(); }
+  },1000);
+  rerenderAiQueue();
+}
+function dismissQueueConfirm(id){
+  if(_qConfirmTimers[id]){ clearInterval(_qConfirmTimers[id]); delete _qConfirmTimers[id]; }
+  delete _qConfirm[id];
+  rerenderAiQueue();
+}
+// 번호 선택 UI 액션 라우팅: 추가/스킵/프롬프트 열기(이미지 지원 챗)/부모 아래 추가. 'other'는 인라인 입력이 처리.
+function queueChoose(id,action,arg){
+  if(action==='add') return queueAdd(id);
+  if(action==='under') return queueAdd(id,arg);   // 반복 회차: 부모 #arg 아래로 추가 + 확인 카드
+  if(action==='skip') return queueSkip(id);
+  if(action==='prompt') return queuePromptChat(id);
+  if(action==='override') return qOverrideToggle(id);   // 배치/우선순위 직접 지정 패널 토글
+}
+// 기타(직접 지시) 입력의 IME-안전 Enter 제출 — 문서 레벨 위임이라 큐가 어느 뷰(목록/스프린트)로
+// 재렌더되든 재바인딩 없이 항상 동작한다. 한글 조합을 확정하는 Enter는 isComposing=true여서 그냥
+// 무시하면 삼켜지므로(마지막 글자 확정용), 보류했다가 compositionend 직후에 제출한다.
+document.addEventListener('keydown',function(e){
+  const el=e.target;
+  if(!el||!el.classList||!el.classList.contains('qother-input')||e.key!=='Enter') return;
+  if(e.isComposing||el._composing){ el._pendingSubmit=true; return; }   // 조합 중: 확정 후로 보류
+  e.preventDefault();
+  const id=el.getAttribute('data-qid'); if(id) queueOtherSubmit(id);
+});
+document.addEventListener('compositionstart',function(e){ const el=e.target; if(el&&el.classList&&el.classList.contains('qother-input')) el._composing=true; });
+document.addEventListener('compositionend',function(e){ const el=e.target;
+  if(!el||!el.classList||!el.classList.contains('qother-input')) return;
+  el._composing=false;
+  if(el._pendingSubmit){ el._pendingSubmit=false; const id=el.getAttribute('data-qid'); if(id) queueOtherSubmit(id); }
+});
+function queueOtherSubmit(id){
+  const inp=$('qother_'+id); const v=(((_qOther[id]!=null?_qOther[id]:(inp?inp.value:''))||'')).trim();
+  if(!v){ if(inp) inp.focus(); return; }
+  delete _qOther[id];                    // 제출됐으니 보관값 정리
+  _qUI={id:id,mode:'prompt',prompt:v};   // queuePromptGen이 t 없으면 _qUI.prompt를 사용
+  queuePromptGen(id);
+}
 // 큐 항목 다듬기: 기존 AI 대화 다이얼로그(이미지 붙여넣기·드래그·다중턴 대화 지원)를 이 항목의
 // 컨텍스트(현재 문구 + 유사 목표 + AI 판정)로 연다. 다듬은 뒤 '이 결과로 진행'(목표 추가) 또는
 // '큐에 반영'(문구만 갱신하고 계속 대기).
@@ -1813,7 +2127,9 @@ let _doneSince=\#(dcInit);
 const _prefsInit=\#(prefsInit);
 let _review=null;         // last review object (for filter-only re-render)
 let _plugins=[];          // last plugin list from /data.json (rendered in the 🧩 overlay)
-let _lastReportArgs=null; // cached (d,r,conf,prov) so 프리뷰 can re-render on filter change
+let _lastReportArgs=null; // cached (d,r,conf,prov) so 리포트 can re-render on filter change
+let _reportRange=null;    // {mode,preset,start,end} — 리포트 기간 필터(컨디션맵과 동일 CMTimeFilter)
+let _reportCtl=null;      // mounted CMTimeFilter controller (mount once on first 리포트 view)
 function evCount(g){ return (g.evidence||[]).length; }
 function toggleEv(id){ if(_evOpen.has(id))_evOpen.delete(id); else _evOpen.add(id); applyEvOpen(); }
 function applyEvOpen(){ (_goals||[]).forEach(g=>{ const p=document.getElementById('ev_'+g.id);
@@ -1949,6 +2265,35 @@ function reapplyFilter(){
   updateFilterButtons();
   fillActiveView(_review);
   if(_lastReportArgs){ const a=_lastReportArgs; _md=buildMarkdown(a.d,a.r,a.conf,a.prov); renderReport(a.d,a.r,a.conf,a.prov); }
+}
+// ===== 리포트 기간 필터 (컨디션맵과 동일한 CMTimeFilter 재사용) =====
+// 리포트 뷰를 처음 열 때 한 번 마운트한다. 프리셋/커스텀/자동은 컨디션맵과 동일.
+function initReportFilter(){
+  if(_reportCtl) return;
+  const host=$('reportFilter'); if(!host) return;
+  _reportCtl=CMTimeFilter.mount(host, {
+    presets:['today','yesterday','7d','1m','30d'], auto:true, custom:true, initial:'auto',
+    onChange:(r)=>{ _reportRange=r;
+      // 캐시된 리뷰로 리포트만 즉시 다시 그린다 (5초 폴링을 기다리지 않음).
+      if(_lastReportArgs){ const a=_lastReportArgs; _md=buildMarkdown(a.d,a.r,a.conf,a.prov); renderReport(a.d,a.r,a.conf,a.prov); }
+    }
+  });
+}
+// 기간 필터는 '완료' 목표에만 건다(완료 컷오프와 동일한 규칙). 대기·진행 등 미완료 목표는
+// 기간과 무관하게 보기(상태) 필터만 따른다. 완료 목표는 롤업 완료 시각(goalCompletedAt)이
+// 선택 기간 [start, end] 안에 들 때만 리포트에 포함. 완료 시각 불명(0)이면 표시를 유지.
+function reportPassesRange(g,goals){
+  if(!_reportRange || !_reportRange.start) return true;
+  if(effStatus(g,goals)!=='done') return true;
+  const c=goalCompletedAt(g,goals); if(!c) return true;
+  const s=CMTimeFilter.parseDay(_reportRange.start).getTime()/1000;
+  const e=CMTimeFilter.parseDay(_reportRange.end).getTime()/1000 + 86400;   // end 당일 끝까지 포함
+  return c>=s && c<e;
+}
+// 리포트 헤더에 표시할 기간 라벨. 범위 미설정이면 그날 날짜, 하루면 그 날짜, 아니면 start ~ end.
+function reportRangeLabel(fallbackDate){
+  const r=_reportRange; if(!r || !r.start) return fallbackDate;
+  return (r.start===r.end) ? r.start : (r.start+' ~ '+r.end);
 }
 // 보기 토글: 상태 버튼을 켜면 그 상태의 목표가 보이고, 끄면 숨겨진다.
 function toggleStatusFilter(s){ _statusFilter[s]=!_statusFilter[s]; reapplyFilter(); syncURL(); }
@@ -2105,7 +2450,7 @@ function applyPrefs(p){
   if(Array.isArray(p.gc)) p.gc.forEach(k=>_gCollapsed.add(k));
   if(Array.isArray(p.gseen)) p.gseen.forEach(k=>_gSeen.add(k));
   if(Array.isArray(p.tord)) _tabOrder=p.tord.filter(k=>VIEW_KEYS.includes(k));   // 빠진 표준 키는 normTabOrder가 채운다
-  if(typeof p.dv==='string') _defaultView=p.dv;
+  if(typeof p.dv==='string' && VIEW_KEYS.includes(p.dv)) _defaultView=p.dv;   // 사라진 탭(옛 skills 등)이 기본뷰로 남아 있으면 무시
 }
 // 부팅 시 1회 호출: 서버 prefs를 적용한 뒤 해시를 읽어 상태 변수와 렌더가 건드리지 않는 폼
 // 컨트롤(뷰 셀렉트·완료 컷오프 입력)을 맞춘다. 상태 버튼의 활성 표시는 이후 updateFilterButtons로 동기화된다.
@@ -2128,6 +2473,8 @@ function restoreFromURL(){
   // 명시적 URL 해시 뷰가 없으면, 사용자가 지정한 기본 보기(Set as default)로 연다.
   // 기본 보기가 없으면 서버가 주입한 마지막 보기(lastView)를 그대로 쓴다.
   if(!hashHasView && _defaultView) _view=_defaultView;
+  // 'skills'·'agents'는 더 이상 대시보드 탭이 아니다(레일 독립 오버레이). 오래된 해시/저장값이 오면 기본 작업뷰로 보정.
+  if(_view==='skills'||_view==='agents') _view='input';
   renderTabs();
   const ds=$('flt_donesince'); if(ds) ds.value=_doneSince?localInput(_doneSince):'';
   _urlReady=true;
@@ -2317,6 +2664,15 @@ function gnum(g){ const n=g.seq||0; return 'goal-'+(n<10?'0':'')+n; }
 function gpill(g){ const n=g.seq||0; const t=gnum(g);
   if(n<=0) return '<span class="pill" style="font-variant-numeric:tabular-nums">'+t+'</span>';
   return '<a class="pill gp" href="/goal?n='+n+'" title="골 페이지 — 정의·첨부 보기" style="font-variant-numeric:tabular-nums" onclick="event.stopPropagation()">'+t+'</a>'; }
+// Link indicator: shown ONLY on a SOURCE goal that links out (g.links non-empty). Reuses
+// the .pill visual (same chip family as gpill), tinted with the accent so it reads as a
+// small dot/badge. Hover lists the linked targets as goal-NN. Display stays flat — the
+// link is a directional export hint, not a nesting. See docs/specs/goal-link-and-generic-queue.md.
+function linkDot(g){
+  const ids=(g&&g.links)||[]; if(!ids.length) return '';
+  const labs=ids.map(function(id){ const t=byId(_goals,id); return t?('goal-'+pad2(t.seq||0)):id; });
+  return '<span class="pill lkdot" title="링크됨: '+esc(labs.join(', '))+'" style="color:var(--accent);border-color:var(--accent)">🔗'+(ids.length>1?(' '+ids.length):'')+'</span>';
+}
 // Session-link icon for a goal row. Connected -> bright chain that opens the readable
 // transcript; not connected -> dim broken chain that opens the native connect picker.
 function slinkBtn(g){
@@ -2349,8 +2705,10 @@ function pad2(n){ return (n<10?'0':'')+n; }
 // 저장되어 앱을 껐다 켜도 그대로 복원된다. ⋯ 메뉴로 기본 지정·좌우 이동을 한다.
 const VIEW_DEFS=[
   {k:'input',t:'목록'},{k:'group',t:'그룹'},{k:'table',t:'테이블'},
-  {k:'token',t:'토큰'},{k:'schedule',t:'일정'},{k:'preview',t:'프리뷰'},
+  {k:'token',t:'토큰'},{k:'queue',t:'큐'},{k:'schedule',t:'일정'},{k:'preview',t:'리포트'},
   {k:'sprint',t:'스프린트'},{k:'archived',t:'아카이브'},{k:'history',t:'히스토리'}
+  // 에이전트는 더 이상 대시보드 탭이 아니다 — 레일의 '위임' 메뉴가 소유하는 독립 오버레이(SessionRail cmNav('delegate')).
+  // 워커(백그라운드/주기 작업)도 대시보드에서 분리됐다 — 레일의 '크론' 메뉴가 독립 페이지 /cron 을 연다.
 ];
 const VIEW_LABEL={}; VIEW_DEFS.forEach(d=>{ VIEW_LABEL[d.k]=d.t; });
 const VIEW_KEYS=VIEW_DEFS.map(d=>d.k);
@@ -2378,6 +2736,25 @@ function markActiveTab(){
   const host=$('viewTabs'); if(!host) return;
   [...host.querySelectorAll('.vtab')].forEach(b=>b.classList.toggle('active', b.dataset.k===_view));
 }
+// 큐 탭 라벨에 미확인 힌트(작은 카운트) — enqueue 후 사용자가 큐 탭을 찾도록. 큐 탭을 보고
+// 있을 땐 숨긴다. 대상: 리뷰 대기 dedup + 완료/오류 잡(사용자 액션이 필요한 항목).
+function updateQueueHint(items){
+  const host=$('viewTabs'); if(!host) return;
+  const btn=host.querySelector('.vtab[data-k="queue"]'); if(!btn) return;
+  const lbl=btn.querySelector('span'); if(!lbl) return;
+  const n=(items||[]).filter(function(it){
+    const kind=it.jobKind||'dedup';
+    if(kind==='dedup') return !it.status||it.status==='ready';   // 리뷰 대기
+    return it.status==='ready';                                   // 잡: 완료/오류
+  }).length;
+  const show=(n>0 && _view!=='queue');
+  let b=lbl.querySelector('.qhint-badge');
+  if(!show){ if(b) b.remove(); return; }
+  if(!b){ b=document.createElement('span'); b.className='qhint-badge';
+    b.style.cssText='display:inline-block;margin-left:5px;min-width:15px;padding:0 4px;border-radius:8px;background:var(--accent);color:#0a0e17;font-size:10px;font-weight:700;text-align:center;line-height:15px;vertical-align:middle';
+    lbl.appendChild(b); }
+  b.textContent=String(n);
+}
 function openTabMenu(e,k){
   e.stopPropagation();   // 탭 자체의 setView가 같이 발동하지 않게
   const idx=_tabOrder.indexOf(k), isDef=(k===_defaultView);
@@ -2403,9 +2780,11 @@ function tabSetDefault(k){
 
 // Persist the chosen view server-side (Settings file store) so the next launch reopens here.
 // A URL hash (bookmark/refresh) still wins over this on load — see restoreFromURL.
-function setView(v){ _view=v; if(_review) fillActiveView(_review); applyView(); syncURL(); post('/api/prefs/view',{view:v}); }
+function setView(v){ _view=v; if(_review) fillActiveView(_review); applyView(); syncURL(); post('/api/prefs/view',{view:v});
+}
 function applyView(){
   const inp=$('inputView'), pv=$('previewView'), gv=$('groupView'), sv=$('scheduleView'), tv=$('tableView'), tkv=$('tokenView'), spv=$('sprintView'), av=$('archivedView');
+  const qv=$('queueView'); if(qv) qv.style.display=(_view==='queue')?'':'none';
   inp.style.display=(_view==='input')?'':'none';
   gv.style.display =(_view==='group')?'':'none';
   sv.style.display =(_view==='schedule')?'':'none';
@@ -2414,13 +2793,22 @@ function applyView(){
   spv.style.display=(_view==='sprint')?'':'none';
   av.style.display =(_view==='archived')?'':'none';
   pv.style.display =(_view==='preview')?'':'none';
+  if(_view==='preview') initReportFilter();   // 리포트 기간 필터를 최초 진입 시 마운트
   const hv=$('historyView'); if(hv) hv.style.display=(_view==='history')?'':'none';
-  // 히스토리 탭에선 오늘 전용 요소(목표 필터 바 · 아래 상세 섹션)를 숨겨 화면을 비운다.
+  // 히스토리 탭에선 목표와 무관하므로 목표 필터 바를 숨겨 화면을 비운다.
   // 벗어나면 인라인 display를 지워 CSS(스포츠 모드 등)가 다시 관장하게 둔다.
-  const gf=$('goalFilters'); if(gf) gf.style.display=(_view==='history')?'none':'';
-  const ds=$('detailSections'); if(ds) ds.style.display=(_view==='history')?'none':'';
+  const hideFilters=(_view==='history');
+  const gf=$('goalFilters'); if(gf) gf.style.display=hideFilters?'none':'';
+  // Page view (컨디션): in-flow panel below the tab bar instead of the goal panel.
+  // 스킬·에이전트는 더 이상 대시보드 탭이 아니라 레일이 소유하는 독립 오버레이다
+  // (SessionRail cmNav('skills') / cmNav('delegate') 참고).
+  const isPage=(_view==='condition');
+  const gp=$('goalPanel'); if(gp) gp.style.display=isPage?'none':'';
   markActiveTab();
 }
+// 에이전트 오버레이(cmAgOverlay)는 더 이상 대시보드 컨텐츠로 재부모화하지 않는다.
+// 스킬 오버레이(cmSkOverlay)와 마찬가지로 레일이 소유하는 독립 오버레이로 남긴다
+// (레일 '위임' 메뉴 → cmAgentsOpen). 대시보드 탭 의존성 제거.
 // Fill ONLY the active view's input DOM. 목록/그룹 render the same goals with the same
 // element ids (tt_<id>, ev_<id>) for live timers and evidence panels, so keeping both
 // in the DOM at once would collide. We blank the inactive one and render the active one.
@@ -2430,6 +2818,7 @@ function fillActiveView(r){
   else if(_view==='schedule'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('tableHost').innerHTML=''; renderSchedule(r); }
   else if(_view==='table'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderTable(r); }
   else if(_view==='token'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderTokenView(r); }
+  else if(_view==='queue'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderQueueTab(r); }
   else if(_view==='sprint'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderSprintView(r); }
   else if(_view==='archived'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderArchivedView(r); }
   else if(_view==='history'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; loadHistory(); }   // 자체 엔드포인트(/history.json)에서 로드 — 캐시되어 재호출은 무비용
@@ -2545,7 +2934,7 @@ function gChildDrop(e,pid,id){ if(!_gChildFrom||_gChildFrom.pid!==pid) return; e
 function gChildRow(g,r){
   return '<div class="gchild" oncontextmenu="goalCtx(event,\''+g.id+'\')" ondragover="gChildOver(event,\''+g.parent+'\',\''+g.id+'\')" ondrop="gChildDrop(event,\''+g.parent+'\',\''+g.id+'\')" ondragleave="gChildLeave(event)">'
     +'<span class="grip" draggable="true" ondragstart="gChildStart(event,\''+g.parent+'\',\''+g.id+'\')" ondragend="gChildEnd(event)" title="드래그하여 순서 변경">⠿</span>'
-    +gpill(g)
+    +gpill(g)+linkDot(g)
     +slinkBtn(g)
     +'<span class="gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span>'
     +'<span class="stat">'+statSel(g)+'</span>'
@@ -2574,7 +2963,7 @@ function gSection(t,all,r){
     +'<div class="gsec-hd" draggable="true" oncontextmenu="goalCtx(event,\''+t.id+'\')" ondragstart="gSecStart(event,\''+t.id+'\')" ondragend="gSecEnd(event)" onclick="gToggleSec(\''+t.id+'\')" title="드래그하여 그룹 우선순위 변경 · 클릭하여 접기 · 우클릭하여 이동 메뉴">'
       +'<span class="grip" title="드래그하여 그룹 우선순위 변경">⠿</span>'
       +'<span class="tw">▾</span>'
-      +gpill(t)
+      +gpill(t)+linkDot(t)
       +slinkBtn(t)
       +'<span class="gtitle">'+esc(t.text)+tag+'</span>'
       +'<span class="prog">'+prog+'</span>'
@@ -2646,7 +3035,7 @@ function schRow(g,r){
   const ds=derivedStatus(r.goals,g);
   const statCell=(ds!==null)?'<span class="ot '+ds+'" title="자식 태스크 상태에서 자동 계산">'+statLabel(ds)+'</span>':statSel(g);
   return '<div class="schrow" oncontextmenu="goalCtx(event,\''+g.id+'\')">'
-    +gpill(g)
+    +gpill(g)+linkDot(g)
     +slinkBtn(g)
     +'<span class="st"><span class="gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span></span>'
     +'<span>'+statCell+'</span>'
@@ -2703,7 +3092,8 @@ function renderReview(d){
   const prov=provisionalHours(d.samples);
   let conf=0;
   if(r.submittedSelf && r.aiScore!=null) conf=prov*((r.selfScore||0)/100)*((r.aiScore||0)/100);
-  $('value').textContent=conf.toFixed(1)+'h';
+  // 확정 가치 카드(#value)는 컨디션 관리 페이지로 이동했다 — 여기 없으면 건너뛴다(conf 자체는 아래에서 계속 사용).
+  const _valEl=$('value'); if(_valEl) _valEl.textContent=conf.toFixed(1)+'h';
   // report + markdown (read-only; safe to rebuild each tick)
   _md=buildMarkdown(d,r,conf,prov);
   _lastReportArgs={d:d,r:r,conf:conf,prov:prov};   // so reapplyFilter() can rebuild 프리뷰
@@ -2713,8 +3103,10 @@ function renderReview(d){
   const key=JSON.stringify(r);
   if(key!==_lastReviewKey){
     _lastReviewKey=key;
-    fillActiveView(r);   // renders 목록 OR 그룹 (only the active one — see note above)
-    renderAiQueue(r.aiQueue);   // AI추가 later 보관함 (큐) 갱신
+    // 큐 아이템 수를 기억해 큐 탭 라벨의 미확인 힌트를 갱신한다(리뷰 대기 dedup + 대기/완료 잡).
+    _lastAiQueue=r.aiQueue||[];
+    fillActiveView(r);   // renders 목록 OR 그룹 OR 큐 (only the active one — see note above)
+    updateQueueHint(r.aiQueue||[]);
   }
   applyView();
 }
@@ -2776,7 +3168,7 @@ function goalRow(g,i,r,idToNum){
   const running=(g.status==='in_progress')||(ds==='on_track');
   return '<div class="goal'+(ds==='on_track'?' ontrack':(running?' running':''))+'" data-i="'+i+'" oncontextmenu="goalCtx(event,\''+g.id+'\')" ondragover="dragOver(event,'+i+')" ondrop="dropOn(event,'+i+')" ondragleave="dragLeave(event)">'
     +'<span class="grip" draggable="true" ondragstart="dragStart(event,'+i+')" ondragend="dragEnd(event)" title="드래그하여 우선순위 변경">⠿</span>'
-    +gpill(g)
+    +gpill(g)+linkDot(g)
     +slinkBtn(g)+spBadge(g)
     +'<span class="g">'+(isChild?'<span class="muted">└ </span>':'')+'<span class="gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span></span>'
     +'<span class="stat">'+statCell+'</span>'
@@ -2869,7 +3261,7 @@ function tblRow(g,all,idToNum){
     : '<span class="ot '+es+'">'+tblStatLabel(es)+'</span>';
   const pnum=(g.parent&&idToNum[g.parent])?('goal-'+pad2(idToNum[g.parent])):'<span class="muted">–</span>';
   return '<tr class="'+(es==='done'?'done ':'')+(isChild?'child':'')+'" oncontextmenu="goalCtx(event,\''+g.id+'\')">'
-    +'<td>'+gpill(g)+'</td>'
+    +'<td>'+gpill(g)+linkDot(g)+'</td>'
     +'<td>'+pnum+'</td>'
     +'<td>'+stCell+'</td>'
     +'<td class="nm">'+(isChild?'<span class="muted">└ </span>':'')+esc(g.text)+'</td>'
@@ -2923,33 +3315,40 @@ function tkSprintTag(g,goals){
 }
 function tkRow(g,goals){
   const c=goalCompletedAt(g,goals);
+  // [4] 투입 지수 모드에서 부모(자식 세션 보유) 목표는 '활동량(세션 수)' 배지를 함께 보여준다.
+  const kids=(_tkMode==='val')?childSessionCount(g,goals):0;
+  const breadth=kids>0?'<span class="chip" style="margin:0 0 0 4px;border-color:#8f6fe3;color:#b39cf0" title="이 목표에 매달린 세션(자식) 수 = 활동량(산출물 폭). 성과(가치) 아님">세션 '+kids+'</span>':'';
+  const amtTitle=(_tkMode==='val')?'투입 지수 (토큰효율×가중치, pt) — 투입이지 성과 아님':'이 목표에 연결된 세션 토큰';
   return '<div class="schrow">'
     +gpill(g)+slinkBtn(g)
     +'<span class="st"><span class="gt">'+esc(g.text)+'</span></span>'
     +tkSprintTag(g,goals)
     +'<span class="dday done">✓ '+(c?fmtDate(c):'완료')+'</span>'
-    +'<span class="tkn" title="이 목표에 누적된 토큰">'+(g.tokens||0)+' K</span>'
+    +breadth
+    +'<span class="tkn" title="'+amtTitle+'">'+tkAmount(g.tokens||0)+'</span>'
     +'</div>';
 }
-// ===== 가치(value) 모델 상수 — 임시(회사 goal 연동 전). 자세한 근거는 docs/value-model.md 참고 =====
-// [2] 토큰효율: 100% 한달치 $200 Max 사용 = 10,000 가치. 100% 한달 토큰량을 60만 K(=600M, 캐시 포함)로
-//     잡아 가중치 W=10000/600000≈0.0167 가치/K. (1k 토큰이 $2000 같은 말도 안 되는 값이 되지 않게 보정.)
-// [3] 시간효율: 같은 가치를 더 적은 시간에 냈으면 더 높은 점수. 풀타임 한달(720h)에 10,000을 내는 속도를
-//     기준선(BASE_RATE)으로, 실제 (가치/시간) ÷ 기준선 = 시간효율 배수 F. F>1이면 기준보다 빠르게 생산.
-const VAL_PER_MONTH=10000, FULL_MONTH_K=600000, FULL_MONTH_H=720;
-const TK_W=VAL_PER_MONTH/FULL_MONTH_K;        // 가치/K
-const BASE_RATE=VAL_PER_MONTH/FULL_MONTH_H;   // 가치/시간 (풀타임 기준선)
-function tkValue(k){ return (k||0)*TK_W; }
-function fmtVal(v){ return '$'+Math.round(v).toLocaleString(); }
-// 표시 헬퍼: 토큰량 모드면 'N K', 가치 모드면 '$N'. 뷰 전체가 이 함수를 통해 숫자를 그린다.
-function tkAmount(k){ return (_tkMode==='val') ? fmtVal(tkValue(k)) : ((k||0)+' K'); }
-// [4] value(breadth): 부모 goal 하나에 매달린 세션(자식) 수 = 그 목표가 이룬 일의 폭. 1세션=1, 100세션=100.
+// ===== 투입 지수(input index) 모델 — 임시(회사 goal 연동 전). 자세한 근거는 docs/value-model.md 참고 =====
+// 중요: 이 숫자는 '성과(가치)'가 아니라 '투입(비용)'이다. 토큰을 많이 쓸수록 커지므로, 돈($)이나 '가치'로
+//       표기하지 않는다 — 투입을 성과로 오독하면 "돈만 쓰고 성과 없는" 것을 성과로 포장하게 된다.
+// [2] 토큰효율: 100% 한달치 사용 = 10,000 pt(무단위). 100% 한달 토큰량을 60만 K(=600M, 캐시 포함)로 잡아
+//     가중치 W=10000/600000≈0.0167 pt/K.
+// [3] 시간효율: 같은 투입 지수를 더 적은 시간에 굴렸으면 도구를 더 효율적으로 쓴 것(노동생산성, 투입 측).
+//     풀타임 한달(720h)에 10,000 pt를 내는 속도를 기준선(BASE_RATE)으로, 실제 (pt/시간) ÷ 기준선 = 배수 F.
+const IDX_PER_MONTH=10000, FULL_MONTH_K=600000, FULL_MONTH_H=720;
+const TK_W=IDX_PER_MONTH/FULL_MONTH_K;        // pt/K (투입 지수 가중치)
+const BASE_RATE=IDX_PER_MONTH/FULL_MONTH_H;   // pt/시간 (풀타임 기준선)
+function tkIndex(k){ return (k||0)*TK_W; }
+function fmtIdx(v){ return Math.round(v).toLocaleString()+' pt'; }   // 무단위 지수 — $ 아님
+// 표시 헬퍼: 토큰량 모드면 'N K', 투입 지수 모드면 'N pt'. 뷰 전체가 이 함수를 통해 숫자를 그린다.
+function tkAmount(k){ return (_tkMode==='val') ? fmtIdx(tkIndex(k)) : ((k||0)+' K'); }
+// [4] 활동량(breadth): 부모 goal 하나에 매달린 세션(자식) 수 = 그 목표가 만든 산출물 폭(가치 아님). 1세션=1.
 function childSessionCount(g,all){ let n=0; (all||[]).forEach(k=>{ if(k.parent===g.id) n++; }); return n; }
-let _tkMode='tok';   // 'tok' 토큰량 | 'val' 가치($)
+let _tkMode='tok';   // 'tok' 토큰량 | 'val' 투입 지수(pt)
 function reflectTkMode(){
   const a=$('tkm_tok'),b=$('tkm_val'); if(a)a.classList.toggle('primary',_tkMode==='tok'); if(b)b.classList.toggle('primary',_tkMode==='val');
   const h=$('tkModeHint'); if(h) h.textContent=(_tkMode==='val')
-    ? '토큰효율×시간효율 가치 (100% 한달='+fmtVal(VAL_PER_MONTH)+' · 임시 모델)'
+    ? '토큰효율×시간효율 투입 지수 (100% 한달='+fmtIdx(IDX_PER_MONTH)+' · 투입이지 성과 아님)'
     : '세션이 실제로 쓴 토큰(K)';
 }
 function setTkMode(m){ _tkMode=m; reflectTkMode(); renderTokenDaily(); if(_review) renderTokenView(_review); }
@@ -2994,16 +3393,16 @@ function renderTokenDaily(){
   const rng=$('tokenDailyRange');
   const val=(_tkMode==='val');
   const totalK=days.reduce((a,d)=>a+(d.k||0),0);
-  const totalVal=tkValue(totalK);
+  const totalIdx=tkIndex(totalK);
   const totalHrs=days.reduce((a,d)=>a+(d.activeSec||0),0)/3600;
   if(rng){
     if(val){
-      // [3] 시간효율 배수: (가치/시간) ÷ 기준선. 시간 기록이 있어야 계산.
-      const rate=totalHrs>0? totalVal/totalHrs : 0;
+      // [3] 시간효율 배수: (투입지수/시간) ÷ 기준선. 시간 기록이 있어야 계산.
+      const rate=totalHrs>0? totalIdx/totalHrs : 0;
       const F=totalHrs>0? rate/BASE_RATE : 0;
-      const adj=totalVal*(F||1);
-      rng.innerHTML=(days.length? (days.length+'일 · 가치 <b>'+fmtVal(totalVal)+'</b>') : '기간 내 기록 없음')
-        +(totalHrs>0? (' · 활성 <b>'+totalHrs.toFixed(1)+'</b>h · 시간효율 <b>×'+F.toFixed(2)+'</b> → 시간보정 <b>'+fmtVal(adj)+'</b>') : ' · 활성시간 기록 없음')
+      const adj=totalIdx*(F||1);
+      rng.innerHTML=(days.length? (days.length+'일 · 투입 <b>'+fmtIdx(totalIdx)+'</b>') : '기간 내 기록 없음')
+        +(totalHrs>0? (' · 활성 <b>'+totalHrs.toFixed(1)+'</b>h · 시간효율 <b>×'+F.toFixed(2)+'</b> → 시간보정 <b>'+fmtIdx(adj)+'</b>') : ' · 활성시간 기록 없음')
         +' · 시각 '+tzLabel()+' 기준';
     }else{
       rng.innerHTML=(days.length? (days.length+'일 기록 · 합계 <b>'+totalK+'</b> K') : '기간 내 토큰 기록 없음')+' · 시각 '+tzLabel()+' 기준';
@@ -3041,36 +3440,25 @@ function renderTokenView(r){
   if(!list.length){ host.innerHTML='<div class="muted" style="padding:8px 0">표시할 완료 목표가 없습니다 (스프린트·완료 컷오프 필터를 확인하세요).</div>'; return; }
   const sumTok=gs=>gs.reduce((a,g)=>a+(g.tokens||0),0);
   const total=sumTok(list);
-  // 상단 요약용 거친 버킷(오늘·어제·이번 주 즉시 비교). 아래 섹션은 실제 일별로 따로 묶는다.
-  const coarse={}; TK_GROUPS.forEach(d=>coarse[d[0]]=[]);
-  list.forEach(g=>{ coarse[tkDayKey(goalCompletedAt(g,all))].push(g); });
-  // 완료일(YYYY-MM-DD)별 분배 — 히스토리 뷰처럼 하루 단위로 본다. 완료 시각 미상은 ''로 모아 맨 뒤.
-  const byDay={};
-  list.forEach(g=>{ const c=goalCompletedAt(g,all); const k=c?tkDayStr(c):''; (byDay[k]=byDay[k]||[]).push(g); });
-  const dayKeys=Object.keys(byDay).sort((a,b)=>{ if(a==='')return 1; if(b==='')return -1; return a<b?1:-1; });  // 최신일 먼저
+  // 스프린트 번호별 분배 — 완료 목표를 스프린트로 묶는다. (완료일 그룹은 위 일별 타임라인의 "그날
+  // 소비량"과 기준이 달라 혼동을 주므로 폐기: 아래는 목표의 세션 전체 토큰을 스프린트 단위로 본다.)
+  const bySpr={};
+  list.forEach(g=>{ const n=effSprint(g,all); (bySpr[n]=bySpr[n]||[]).push(g); });
+  // 스프린트 번호 내림차순(최근 먼저), 스프린트 없음(0)은 맨 뒤.
+  const sprKeys=Object.keys(bySpr).map(Number).sort((a,b)=>{ if(a===0)return 1; if(b===0)return -1; return b-a; });
   const newestFirst=(a,b)=>(goalCompletedAt(b,all)-goalCompletedAt(a,all))||((b.seq||0)-(a.seq||0));
-  // 상단 요약: 합계 + 오늘·어제 즉시 비교 (이 뷰의 핵심 질문 — "어제 얼마나 썼나").
-  // 토큰량/가치 모드에 따라 tkAmount가 'N K' 또는 '$N'으로 그린다.
+  // 요약: 합계 + 완료 개수 + 스프린트 수. (날짜 비교는 위 일별 타임라인이 담당하므로 여기선 뺀다.)
   let h='<div class="tksum">'
-    +'<span><span class="k">합계</span> <span class="big">'+tkAmount(total)+'</span> <span class="k">· 완료 '+list.length+'개</span></span>'
-    +'<span><span class="k">오늘</span> <b>'+tkAmount(sumTok(coarse[0]))+'</b></span>'
-    +'<span><span class="k">어제</span> <b>'+tkAmount(sumTok(coarse[1]))+'</b></span>'
-    +'<span><span class="k">이번 주</span> <b>'+tkAmount(sumTok(coarse[2]))+'</b></span>'
+    +'<span><span class="k">합계</span> <span class="big">'+tkAmount(total)+'</span> <span class="k">· 완료 '+list.length+'개 · 스프린트 '+sprKeys.length+'개</span></span>'
     +'</div>';
-  // 스프린트별 합계 (보이는 목록 기준, 많은 순) — "어느 스프린트에 썼나".
-  const spTok={}; list.forEach(g=>{ const n=effSprint(g,all); spTok[n]=(spTok[n]||0)+(g.tokens||0); });
-  const spRows=Object.keys(spTok).map(n=>[parseInt(n,10),spTok[n]]).sort((a,b)=>b[1]-a[1]);
-  if(spRows.length){
-    h+='<div class="tkspr">'+spRows.map(s=>'<span class="chip">'
-      +(s[0]?esc(sprintCode(s[0])):'스프 –')+' <b>'+tkAmount(s[1])+'</b></span>').join('')+'</div>';
-  }
-  // 일별 섹션 — 하루당 한 그룹. 머리글에 날짜(요일)·완료 개수·그 날 합계. 최신일이 위.
-  const todayStr=histDayStr(new Date());
-  dayKeys.forEach(k=>{
-    const gs=byDay[k]; if(!gs.length) return;
+  // 스프린트별 섹션 — 한 스프린트당 한 그룹. 머리글에 스프린트 코드·완료 개수·토큰 합계. 진행 중(미종료)
+  // 스프린트는 강조. 그룹 안은 완료 최신순.
+  const openSet=new Set(((_review&&_review.sprints)||[]).filter(s=>!s.closed).map(s=>s.number));
+  sprKeys.forEach(n=>{
+    const gs=bySpr[n]; if(!gs.length) return;
     gs.sort(newestFirst);
-    const label=(k==='')?'완료 시각 미상':tkDayLabel(k);
-    h+='<div class="schsec'+(k===todayStr?' today':'')+'">'
+    const label=n?sprintCode(n):'스프린트 없음';
+    h+='<div class="schsec'+(openSet.has(n)?' today':'')+'">'
       +'<div class="schsec-hd">'+esc(label)+'<span class="cnt">'+gs.length+'개</span>'
       +'<span class="tot">'+tkAmount(sumTok(gs))+'</span></div>'
       +gs.map(g=>tkRow(g,all)).join('')+'</div>';
@@ -3338,8 +3726,9 @@ function bgoalRow(g,hasKids,collapsed,pref){
       })();
   return '<div class="bgoal'+(isChild?' child':'')+'" data-id="'+g.id+'" draggable="true"'
     +' oncontextmenu="goalCtx(event,\''+g.id+'\')" onmouseenter="priRowEnter(\''+g.id+'\');pinRowEnter(\''+g.id+'\')"'
-    +' ondragstart="spDragStart(event,\''+g.id+'\')" ondragend="spDragEnd(event)">'
-    +lead+'<span class="grip" title="드래그=스프린트 이동 · 우클릭=메뉴 · 부모#칸에서 Cmd+드래그=부모 채우기">⠿</span>'+priDot+gpill(g)
+    +' ondragstart="spDragStart(event,\''+g.id+'\')" ondragend="spDragEnd(event)"'
+    +' ondragover="bgReorderOver(event,\''+g.id+'\')" ondrop="bgReorderDrop(event,\''+g.id+'\')" ondragleave="bgReorderLeave(event)">'
+    +lead+'<span class="grip" title="드래그=스프린트 이동 · 우클릭=메뉴 · 부모#칸에서 Cmd+드래그=부모 채우기">⠿</span>'+priDot+gpill(g)+linkDot(g)
     +'<span class="t gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+pr+'</span>'
     +pcell+statCell+'</div>';
 }
@@ -3362,7 +3751,7 @@ function groupBodyHTML(rows){
 function sprintGroupHTML(s,shown,allLive,aq){
   const rows=shown.filter(g=>!g.bump&&boardSprint(g,_goals)===s.number);
   const members=allLive.filter(g=>!g.bump&&boardSprint(g,_goals)===s.number);   // 카운트는 전체 멤버 (Bump out 제외)
-  const q=aiQueueBoxHTML((aq||[]).filter(it=>(it.sprint||0)===s.number));   // 이 스프린트로 담긴 큐 → 하단
+  const q=aiQueueBoxHTML((aq||[]).filter(it=>(it.jobKind||'dedup')==='dedup'&&(it.sprint||0)===s.number));   // 이 스프린트로 담긴 dedup 큐 → 하단
   const body=(rows.length?groupBodyHTML(rows)
     :(q?'':'<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'여기로 목표를 끌어다 놓기')+'</div>'))+q;
   const col=_spCollapsed.has(s.number);
@@ -3383,7 +3772,7 @@ function sprintGroupHTML(s,shown,allLive,aq){
 function backlogHTML(shown,allLive,aq){
   const rows=shown.filter(g=>!g.bump&&boardSprint(g,_goals)===0);
   const members=allLive.filter(g=>!g.bump&&boardSprint(g,_goals)===0);
-  const q=aiQueueBoxHTML((aq||[]).filter(it=>(it.sprint||0)===0));   // 백로그로 담긴 큐 → 하단
+  const q=aiQueueBoxHTML((aq||[]).filter(it=>(it.jobKind||'dedup')==='dedup'&&(it.sprint||0)===0));   // 백로그로 담긴 dedup 큐 → 하단
   const body=(rows.length?groupBodyHTML(rows)
     :(q?'':'<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'미배정 목표가 없습니다')+'</div>'))+q;
   const col=_spCollapsed.has('bg');
@@ -3525,7 +3914,33 @@ function setPriority(id,p){ priApplyDom(id,p); post('/api/goal/priority',{id:id,
 // --- 드래그 배정 (스프린트/Backlog 그룹 이동) ---
 let _spDrag=null;
 function spDragStart(e,id){ _spDrag=id; e.currentTarget.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; }
-function spDragEnd(e){ e.currentTarget.classList.remove('dragging'); document.querySelectorAll('.spgrp.dropOver').forEach(x=>x.classList.remove('dropOver')); _spDrag=null; }
+function spDragEnd(e){ e.currentTarget.classList.remove('dragging'); document.querySelectorAll('.spgrp.dropOver').forEach(x=>x.classList.remove('dropOver')); document.querySelectorAll('.bgoal.dropTarget').forEach(x=>x.classList.remove('dropTarget')); _spDrag=null; }
+// Intra-group reorder on the sprint board. Dropping a row ONTO a sibling row in the SAME
+// bucket (same Bump/Backlog/sprint + same parent) reorders the two; the group-level drop
+// (spDrop/spDropBump) only moves BETWEEN buckets and can't change position. Cross-bucket
+// drags fall through (no preventDefault/stopPropagation) so the group handler still fires.
+function bgBucket(g){ return g.bump ? 'bump' : ('s'+boardSprint(g,_goals)); }
+function bgSameGroup(a,b){ return a&&b&&(a.parent||'')===(b.parent||'')&&bgBucket(a)===bgBucket(b); }
+function bgReorderOver(e,id){
+  if(_spDrag==null||_spDrag===id) return;
+  const src=byId(_goals,_spDrag), tgt=byId(_goals,id);
+  if(!bgSameGroup(src,tgt)) return;   // different bucket -> let spOver/spDrop take it
+  e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect='move';
+  const row=e.currentTarget; document.querySelectorAll('.bgoal.dropTarget').forEach(x=>x.classList.remove('dropTarget')); row.classList.add('dropTarget');
+}
+function bgReorderLeave(e){ e.currentTarget.classList.remove('dropTarget'); }
+function bgReorderDrop(e,id){
+  if(_spDrag==null||_spDrag===id) return;
+  const src=byId(_goals,_spDrag), tgt=byId(_goals,id);
+  if(!bgSameGroup(src,tgt)) return;   // fall through to group drop (bucket move)
+  e.preventDefault(); e.stopPropagation();
+  const from=_spDrag; _spDrag=null;
+  document.querySelectorAll('.bgoal.dropTarget').forEach(x=>x.classList.remove('dropTarget'));
+  const pid=src.parent||'';
+  if(pid){ const kids=gMove(_goals.filter(g=>g.parent===pid).map(g=>g.id), from, id); if(!kids) return;
+    const ov={}; ov[pid]=kids; post('/api/goal/reorder',{order:gBuildOrder(_goals.filter(g=>!g.parent).map(g=>g.id), ov)}); }
+  else { const order=gMove(_goals.filter(g=>!g.parent).map(g=>g.id), from, id); if(order) post('/api/goal/reorder',{order:gBuildOrder(order)}); }
+}
 function spOver(e){ e.preventDefault(); e.currentTarget.classList.add('dropOver'); }
 function spLeave(e){ e.currentTarget.classList.remove('dropOver'); }
 function spDrop(e,n){ e.preventDefault(); e.currentTarget.classList.remove('dropOver');
@@ -3653,6 +4068,11 @@ function goalCtx(e,id){ e.preventDefault(); e.stopPropagation();
   if(!(g&&g.bump)) html+='<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToBump(\''+id+'\')">Bump out (아이디어로 내리기)</button>';
   html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">부모(계층)</div>'
     +'<button class="popitem" onmousedown="event.stopPropagation();openParentPicker(\''+id+'\')">부모 설정 / 해제 ▸</button>';
+  // 링크: 이 목표를 다른 목표로 링크한다. 링크하면 이 목표가 최상위로 승격되고(parent="")
+  // 링크가 기록된다(계층은 평면 유지, 내보내기만 링크를 따라간다).
+  html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">링크</div>'
+    +'<button class="popitem" onmousedown="event.stopPropagation();openLinkPicker(\''+id+'\')">링크로 연결 ▸</button>'
+    +'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();exportLinkmap(\''+id+'\')">내보내기 (링크 체인) ↗</button>';
   const isParent=(_goals||[]).some(k=>k.parent===id);
   // 보관: 활성 목록에서 치우고 아카이브 뷰로 보낸다(자식도 함께). 되돌리기는 아카이브 뷰의 '보관 해제'.
   html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">보관</div>'
@@ -3714,6 +4134,64 @@ function renderParentList(q){
 }
 // 부모 지정 시 전역 '마지막 선택' 1개를 브라우저에 저장(해제는 저장하지 않음).
 function setParentById(id,pid){ if(pid){ try{ localStorage.setItem('cm.lastParent',pid); }catch(e){} } post('/api/goal/parent',{id:id,parent:pid}); }
+
+// --- 링크 대상 선택기 (검색 + 후보 목록) — 부모 선택기와 같은 팝업 UX ---
+// 부모 선택기(openParentPicker/renderParentList)와 동일한 패턴. 다만 링크는 최상위가
+// 아니어도 아무 목표나 대상이 될 수 있으므로 후보에서 '최상위' 제한을 걸지 않는다.
+let _lkId=null;
+function openLinkPicker(id){
+  _lkId=id;
+  setPopupHTML('<div class="pophdr">링크 대상 선택</div>'
+    +'<input class="ppsearch" id="lkSearch" placeholder="번호·이름 검색 (goal-01 · 01 · 1)" oninput="renderLinkList(this.value)" onmousedown="event.stopPropagation()">'
+    +'<div id="lkList"></div>');
+  renderLinkList('');
+  const s=$('lkSearch'); if(s) s.focus();
+}
+function renderLinkList(q){
+  const el=$('lkList'); if(!el) return;
+  q=String(q||'').toLowerCase().trim();
+  const src=byId(_goals,_lkId);
+  const already=new Set((src&&src.links)||[]);
+  // 후보: 자기 자신·이미 링크된 목표·보관됨 제외. 부모 제한은 없다(어떤 목표든 대상 가능).
+  const cands=(_goals||[]).filter(g=>g.id!==_lkId && !already.has(g.id) && !g.archived);
+  const f=cands.filter(function(g){ if(!q) return true; const lab=('goal-'+pad2(g.seq||0)+' '+(g.text||'')).toLowerCase(); return lab.indexOf(q)>=0; });
+  el.innerHTML = f.length
+    ? f.map(g=>'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();confirmLink(\''+_lkId+'\',\''+g.id+'\')"><span class="gn">goal-'+pad2(g.seq||0)+'</span>'+esc(g.text)+'</button>').join('')
+    : '<div class="muted" style="padding:7px 10px;font-size:12px">결과 없음</div>';
+}
+// 링크 확인 다이얼로그: 승격(최상위) 전/후를 그림으로 보여주고 확인/취소를 받는다.
+// 확인하면 소스가 최상위로 승격되고 소스→대상 링크가 기록된다.
+function confirmLink(srcId,tgtId){
+  const s=byId(_goals,srcId), t=byId(_goals,tgtId); if(!s||!t) return;
+  const sLab='goal-'+pad2(s.seq||0), tLab='goal-'+pad2(t.seq||0);
+  const par=s.parent?byId(_goals,s.parent):null;
+  const parLab=par?('goal-'+pad2(par.seq||0)):'';
+  // "지금" 상태: 부모 안에 묻혀 있으면 그 부모를, 아니면 이미 최상위임을 보여준다.
+  const beforeInner = par
+    ? '<div class="lkbox">'+esc(parLab)+' <span class="muted">('+esc(par.text)+')</span><div class="lknest">└ '+esc(sLab)+' <span class="muted">('+esc(s.text)+')</span></div></div>'
+    : '<div class="lkbox">'+esc(sLab)+' <span class="muted">('+esc(s.text)+')</span> <span class="muted">— 이미 최상위</span></div>';
+  const afterInner =
+    '<div class="lkbox">'+esc(sLab)+' <span class="muted">('+esc(s.text)+')</span> <span class="lkchip">🔗 '+esc(tLab)+'</span></div>'
+    +'<div class="muted" style="font-size:12px;margin-top:4px">최상위로 승격 + '+esc(tLab)+' 링크</div>';
+  const ov=document.createElement('div');
+  ov.className='overlay on'; ov.id='lkConfirm';
+  ov.innerHTML='<div class="modal" style="max-width:520px">'
+    +'<h2 style="margin:0 0 6px">링크로 연결</h2>'
+    +'<p class="muted" style="font-size:13px;margin:0 0 14px">'+esc(sLab)+' 을(를) 최상위로 승격하고 '+esc(tLab)+' 로 링크합니다. 화면 계층은 평면(1단계) 그대로이며, 링크는 내보내기(압축)에서만 따라갑니다.</p>'
+    +'<div class="lkba">'
+      +'<div class="lkcol"><div class="lkcap">지금</div>'+beforeInner+'</div>'
+      +'<div class="lkarrow">➜</div>'
+      +'<div class="lkcol"><div class="lkcap">연결 후</div>'+afterInner+'</div>'
+    +'</div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:18px">'
+      +'<button class="btn" onclick="closeLinkConfirm()">취소</button>'
+      +'<button class="btn primary" onclick="doLink(\''+srcId+'\',\''+tgtId+'\')">확인</button>'
+    +'</div></div>';
+  ov.addEventListener('mousedown',function(e){ if(e.target===ov) closeLinkConfirm(); });
+  document.body.appendChild(ov);
+}
+function closeLinkConfirm(){ const el=$('lkConfirm'); if(el) el.remove(); }
+function doLink(srcId,tgtId){ closeLinkConfirm(); post('/api/goal/link',{id:srcId,target:tgtId}); }
 
 // --- 스프린트 편집 모달 ---
 let _spModalNum=null;
@@ -3779,173 +4257,63 @@ function evMd(g){
   const ev=g.evidence||[]; if(!ev.length) return '';
   return ev.map(e=> '  - '+(e.kind==='file'?('📄 '+(e.title||'file')):('🔗 '+(e.title||e.href)+' '+e.href))).join('\n')+'\n';
 }
+// goal-NN 라벨(내보내기 링크 표시용). seq를 2자리로 패딩.
+function goalTag(g){ const n=(g&&g.seq)||0; return 'goal-'+(n<10?'0'+n:''+n); }
 function buildMarkdown(d,r,conf,prov){
-  const goals=r.goals||[], tops=goals.filter(g=>!g.parent && goalPasses(g,goals));
-  let md='# 오늘 리포트 ('+d.date+')\n\n- 확정 가치: '+conf.toFixed(2)+'h (잠정 '+prov.toFixed(1)+'h)\n\n';
-  tops.forEach(t=>{
+  const goals=r.goals||[], byId={}; goals.forEach(g=>{ byId[g.id]=g; });
+  const tops=goals.filter(g=>!g.parent && goalPasses(g,goals) && reportPassesRange(g,goals));
+  let md='# 리포트 ('+reportRangeLabel(d.date)+')\n\n- 확정 가치: '+conf.toFixed(2)+'h (잠정 '+prov.toFixed(1)+'h)\n\n';
+  // visited-set으로 중복·사이클을 방지하며 각 top의 링크 체인을 따라간다(01→233→…→01 종료).
+  const visited=new Set();
+  // linked=true면 "↗ goal-NN (링크됨)" 헤더로 표시. 재귀로 링크된 목표의 자식/링크도 따라간다.
+  function emitTop(t,linked){
+    if(visited.has(t.id)) return; visited.add(t.id);
     const ds=derivedStatus(goals,t);
-    md+='## '+t.text+(ds==='on_track'?' [on track]':(ds==='done'?' [완료]':''))+(gnote(r,t.id)?(' — '+gnote(r,t.id)):'')+'\n';
+    const head=linked?('↗ '+goalTag(t)+' (링크됨) '+t.text):t.text;
+    md+='## '+head+(ds==='on_track'?' [on track]':(ds==='done'?' [완료]':''))+(gnote(r,t.id)?(' — '+gnote(r,t.id)):'')+'\n';
     md+=evMd(t);
     goals.filter(c=>c.parent===t.id && goalPasses(c,goals)).forEach(c=>{ const cs=(c.status||'backlog');
       const m=cs==='in_progress'?' (진행)':(cs==='done'?' (완료)':'');
       md+='- '+c.text+m+(gnote(r,c.id)?(' — '+gnote(r,c.id)):'')+'\n'; md+=evMd(c); });
     md+='\n';
-  });
+    (t.links||[]).forEach(lid=>{ const lg=byId[lid]; if(lg) emitTop(lg,true); });
+  }
+  tops.forEach(t=>emitTop(t,false));
   return md;
 }
 function renderReport(d,r,conf,prov){
-  const goals=r.goals||[], tops=goals.filter(g=>!g.parent && goalPasses(g,goals));
-  let html='<div class="muted" style="margin-bottom:10px">'+esc(d.date)+' · 확정 '+conf.toFixed(2)+'h (잠정 '+prov.toFixed(1)+'h)</div>';
-  if(!tops.length) html+='<div class="muted">'+(anyStatusActive()?'필터에 해당하는 목표가 없습니다.':'목표가 없습니다. 입력 뷰에서 추가하세요.')+'</div>';
-  tops.forEach(t=>{
+  const goals=r.goals||[], byId={}; goals.forEach(g=>{ byId[g.id]=g; });
+  const tops=goals.filter(g=>!g.parent && goalPasses(g,goals) && reportPassesRange(g,goals));
+  let html='<div class="muted" style="margin-bottom:10px">'+esc(reportRangeLabel(d.date))+' · 확정 '+conf.toFixed(2)+'h (잠정 '+prov.toFixed(1)+'h)</div>';
+  if(!tops.length) html+='<div class="muted">'+((_reportRange&&_reportRange.start)?'선택한 기간·보기 필터에 해당하는 목표가 없습니다.':(anyStatusActive()?'필터에 해당하는 목표가 없습니다.':'목표가 없습니다. 입력 뷰에서 추가하세요.'))+'</div>';
+  // visited-set으로 중복·사이클을 방지하며 링크 체인을 따라간다.
+  const visited=new Set();
+  function emitTop(t,linked){
+    if(visited.has(t.id)) return; visited.add(t.id);
     const ds=derivedStatus(goals,t);
     const tag=ds==='on_track'?'<span class="otTag">On Track</span>':(ds==='done'?'<span class="otTag" style="border-color:var(--green);color:var(--green);background:rgba(54,192,138,.12)">완료</span>':'');
-    html+='<h3 style="margin:12px 0 4px">'+esc(t.text)+tag+'</h3>';
+    const head=linked?('<span style="color:#9b7bff">↗ '+esc(goalTag(t))+' (링크됨)</span> '+esc(t.text)):esc(t.text);
+    html+='<h3 style="margin:12px 0 4px">'+head+tag+'</h3>';
     if(gnote(r,t.id)) html+='<div class="muted" style="margin-bottom:4px">'+esc(gnote(r,t.id))+'</div>';
     html+=evReportHtml(t);
     const kids=goals.filter(c=>c.parent===t.id && goalPasses(c,goals));
     if(kids.length) html+='<ul>'+kids.map(c=>{ const cs=(c.status||'backlog');
       const m=cs==='in_progress'?' <span style="color:#9be3fb">(진행)</span>':(cs==='done'?' <span class="ok">(완료)</span>':'');
       return '<li>'+esc(c.text)+m+(gnote(r,c.id)?' <span class="muted">— '+esc(gnote(r,c.id))+'</span>':'')+evReportHtml(c)+'</li>'; }).join('')+'</ul>';
-  });
+    (t.links||[]).forEach(lid=>{ const lg=byId[lid]; if(lg) emitTop(lg,true); });
+  }
+  tops.forEach(t=>emitTop(t,false));
   $('report').innerHTML=html;
 }
 
-function drawChart(samples){
-  const c=$('chart'), dpr=window.devicePixelRatio||1, W=c.clientWidth, H=260;
-  c.width=W*dpr; c.height=H*dpr; const g=c.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
-  const padL=44,padR=14,padT=14,padB=24, cw=W-padL-padR, ch=H-padT-padB;
-  const maxRate=Math.max(1,...samples.map(s=>s.rate));
-  const X=m=>padL+cw*(m/1440), Y=r=>padT+ch*(1-r/maxRate);
-  g.strokeStyle='#232733'; g.fillStyle='#8b93a7'; g.lineWidth=1; g.font='11px system-ui';
-  for(let h=0;h<=24;h+=3){ const px=X(h*60); g.beginPath(); g.moveTo(px,padT); g.lineTo(px,padT+ch); g.stroke(); g.fillText((h<10?'0':'')+h+':00',px-12,H-9); }
-  if(!samples.length){ g.fillStyle='#8b93a7'; g.fillText('아직 활동 데이터가 없습니다. 작업을 시작하면 1분 뒤부터 쌓입니다.',padL,padT+ch/2); return; }
-  g.fillStyle='rgba(54,192,138,0.22)'; const bw=Math.max(1,cw/1440);
-  samples.forEach(s=>{ if(s.active>0) g.fillRect(X(minOfDay(s)),padT+ch-6,bw,6); });
-  // total activity area
-  g.beginPath(); samples.forEach((s,i)=>{const px=X(minOfDay(s)),py=Y(s.rate); i?g.lineTo(px,py):g.moveTo(px,py);});
-  g.strokeStyle='#5b8cff'; g.lineWidth=2; g.stroke();
-  g.lineTo(X(minOfDay(samples[samples.length-1])),padT+ch); g.lineTo(X(minOfDay(samples[0])),padT+ch); g.closePath();
-  g.fillStyle='rgba(91,140,255,0.10)'; g.fill();
-  // keyboard line
-  g.beginPath(); samples.forEach((s,i)=>{const px=X(minOfDay(s)),py=Y(s.key||0); i?g.lineTo(px,py):g.moveTo(px,py);});
-  g.strokeStyle='#36c08a'; g.lineWidth=1.5; g.stroke();
-  // mouse line
-  g.beginPath(); samples.forEach((s,i)=>{const px=X(minOfDay(s)),py=Y(s.mouse||0); i?g.lineTo(px,py):g.moveTo(px,py);});
-  g.strokeStyle='#e8a13a'; g.lineWidth=1.5; g.stroke();
-}
-
-function drawStrip(samples){
-  const c=$('strip'), dpr=window.devicePixelRatio||1, W=c.clientWidth, H=34;
-  c.width=W*dpr; c.height=H*dpr; const g=c.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
-  const padL=44,padR=14, cw=W-padL-padR;
-  g.fillStyle='#0d1016'; g.fillRect(padL,6,cw,20);
-  const bw=Math.max(1.5,cw/1440);
-  samples.forEach(s=>{ if(s.app && s.app!=='-'){ g.fillStyle=appColor(s.app); g.fillRect(padL+cw*(minOfDay(s)/1440),6,bw,20); } });
-}
-
-function appStats(samples){
-  const apps={};
-  samples.forEach(s=>{
-    const a=s.app||'-'; if(a==='-') return;
-    const e=apps[a]||(apps[a]={app:a,minutes:0,active:0,profiles:{},tracks:{}});
-    e.minutes++; e.active+=(s.active||0);
-    if(s.profile&&s.profile!=='-') e.profiles[s.profile]=(e.profiles[s.profile]||0)+1;
-    if(s.track&&s.track!=='-') e.tracks[s.track]=(e.tracks[s.track]||0)+1;
-  });
-  return Object.values(apps).sort((x,y)=>y.minutes-x.minutes);
-}
-
-function renderApps(samples){
-  const stats=appStats(samples);
-  // bars
-  const bars=$('appbars');
-  if(!stats.length){ bars.innerHTML='<span class="empty">데이터 없음</span>'; }
-  else {
-    const max=Math.max(...stats.map(s=>s.minutes));
-    bars.innerHTML=stats.map(s=>{
-      const col=appColor(s.app), pct=Math.max(3,100*s.minutes/max);
-      return '<div class="bar"><div class="name"><span class="dot" style="background:'+col+'"></span>'+esc(s.app)+'</div>'
-        +'<div class="track"><div class="fill" style="width:'+pct+'%;background:'+col+'"></div></div>'
-        +'<div class="val">'+fmtMin(s.minutes)+'</div></div>';
-    }).join('');
-  }
-  // bgm debug table
-  const rows=$('bgmrows');
-  const withBgm=stats.filter(s=>Object.keys(s.tracks).length);
-  if(!withBgm.length){ rows.innerHTML='<tr><td colspan="4" class="empty">아직 재생된 BGM 기록이 없습니다.</td></tr>'; return; }
-  rows.innerHTML=withBgm.map(s=>{
-    const col=appColor(s.app);
-    const domProfile=Object.entries(s.profiles).sort((a,b)=>b[1]-a[1])[0];
-    const profLabel=domProfile?domProfile[0]:'-';
-    const band=BANDS[profLabel];
-    const chips=Object.entries(s.tracks).sort((a,b)=>b[1]-a[1]).map(([t,n])=>{
-      const bpm=trackBpm(t);
-      const bad=band&&bpm!=null&&(bpm<band[0]||bpm>band[1]);
-      return '<span class="chip'+(bad?' bad':'')+'">'+esc(t)+(n>1?' ×'+n:'')+'</span>';
-    }).join('');
-    return '<tr><td><span class="dot" style="background:'+col+'"></span>'+esc(s.app)+'</td>'
-      +'<td>'+esc(profLabel)+'</td><td>'+chips+'</td><td>'+fmtMin(s.minutes)+'</td></tr>';
-  }).join('');
-}
+// 활동 차트(drawChart)·시간대 앱 띠(drawStrip)·앱 통계(appStats)·주요 앱 렌더(renderApps)는
+// 컨디션 관리 페이지(/bgm-player)의 컨디션맵 탭으로 이동했다 — 대시보드에선 제거.
+// minOfDay 헬퍼도 이들 전용이라 함께 제거.
 
 // ===== Workers (background jobs) =====
-// Shows every background worker, its schedule, and whether it's actually firing.
-// The server sends agoSec/nextSec snapshots; we tick them locally each second so
-// "마지막 실행" counts up and "다음 실행" counts down between 5s refreshes.
-let _workers=[];          // last snapshot from the server
-let _workersBase=0;       // performance.now() when the snapshot arrived (ms)
-function fmtInterval(s){ if(s>=60&&s%60===0) return (s/60)+'분'; return s+'초'; }
-function fmtAgo(sec){ if(sec<0) return '아직 없음';
-  if(sec<60) return sec+'초 전'; const m=(sec/60)|0,s=sec%60; return m+'분 '+(s>0?s+'초 ':'')+'전'; }
-function renderWorkers(arr){
-  _workers=Array.isArray(arr)?arr:[];
-  _workersBase=performance.now();
-  const rows=$('workerrows');
-  if(!_workers.length){ rows.innerHTML='<tr><td colspan="9" class="empty">데이터 없음</td></tr>'; return; }
-  const ownerLabel=(o,manual)=>{
-    if(manual) return '<span class="chip" style="margin:0;background:#7a8699;color:#fff" title="퇴근 시 손으로 실행(Scripts/bug-hunt.sh) — 스케줄러가 돌리지 않음">수동</span>';
-    if(o==='qa') return '<span class="chip" style="margin:0;background:#3aa0ff;color:#fff" title="외부 자동화(launchd → claude -p)가 보고">자동화</span>';
-    if(o&&o!=='core') return '<span class="chip" style="margin:0;background:#9b7bff;color:#fff" title="'+esc(o)+'">플러그인</span>';
-    return '<span class="muted">기본</span>';
-  };
-  rows.innerHTML=_workers.map((w,i)=>{
-    const off=w.enabled===false;   // user-toggled OFF (only meaningful for toggleable workers)
-    let badge;
-    if(off) badge='<span class="chip bad" title="사용자가 끔">꺼짐</span>';
-    else { badge=w.active?'<span class="chip">동작 중</span>':'<span class="chip bad">유휴</span>';
-      if(w.error) badge='<span class="chip bad" title="'+esc(w.errorMsg||'')+'">오류 ⚠</span> '+badge; }
-    const more=w.id?'<a class="btn" href="/worker?id='+encodeURIComponent(w.id)+'" target="_blank">자세히</a>':'';
-    // QA workers get an on/off toggle; the periodic inspection worker also gets run-now
-    // (the fix worker is event-driven, so no manual run button).
-    let ctrl='';
-    if(w.toggleable){
-      ctrl+=' <button class="btn" onclick="toggleWorker(\''+esc(w.id)+'\','+off+')">'+(off?'켜기':'끄기')+'</button>';
-    }
-    if(w.runnable){
-      ctrl+=' <button class="btn" title="지금 한 번 실행" onclick="runWorker(this,\''+esc(w.id)+'\')"'+(off?' disabled':'')+'>즉시 실행</button>';
-    }
-    return '<tr'+(w.error&&!off?' style="background:rgba(226,102,125,0.08)"':'')+(off?' style="opacity:0.6"':'')+'><td><b>'+esc(w.name)+'</b></td>'
-      +'<td>'+ownerLabel(w.owner,w.manual)+'</td>'
-      +'<td class="muted">'+esc(w.detail)+'</td>'
-      +'<td'+(w.manual?' title="자동 실행 주기가 아니라, 1회 실행 동안 도는 라운드 간격"':'')+'>'+(w.manual?'라운드 '+fmtInterval(w.interval):fmtInterval(w.interval))+'</td>'
-      +'<td id="wk_ago_'+i+'">'+fmtAgo(w.agoSec)+'</td>'
-      +'<td id="wk_next_'+i+'">'+(!off&&w.active&&w.nextSec>=0?w.nextSec+'초 후':'–')+'</td>'
-      +'<td>'+(w.runs||0).toLocaleString()+'</td>'
-      +'<td>'+badge+'</td>'
-      +'<td>'+more+ctrl+'</td></tr>';
-  }).join('');
-  // Publish the audit synchronously — reading scrollHeight forces layout, so measures
-  // are valid now. Synchronous (not rAF) so headless --dump-dom reliably captures it.
-  publishQaAudit();
-}
-// QA-style worker controls. Toggle persists (writes a flag the runner script reads);
-// run-now forces a single immediate pass (bypasses the interval + change gates).
-function toggleWorker(id,wasOff){ post('/api/worker/toggle',{id:id,enabled:wasOff}); }
-function runWorker(btn,id){
-  if(btn){ btn.disabled=true; btn.textContent='실행 중…'; }
-  post('/api/worker/run',{id:id}).then(()=>setTimeout(load,1500));
-}
+// The 워커/크론 surface moved to its OWN page (/cron, served by AppDelegate.cronPage) so it no
+// longer depends on this dashboard document. renderWorkers/toggleWorker/runWorker/tickWorkers and
+// the fmtInterval/fmtAgo helpers now live inline in that page, polling /workers.json on their own.
 // ===== Self-audit for the QA agent (deterministic UI-breakage detection) =====
 // Pixel-measure elements that should stay on ONE line — table headers, buttons, chips,
 // and short table cells — and flag any whose short label wraps to 2+ lines or overflows
@@ -4006,19 +4374,9 @@ function publishQaAudit(){
     }
   }catch(e){}
 }
-// Live 1s tick: advance ago up / next down without waiting for the 5s reload.
-function tickWorkers(){
-  if(!_workers.length) return;
-  const elapsed=Math.floor((performance.now()-_workersBase)/1000);
-  _workers.forEach((w,i)=>{
-    if(w.agoSec>=0){ const a=document.getElementById('wk_ago_'+i); if(a) a.textContent=fmtAgo(w.agoSec+elapsed); }
-    if(w.active&&w.nextSec>=0){ const n=document.getElementById('wk_next_'+i);
-      if(n) n.textContent=Math.max(0,w.nextSec-elapsed)+'초 후'; }
-  });
-}
-setInterval(tickWorkers,1000);
-
 restoreFromURL();   // 해시에 저장된 뷰·필터 설정을 첫 렌더 전에 복원(새로고침 후에도 유지)
+// Open the plugins overlay when arrived here from another page's rail settings menu (?plugins=1).
+try{ if(new URLSearchParams(location.search).get('plugins')==='1' && typeof openPlugins==='function'){ setTimeout(openPlugins,80); } }catch(e){}
 load();
 setInterval(load,5000);
 setInterval(liveTick,100);
@@ -4026,6 +4384,22 @@ window.addEventListener('resize', load);
 // 부모 채우기 무장: Cmd(또는 Ctrl)를 누르는 동안 부모#칸이 채우기 소스로 강조된다.
 document.addEventListener('keydown',function(e){ if(e.key==='Meta'||e.key==='Control') document.body.classList.add('armparent'); });
 document.addEventListener('keyup',  function(e){ if(e.key==='Meta'||e.key==='Control') document.body.classList.remove('armparent'); });
+// 검토 대기 항목이 정확히 1건일 때 숫자키(1-N)로 옵션 선택. 여러 건이면 모호하므로 클릭만 허용.
+// 입력/텍스트영역에 포커스가 있으면(기타 직접 입력 등) 무시한다.
+document.addEventListener('keydown',function(e){
+  if(e.metaKey||e.ctrlKey||e.altKey) return;
+  if(!/^[1-9]$/.test(e.key)) return;
+  const t=e.target, tag=(t&&t.tagName)||'';
+  if(tag==='INPUT'||tag==='TEXTAREA'||(t&&t.isContentEditable)) return;
+  const cards=document.querySelectorAll('.qchoice');
+  if(cards.length!==1) return;
+  const card=cards[0], opt=card.querySelector('.qopt[data-n="'+e.key+'"]');
+  if(!opt) return;
+  e.preventDefault();
+  const id=card.getAttribute('data-qid'), act=opt.getAttribute('data-action'), arg=opt.getAttribute('data-arg');
+  if(act==='other'){ const inp=$('qother_'+id); if(inp) inp.focus(); }
+  else queueChoose(id,act,arg);
+});
 window.addEventListener('blur',function(){ document.body.classList.remove('armparent'); });
 // Run the QA self-audit independently of load(), so it still fires (and re-measures on
 // resize) even if a render path hiccups. Cheap; only POSTs when the finding set changes.

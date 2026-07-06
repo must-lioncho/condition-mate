@@ -32,20 +32,26 @@ field() {
 sid="$(field session_id)"
 [ -z "$sid" ] && exit 0
 
+# Suppress goal creation for programmatic, headless `claude -p` worker sessions (the app's
+# own UI-QA/dedup/search workers and the skill harnesses' producer/reviewer subagents).
+# Those aren't user work — they are internal machinery whose "first prompt" is a big fixed
+# system prompt, so mirroring them floods the dashboard with echo goals (goal-title-writer
+# etc.). The spawner exports CM_SUPPRESS_SESSION_GOAL=1; hooks inherit it, so we can skip
+# EVERY event (including start) before any goal — even a placeholder — is ever created.
+[ -n "$CM_SUPPRESS_SESSION_GOAL" ] && exit 0
+
 # The data dir mirrors AppPaths.base. Resolution order, so the hook always reaches the
 # same store the app writes to:
-#   1. CM_DATA_DIR            - explicit override (tests / custom runs)
+#   1. CM_DATA_DIR            - explicit override (tests / custom / dev-run)
 #   2. CLAUDE_PROJECT_DIR/.localdata - the dev store (dev-run.sh points the app here too),
 #                              so a session in this project posts to the running dev app
-#   3. ~/Library/Application Support/ConditionManager - the production default
+#   3. ~/.condition-manager  - the single production/home store
 if [ -n "$CM_DATA_DIR" ]; then
   data_dir="$CM_DATA_DIR"
-elif [ -n "$CLAUDE_PROJECT_DIR" ] && [ -d "$CLAUDE_PROJECT_DIR/../../.condition-manager" ]; then
-  data_dir="$(cd "$CLAUDE_PROJECT_DIR/../.." && pwd)/.condition-manager"
 elif [ -n "$CLAUDE_PROJECT_DIR" ] && [ -d "$CLAUDE_PROJECT_DIR/.localdata" ]; then
   data_dir="$CLAUDE_PROJECT_DIR/.localdata"
 else
-  data_dir="$HOME/Library/Application Support/ConditionManager"
+  data_dir="$HOME/.condition-manager"
 fi
 port_file="$data_dir/dashboard.port"
 [ -f "$port_file" ] || exit 0
@@ -118,6 +124,17 @@ print(out.replace(chr(10), " ").strip())
       | sed 's/.*:[[:space:]]*"\(.*\)"$/\1/')"
   fi
 fi
+
+# Defense in depth for the CM_SUPPRESS gate above: even if a worker/subagent session is
+# spawned WITHOUT the env var (an ad-hoc `claude --agent … -p`, or an app worker that
+# predates the env change), its title is a known fixed system prompt. Drop the event when
+# the extracted title starts with one of those signatures so no echo goal is minted. The
+# title is truncated to 40 chars upstream, so match on the leading signature only.
+case "$text" in
+  "# title-writer"*|"# nss-report-reviewer"*|"You turn ONE raw goal"* \
+  |"You are an automated UI QA"*|"You are a deduplication judge"* \
+  |"You are a semantic search"*|"You are a triage judge"*) exit 0 ;;
+esac
 
 # Wait kind (only meaningful for the `wait`/Notification event): split the human-wait into
 #   permission - 확인 요청: the agent needs the user to approve a tool. Claude Code's

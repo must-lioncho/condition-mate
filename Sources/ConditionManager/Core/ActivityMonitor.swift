@@ -33,15 +33,18 @@ final class ActivityMonitor {
     private var minuteBuckets: [Int] = []           // per-tick event counts over the trailing minute
     private let apmAverageSeconds: Double = 60.0
 
-    // "Condition" signal (0...1) for the menu-bar lightning gauge: the 1-minute
-    // average APM measured against an adaptive personal peak that slowly decays.
-    // Unlike apmNorm (fixed redline), this reads how hot the current pace is
-    // relative to your *own* recent best — 1.0 means "at your peak", low means
-    // "well below it". It mirrors ConditionDirector.lastNorm (activity/peak) but
-    // is computed here on the always-live sampler, so the gauge keeps moving even
-    // when BGM/디렉터 is stopped (plugin not installed, idle, untracked app).
-    private(set) var conditionNorm: Double = 0
-    private var conditionPeak: Double = 1
+    // Condition signal (0...1) for the menu-bar lightning gauge: the 1-minute
+    // average APM against a *fixed* gauge redline — a tachometer, not a
+    // personal-best tracker. An adaptive "÷ your own recent peak" ratio was tried
+    // first but self-normalises to ~1.0 whenever you keep working (the peak hugs
+    // the current average and decays only ~1%/5s), which pinned the gauge at Lv5
+    // regardless of how low the absolute pace was. A fixed scale (like apmNorm)
+    // makes the five stages track real intensity. This redline is lower than
+    // apmRedline so the stages span a realistic sustained-work band on the menu
+    // bar instead of sitting near the floor. Tune `gaugeRedline` to taste: the
+    // stage boundaries fall at 20/40/60/80% of it (Lv5 ≈ gaugeRedline APM).
+    let gaugeRedline: Double = 150
+    var conditionNorm: Double { min(1.0, averageAPM / gaugeRedline) }
 
     private(set) var lastEventDate: Date = Date()
 
@@ -76,27 +79,19 @@ final class ActivityMonitor {
             .keyDown, .flagsChanged,
             .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel
         ]
+        // Global monitor: events dispatched to *other* apps.
         if let m = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] event in
-            guard let self = self else { return }
-            let now = Date()
-            switch event.type {
-            case .keyDown, .flagsChanged:
-                self.keyCount += 1
-            case .scrollWheel:
-                // Collapse a continuous scroll burst into a single activity:
-                // skip events that fall within the coalescing gap of the last.
-                if let last = self.lastScrollDate, now.timeIntervalSince(last) < self.scrollCoalesceGap {
-                    self.lastScrollDate = now
-                    self.lastEventDate = now   // still "active", just not a new activity
-                    return
-                }
-                self.lastScrollDate = now
-                self.mouseCount += 1
-            default:
-                self.mouseCount += 1
-            }
-            self.liveCount += 1
-            self.lastEventDate = now
+            self?.record(event)
+        }) {
+            monitors.append(m)
+        }
+        // Local monitor: events dispatched to *our own* windows (dashboard,
+        // settings, follow-up windows). Global monitors never see these, so
+        // without this, working inside Condition Manager reads as zero activity.
+        // Return the event unchanged so normal handling proceeds.
+        if let m = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
+            self?.record(event)
+            return event
         }) {
             monitors.append(m)
         }
@@ -107,6 +102,30 @@ final class ActivityMonitor {
         liveTimer = Timer.scheduledTimer(withTimeInterval: liveInterval, repeats: true) { [weak self] _ in
             self?.liveSample()
         }
+    }
+
+    // Tally one input event into the rolling counters. Shared by the global and
+    // local monitors so our own windows count the same as any other app.
+    private func record(_ event: NSEvent) {
+        let now = Date()
+        switch event.type {
+        case .keyDown, .flagsChanged:
+            keyCount += 1
+        case .scrollWheel:
+            // Collapse a continuous scroll burst into a single activity:
+            // skip events that fall within the coalescing gap of the last.
+            if let last = lastScrollDate, now.timeIntervalSince(last) < scrollCoalesceGap {
+                lastScrollDate = now
+                lastEventDate = now   // still "active", just not a new activity
+                return
+            }
+            lastScrollDate = now
+            mouseCount += 1
+        default:
+            mouseCount += 1
+        }
+        liveCount += 1
+        lastEventDate = now
     }
 
     // 10 Hz: roll sub-second event counts through a short window and recompute the
@@ -151,13 +170,6 @@ final class ActivityMonitor {
         mouseSmoothed = mouseSmoothed * (1 - smoothingAlpha) + mousePerMin * smoothingAlpha
         keyRate = keySmoothed
         mouseRate = mouseSmoothed
-
-        // Adaptive personal peak with a slow decay (~6 min half-life at this 5s
-        // cadence) so a single burst doesn't pin the scale forever, then express
-        // the current sustained pace as a fraction of it. Floor the peak at 1 so a
-        // quiet session reads as low condition rather than dividing toward 0/0.
-        conditionPeak = max(conditionPeak * 0.99, max(averageAPM, 1))
-        conditionNorm = min(1.0, averageAPM / conditionPeak)
 
         WorkerRegistry.shared.recordRun("activity-sample",
             why: "5초 입력 집계·평활화",

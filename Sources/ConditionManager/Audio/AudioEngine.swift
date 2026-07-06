@@ -13,6 +13,35 @@ final class AudioEngine {
     private(set) var currentURL: URL?
     private(set) var currentTitle: String?
 
+    // Play-time accounting. AudioEngine is the single chokepoint that knows when a
+    // track is actually audible, so it times each contiguous "segment" (from when a
+    // track starts/resumes until it switches, pauses, or stops) and reports it. The
+    // TrackPlayStatsStore (wired in AppDelegate) accrues the seconds and play counts
+    // that feed the BGM 관리 page's "재생 시간 순위" section. A pause/mute does not
+    // count (segment closes on pause; mute leaves the segment running since the same
+    // track is still the director's active pick, just voiced by the browser instead).
+    var onSegmentEnd: ((_ key: String, _ title: String, _ seconds: Double) -> Void)?
+    var onTrackStart: ((_ key: String, _ title: String) -> Void)?
+    private var segKey: String?
+    private var segTitle: String?
+    private var segStart: Date?
+
+    private func beginSegment(_ key: String, _ title: String) {
+        endSegment()
+        segKey = key; segTitle = title; segStart = Date()
+    }
+    private func endSegment() {
+        guard let k = segKey, let t = segTitle, let s = segStart else { return }
+        segKey = nil; segTitle = nil; segStart = nil
+        onSegmentEnd?(k, t, Date().timeIntervalSince(s))
+    }
+    // The still-open segment's elapsed seconds, folded into the ranking at read time so
+    // a long-playing track shows fresh totals without writing on every tick.
+    func currentSegment() -> (key: String, title: String, seconds: Double)? {
+        guard let k = segKey, let t = segTitle, let s = segStart else { return nil }
+        return (k, t, Date().timeIntervalSince(s))
+    }
+
     // One-shot CoreAudio warm-up. The very first AVAudioPlayer in the process can
     // report isPlaying == true yet route no audio to the output device until the
     // output unit has been started once. That is why a fresh launch was silent
@@ -23,9 +52,21 @@ final class AudioEngine {
     private var primer: AVAudioPlayer?
 
     var targetVolume: Float = 0.8 {
-        didSet { current?.volume = isPaused ? 0 : targetVolume }
+        didSet { applyVolume() }
     }
     private(set) var isPaused = false
+
+    // Force-silence the native output without disturbing targetVolume (which the
+    // ConditionDirector manages for idle softening etc.). Used when the dashboard's
+    // BGM view takes over playback in the browser, so the same track is not heard
+    // twice. Re-applied on every volume-setting path so a crossfade can't unmute it.
+    var muted = false {
+        didSet { applyVolume() }
+    }
+    private func applyVolume() {
+        current?.volume = (isPaused || muted) ? 0 : targetVolume
+        if isPaused || muted { outgoing?.volume = 0 }
+    }
 
     private let fadeDuration: TimeInterval = 2.0
     private let fadeStep: TimeInterval = 0.05
@@ -50,6 +91,12 @@ final class AudioEngine {
         currentTitle = title
         isPaused = false
 
+        // A genuine new selection: bump the play count and open a fresh play-time
+        // segment (which flushes the outgoing track's segment first).
+        let key = url.lastPathComponent
+        onTrackStart?(key, title)
+        beginSegment(key, title)
+
         startCrossfade()
     }
 
@@ -60,8 +107,8 @@ final class AudioEngine {
             guard let self = self else { timer.invalidate(); return }
             elapsed += self.fadeStep
             let progress = min(1.0, elapsed / self.fadeDuration)
-            self.current?.volume = Float(progress) * self.targetVolume
-            self.outgoing?.volume = Float(1 - progress) * self.targetVolume
+            self.current?.volume = self.muted ? 0 : Float(progress) * self.targetVolume
+            self.outgoing?.volume = self.muted ? 0 : Float(1 - progress) * self.targetVolume
             if progress >= 1.0 {
                 timer.invalidate()
                 self.fadeTimer = nil
@@ -73,6 +120,7 @@ final class AudioEngine {
 
     func pause() {
         isPaused = true
+        endSegment()               // clock stops while paused
         fadeTimer?.invalidate(); fadeTimer = nil
         current?.pause()
         outgoing?.stop(); outgoing = nil
@@ -81,8 +129,10 @@ final class AudioEngine {
     func resume() {
         guard let player = current else { return }
         isPaused = false
-        player.volume = targetVolume
+        player.volume = muted ? 0 : targetVolume
         player.play()
+        // Resume continues the same track — reopen a segment but do not count a new play.
+        if let u = currentURL { beginSegment(u.lastPathComponent, currentTitle ?? u.lastPathComponent) }
     }
 
     // Audio ducking: briefly drop the BGM so a UI sound effect (e.g. the task-done
@@ -90,7 +140,7 @@ final class AudioEngine {
     // then release over `release`. No-op while paused. Self-correcting: volume always
     // ends at targetVolume even if a crossfade was running.
     func duck(depth: Float = 0.22, hold: TimeInterval = 0.55, release: TimeInterval = 0.5) {
-        guard !isPaused, let player = current else { return }
+        guard !isPaused, !muted, let player = current else { return }
         duckTimer?.invalidate()
         let low = targetVolume * max(0, min(1, depth))
         player.volume = low
@@ -143,6 +193,7 @@ final class AudioEngine {
     }()
 
     func stop() {
+        endSegment()               // flush the final segment before going silent
         fadeTimer?.invalidate(); fadeTimer = nil
         duckTimer?.invalidate(); duckTimer = nil
         current?.stop(); current = nil

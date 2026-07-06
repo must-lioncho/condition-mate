@@ -25,12 +25,22 @@ final class MenuController: NSObject, NSMenuDelegate {
         let s = Settings.shared
 
         // --- Manual Start / Stop Working (top, prominent like Hubstaff) ---
+        // ⌘S start/stop, ⌘M mute — app-wide shortcuts (active on any page while the app is frontmost),
+        // wired via a local key monitor in AppDelegate; shown here for discoverability.
         if d.isWorking {
-            addBigAction("■  작업 중단", action: #selector(onToggleWorking), color: .systemRed)
+            addBigAction("■  챌린지 중단  ⌘S", action: #selector(onToggleWorking), color: .systemRed)
         } else {
-            addBigAction("▶  작업 시작", action: #selector(onToggleWorking), color: .systemGreen)
+            addBigAction("▶  챌린지 시작  ⌘S", action: #selector(onToggleWorking), color: .systemGreen)
+        }
+        // Music mute toggle (음원 on/off) — same source of truth (session.isMuted) as ⌘M, the
+        // dashboard mute dot, and the BGM player, so every surface shows and controls one state.
+        if d.session.isMuted {
+            addItem("🔇  음소거 해제 (소리 켜기)  ⌘M", action: #selector(onToggleMuteMenu))
+        } else {
+            addItem("🔊  음소거 (챌린지는 계속)  ⌘M", action: #selector(onToggleMuteMenu))
         }
         addDisabled("\(d.liveStatus) · 세션 \(Formatting.clock(d.sessionSeconds))")
+        addDisabled("⌘M 음소거 · ⌘S 챌린지 (앱 활성 시 어느 페이지든)")
 
         menu.addItem(.separator())
 
@@ -57,7 +67,7 @@ final class MenuController: NSObject, NSMenuDelegate {
             if d.library.tracks.isEmpty {
                 addDisabled("음원 없음 — 음악 폴더를 선택하세요")
             } else {
-                addDisabled("컨디션 대기 중 (작업 세션 시작 시 재생)")
+                addDisabled("컨디션 대기 중 (챌린지 시작 시 재생)")
             }
         } else {
             addDisabled("음악 꺼짐")
@@ -72,12 +82,17 @@ final class MenuController: NSObject, NSMenuDelegate {
 
         // --- Toggles ---
         addCheck("음악 (BGM)", checked: s.musicEnabled, action: #selector(onToggleMusic))
+        addCheck("창 자동 열기 (BGM 자동재생)", checked: s.bgmWindowEnabled, action: #selector(onToggleBGMWindow))
         // Menu-bar gauge: 스포츠(라이브 APM) ↔ 타임(시간). Label shows the next state.
         let modeLabel = d.menuBarMode == .sports
             ? "메뉴바: ⚡APM (스포츠) → 시간으로"
             : "메뉴바: ⏱ 시간 (타임) → APM으로"
         addItem(modeLabel, action: #selector(onToggleMenuBarMode))
-        addItem("대시보드 열기 (내 활동 보기)", action: #selector(onOpenDashboard))
+        // Single unified window-toggle entry (replaces the old two separate "열기" items):
+        // closed -> opens in the current in-window mode; open -> switches the SAME window's mode.
+        // Label always shows the destination state, consistent with the menu-bar mode line above
+        // and with the in-window segmented toggle (they share the same mode and stay in sync).
+        addItem(windowToggleLabel(d), action: #selector(onToggleAppWindowMode))
 
         menu.addItem(.separator())
 
@@ -130,6 +145,18 @@ final class MenuController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
         addItem("종료", action: #selector(onQuit), key: "q")
+    }
+
+    // Label for the single unified window-toggle menu entry. Always names the destination state
+    // (mirrors the "메뉴바: … → …" pattern above), so one click always does what the label says:
+    //   closed            -> "창 열기 (컨디션 모드)" / "창 열기 (대시보드 모드)" depending on last mode
+    //   open, 컨디션 mode  -> "대시보드 모드로 전환"
+    //   open, 대시보드 mode -> "컨디션 모드로 전환"
+    private func windowToggleLabel(_ d: AppDelegate) -> String {
+        if !d.appWindowIsOpen {
+            return d.appWindowMode == .bgm ? "창 열기 (컨디션 모드)" : "창 열기 (대시보드 모드)"
+        }
+        return d.appWindowMode == .bgm ? "대시보드 모드로 전환" : "컨디션 모드로 전환"
     }
 
     // Per-app BGM strategy picker.
@@ -258,10 +285,12 @@ final class MenuController: NSObject, NSMenuDelegate {
     // MARK: - Actions
 
     @objc private func onToggleWorking() { delegate?.toggleWorking() }
+    @objc private func onToggleMuteMenu() { delegate?.toggleMute() }
     @objc private func onToggleMusic() { delegate?.toggleMusic() }
     @objc private func onToggleMenuBarMode() { delegate?.toggleMenuBarMode() }
     @objc private func onDislikeTrack() { delegate?.dislikeCurrentTrack() }
-    @objc private func onOpenDashboard() { delegate?.openDashboard() }
+    @objc private func onToggleAppWindowMode() { delegate?.toggleAppWindowMode() }
+    @objc private func onToggleBGMWindow() { delegate?.toggleBGMWindowAutoOpen() }
     @objc private func onChooseFolder() { delegate?.chooseMusicFolder() }
     @objc private func onAddApp() { delegate?.addCurrentFrontmostApp() }
     @objc private func onRequestAccessibility() { delegate?.requestAccessibility() }
