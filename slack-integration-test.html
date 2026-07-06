@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slack 연동 · 구상 테스트</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#131824; --panel2:#1a2030; --line:#232b3d;
+    --tx:#e7ecf5; --mut:#8b96ad; --dim:#5f6b83;
+    --cyan:#37d6ff; --red:#ff5470; --purple:#b57bff; --gold:#ffd166; --green:#4be3a0;
+    --grad:linear-gradient(90deg,#37d6ff,#b57bff);
+    --slack:#4a154b; --slackgreen:#2eb67d; --slackblue:#36c5f0; --slackred:#e01e5a; --slackyellow:#ecb22e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 700px at 80% -10%,#141b2b,#0b0e14 60%);color:var(--tx);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo",sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding:28px 20px 100px}
+  h1{font-size:22px;margin:0;font-weight:800;letter-spacing:-.02em}
+  h2{font-size:15px;margin:0 0 2px;font-weight:800;letter-spacing:-.01em}
+  .sub{color:var(--mut);font-size:12.5px;margin-top:4px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;margin-top:18px}
+  .tag{display:inline-block;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px;font-weight:700}
+  header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:4px}
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  .split3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:860px){.split,.split3{grid-template-columns:1fr}}
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--tx);border-radius:9px;padding:8px 14px;font-size:12.5px;cursor:pointer;font-weight:600}
+  .btn:hover{border-color:var(--cyan)}
+  code{background:var(--panel2);padding:1px 5px;border-radius:4px;color:var(--gold);font-size:11.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .muted{color:var(--mut)}
+  .foot{color:var(--dim);font-size:11.5px;line-height:1.7;margin-top:10px}
+
+  /* method chooser */
+  .method{background:var(--panel2);border:1.5px solid var(--line);border-radius:14px;padding:16px;cursor:pointer;transition:.18s;position:relative;height:100%}
+  .method:hover{border-color:#33405c}
+  .method.on{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan),0 12px 34px -16px var(--cyan);background:linear-gradient(180deg,rgba(55,214,255,.08),rgba(181,123,255,.05))}
+  .method .mh{display:flex;align-items:center;gap:8px;font-weight:800;font-size:14px}
+  .method .rec{position:absolute;top:-10px;right:12px;background:var(--green);color:#062018;font-size:9.5px;font-weight:900;padding:3px 9px;border-radius:20px;letter-spacing:.04em}
+  .method p{font-size:12px;color:var(--mut);margin:10px 0 12px;line-height:1.5;min-height:52px}
+  .kv{display:flex;flex-direction:column;gap:7px}
+  .kv .r{display:flex;align-items:center;gap:8px;font-size:11.5px}
+  .kv .r .ic{width:16px;text-align:center}
+  .kv .r b{color:var(--tx)}
+  .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+  .good{color:var(--green)} .bad{color:var(--red)} .warn{color:var(--gold)}
+
+  /* verdict panel */
+  .verdict{font-size:13.5px;line-height:1.7}
+  .verdict b{color:var(--cyan)}
+  .steps{counter-reset:s;margin:6px 0 0;padding:0;list-style:none}
+  .steps li{counter-increment:s;position:relative;padding:9px 0 9px 34px;font-size:12.5px;border-top:1px solid var(--line)}
+  .steps li:first-child{border-top:0}
+  .steps li::before{content:counter(s);position:absolute;left:0;top:8px;width:22px;height:22px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--cyan);font-weight:800;font-size:11px;display:flex;align-items:center;justify-content:center}
+  .steps li b{color:var(--tx)}
+
+  /* storage bars */
+  .store{margin-top:12px}
+  .store .row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
+  .store .row:first-child{border-top:0}
+  .store .nm{width:150px;font-size:12.5px;font-weight:700;flex:0 0 auto}
+  .store .bar{flex:1;height:8px;background:var(--panel2);border-radius:6px;overflow:hidden}
+  .store .bar>i{display:block;height:100%;border-radius:6px}
+  .store .sc{width:74px;text-align:right;font-size:11px;color:var(--mut);flex:0 0 auto}
+  .badge{display:inline-block;font-size:10px;font-weight:800;padding:2px 7px;border-radius:20px;margin-left:8px}
+  .badge.rec{background:rgba(75,227,160,.16);color:var(--green)}
+  .badge.no{background:rgba(255,84,112,.16);color:var(--red)}
+
+  /* triggers */
+  .trig{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid var(--line)}
+  .trig:first-child{border-top:0}
+  .trig .tl{font-size:12.5px}
+  .trig .tl .d{font-size:11px;color:var(--mut);margin-top:2px}
+  .sw{width:44px;height:25px;border-radius:20px;background:var(--panel2);border:1px solid var(--line);position:relative;cursor:pointer;flex:0 0 auto;transition:.18s}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:50%;background:var(--dim);transition:.18s}
+  .sw.on{background:linear-gradient(90deg,rgba(55,214,255,.5),rgba(75,227,160,.5));border-color:var(--green)}
+  .sw.on::after{left:21px;background:var(--green)}
+
+  /* slack preview */
+  .slackwin{background:#1a1d21;border:1px solid #2b2e33;border-radius:12px;overflow:hidden;font-family:Lato,-apple-system,"Apple SD Gothic Neo",sans-serif}
+  .slacktop{background:var(--slack);color:#fff;padding:9px 14px;font-size:12px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .slacktop .ch{opacity:.75;font-weight:500}
+  .slackbody{padding:14px 16px;min-height:120px}
+  .msg{display:flex;gap:10px}
+  .msg .av{width:36px;height:36px;border-radius:8px;background:var(--grad);flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:18px}
+  .msg .mc{flex:1;min-width:0}
+  .msg .mn{color:#e8e8e8;font-weight:800;font-size:13.5px}
+  .msg .mn .app{background:#3f3f46;color:#c9c9cf;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle}
+  .msg .mn .tm{color:#9a9ba0;font-weight:400;font-size:11px;margin-left:6px}
+  .attach{border-left:4px solid var(--cyan);background:#222528;border-radius:0 8px 8px 0;padding:11px 13px;margin-top:6px}
+  .attach .at{font-weight:800;color:#fff;font-size:13px;margin-bottom:8px}
+  .fields{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px}
+  .fields .f .k{font-size:10.5px;color:#9a9ba0;font-weight:700}
+  .fields .f .v{font-size:12.5px;color:#e8e8e8;margin-top:1px}
+  .ctx{color:#9a9ba0;font-size:11px;margin-top:10px;display:flex;align-items:center;gap:6px}
+  .gaugebar{height:8px;background:#33373c;border-radius:5px;overflow:hidden;margin-top:6px}
+  .gaugebar>i{display:block;height:100%;border-radius:5px;transition:width .3s}
+
+  /* risk table */
+  .risk .row{display:flex;gap:12px;padding:11px 0;border-top:1px solid var(--line);font-size:12.5px}
+  .risk .row:first-child{border-top:0}
+  .risk .q{flex:0 0 42%;font-weight:700}
+  .risk .a{flex:1;color:var(--mut)}
+  .pill{display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px}
+  .pill.g{background:rgba(75,227,160,.15);color:var(--green)}
+  .pill.y{background:rgba(255,209,102,.15);color:var(--gold)}
+  .pill.r{background:rgba(255,84,112,.15);color:var(--red)}
+
+  .cta{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+  .selname{color:var(--cyan);font-weight:800}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div>
+    <h1>Slack 연동 · 구상 테스트</h1>
+    <div class="sub">토큰 보안과 만료(expire) 재발급 문제를 최소화하는 방식으로 · 실제 앱 코드 변경 없음 · 순수 제안/프로토타입</div>
+  </div>
+  <div class="btn" onclick="location.reload()">↺ 초기화</div>
+</header>
+
+<!-- ============ 1. 연동 방식 선택 ============ -->
+<div class="card">
+  <span class="tag">1 · 연동 방식 선택 — 카드를 눌러 비교하세요</span>
+  <div class="split3">
+
+    <div class="method on" data-m="webhook" onclick="pick('webhook')">
+      <span class="rec">권장</span>
+      <div class="mh">🪝 Incoming Webhook</div>
+      <p>Slack이 발급한 <b>고정 URL 하나에 POST</b>만 하면 지정된 채널에 메시지가 뜹니다. 단방향(보내기 전용).</p>
+      <div class="kv">
+        <div class="r"><span class="ic good">●</span><span>만료: <b class="good">없음 (재발급 불필요)</b></span></div>
+        <div class="r"><span class="ic good">●</span><span>스코프/권한: <b class="good">최소 (채널 1개 쓰기)</b></span></div>
+        <div class="r"><span class="ic warn">●</span><span>기능: <b>보내기만</b> · 읽기/버튼 없음</span></div>
+        <div class="r"><span class="ic good">●</span><span>설정: <b class="good">앱 만들고 URL 복사</b></span></div>
+      </div>
+    </div>
+
+    <div class="method" data-m="bot" onclick="pick('bot')">
+      <div class="mh">🤖 Bot Token (rotation OFF)</div>
+      <p>Slack 앱의 <code>xoxb-</code> 봇 토큰. <b>토큰 로테이션을 끄면 만료되지 않습니다.</b> 여러 채널·읽기·업데이트 가능.</p>
+      <div class="kv">
+        <div class="r"><span class="ic good">●</span><span>만료: <b class="good">없음 (로테이션 OFF일 때)</b></span></div>
+        <div class="r"><span class="ic warn">●</span><span>스코프: <b>지정 권한만</b> (chat:write 등)</span></div>
+        <div class="r"><span class="ic good">●</span><span>기능: <b class="good">보내기+읽기+수정+버튼</b></span></div>
+        <div class="r"><span class="ic warn">●</span><span>설정: <b>OAuth 설치 필요</b></span></div>
+      </div>
+    </div>
+
+    <div class="method" data-m="rotate" onclick="pick('rotate')">
+      <div class="mh">🔁 OAuth + Token Rotation</div>
+      <p>access 토큰이 <b>12시간마다 만료</b>, refresh 토큰으로 자동 갱신. 보안 최고지만 <b>바로 그 재발급 로직이 필요</b>.</p>
+      <div class="kv">
+        <div class="r"><span class="ic bad">●</span><span>만료: <b class="bad">12시간 · 자동 refresh 구현 필수</b></span></div>
+        <div class="r"><span class="ic good">●</span><span>스코프: <b class="good">지정 권한만 · 유출 시 피해 최소</b></span></div>
+        <div class="r"><span class="ic good">●</span><span>기능: <b class="good">전체</b></span></div>
+        <div class="r"><span class="ic bad">●</span><span>설정: <b class="bad">refresh 스케줄러 필요 (복잡)</b></span></div>
+      </div>
+    </div>
+
+  </div>
+  <div class="foot">
+    ※ 걱정하신 <b>“expire되면 재발급”</b> 이슈는 <b>3번(Rotation)에서만</b> 발생합니다. 1·2번은 만료 자체가 없어 재발급 로직이 필요 없습니다.
+  </div>
+</div>
+
+<!-- ============ 2. 선택 결과 · 추천 셋업 ============ -->
+<div class="split">
+  <div class="card">
+    <span class="tag">2 · 선택한 방식 — 셋업 절차</span>
+    <h2>현재 선택: <span class="selname" id="selName">Incoming Webhook</span></h2>
+    <div class="verdict" id="verdict"></div>
+    <ol class="steps" id="steps"></ol>
+  </div>
+
+  <div class="card">
+    <span class="tag">3 · 토큰 보관 위치 — 보안 점수</span>
+    <h2>비밀값을 어디에 둘까</h2>
+    <div class="sub">Webhook URL / 봇 토큰은 모두 <b>bearer 비밀</b> — 가진 사람이 곧 권한.</div>
+    <div class="store">
+      <div class="row">
+        <div class="nm">macOS Keychain <span class="badge rec">권장</span></div>
+        <div class="bar"><i style="width:100%;background:var(--green)"></i></div>
+        <div class="sc">암호화 저장</div>
+      </div>
+      <div class="row">
+        <div class="nm">환경변수</div>
+        <div class="bar"><i style="width:55%;background:var(--gold)"></i></div>
+        <div class="sc">프로세스만</div>
+      </div>
+      <div class="row">
+        <div class="nm">설정 JSON 파일</div>
+        <div class="bar"><i style="width:28%;background:var(--red)"></i></div>
+        <div class="sc">평문</div>
+      </div>
+      <div class="row">
+        <div class="nm">git 커밋 <span class="badge no">금지</span></div>
+        <div class="bar"><i style="width:8%;background:var(--red)"></i></div>
+        <div class="sc">유출</div>
+      </div>
+    </div>
+    <div class="foot">
+      핵심 원칙: <b>Swift(네이티브) 쪽만 Keychain에서 읽어 Slack에 직접 POST</b> → 비밀값을 loopback 대시보드 웹뷰(<code>/data.json</code> 등)로는 <b>절대 반환하지 않음</b>. 웹뷰에는 “연결됨/끊김” 상태 플래그만 노출.
+    </div>
+  </div>
+</div>
+
+<!-- ============ 4. 무엇을 언제 보낼까 (트리거) + 미리보기 ============ -->
+<div class="split">
+  <div class="card">
+    <span class="tag">4 · 무엇을 언제 Slack에 보낼까</span>
+    <h2>알림 트리거</h2>
+    <div class="sub">토글하면 오른쪽 미리보기가 바뀝니다.</div>
+    <div style="margin-top:10px">
+      <div class="trig">
+        <div class="tl">⚡ 컨디션 급락 알림<div class="d">기준선 아래로 떨어지면 즉시</div></div>
+        <div class="sw on" data-t="cond" onclick="tg(this)"></div>
+      </div>
+      <div class="trig">
+        <div class="tl">📊 일일 리포트(NSS/온체인)<div class="d">nss-report-daily 생성 완료 시 요약 push</div></div>
+        <div class="sw on" data-t="report" onclick="tg(this)"></div>
+      </div>
+      <div class="trig">
+        <div class="tl">🎯 목표 승급/완료<div class="d">goal이 큐로 올라가거나 완료될 때</div></div>
+        <div class="sw" data-t="goal" onclick="tg(this)"></div>
+      </div>
+      <div class="trig">
+        <div class="tl">🟢 세션 시작/종료<div class="d">업무 시작 감지 · 잦아서 기본 OFF</div></div>
+        <div class="sw" data-t="session" onclick="tg(this)"></div>
+      </div>
+    </div>
+    <div class="cta">
+      <div class="btn" onclick="cycleMsg()">▸ 미리보기 예시 바꾸기</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag">5 · Slack 메시지 미리보기 (실제 전송 아님)</span>
+    <div class="slackwin">
+      <div class="slacktop">💬 <span>컨디션 매니저</span> <span class="ch" id="chName">#condition-alerts</span></div>
+      <div class="slackbody">
+        <div class="msg">
+          <div class="av">🧭</div>
+          <div class="mc">
+            <div class="mn">Condition Manager <span class="app">APP</span> <span class="tm" id="msgTime">오늘 14:32</span></div>
+            <div class="attach" id="attach"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="foot">이 카드는 순수 목업입니다. 어떤 필드/문구/색을 쓸지 여기서 먼저 확정한 뒤 실제 구현에 넘기면 됩니다.</div>
+  </div>
+</div>
+
+<!-- ============ 6. 보안 Q&A ============ -->
+<div class="card">
+  <span class="tag">6 · 걱정거리 정면 답변</span>
+  <div class="risk">
+    <div class="row"><div class="q">토큰이 만료되면 매번 재발급해야 하나?</div><div class="a"><span class="pill g">해결</span> Webhook 또는 rotation-OFF 봇토큰이면 <b>만료 없음</b>. Rotation 방식만 골라야 재발급 로직이 필요 — 그건 안 고르면 됨.</div></div>
+    <div class="row"><div class="q">토큰이 코드/깃에 노출될까?</div><div class="a"><span class="pill g">해결</span> Keychain 저장 + 웹뷰로 값 미반환 + <code>.gitignore</code>. 대시보드 GET 화이트리스트에 secret 엔드포인트 추가 금지.</div></div>
+    <div class="row"><div class="q">토큰이 유출되면 피해 범위는?</div><div class="a"><span class="pill y">완화</span> Webhook=해당 채널 <b>쓰기만</b>. 봇=부여한 스코프만. 유출 시 Slack에서 <b>revoke 후 1개만 재발급</b>.</div></div>
+    <div class="row"><div class="q">로컬 앱인데 굳이 OAuth 서버가 필요한가?</div><div class="a"><span class="pill g">불필요</span> Webhook/봇토큰은 <b>서버·콜백 URL 없이</b> 붙여넣기만으로 동작. Rotation만 리다이렉트 처리가 필요.</div></div>
+    <div class="row"><div class="q">보내기만 vs 양방향?</div><div class="a"><span class="pill y">선택</span> 알림만이면 <b>Webhook</b>으로 충분. 나중에 버튼/응답/여러 채널이 필요해지면 <b>봇토큰</b>으로 승급.</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <span class="tag">최종 제안 요약</span>
+  <div class="verdict">
+    <b>1단계 (지금):</b> Incoming Webhook + macOS Keychain 저장. 만료·재발급 이슈 원천 제거, 30분이면 붙음.<br>
+    <b>2단계 (필요 시):</b> 버튼·양방향·다채널이 필요해지면 <b>Bot Token(rotation OFF)</b>로 승급 — 여전히 만료 없음.<br>
+    <b>회피:</b> Token Rotation은 “보안 최상”이지만 <b>바로 그 재발급 부담</b>을 만들므로, 규정상 강제되지 않는 한 채택하지 않음.<br>
+    <span class="muted">이 페이지에서 방식·트리거·메시지 모양을 확정하시면, 실제 Swift 연동 스펙으로 넘기겠습니다.</span>
+  </div>
+</div>
+
+</div>
+
+<script>
+  const DATA = {
+    webhook:{
+      name:"Incoming Webhook",
+      verdict:"채널 하나에 <b>단방향 알림</b>만 보낼 거라면 최적. 만료가 없어 <b>재발급 이슈가 원천적으로 없습니다.</b>",
+      steps:[
+        "Slack에서 <b>Create App → Incoming Webhooks 활성화</b>",
+        "알림 받을 <b>채널 선택</b> → <code>https://hooks.slack.com/...</code> URL 발급 (1회)",
+        "그 URL을 앱 설정에서 입력 → <b>macOS Keychain에 저장</b>",
+        "Swift가 컨디션/리포트 이벤트 때 그 URL로 <b>JSON POST</b>"
+      ]
+    },
+    bot:{
+      name:"Bot Token (rotation OFF)",
+      verdict:"여러 채널·읽기·버튼이 필요하면 이걸로. <b>토큰 로테이션을 켜지 않으면 만료되지 않습니다.</b>",
+      steps:[
+        "Slack 앱 생성 → <b>OAuth&Permissions</b>에서 <code>chat:write</code> 스코프 추가",
+        "<b>Token Rotation은 비활성</b>으로 둠 (만료 방지)",
+        "워크스페이스에 설치 → <code>xoxb-</code> 봇 토큰 발급",
+        "토큰을 <b>Keychain 저장</b> → Swift가 <code>chat.postMessage</code> 호출"
+      ]
+    },
+    rotate:{
+      name:"OAuth + Token Rotation",
+      verdict:"보안은 최상이나 <b>access 토큰이 12h마다 만료</b> → refresh 자동 갱신 로직이 필수. <b>걱정하신 재발급 부담이 바로 여기서 발생</b>합니다.",
+      steps:[
+        "OAuth 앱 생성 + <b>redirect URL / 콜백 처리</b> 구현",
+        "설치 시 access(12h) + refresh 토큰 수령 → 둘 다 Keychain 저장",
+        "<b>만료 전 refresh 토큰으로 자동 재발급</b> 스케줄러 상시 운영",
+        "실패/회전 오류 처리 + 재인증 UX까지 구현 (복잡)"
+      ]
+    }
+  };
+
+  const MSGS = [
+    {ch:"#condition-alerts", title:"⚡ 컨디션 급락 감지", color:"var(--slackred)",
+     fields:[["현재 레벨","2 / 5 ⚡"],["기준선 대비","-38%"],["직전 앱","Slack (책상)"],["지속","47분"]],
+     ctx:"기준시간 09:00 기준 · 집중 구간 이탈", gauge:38, gcolor:"var(--slackred)"},
+    {ch:"#daily-report", title:"📊 온체인·NSS 일일 리포트", color:"var(--slackgreen)",
+     fields:[["NSS 신규","+128건"],["누적 구독","4,902"],["USDT 유입","+21,400"],["출금","-3,120"]],
+     ctx:"nss-report-daily 생성 완료 · A4 2p PDF 첨부 가능", gauge:82, gcolor:"var(--slackgreen)"},
+    {ch:"#goals", title:"🎯 목표 큐 승급", color:"var(--slackyellow)",
+     fields:[["목표","대시보드 가치 파이프라인"],["seq","#7 채번"],["배치","top-level"],["상태","진행 중"]],
+     ctx:"resolve add 시점 채번 · AI placement=top", gauge:60, gcolor:"var(--slackyellow)"},
+    {ch:"#work-sessions", title:"🟢 업무 세션 시작", color:"var(--slackblue)",
+     fields:[["시작","14:05"],["직전 갭","6h 12m"],["첫 앱","Cursor"],["예상 가치","높음"]],
+     ctx:"6h 갭 후 업무시작 감지", gauge:74, gcolor:"var(--slackblue)"}
+  ];
+  let mi = 0;
+
+  function pick(m){
+    document.querySelectorAll('.method').forEach(e=>e.classList.toggle('on', e.dataset.m===m));
+    const d = DATA[m];
+    document.getElementById('selName').textContent = d.name;
+    document.getElementById('verdict').innerHTML = d.verdict;
+    document.getElementById('steps').innerHTML = d.steps.map(s=>`<li>${s}</li>`).join('');
+  }
+
+  function tg(el){ el.classList.toggle('on'); renderMsg(); }
+
+  function activeMsg(){
+    // pick a message that matches an enabled trigger, else fall back to current
+    const map = {cond:0, report:1, goal:2, session:3};
+    const enabled = [...document.querySelectorAll('.sw.on')].map(e=>map[e.dataset.t]);
+    if(enabled.length && !enabled.includes(mi)) mi = enabled[0];
+    return MSGS[mi];
+  }
+
+  function cycleMsg(){
+    const on = [...document.querySelectorAll('.sw.on')].map(e=>({cond:0,report:1,goal:2,session:3}[e.dataset.t]));
+    const pool = on.length ? on : [0,1,2,3];
+    mi = pool[(pool.indexOf(mi)+1+pool.length)%pool.length];
+    renderMsg();
+  }
+
+  function renderMsg(){
+    const m = activeMsg();
+    document.getElementById('chName').textContent = m.ch;
+    const f = m.fields.map(([k,v])=>`<div class="f"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+    document.getElementById('attach').style.borderLeftColor = m.color;
+    document.getElementById('attach').innerHTML =
+      `<div class="at">${m.title}</div>`+
+      `<div class="fields">${f}</div>`+
+      `<div class="gaugebar"><i style="width:${m.gauge}%;background:${m.gcolor}"></i></div>`+
+      `<div class="ctx">🕑 ${m.ctx}</div>`;
+  }
+
+  pick('webhook');
+  renderMsg();
+</script>
+</body>
+</html>

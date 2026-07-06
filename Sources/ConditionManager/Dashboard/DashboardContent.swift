@@ -287,6 +287,9 @@ enum DashboardContent {
   .hdr{display:flex;align-items:center;justify-content:space-between;gap:12px}
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto;z-index:50}
   .overlay.on{display:flex}
+  /* 배경 클릭이 무시됐을 때(입력 내용 있음) '닫기' 버튼을 살짝 튕겨 안내 */
+  @keyframes cmNudge{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+  .btn.nudge{animation:cmNudge .4s ease;box-shadow:0 0 0 2px var(--accent,#5b8cff)}
   /* 작성 중이던 목표 초안(draft) 이어쓰기 칩 — 모달을 ESC로 닫아도 입력이 남아 있으면 여기서 이어서 편집 */
   .gadraft-chip{display:none;position:fixed;right:18px;bottom:18px;z-index:49;align-items:center;gap:6px;
     padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--fg);
@@ -310,6 +313,13 @@ enum DashboardContent {
   .lkchip{display:inline-block;margin-left:4px;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid var(--accent);color:var(--accent)}
   .lkarrow{color:var(--mut);font-size:18px;flex:0 0 auto}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+  /* 목표 추가 히어로: 화면 가운데로 모으고 입력창을 크게 — 머릿속 덤프의 주 입구 */
+  .addhero{max-width:760px;margin:30px auto 16px}
+  .addhero-label{text-align:center;font-size:16px;font-weight:600;letter-spacing:.5px;color:var(--fg);margin:0 0 12px}
+  .addhero-row{margin:0;flex-wrap:nowrap}
+  .addhero .bardwrap{min-width:0}
+  .addhero #goalText{font-size:16px;padding:13px 16px;border-radius:12px}
+  .addhero .btn{padding:12px 16px;font-size:14px}
   input[type=text],input[type=number]{background:#0d1016;border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:6px 9px;font-size:13px}
   input[type=range]{vertical-align:middle}
   .goal{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line)}
@@ -646,17 +656,20 @@ enum DashboardContent {
     </div><!-- /#goalFilters -->
     <!-- INPUT VIEW -->
     <div id="inputView">
-      <div class="row">목표 추가:
-        <span class="bardwrap">
-          <canvas id="bardCanvas" width="48" height="48" aria-hidden="true" title="음유시인이 1분마다 버프를 연주합니다"></canvas>
-          <input type="text" id="goalText" placeholder="목표/디테일 입력 후 Enter (계속 추가)" style="width:100%"
-                 onkeydown="goalKey(event)">
-        </span>
-        <span class="infowrap">
-          <button class="btn" id="aiAddBtn" onclick="aiAdd()" oncontextmenu="return toggleAiTip(event)">AI추가</button>
-          <div class="infotip" id="aiTip">번호를 보고 각 목표의 <b>부모#</b> 칸에 부모 번호를 입력하면 묶입니다 (비우면 최상위). 압축된 결과는 리포트에서 확인. <b>AI추가</b>는 기다리지 않고 큐에 담아 백그라운드로 중복을 분석합니다 — 결과는 <b>큐</b> 탭에서 원탭으로 확정.</div>
-        </span>
-        <button class="btn" onclick="addGoal()">추가</button>
+      <div class="addhero">
+        <div class="addhero-label">목표 추가</div>
+        <div class="row addhero-row">
+          <span class="bardwrap">
+            <canvas id="bardCanvas" width="48" height="48" aria-hidden="true" title="음유시인이 1분마다 버프를 연주합니다"></canvas>
+            <input type="text" id="goalText" placeholder="목표/디테일 입력 후 Enter (계속 추가)" style="width:100%"
+                   onkeydown="goalKey(event)">
+          </span>
+          <span class="infowrap">
+            <button class="btn" id="aiAddBtn" onclick="aiAdd()" oncontextmenu="return toggleAiTip(event)">AI추가</button>
+            <div class="infotip" id="aiTip">번호를 보고 각 목표의 <b>부모#</b> 칸에 부모 번호를 입력하면 묶입니다 (비우면 최상위). 압축된 결과는 리포트에서 확인. <b>AI추가</b>는 기다리지 않고 큐에 담아 백그라운드로 중복을 분석합니다 — 결과는 <b>큐</b> 탭에서 원탭으로 확정.</div>
+          </span>
+          <button class="btn" onclick="addGoal()">추가</button>
+        </div>
       </div>
       <div id="goals"></div>
     </div>
@@ -793,7 +806,7 @@ enum DashboardContent {
 
   </div>
 
-  <div class="foot">5초마다 자동 갱신 · 127.0.0.1 로컬 전용</div>
+  <div class="foot">127.0.0.1 로컬 전용</div>
 </div>
 
 <div class="overlay" id="plugins">
@@ -854,7 +867,7 @@ enum DashboardContent {
 <div class="overlay" id="gaModal">
   <div class="modal" style="max-width:560px">
     <div class="hdr"><h1 style="margin:0;font-size:16px"><span id="gaEditIcon" style="display:none" title="작성 중이던 초안을 이어서 편집 중">✎ </span><span id="gaTitle">목표 추가</span> <span class="muted" id="gaWhere" style="font-size:13px;font-weight:400"></span></h1>
-      <button class="btn" onclick="closeGoalAdd()" title="ESC 로도 닫힙니다 — 입력한 내용은 유지됩니다">닫기</button></div>
+      <button class="btn" onclick="closeGoalAdd()" title="ESC 로도 닫힙니다 — 입력한 내용은 기억됩니다. 내용이 있을 땐 바깥을 눌러도 닫히지 않으니 이 버튼으로 닫으세요">닫기</button></div>
     <div class="row">
       <input type="text" id="gaText" placeholder="목표/디테일 입력 후 Enter (AI추가로 계속 추가)" style="flex:1;min-width:200px">
       <button class="btn primary" id="gaAiBtn" onclick="gaAi()" title="추가 전에 AI가 비슷한 목표가 있는지 먼저 검사합니다">AI추가</button>
@@ -1190,9 +1203,9 @@ function withCarryForward(samples){
   return ss;
 }
 // Time buckets (operates on carry-forward samples; each = 1 minute).
-// Span anchors separated by < 6h = one work span; >= 6h gaps are 퇴근.
+// Span anchors separated by < 8h = one work span; >= 8h gaps are 퇴근.
 function timeBuckets(ss){
-  const SIXH=6*3600;
+  const OFFGAP=8*3600;
   const anchors=[]; let desk=0, focus=0;
   ss.forEach(s=>{
     if(s._cat==='focus'){ focus++; desk++; }
@@ -1204,8 +1217,8 @@ function timeBuckets(ss){
     total=1;
     for(let i=1;i<anchors.length;i++){
       const gap=anchors[i]-anchors[i-1];
-      if(gap < SIXH) total += gap/60;   // rest/meeting within span -> total
-      else off += gap/60;               // >=6h gap -> 퇴근
+      if(gap < OFFGAP) total += gap/60; // rest/meeting within span -> total
+      else off += gap/60;               // >=8h gap -> 퇴근
     }
   }
   return {total:Math.round(total), desk, focus, off:Math.round(off)};
@@ -1367,10 +1380,25 @@ function goalKey(e){ if(e.key!=='Enter')return; if(_composing){_pendingAdd=true;
   });
   // ESC 로 모달을 닫는다(입력은 초안으로 보존). 조합(IME) 중 ESC 는 후보만 취소되도록 통과시킨다.
   if(gt) gt.addEventListener('keydown',function(e){ if(e.key==='Escape' && !e.isComposing){ e.preventDefault(); closeGoalAdd(); } });
+  // 배경(모달 바깥) 클릭: 입력이 비어 있으면 닫고, 글자가 있으면 실수 방지를 위해 무시한다
+  // (내용이 있을 땐 반드시 '닫기' 버튼으로 닫아야 한다). 클릭이 오버레이 자체일 때만 반응.
+  const gm=document.getElementById('gaModal');
+  if(gm) gm.addEventListener('mousedown',function(e){
+    if(e.target!==gm) return;                       // .modal 안쪽 클릭은 무시(오버레이 자체만)
+    const inp=$('gaText'); const has=inp&&String(inp.value||'').trim();
+    if(!has){ closeGoalAdd(); return; }
+    // 글자가 있으면: 닫히지 않는다. '닫기' 버튼을 눌러야 함을 살짝 강조해 알린다.
+    const cb=gm.querySelector('.hdr .btn');
+    if(cb){ cb.classList.add('nudge'); setTimeout(()=>cb.classList.remove('nudge'),400); }
+  });
 })();
 // --- 재사용 목표 추가 모달 — 스프린트 보드의 모든 추가 진입점이 이 모달 하나를 연다. ---
 let _gaCtx={sprint:0,parent:'',bump:false};   // 현재 추가 대상 (0/''=Backlog 최상위, bump=Bump out 인박스)
-let _gaDraft='';        // ESC/닫기 시 남은 미제출 입력(초안) — 재오픈/이어쓰기 칩에서 복원한다.
+// ESC/닫기 시 남은 미제출 입력(초안) — 재오픈/이어쓰기 칩에서 복원한다.
+// localStorage 에 영속화하여 새로고침·재접속 후에도 "마지막 글씨"를 기억한다.
+let _gaDraft=(function(){ try{ return localStorage.getItem('cm.gaDraft')||''; }catch(e){ return ''; } })();
+// 초안을 localStorage 에 저장/삭제한다(비어 있으면 지운다).
+function gaPersistDraft(){ try{ if(_gaDraft&&_gaDraft.trim()) localStorage.setItem('cm.gaDraft',_gaDraft); else localStorage.removeItem('cm.gaDraft'); }catch(e){} }
 let _gaLastOpts=null;   // 마지막으로 모달을 연 opts — 이어쓰기 칩이 같은 맥락으로 다시 연다.
 let _gaSearchMode=false;// 검색(찾기만) 모드로 열렸는지 — Enter 라우팅을 검색/AI추가로 가른다.
 function openGoalAdd(opts){
@@ -1403,6 +1431,7 @@ function openGoalAdd(opts){
 // 닫을 때(ESC/닫기 버튼) 입력이 남아 있으면 초안으로 보존한다 — 비어 있으면 초안을 비운다.
 function closeGoalAdd(){
   const inp=$('gaText'); _gaDraft = inp ? String(inp.value||'').trim() : '';
+  gaPersistDraft();
   const m=$('gaModal'); if(m) m.classList.remove('on');
   updateGaDraftChip();
 }
@@ -1415,7 +1444,7 @@ function updateGaDraftChip(){
 // 이어쓰기 칩 클릭 → 마지막 맥락 그대로 다시 열어 초안을 복원한다.
 function resumeGoalDraft(){ openGoalAdd(_gaLastOpts||{}); }
 // 성공적으로 담긴 뒤에는 초안을 확실히 비운다(칩·아이콘도 정리).
-function gaClearDraft(){ _gaDraft=''; updateGaDraftChip(); const ei=$('gaEditIcon'); if(ei) ei.style.display='none'; }
+function gaClearDraft(){ _gaDraft=''; gaPersistDraft(); updateGaDraftChip(); const ei=$('gaEditIcon'); if(ei) ei.style.display='none'; }
 // 추가 후 모달은 열어둔다(placeholder의 "계속 추가"). 닫기는 사용자가 직접.
 function gaAdd(){ const inp=$('gaText'); if(goalAddSubmit(inp.value,_gaCtx)){ inp.value=''; gaClearDraft(); inp.focus(); } }
 function gaAi(){ const inp=$('gaText'); goalAddAi(inp.value,_gaCtx,$('gaAiBtn'),()=>{ inp.value=''; gaClearDraft(); closeGoalAdd(); },()=>{ inp.value=''; gaClearDraft(); closeGoalAdd(); }); }
@@ -4378,7 +4407,8 @@ restoreFromURL();   // 해시에 저장된 뷰·필터 설정을 첫 렌더 전�
 // Open the plugins overlay when arrived here from another page's rail settings menu (?plugins=1).
 try{ if(new URLSearchParams(location.search).get('plugins')==='1' && typeof openPlugins==='function'){ setTimeout(openPlugins,80); } }catch(e){}
 load();
-setInterval(load,5000);
+// 새로고침 후에도 localStorage 에 남은 초안이 있으면 이어쓰기 칩을 되살린다.
+try{ if(typeof updateGaDraftChip==='function') updateGaDraftChip(); }catch(e){}
 setInterval(liveTick,100);
 window.addEventListener('resize', load);
 // 부모 채우기 무장: Cmd(또는 Ctrl)를 누르는 동안 부모#칸이 채우기 소스로 강조된다.

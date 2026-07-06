@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return self?.serveEvidence(path)
         },
         page: { [weak self] path in
+            if path.hasPrefix("/bgm-timeline-test") { return BGMTimelineTestContent.html() }
             if path.hasPrefix("/bgm-player") { return BGMPlayerContent.html() }
             if path.hasPrefix("/goal") { return self?.goalPage(path) }
             if path.hasPrefix("/worker-log") { return self?.workerLogAllPage(path) }
@@ -165,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func totalSpanDisplaySec() -> Double {
         guard lastAnchorT > 0 else { return totalSpanBaseSec }
         let tail = Date().timeIntervalSince1970 - Double(lastAnchorT)
-        let live = (isWorking && tail < 6 * 3600) ? max(0, tail) : 0
+        let live = (isWorking && tail < 8 * 3600) ? max(0, tail) : 0
         return totalSpanBaseSec + live
     }
 
@@ -1054,7 +1055,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         // 타임 모드 (and 스포츠 while idle): the 토탈 시간 work span — the exact same
-        // number the dashboard "토탈 시간" card shows (휴식·미팅 포함, 6h+ 공백 제외),
+        // number the dashboard "토탈 시간" card shows (휴식·미팅 포함, 8h+ 공백 제외),
         // e.g. 6:38. The total amount (총량) of the day, not a since-start session clock.
         button.title = " " + Formatting.clock(totalSpanDisplaySec())
     }
@@ -1062,7 +1063,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Recompute the 토탈 시간 work span from today's per-minute samples — mirrors the
     // dashboard timeBuckets() total: anchors are minutes with input or a meeting; the
-    // span sums consecutive-anchor gaps under 6h (a 6h+ gap is 퇴근, excluded). Inferred
+    // span sums consecutive-anchor gaps under 8h (an 8h+ gap is 퇴근, excluded). Inferred
     // carry-forward minutes never change this telescoped sum, so we skip that pass.
     private func recomputeTotalSpan() {
         let samples = activityLog.todaySamplesParsed()
@@ -1076,10 +1077,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var base = 0.0
         if let first = anchors.first {
             base = 60                          // the first anchored minute owns its 60s
-            let sixH = 6 * 3600
+            let offGap = 8 * 3600
             for i in 1..<anchors.count {
                 let gap = anchors[i] - anchors[i - 1]
-                if gap < sixH { base += Double(gap) }
+                if gap < offGap { base += Double(gap) }
             }
             lastAnchorT = anchors.last ?? first
         } else {
@@ -1790,7 +1791,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               </table>
               <div class="legend"><span><span class="chip" style="margin:0">동작 중</span> = 일정대로 실행 중 · <span class="chip bad" style="margin:0">유휴</span> = 현재 멈춤(세션 비활성 등) · <span class="chip bad" style="margin:0">오류</span> = 데이터 싱크 이상(로그 확인) · <b>구분</b> 기본=항상 실행, 플러그인=연결 시에만, 자동화=외부 스케줄러(launchd)가 주기 실행, 수동=퇴근 시 손으로 실행(주기 칸은 1회 실행 중 라운드 간격)</span></div>
             </div>
-            <div class="foot">5초마다 자동 갱신 · 127.0.0.1 로컬 전용</div>
+            <div class="foot">127.0.0.1 로컬 전용</div>
           </main>
           <script>
           function esc(s){ return (s||'-').replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
@@ -1845,7 +1846,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           function load(){ fetch('/workers.json').then(function(r){ return r.json(); })
             .then(function(d){ renderWorkers(d.workers); }).catch(function(){}); }
           load();
-          setInterval(load,5000);
           setInterval(tickWorkers,1000);
           </script>
         </body></html>
@@ -3289,19 +3289,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let text = obj["text"] as? String {
                     let sprint = (obj["sprint"] as? NSNumber)?.intValue ?? Int((obj["sprint"] as? String) ?? "") ?? 0
                     let bump = (obj["bump"] as? NSNumber)?.boolValue ?? (obj["bump"] as? Bool) ?? false
-                    // Deferred-seq (Option A): a brain-dump idea (bump=true) must NOT mint a
-                    // numbered bump goal — that made a double-inbox with the pending queue.
-                    // Reroute idea creation to the queue enqueue path (analyzed in the
-                    // background, promoted later via resolve). A non-idea direct add (bump
-                    // absent/false) still creates a real numbered Goal immediately.
-                    if bump {
-                        if reviewStore.enqueuePending(text: text, parent: (obj["parent"] as? String) ?? "",
-                                                      sprint: sprint, origin: obj["origin"] as? String) != nil {
-                            kickAIQueueWorker()
-                        }
-                    } else {
-                        reviewStore.addGoal(text: text, parent: (obj["parent"] as? String) ?? "", sprint: sprint)
-                    }
+                    // A direct add lands as a real goal immediately. bump=true parks it in the
+                    // Bump out 인박스 (raw idea, 정리 전) at the bottom of the board; bump=false
+                    // creates a normal Backlog/Sprint goal. Neither routes through the AI 큐 —
+                    // that background dedup pipeline is the AI추가 button's job (queue/enqueue),
+                    // not a plain add. This keeps a dumped idea visible where the user put it
+                    // instead of disappearing into the queue and resurfacing in Backlog.
+                    reviewStore.addGoal(text: text, parent: (obj["parent"] as? String) ?? "",
+                                        sprint: sprint, bump: bump)
                 }
             case "/api/chat/reset":
                 chatStore.reset()
@@ -3446,6 +3441,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         writeTitleOverride(for: g, title: g.text)
                     }
                 }
+            case "/api/goal/task":
+                // Add a 부분과제 (subtask) under an existing goal (goal-NN/tasks/taskN-…) instead
+                // of spawning a brand-new goal — e.g. a 주보상 패키지 becomes a task on goal-130.
+                // Called by the goal page's "+ 태스크 추가" form AND directly by an AI so tasks
+                // can be filed with or without the user. Auto-numbers taskN and writes a
+                // _task.md anchor with whatever metadata was supplied.
+                let seq = (obj["seq"] as? NSNumber)?.intValue ?? Int((obj["seq"] as? String) ?? "") ?? 0
+                let title = ((obj["title"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if seq > 0, !title.isEmpty {
+                    if let folder = addSubtaskFolder(
+                        seq: seq, title: title,
+                        status: (obj["status"] as? String) ?? "",
+                        coin: Self.numString(obj["coin"]), week: Self.numString(obj["week"]),
+                        outputs: (obj["outputs"] as? String) ?? "") {
+                        let id = folder.split(separator: "-").first.map(String.init) ?? folder
+                        return "{\"ok\":true,\"seq\":\(seq),\"id\":\(jsonString(id)),\"task\":\(jsonString(folder))}"
+                    }
+                    return "{\"ok\":false,\"error\":\"create-failed\"}"
+                }
+                return "{\"ok\":false,\"error\":\"bad-request\"}"
             case "/api/session/event":
                 // Driven by Claude Code session hooks (see Scripts/cc-session-hook.sh).
                 // event: start | active | idle | end. The goal is keyed by sessionId
@@ -3542,12 +3557,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     reviewStore.setGoalSprint(id: id, sprint: n)
                 }
             case "/api/goal/bump":
-                // DEMOTION REMOVED (deferred-seq / Option A): a numbered Goal can no longer be
-                // sent back to the un-numbered idea inbox (that would strand its unique seq).
-                // The store now ignores bump=true; this endpoint can only CLEAR a stray legacy
-                // bump flag. New ideas go to the pending queue via /api/goal/queue/enqueue.
+                // Move a numbered goal into (bump=true) or out of (bump=false) the Bump out
+                // 인박스. The goal keeps its unique seq either way, so demotion is safe.
                 if let id = obj["id"] as? String {
-                    reviewStore.setGoalBump(id: id, bump: false)
+                    let bump = (obj["bump"] as? NSNumber)?.boolValue ?? (obj["bump"] as? Bool) ?? false
+                    reviewStore.setGoalBump(id: id, bump: bump)
                 }
             case "/api/sprint/create":
                 reviewStore.createSprint(goalText: (obj["goalText"] as? String) ?? "",
@@ -6028,6 +6042,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return "<span class=\"st \(cls)\">\(htmlEscape(label))</span>"
     }
 
+    // Coerce a JSON value that may arrive as a string or a number into a trimmed string
+    // (coin/week come in either shape from the client or an AI caller). "" when absent.
+    private static func numString(_ v: Any?) -> String {
+        if let s = v as? String { return s.trimmingCharacters(in: .whitespaces) }
+        if let n = v as? NSNumber { return n.stringValue }
+        return ""
+    }
+
+    // Folder-safe slug for a subtask title: path separators, colons, quotes and hashes
+    // become '-', whitespace collapses to '-', repeats fold, edges trim, capped at 40.
+    // Korean is preserved. Mirrors the constraints IssuePaths.taskDir enforces so the
+    // "taskN-<slug>" folder is always creatable.
+    private static func taskSlug(_ s: String) -> String {
+        var out = ""
+        for ch in s {
+            if ch == "/" || ch == "\\" || ch == ":" || ch == "#" || ch == "\"" || ch.isNewline || ch == "\t" || ch == " " {
+                out.append("-")
+            } else { out.append(ch) }
+        }
+        while out.contains("--") { out = out.replacingOccurrences(of: "--", with: "-") }
+        out = out.trimmingCharacters(in: CharacterSet(charactersIn: "-. "))
+        return String(out.prefix(40))
+    }
+
+    // Create a new 부분과제 folder (goal-NN/tasks/taskN-<slug>) and write its _task.md anchor.
+    // The next task number is 1 + the largest leading number across existing task* folders,
+    // so it never collides even when earlier tasks were archived. Returns the new folder
+    // name, or nil for an invalid goal number or a filesystem failure.
+    private func addSubtaskFolder(seq: Int, title: String, status: String,
+                                  coin: String, week: String, outputs: String) -> String? {
+        guard let tasksDir = IssuePaths.tasksDir(seq: seq) else { return nil }
+        let fm = FileManager.default
+        try? fm.createDirectory(at: tasksDir, withIntermediateDirectories: true)
+        var maxN = 0
+        if let entries = try? fm.contentsOfDirectory(atPath: tasksDir.path) {
+            for name in entries where name.lowercased().hasPrefix("task") {
+                var d = ""
+                for ch in name.dropFirst(4) { if ch.isNumber { d.append(ch) } else { break } }
+                if let n = Int(d) { maxN = max(maxN, n) }
+            }
+        }
+        let n = maxN + 1
+        let slug = Self.taskSlug(title)
+        let folder = "task\(n)" + (slug.isEmpty ? "" : "-\(slug)")
+        guard let dir = IssuePaths.taskDir(seq: seq, task: folder) else { return nil }
+        do { try fm.createDirectory(at: dir, withIntermediateDirectories: true) }
+        catch { return nil }
+        // Single-line the title so it can't break the frontmatter fences.
+        let oneLine = title.replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+        let st = status.trimmingCharacters(in: .whitespacesAndNewlines)
+        let statusVal = st.isEmpty ? "TODO" : st.uppercased()
+        var md = "---\nid: task\(n)\ntitle: \(oneLine)\nstatus: \(statusVal)\n"
+        if !coin.isEmpty { md += "coin: \(coin)\n" }
+        if !week.isEmpty { md += "week: \(week)\n" }
+        if !outputs.isEmpty { md += "outputs: \(outputs)\n" }
+        md += "---\n"
+        try? md.write(to: dir.appendingPathComponent("_task.md"), atomically: true, encoding: .utf8)
+        return folder
+    }
+
     // Render the goal's tasks/ subfolders as a Jira-style 부분과제 table. Each child folder
     // is one subtask; a _task.md anchor (frontmatter id/title/status/coin/week/outputs)
     // supplies metadata, else the folder name is split into a short id + title. Returns ""
@@ -6036,9 +6111,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func renderSubtasks(seq: Int) -> String {
         guard let dir = IssuePaths.tasksDir(seq: seq) else { return "" }
         let fm = FileManager.default
-        guard let entries = try? fm.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
-        else { return "" }
+        // Missing tasks/ folder is fine — the section still renders its shell so the
+        // "+ 태스크 추가" control is available on every goal (0건 included).
+        let entries = (try? fm.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
         struct Row { var name, id, title, status, coin, week, outputs: String }
         var rows: [Row] = []
         for url in entries {
@@ -6069,7 +6145,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             rows.append(Row(name: name, id: id, title: title, status: status,
                             coin: coin, week: week, outputs: outputs))
         }
-        if rows.isEmpty { return "" }
         // Leading task number drives order (task1…task26); archived folders sink to the end.
         func numKey(_ n: String) -> Int {
             var d = ""
@@ -6106,12 +6181,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             body += "</tr>"
         }
         // 상태 filter menu (mirrors the dashboard's Active/Archived/All control). All rows
-        // ship in the HTML; the select just toggles row visibility client-side.
-        let tools = "<div class=\"subt-tools\"><label class=\"subt-flt\">상태 <select class=\"modesel\" onchange=\"filterSubtasks(this.value)\"><option value=\"active\" selected>활성</option><option value=\"archived\">보관</option><option value=\"all\">전체</option></select></label></div>"
+        // ship in the HTML; the select just toggles row visibility client-side. The
+        // "+ 태스크 추가" control opens an inline form that POSTs /api/goal/task — the same
+        // endpoint an AI calls to file a task under this goal (e.g. a 주보상 패키지) instead
+        // of creating a whole new goal.
+        let tools = """
+          <div class="subt-tools">
+            <label class="subt-flt">상태 <select class="modesel" onchange="filterSubtasks(this.value)"><option value="active" selected>활성</option><option value="archived">보관</option><option value="all">전체</option></select></label>
+            <button type="button" class="subt-addbtn" onclick="addSubtaskToggle()">+ 태스크 추가</button>
+          </div>
+          <div id="subtAddForm" class="subt-addform" style="display:none">
+            <input id="subtAddTitle" type="text" placeholder="제목 (예: 주보상 패키지)" onkeydown="if(event.key==='Enter')submitSubtask()" />
+            <select id="subtAddStatus" class="modesel">
+              <option value="TODO" selected>대기</option>
+              <option value="DOING">진행</option>
+              <option value="DONE">완료</option>
+              <option value="BLOCKED">막힘</option>
+            </select>
+            <input id="subtAddCoin" type="text" class="subt-addsm" placeholder="코인" />
+            <input id="subtAddWeek" type="text" class="subt-addsm" placeholder="주차" />
+            <input id="subtAddOut" type="text" placeholder="산출물" />
+            <button id="subtAddBtn" type="button" class="subt-addgo" onclick="submitSubtask()">추가</button>
+          </div>
+        """
+        // Empty goals still render the table shell (with a muted hint row) so the section
+        // reads as an intentional place to add tasks, not a rendering gap.
+        let tbody = rows.isEmpty
+            ? "<tr class=\"subt-empty\"><td colspan=\"5\">아직 부분과제가 없습니다. “+ 태스크 추가”로 만들어 보세요.</td></tr>"
+            : body
         let table = """
           <table class="subtasks">
             <thead><tr><th>태스크</th><th>제목</th><th>상태</th><th>코인·주차</th><th>산출물</th></tr></thead>
-            <tbody>\(body)</tbody>
+            <tbody>\(tbody)</tbody>
           </table>
         """
         let head = "<h2 class=\"atth\" onclick=\"toggleTasks()\">부분과제 <span id=\"subtCount\" class=\"subt-count\">\(activeCount)건</span> <span id=\"tasksToggle\" class=\"att-toggle\">▾ 접기</span></h2>"
@@ -6458,6 +6559,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             });
             var c=document.getElementById('subtCount'); if(c) c.textContent=shown+'건';
           }
+          // 부분과제 추가: reveal the inline form and focus the title.
+          function addSubtaskToggle(){
+            var f=document.getElementById('subtAddForm'); if(!f) return;
+            var open=(f.style.display==='none'); f.style.display=open?'':'none';
+            if(open){ var t=document.getElementById('subtAddTitle'); if(t) t.focus(); }
+          }
+          // POST /api/goal/task — creates a tasks/<taskN> folder under this goal and reloads
+          // to show it. The same endpoint the AI uses, so a task can be filed with or without
+          // the user. 제목 is required; 상태/코인/주차/산출물 are optional metadata.
+          function submitSubtask(){
+            var titleEl=document.getElementById('subtAddTitle'); if(!titleEl) return;
+            var title=titleEl.value.trim(); if(!title){ titleEl.focus(); return; }
+            var g=function(id){ var e=document.getElementById(id); return e?e.value.trim():''; };
+            var btn=document.getElementById('subtAddBtn'); if(btn) btn.disabled=true;
+            fetch('/api/goal/task',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({seq:SEQ,title:title,status:g('subtAddStatus'),
+                coin:g('subtAddCoin'),week:g('subtAddWeek'),outputs:g('subtAddOut')})})
+              .then(function(r){return r.json();})
+              .then(function(d){ if(d&&d.ok){ location.reload(); }
+                else { if(btn) btn.disabled=false; alert('태스크 추가 실패'); } })
+              .catch(function(){ if(btn) btn.disabled=false; });
+          }
           function renderChat(d){
             var box=document.getElementById('chatbody'); box.innerHTML='';
             var msgs=(d&&d.messages)||[];
@@ -6716,7 +6839,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           *{box-sizing:border-box}
           html,body{height:100%}
           body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden}
-          header{flex:none;background:rgba(14,17,22,.92);border-bottom:1px solid var(--line);padding:14px 20px}
+          /* This page loads in the app's fullSizeContentView WKWebView, so the header renders up
+             under the transparent titlebar. The native TitlebarDragView (AppWindow.swift) covers the
+             top ~28pt strip and swallows mouse-down there as a window-drag — everything past the 160px
+             traffic-light exclusion, which (rail expanded) includes the back link. Pad the header top
+             so the interactive '← 대시보드' link clears that band; the empty strip above it stays
+             draggable. Matches DashboardContent's own top-strip offset. */
+          header{flex:none;background:rgba(14,17,22,.92);border-bottom:1px solid var(--line);padding:36px 20px 14px}
           header a.back{color:var(--accent);text-decoration:none;font-size:12px}
           header h1{margin:6px 0 2px;font-size:17px}
           header .num{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--line);color:var(--accent);font-variant-numeric:tabular-nums;margin-right:6px}
@@ -6794,11 +6923,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           .subt-count{font-size:11px;color:var(--mut);text-transform:none;letter-spacing:0;font-variant-numeric:tabular-nums}
           .subt-tools{display:flex;align-items:center;gap:8px;margin:2px 0 8px}
           .subt-flt{display:inline-flex;align-items:center;gap:6px;color:var(--mut);font-size:12px}
+          .subt-addbtn{margin-left:auto;background:transparent;border:1px solid var(--line);color:var(--accent);border-radius:7px;padding:5px 10px;font-size:12px;cursor:pointer}
+          .subt-addbtn:hover{border-color:var(--accent)}
+          .subt-addform{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 10px}
+          .subt-addform input{background:#1b2230;border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:6px 8px;font-size:12px}
+          .subt-addform input:focus{outline:none;border-color:var(--accent)}
+          .subt-addform #subtAddTitle{flex:1;min-width:160px}
+          .subt-addform .subt-addsm{width:64px}
+          .subt-addform .subt-addgo{background:var(--accent);border:1px solid var(--accent);color:#0b0f17;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer}
+          .subt-addform .subt-addgo:disabled{opacity:.5;cursor:default}
+          table.subtasks .subt-empty td{color:var(--mut);text-align:center;padding:14px 10px}
           table.subtasks{width:100%;border-collapse:collapse;font-size:13px;margin:2px 0 6px}
           table.subtasks th{text-align:left;color:var(--mut);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.03em;padding:6px 10px;border-bottom:1px solid var(--line)}
           table.subtasks td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
           table.subtasks tbody tr:hover td{background:var(--panel)}
-          table.subtasks .tid{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent);white-space:nowrap}
+          table.subtasks .tid{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}
+          table.subtasks .tid a.tlink{color:var(--accent);text-decoration:none;border-bottom:1px dashed transparent}
+          table.subtasks .tid a.tlink:hover{border-bottom-color:var(--accent)}
           table.subtasks .ttitle{color:var(--fg);word-break:break-word}
           table.subtasks .tmeta{color:var(--mut);white-space:nowrap}
           table.subtasks .tout code{color:var(--green)}

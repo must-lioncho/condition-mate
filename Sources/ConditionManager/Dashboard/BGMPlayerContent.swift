@@ -245,13 +245,13 @@ enum BGMPlayerContent {
     <button class="subtab" data-m="debug" onclick="setMode('debug')">디버그</button>
   </div>
 
-  <!-- 컨디션맵: 업무 시작(6h 무활동 뒤 첫 활동)을 기준으로 24시간 컨디션 흐름을 가로 띠로 -->
+  <!-- 컨디션맵: 업무 시작(8h 무활동 뒤 첫 활동)을 기준으로 24시간 컨디션 흐름을 가로 띠로 -->
   <div class="card" id="mapPanel" style="display:none">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px">
       <p class="lbl" style="margin:0">컨디션 맵 · 하루 컨디션 흐름</p>
       <button class="btn" id="mapReload" onclick="loadMap(true)">↻ 새로고침</button>
     </div>
-    <p class="actnote" style="margin:0 0 12px">6시간 이상 활동이 없으면 <b>퇴근</b>으로 보고, 이후 첫 활동을 <b>업무 시작</b>으로 잡아 그 시점부터 24시간을 그립니다. 기준 시간(8·12·18h 또는 직접)에 맞춰 진행 상태를 관리하세요.</p>
+    <p class="actnote" style="margin:0 0 12px">8시간 이상 활동이 없으면 <b>퇴근</b>으로 보고, 이후 첫 활동을 <b>업무 시작</b>으로 잡아 그 시점부터 24시간을 그립니다. 기준 시간(8·12·18h 또는 직접)에 맞춰 진행 상태를 관리하세요.</p>
     <div id="mapFilter" style="margin:0 0 10px"></div>
     <div class="cmf-row" style="margin:0 0 12px">
       <span style="font-size:12px;color:var(--dim)">기준</span>
@@ -275,7 +275,7 @@ enum BGMPlayerContent {
         <div class="card lead"><div class="k">토탈 시간</div><div class="v" id="t_total">–</div><div class="cap">업무 스팬 (휴식·미팅 포함)</div></div>
         <div class="card"><div class="k">책상 시간</div><div class="v" id="t_desk">–</div><div class="cap">만들기 시도 (리서치+코딩)</div></div>
         <div class="card"><div class="k">집중 시간</div><div class="v" id="t_focus">–</div><div class="cap">몰입 (에디터)</div></div>
-        <div class="card"><div class="k">퇴근</div><div class="v" id="t_off">–</div><div class="cap">6시간+ 공백</div></div>
+        <div class="card"><div class="k">퇴근</div><div class="v" id="t_off">–</div><div class="cap">8시간+ 공백</div></div>
         <div class="card"><div class="k">오늘 가치 (확정)</div><div class="v" id="value">–</div><div class="cap">승인 전 = 0 (대시보드에서 확정)</div></div>
       </div>
       <div class="panel tierpanel" style="margin:6px 0;padding:12px 16px">
@@ -1238,9 +1238,9 @@ function fmtH(min){ const h=Math.floor(min/60), m=min%60; return h>0? h+'시간 
 // Provisional value hours (weighted active time) — same formula as the dashboard.
 function provisionalHours(samples){ return samples.reduce((a,s)=>a+(s.active||0)*(s.mult||1),0)/3600; }
 // Time buckets (operates on carry-forward samples; each = 1 minute).
-// Span anchors separated by < 6h = one work span; >= 6h gaps are 퇴근.
+// Span anchors separated by < 8h = one work span; >= 8h gaps are 퇴근.
 function timeBuckets(ss){
-  const SIXH=6*3600;
+  const OFFGAP=8*3600;
   const anchors=[]; let desk=0, focus=0;
   ss.forEach(s=>{
     if(s._cat==='focus'){ focus++; desk++; }
@@ -1252,8 +1252,8 @@ function timeBuckets(ss){
     total=1;
     for(let i=1;i<anchors.length;i++){
       const gap=anchors[i]-anchors[i-1];
-      if(gap < SIXH) total += gap/60;   // rest/meeting within span -> total
-      else off += gap/60;               // >=6h gap -> 퇴근
+      if(gap < OFFGAP) total += gap/60; // rest/meeting within span -> total
+      else off += gap/60;               // >=8h gap -> 퇴근
     }
   }
   return {total:Math.round(total), desk, focus, off:Math.round(off)};
@@ -1566,9 +1566,9 @@ try{
   } else { setPresetControls(current); }
 }catch(e){ setPresetControls(current); }
 // ======================= 컨디션 맵 =======================
-// 업무 시작(6h 무활동 뒤 첫 활동)을 기준으로 24시간 컨디션 흐름을 가로 띠로 그린다.
+// 업무 시작(8h 무활동 뒤 첫 활동)을 기준으로 24시간 컨디션 흐름을 가로 띠로 그린다.
 // 데이터는 대시보드와 동일한 /history.json (분 단위 샘플: t, active(초), tier, meeting)을 재사용.
-const MAP_GAP = 6*3600;             // 6시간 무활동 => 퇴근 경계
+const MAP_GAP = 8*3600;             // 8시간 무활동 => 퇴근 경계 (낮잠·짧은 수면으로 하루가 쪼개지지 않게)
 const MAP_DAY = 24*3600;
 const COND_COLOR = ['#1b1e27','#5a6172','#c98a3f','#e8a13a','#36c08a','#22e39a']; // 0휴식 1소극 2·3중간 4적극 5몰입
 let _mapInited=false, _mapCtl=null, _mapRange={mode:'auto',preset:'auto',start:'',end:''};
@@ -1614,7 +1614,7 @@ function mapAllSamples(){
   out.sort((a,b)=>a.t-b.t);
   return out;
 }
-// 활동(active>0) 샘플 앞에 6h+ 공백이 있으면 그 샘플이 '업무 시작' 후보.
+// 활동(active>0) 샘플 앞에 8h+ 공백이 있으면 그 샘플이 '업무 시작' 후보.
 function mapStartCandidates(active){
   const st=[]; let prev=null;
   active.forEach(s=>{ if(prev===null || (s.t-prev)>=MAP_GAP) st.push(s.t); prev=s.t; });

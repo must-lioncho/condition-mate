@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>업무 자동화 레벨 · 테스트</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#131824; --panel2:#1a2030; --line:#232b3d;
+    --tx:#e7ecf5; --mut:#8b96ad; --dim:#5f6b83;
+    --cyan:#37d6ff; --red:#ff5470; --purple:#b57bff; --gold:#ffd166; --green:#4be3a0;
+    --grad:linear-gradient(90deg,#37d6ff,#b57bff);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 700px at 80% -10%,#141b2b,#0b0e14 60%);color:var(--tx);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo",sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 20px 80px}
+  h1{font-size:22px;margin:0;font-weight:800;letter-spacing:-.02em}
+  .sub{color:var(--mut);font-size:12.5px;margin-top:4px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;margin-top:18px}
+  .row{display:flex;gap:18px;flex-wrap:wrap}
+  .row>.card{flex:1;min-width:280px;margin-top:0}
+  .tag{display:inline-block;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;font-weight:700}
+  /* header */
+  header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+  .winToggle{display:flex;background:var(--panel2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .winToggle button{background:none;border:0;color:var(--mut);padding:8px 14px;font-size:12.5px;cursor:pointer;font-weight:600}
+  .winToggle button.on{background:var(--grad);color:#0b0e14}
+  /* hero */
+  .hero{display:flex;gap:26px;align-items:center;flex-wrap:wrap}
+  .gauge{position:relative;width:190px;height:190px;flex:0 0 auto}
+  .gaugeNum{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .gaugeNum .lv{font-size:14px;color:var(--mut);font-weight:700;letter-spacing:.1em}
+  .gaugeNum .big{font-size:64px;font-weight:900;line-height:.9;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .gaugeNum .nm{font-size:16px;font-weight:800;margin-top:6px}
+  .heroInfo{flex:1;min-width:260px}
+  .verdict{font-size:15px;line-height:1.6}
+  .verdict b{color:var(--cyan)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:7px 11px;font-size:12px}
+  .chip b{color:var(--tx);font-size:14px}
+  .chip span{color:var(--mut)}
+  /* ladder */
+  .ladder{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}
+  .lv{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 10px;text-align:center;position:relative;transition:.2s}
+  .lv .n{font-size:11px;color:var(--dim);font-weight:800}
+  .lv .t{font-size:12.5px;font-weight:800;margin-top:5px}
+  .lv .d{font-size:10.5px;color:var(--mut);margin-top:6px;line-height:1.35;min-height:44px}
+  .lv .rng{font-size:10px;color:var(--dim);margin-top:6px}
+  .lv.cur{border-color:var(--cyan);background:linear-gradient(180deg,rgba(55,214,255,.14),rgba(181,123,255,.10));box-shadow:0 0 0 1px var(--cyan),0 8px 30px -12px var(--cyan)}
+  .lv.cur .n{color:var(--cyan)}
+  .lv.you{position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:var(--cyan);color:#0b0e14;font-size:9px;font-weight:900;padding:2px 7px;border-radius:20px;white-space:nowrap}
+  /* dims */
+  .dim{margin-top:14px}
+  .dim:first-child{margin-top:0}
+  .dim .lab{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px}
+  .dim .lab .r{color:var(--mut)}
+  .dim .lab .r b{color:var(--tx)}
+  .bar{height:9px;background:var(--panel2);border-radius:6px;overflow:hidden}
+  .bar>i{display:block;height:100%;border-radius:6px;background:var(--grad);transition:width .3s}
+  .meta{font-size:11px;color:var(--dim);margin-top:4px}
+  /* controls */
+  .ctl{margin-top:14px}
+  .ctl .top{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px}
+  .ctl .top .v{color:var(--cyan);font-weight:700;font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;-webkit-appearance:none;height:5px;border-radius:5px;background:var(--panel2);outline:none;margin:2px 0}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--cyan);cursor:pointer;box-shadow:0 0 0 3px rgba(55,214,255,.2)}
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media(max-width:760px){.split{grid-template-columns:1fr}.ladder{grid-template-columns:repeat(2,1fr)}.gauge{width:160px;height:160px}}
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--tx);border-radius:9px;padding:8px 14px;font-size:12.5px;cursor:pointer;font-weight:600}
+  .btn:hover{border-color:var(--cyan)}
+  .foot{color:var(--dim);font-size:11.5px;line-height:1.7;margin-top:10px}
+  code{background:var(--panel2);padding:1px 5px;border-radius:4px;color:var(--gold);font-size:11px}
+  .wname{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:3px 8px;font-size:11px;margin:3px 3px 0 0;color:var(--mut)}
+  .barmini{display:flex;gap:3px;align-items:flex-end;height:46px;margin-top:8px}
+  .barmini i{flex:1;background:var(--grad);border-radius:2px;min-height:2px;opacity:.85}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div>
+    <h1>업무 자동화 레벨 <span style="color:var(--mut);font-weight:600;font-size:15px">Work Automation Level</span></h1>
+    <div class="sub">사용 패턴 기반 1~7레벨 산정 · 실측 데이터 <b id="asOf" style="color:var(--mut)"></b> · <span style="color:var(--gold)">테스트 페이지 — 로직을 직접 조정하며 판단하세요</span></div>
+  </div>
+  <div class="winToggle">
+    <button id="wLife" class="on" onclick="setWin('lifetime')">전체 (13일)</button>
+    <button id="wRec" onclick="setWin('recent')">최근 7일</button>
+  </div>
+</header>
+
+<!-- HERO -->
+<div class="card">
+  <div class="hero">
+    <div class="gauge">
+      <svg viewBox="0 0 120 120" width="190" height="190">
+        <defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#37d6ff"/><stop offset="1" stop-color="#b57bff"/></linearGradient></defs>
+        <circle cx="60" cy="60" r="52" fill="none" stroke="#1a2030" stroke-width="12"/>
+        <circle id="arc" cx="60" cy="60" r="52" fill="none" stroke="url(#g1)" stroke-width="12"
+          stroke-linecap="round" transform="rotate(-90 60 60)"
+          stroke-dasharray="326.7" stroke-dashoffset="326.7"/>
+      </svg>
+      <div class="gaugeNum">
+        <div class="lv">LEVEL</div>
+        <div class="big" id="lvBig">7</div>
+        <div class="nm" id="lvNm">자가운영</div>
+      </div>
+    </div>
+    <div class="heroInfo">
+      <div class="verdict" id="verdict"></div>
+      <div class="chips" id="chips"></div>
+    </div>
+  </div>
+</div>
+
+<!-- LADDER -->
+<div class="card">
+  <div class="tag">7단계 자동화 성숙도 사다리</div>
+  <div class="ladder" id="ladder"></div>
+</div>
+
+<div class="split">
+  <!-- DIMENSIONS -->
+  <div class="card">
+    <div class="tag">5개 지표 점수 (0~100) · 실측</div>
+    <div id="dims"></div>
+    <div class="foot" id="dimFoot"></div>
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="card">
+    <div class="tag">모델 조정 — 판단용 <span style="color:var(--gold)">(내 데이터에서 시작)</span></div>
+    <div id="inputs"></div>
+    <div style="height:1px;background:var(--line);margin:16px 0"></div>
+    <div class="tag" style="margin-bottom:6px">가중치 (합 100%)</div>
+    <div id="weights"></div>
+    <div style="margin-top:14px;display:flex;gap:8px">
+      <button class="btn" onclick="resetAll()">내 실측값으로 리셋</button>
+      <button class="btn" onclick="demo(1)">Lv1 예시</button>
+      <button class="btn" onclick="demo(4)">Lv4 예시</button>
+    </div>
+  </div>
+</div>
+
+<!-- DATA APPENDIX -->
+<div class="card">
+  <div class="tag">근거 데이터</div>
+  <div class="row">
+    <div style="flex:1;min-width:240px">
+      <div class="sub">일별 토큰 (K) · 최근 13일</div>
+      <div class="barmini" id="spark"></div>
+    </div>
+    <div style="flex:1;min-width:240px">
+      <div class="sub">상시 백그라운드 워커 <b id="wc" style="color:var(--cyan)"></b>개</div>
+      <div id="wlist" style="margin-top:6px"></div>
+    </div>
+  </div>
+  <div class="foot" id="formulaFoot"></div>
+</div>
+
+</div>
+
+<script>
+const DATA = {"asOf": "2026-07-06 (Mon)", "lifetime": {"n": 13, "totK": 145617, "activeH": 62.3, "sessions": 450, "leverage": 2337, "sessPerHr": 7.22, "sessPerDay": 34.6, "dims": {"lev": 94.7, "aut": 80.7, "par": 95.9, "thr": 88.9, "deleg": 98.6}, "composite": 91.1, "level": 7}, "recent": {"n": 7, "totK": 94966, "activeH": 40.0, "sessions": 318, "leverage": 2376, "sessPerHr": 7.96, "sessPerDay": 45.4, "dims": {"lev": 95.0, "aut": 80.7, "par": 99.8, "thr": 88.9, "deleg": 98.6}, "composite": 91.8, "level": 7}, "goals": {"total": 257, "done": 206, "tokenBacked": 205, "delegShare": 0.986}, "workers": {"count": 13, "names": ["코어 루프", "활동 샘플", "브라우저 도메인", "상태 저장", "타임라인 기록", "QA 점검", "QA 수정", "버그 헌트", "세션 상태 동기화", "세션 제목 스탬프", "프로젝트 활성·싱크 점검", "BGM 디렉터", "컨디션 메이트"]}, "weights": {"lev": 0.3, "aut": 0.25, "par": 0.15, "thr": 0.15, "deleg": 0.15}, "thresholds": [0, 14, 28, 42, 56, 70, 84, 101], "levelNames": ["수동", "보조", "위임", "병렬", "오케스트레이션", "자율", "자가운영"], "daily": [{"day": "2026-06-23", "tokens": 1315275, "k": 1315, "sessions": 4, "activeSec": 2663}, {"day": "2026-06-24", "tokens": 24331576, "k": 24332, "sessions": 44, "activeSec": 28433}, {"day": "2026-06-25", "tokens": 18880115, "k": 18880, "sessions": 59, "activeSec": 22131}, {"day": "2026-06-26", "tokens": 1367300, "k": 1367, "sessions": 5, "activeSec": 11677}, {"day": "2026-06-27", "tokens": 51892, "k": 52, "sessions": 2, "activeSec": 3570}, {"day": "2026-06-28", "tokens": 4705400, "k": 4705, "sessions": 18, "activeSec": 11950}, {"day": "2026-06-29", "tokens": 17550070, "k": 17550, "sessions": 61, "activeSec": 32259}, {"day": "2026-06-30", "tokens": 7690462, "k": 7690, "sessions": 22, "activeSec": 16521}, {"day": "2026-07-01", "tokens": 7208679, "k": 7209, "sessions": 15, "activeSec": 18149}, {"day": "2026-07-03", "tokens": 12459607, "k": 12460, "sessions": 41, "activeSec": 20669}, {"day": "2026-07-04", "tokens": 3186265, "k": 3186, "sessions": 7, "activeSec": 10182}, {"day": "2026-07-05", "tokens": 17077563, "k": 17078, "sessions": 88, "activeSec": 16445}, {"day": "2026-07-06", "tokens": 29792985, "k": 29793, "sessions": 84, "activeSec": 29650}]};
+
+// ---------- model ----------
+const clamp=x=>Math.max(0,Math.min(100,x));
+const L2=Math.log2, L10=Math.log10;
+function dimScores(m){ // m: {leverage, workers, sessPerHr, done, delegShare(0..1)}
+  return {
+    lev: clamp((L10(Math.max(m.leverage,1))-1.0)/(3.5-1.0)*100),
+    aut: clamp(L2(Math.max(m.workers,1))/L2(24)*100),
+    par: clamp(L2(Math.max(m.sessPerHr,0.2)+1)/L2(9)*100),
+    thr: clamp(L10(Math.max(m.done,1))/L10(400)*100),
+    deleg: clamp(m.delegShare*100),
+  };
+}
+function levelOf(comp){ let L=1; for(let i=0;i<7;i++){ if(comp>=DATA.thresholds[i]) L=i+1; } return L; }
+function composite(sc,w){ return sc.lev*w.lev+sc.aut*w.aut+sc.par*w.par+sc.thr*w.thr+sc.deleg*w.deleg; }
+
+const DIMDEF=[
+  {k:'lev',  t:'레버리지',   sub:'사람 1시간당 AI 토큰작업(K/h)', unit:m=>Math.round(m.leverage).toLocaleString()+' K/h'},
+  {k:'aut',  t:'자율성',     sub:'상시 백그라운드 워커 수',       unit:m=>m.workers+'개'},
+  {k:'par',  t:'병렬성',     sub:'활동시간당 동시 세션(session/h)', unit:m=>m.sessPerHr.toFixed(1)+' /h'},
+  {k:'thr',  t:'처리량',     sub:'완료한 목표 수(누적)',           unit:m=>m.done+'개'},
+  {k:'deleg',t:'위임률',     sub:'AI가 실제 수행한 작업 비율',     unit:m=>Math.round(m.delegShare*100)+'%'},
+];
+const LADDER=[
+  ['수동','거의 모든 일을 직접. AI는 검색·단답 정도.'],
+  ['보조','AI를 편집기·도우미로 간헐 사용. 결과는 직접 조립.'],
+  ['위임','작업 단위로 AI에 통째로 맡기고 검수.'],
+  ['병렬','여러 작업을 동시에 위임·회수. 멀티 세션 운용.'],
+  ['오케스트레이션','에이전트·역할을 나눠 조율. 파이프라인 구성.'],
+  ['자율','상시 백그라운드가 스스로 돌며 일감을 처리.'],
+  ['자가운영','시스템이 스스로 운영. 나는 방향 제시·판단만.'],
+];
+
+// ---------- state ----------
+let WIN='lifetime';
+let M={}, W={};
+function baseMetrics(win){
+  const s=DATA[win];
+  return { leverage:s.leverage, workers:DATA.workers.count, sessPerHr:s.sessPerHr,
+           done:DATA.goals.done, delegShare:DATA.goals.delegShare };
+}
+function resetAll(){ M=baseMetrics(WIN); W={...DATA.weights}; syncInputs(); render(); }
+function setWin(w){ WIN=w; document.getElementById('wLife').classList.toggle('on',w==='lifetime');
+  document.getElementById('wRec').classList.toggle('on',w==='recent'); resetAll(); }
+function demo(l){
+  if(l===1){ M={leverage:22,workers:0,sessPerHr:0.4,done:3,delegShare:0.10}; }
+  if(l===4){ M={leverage:320,workers:3,sessPerHr:2.2,done:60,delegShare:0.55}; }
+  syncInputs(); render();
+}
+
+// ---------- inputs ----------
+const INP=[
+  {k:'leverage',t:'레버리지 (K/h)',min:5,max:3000,step:5},
+  {k:'workers',t:'백그라운드 워커 (개)',min:0,max:24,step:1},
+  {k:'sessPerHr',t:'동시 세션 (/h)',min:0,max:12,step:0.1},
+  {k:'done',t:'완료 목표 (개)',min:0,max:400,step:1},
+  {k:'delegShare',t:'위임률 (%)',min:0,max:100,step:1,pct:true},
+];
+function buildInputs(){
+  document.getElementById('inputs').innerHTML=INP.map(x=>`
+    <div class="ctl">
+      <div class="top"><span>${x.t}</span><span class="v" id="v_${x.k}"></span></div>
+      <input type="range" id="i_${x.k}" min="${x.min}" max="${x.max}" step="${x.step}"
+        oninput="onInput('${x.k}',this.value,${x.pct?1:0})">
+    </div>`).join('');
+  const wk=['lev','aut','par','thr','deleg'], wt=['레버리지','자율성','병렬성','처리량','위임률'];
+  document.getElementById('weights').innerHTML=wk.map((k,i)=>`
+    <div class="ctl">
+      <div class="top"><span>${wt[i]}</span><span class="v" id="wv_${k}"></span></div>
+      <input type="range" id="w_${k}" min="0" max="60" step="1" oninput="onWeight('${k}',this.value)">
+    </div>`).join('');
+}
+function onInput(k,val,pct){ M[k]= pct? (+val/100) : +val; syncInputVals(); render(); }
+function onWeight(k,val){ W[k]=+val/100; syncWeightVals(); render(); }
+function syncInputs(){ INP.forEach(x=>{ const el=document.getElementById('i_'+x.k);
+  el.value = x.pct ? Math.round(M[x.k]*100) : M[x.k]; });
+  ['lev','aut','par','thr','deleg'].forEach(k=>document.getElementById('w_'+k).value=Math.round(W[k]*100));
+  syncInputVals(); syncWeightVals(); }
+function syncInputVals(){
+  document.getElementById('v_leverage').textContent=Math.round(M.leverage).toLocaleString();
+  document.getElementById('v_workers').textContent=M.workers;
+  document.getElementById('v_sessPerHr').textContent=(+M.sessPerHr).toFixed(1);
+  document.getElementById('v_done').textContent=M.done;
+  document.getElementById('v_delegShare').textContent=Math.round(M.delegShare*100)+'%';
+}
+function syncWeightVals(){ ['lev','aut','par','thr','deleg'].forEach(k=>
+  document.getElementById('wv_'+k).textContent=Math.round(W[k]*100)+'%'); }
+
+// ---------- render ----------
+function render(){
+  const sc=dimScores(M);
+  const wsum=W.lev+W.aut+W.par+W.thr+W.deleg;
+  const wn = wsum>0 ? {lev:W.lev/wsum,aut:W.aut/wsum,par:W.par/wsum,thr:W.thr/wsum,deleg:W.deleg/wsum} : W;
+  const comp=composite(sc,wn);
+  const L=levelOf(comp);
+  // gauge
+  const frac=Math.max(0.04,Math.min(1,comp/100));
+  document.getElementById('arc').style.strokeDashoffset=(326.7*(1-frac)).toFixed(1);
+  document.getElementById('lvBig').textContent=L;
+  document.getElementById('lvNm').textContent=DATA.levelNames[L-1];
+  // verdict
+  const wsMore = 84 - comp;
+  document.getElementById('verdict').innerHTML=
+    `종합 점수 <b>${comp.toFixed(1)}</b> / 100 → <b>Lv${L} ${DATA.levelNames[L-1]}</b>.<br>`+
+    (L>=7? '시스템이 사실상 스스로 운영됩니다. 당신은 방향과 판단에 집중.' :
+     L>=5? '에이전트·백그라운드를 조율하는 단계. 자가운영까지 얼마 안 남았습니다.' :
+     L>=3? '작업을 위임하는 단계. 병렬화·상시 워커를 늘리면 레벨이 오릅니다.' :
+           '아직 직접 하는 비중이 큽니다. AI에 통째 위임을 늘려보세요.');
+  // chips
+  const g=DATA.goals, wcnt=DATA.workers.count, s=DATA[WIN];
+  document.getElementById('chips').innerHTML=[
+    ['레버리지',Math.round(M.leverage).toLocaleString()+' K/h'],
+    ['워커',wcnt+'개 상시'],
+    ['완료목표',g.done+'/'+g.total],
+    ['위임률',Math.round(M.delegShare*100)+'%'],
+    ['활동',s.activeH+'h · '+s.sessions+'세션'],
+  ].map(c=>`<div class="chip"><span>${c[0]}</span> <b>${c[1]}</b></div>`).join('');
+  // ladder
+  document.getElementById('ladder').innerHTML=LADDER.map((x,i)=>{
+    const lo=DATA.thresholds[i], hi=DATA.thresholds[i+1];
+    const cur=(i+1===L);
+    return `<div class="lv ${cur?'cur':''}">${cur?'<div class="you">● 나</div>':''}
+      <div class="n">Lv${i+1}</div><div class="t">${x[0]}</div>
+      <div class="d">${x[1]}</div><div class="rng">${lo}~${hi>100?100:hi}점</div></div>`;
+  }).join('');
+  // dims
+  document.getElementById('dims').innerHTML=DIMDEF.map(d=>{
+    const v=sc[d.k];
+    return `<div class="dim">
+      <div class="lab"><span>${d.t} <span style="color:var(--dim)">·${Math.round(wn[d.k]*100)}%</span></span>
+        <span class="r"><b>${v.toFixed(0)}</b>/100 · ${d.unit(M)}</span></div>
+      <div class="bar"><i style="width:${v}%"></i></div>
+      <div class="meta">${d.sub}</div></div>`;
+  }).join('');
+}
+
+// ---------- static ----------
+function boot(){
+  document.getElementById('asOf').textContent=DATA.asOf;
+  buildInputs();
+  // sparkline
+  const ks=DATA.daily.map(d=>d.k), mx=Math.max(...ks);
+  document.getElementById('spark').innerHTML=DATA.daily.map(d=>
+    `<i title="${d.day}: ${d.k.toLocaleString()}K / ${d.sessions}세션" style="height:${Math.max(4,d.k/mx*100)}%"></i>`).join('');
+  document.getElementById('wc').textContent=DATA.workers.count;
+  document.getElementById('wlist').innerHTML=DATA.workers.names.map(n=>`<span class="wname">${n}</span>`).join('');
+  document.getElementById('dimFoot').innerHTML=
+    '각 지표는 로그 스케일로 0~100 정규화 후 가중합. 실측은 조정 불가한 <code>워커·완료목표·위임률</code>과 사용창(전체/최근)에 따라 바뀌는 <code>레버리지·세션</code>으로 구성.';
+  document.getElementById('formulaFoot').innerHTML=
+    '<b>산식</b> · 레버리지 = 총토큰K ÷ 사람활동시간 → <code>log10</code> 정규화(10K/h~3162K/h). '+
+    '자율성 = <code>log2(워커수)/log2(24)</code>. 병렬성 = <code>log2(세션/h+1)</code>. '+
+    '처리량 = <code>log10(완료목표)/log10(400)</code>. 위임률 = 토큰기록 목표 ÷ 진행·완료 목표. '+
+    '종합 = Σ(지표×가중치), 레벨 경계 = '+DATA.thresholds.join(' / ')+'점.';
+  resetAll();
+}
+boot();
+</script>
+</body>
+</html>

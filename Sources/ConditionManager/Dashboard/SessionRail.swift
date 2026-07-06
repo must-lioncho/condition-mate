@@ -42,8 +42,16 @@ enum SessionRail {
             justify-content:center; gap:4px; padding:9px 4px; border-radius:8px; color:#c8cfdb;
             text-decoration:none; font-size:12px; cursor:pointer; text-align:center }
           .cmrail-item:hover{ background:#161c2a }
-          .cmrail-item.on{ background:#1a2438; color:#e7ecf4 }
-          .cmrail-item .cmr-ico{ font-size:16px; line-height:1; flex:none }
+          .cmrail-item.on{ background:#152036; color:#e7ecf4 }
+          /* Monochrome line icons (SF-Symbols style): a single dim tint at rest so the six
+             nav items read as one calm set; the ACTIVE item alone lights up blue (icon + label)
+             to mark the current surface. Replaces the multi-color emoji that looked busy. */
+          .cmrail-item .cmr-ico{ font-size:16px; line-height:1; flex:none;
+            display:flex; align-items:center; justify-content:center; height:18px }
+          .cmrail-item .cmr-ico svg{ width:17px; height:17px; display:block; stroke:currentColor; color:#8b93a7 }
+          .cmrail-item:hover .cmr-ico svg{ color:#c8cfdb }
+          .cmrail-item.on .cmr-lbl{ color:#7db0ff }
+          .cmrail-item.on .cmr-ico svg{ color:#5b8cff }
           .cmrail-item .cmr-lbl{ max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
           .cmrail-item .cmr-cap{ flex:none; font-size:8.5px; line-height:1; color:#5d6678; background:#141a26;
             border:1px solid #222c3e; border-radius:999px; padding:2px 5px }
@@ -225,17 +233,17 @@ enum SessionRail {
           <div class="cmrail-work" id="cmRailWork">
             <nav class="cmrail-nav" id="cmRailNav">
               <a class="cmrail-item" data-nav="chat" onclick="cmNav('chat')" title="대화를 통해 목표를 만듭니다">
-                <span class="cmr-ico">💬</span><span class="cmr-lbl">chat</span></a>
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7.5c0-2.2 2.3-4 5.5-4s5.5 1.8 5.5 4-2.3 4-5.5 4c-.7 0-1.4-.08-2-.23L3.2 12.7l.7-2.1C3 9.85 2.5 8.73 2.5 7.5Z"/></svg></span><span class="cmr-lbl">chat</span></a>
               <a class="cmrail-item" data-nav="skills" onclick="cmNav('skills')" title="반복적인 업무를 스킬로 실행합니다">
-                <span class="cmr-ico">🧩</span><span class="cmr-lbl">스킬</span></a>
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6.3 2.6h3.4v1.5a1.1 1.1 0 1 0 2.2 0V2.6h1.5v3.4h-1.5a1.1 1.1 0 1 0 0 2.2h1.5v3.4h-3.4v-1.5a1.1 1.1 0 1 0-2.2 0v1.5H3.9V10.2h1.5a1.1 1.1 0 1 0 0-2.2H3.9V4.6" transform="translate(-.4 .2)"/></svg></span><span class="cmr-lbl">스킬</span></a>
               <a class="cmrail-item" data-nav="cron" onclick="cmNav('cron')" title="주기적으로 실행해야 하는 업무(워커)를 등록·관리합니다">
-                <span class="cmr-ico">⏰</span><span class="cmr-lbl">크론</span></a>
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8.4" r="5"/><path d="M8 5.6V8.4l1.9 1.2"/></svg></span><span class="cmr-lbl">크론</span></a>
               <a class="cmrail-item" data-nav="delegate" onclick="cmNav('delegate')" title="목적을 달성하는 책임 에이전트를 봅니다">
-                <span class="cmr-ico">🤝</span><span class="cmr-lbl">위임</span></a>
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.6" cy="5.4" r="2.1"/><path d="M2.4 12.8c0-1.9 1.5-3.2 3.2-3.2 1.1 0 2 .5 2.6 1.2"/><path d="M9.4 8.4h4M11.7 6.5l1.9 1.9-1.9 1.9"/></svg></span><span class="cmr-lbl">위임</span></a>
               <a class="cmrail-item" data-nav="team" onclick="cmNav('team')" title="teamlead와 더 깊게 대화하고 위임합니다">
-                <span class="cmr-ico">👥</span><span class="cmr-lbl">팀위임</span><span class="cmr-cap">준비 중</span></a>
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5.8" r="2"/><path d="M2.6 12.4c0-1.9 1.5-3.1 3.4-3.1s3.4 1.2 3.4 3.1"/><circle cx="11" cy="6.3" r="1.6"/><path d="M10.4 9.4c1.7 0 3 1 3 2.8"/></svg></span><span class="cmr-lbl">팀위임</span><span class="cmr-cap">준비 중</span></a>
               <a class="cmrail-item" data-nav="work" onclick="cmNav('work')" title="현재 대시보드(작업 목록)를 봅니다">
-                <span class="cmr-ico">🗂</span><span class="cmr-lbl">작업</span></a>
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 5.2c0-.6.5-1.1 1.1-1.1h2.1l1.1 1.3h4.4c.6 0 1.1.5 1.1 1.1v4.9c0 .6-.5 1.1-1.1 1.1H3.7c-.6 0-1.1-.5-1.1-1.1V5.2Z"/></svg></span><span class="cmr-lbl">작업</span></a>
             </nav>
             <div class="cmrail-seclabel">세션</div>
             <div class="cmrail-sessions" id="cmRailSessions"><span class="cmrail-empty">불러오는 중…</span></div>

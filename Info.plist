@@ -24,9 +24,13 @@
     <string>NSApplication</string>
     <key>NSHighResolutionCapable</key>
     <true/>
-    <!-- Menu bar accessory: no Dock icon, not in the app switcher. -->
+    <!-- App icon shown in the Dock and app switcher (Contents/Resources/AppIcon.icns). -->
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <!-- Regular app: Dock icon + app switcher presence, plus the menu bar status item.
+         (Previously LSUIElement=true made it menu-bar-only with no Dock icon.) -->
     <key>LSUIElement</key>
-    <true/>
+    <false/>
     <!-- Reading the active browser tab's URL (per-site activity) uses Apple Events. -->
     <key>NSAppleEventsUsageDescription</key>
     <string>활성 브라우저 탭의 사이트를 읽어 활동 종류(리서치/시청)를 구분합니다.</string>

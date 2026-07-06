@@ -499,21 +499,6 @@ final class ReviewStore {
         goals = g
         loadSucceeded = true
         migrateSeq()
-        normalizeBump()
-    }
-
-    // One-time normalization for the deferred-seq migration (Option A): every stored Goal
-    // already has a unique seq (migrateSeq guarantees it), so a legacy bump=true goal is now
-    // just a normal numbered backlog goal. The un-numbered idea inbox moved entirely to the
-    // pending queue, so clear the residual bump flag on load. This deletes no goals — it only
-    // drops them out of the retired Bump out bucket. Idempotent: after the first save, no
-    // goal carries bump=true and this is a no-op.
-    private func normalizeBump() {
-        var changed = false
-        for i in goals.indices where goals[i].bump {
-            goals[i].bump = false; changed = true
-        }
-        if changed { saveGoals() }
     }
 
     // Copy the current on-disk goals.json aside (best-effort) so a destructive or
@@ -557,20 +542,19 @@ final class ReviewStore {
     // Returns the new goal's #seq (0 if the text was empty and nothing was added), so
     // callers can build a link to the created goal's page.
     //
-    // NUMBERING RULE (deferred seq, Option A): a real Goal is minted here — and ONLY here —
-    // with a UNIQUE, IMMUTABLE seq. An un-numbered brain-dump idea must NOT reach this path;
-    // it lives solely in the pending queue (queue.json) until promotion via resolveQueueItem
-    // ("add"), which calls back into addGoal. The legacy `bump` parameter is DEAD: idea
-    // creation no longer produces a numbered bump goal (that made a double-inbox with the
-    // queue). The field is kept only for backward-compat decoding of old goals — new goals
-    // are never written with bump=true. See setGoalBump (demotion removed).
+    // NUMBERING RULE: a real Goal is minted here — and ONLY here — with a UNIQUE, IMMUTABLE
+    // seq. `bump: true` marks it as a raw brain-dump idea so it lands in the Bump out 인박스
+    // (정리 전) at the bottom of the board instead of Backlog; it's still a real numbered goal,
+    // so promotion (setGoalSprint) just clears the flag without renumbering. The AI 큐
+    // (queue.json) remains a separate dedup path reached only via enqueuePending (AI추가) — a
+    // plain add never routes through it.
     @discardableResult
-    func addGoal(text: String, parent: String = "", sprint: Int = 0) -> Int {
+    func addGoal(text: String, parent: String = "", sprint: Int = 0, bump: Bool = false) -> Int {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return 0 }
         let seq = nextSeq()
         goals.append(Goal(id: UUID().uuidString, seq: seq, text: t, parent: parent,
-                          sprint: max(0, sprint)))
+                          sprint: max(0, sprint), bump: bump))
         saveGoals()
         return seq
     }
@@ -925,17 +909,14 @@ final class ReviewStore {
         saveGoals()
     }
 
-    // DEMOTION REMOVED (deferred-seq / Option A). A numbered Goal can NO LONGER be sent back
-    // to the un-numbered idea inbox: doing so would strand a seq (breaking the UNIQUE+IMMUTABLE
-    // invariant) or force renumbering. The un-numbered inbox is now exclusively the pending
-    // queue (queue.json); promotion out of it is resolveQueueItem("add"). This function only
-    // ever CLEARS the legacy bump flag (never sets it true) so any stray bumped goal can still
-    // be normalized into Backlog. `bump` is legacy/back-compat only.
+    // Move a goal into (bump=true) or out of (bump=false) the Bump out 인박스. The goal keeps
+    // its UNIQUE, IMMUTABLE seq either way — demotion no longer strands a number because a
+    // bumped goal is still a real numbered goal, just parked in the raw-idea tier. Promotion
+    // (setGoalSprint) also clears the flag.
     func setGoalBump(id: String, bump: Bool) {
         guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
-        // Ignore requests to bump=true (demotion is disabled); only allow clearing.
-        guard goals[idx].bump else { return }
-        goals[idx].bump = false
+        guard goals[idx].bump != bump else { return }
+        goals[idx].bump = bump
         saveGoals()
     }
 

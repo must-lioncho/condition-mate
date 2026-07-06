@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>계정 관리 · Codex 폴백 · UX 테스트</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel-2:#12161f; --line:#232733; --line-soft:#1b212c;
+    --fg:#e7ebf3; --mut:#8b93a7; --mute2:#5c6577;
+    --accent:#5b8cff; --accent-2:#2563eb; --accent-glow:rgba(91,140,255,.5);
+    --green:#36c08a; --amber:#f5a623; --red:#e2667d;
+    --claude:#d97757; --codex:#10a37f;
+    font-synthesis:none;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Pretendard","Segoe UI",Roboto,sans-serif;
+    background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased;
+    font-size:14px;line-height:1.5;
+  }
+  .wrap{max-width:940px;margin:0 auto;padding:26px 22px 80px}
+  a{color:var(--accent)}
+  .tabular{font-variant-numeric:tabular-nums}
+
+  /* prototype banner */
+  .proto{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:10px;margin-bottom:20px;
+    background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.35);color:#ffcf87;font-size:12.5px}
+  .proto b{color:#ffe0ad}
+
+  h1{font-size:20px;letter-spacing:-.3px;margin-bottom:4px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:22px}
+  h2{font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;margin:26px 0 12px;font-weight:700}
+
+  /* engine switcher */
+  .engbar{display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:14px;
+    background:var(--panel);border:1px solid var(--line);margin-bottom:6px}
+  .engbar .lbl{font-size:12px;color:var(--mut);font-weight:600}
+  .segmented{display:flex;background:var(--panel-2);border:1px solid var(--line);border-radius:11px;padding:3px}
+  .seg{display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:9px;border:none;cursor:pointer;
+    background:transparent;color:var(--mut);font-size:13.5px;font-weight:600;transition:.15s;font-family:inherit}
+  .seg .dot{width:9px;height:9px;border-radius:50%}
+  .seg[data-eng="claude"] .dot{background:var(--claude)}
+  .seg[data-eng="codex"] .dot{background:var(--codex)}
+  .seg.on{color:var(--fg);background:#20252f;box-shadow:0 2px 8px rgba(0,0,0,.25)}
+  .seg.on[data-eng="claude"]{box-shadow:inset 0 0 0 1px rgba(217,119,87,.5)}
+  .seg.on[data-eng="codex"]{box-shadow:inset 0 0 0 1px rgba(16,163,127,.5)}
+  .engbar .route{margin-left:auto;font-size:12px;color:var(--mut)}
+  .engbar .route b{color:var(--fg)}
+
+  /* proposal banner (Codex fallback suggestion) */
+  .propose{display:none;align-items:center;gap:14px;padding:14px 16px;border-radius:14px;margin:14px 0 6px;
+    background:linear-gradient(135deg,rgba(226,102,125,.12),rgba(245,166,35,.06));
+    border:1px solid rgba(226,102,125,.4);animation:slidein .35s cubic-bezier(.2,.8,.2,1)}
+  .propose.show{display:flex}
+  @keyframes slidein{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+  .propose .ic{width:38px;height:38px;flex:0 0 38px;border-radius:11px;display:grid;place-items:center;
+    background:rgba(226,102,125,.16);font-size:20px}
+  .propose .msg{flex:1}
+  .propose .msg b{color:#ffc2ce;font-size:14px}
+  .propose .msg small{display:block;color:var(--mut);font-size:12px;margin-top:2px}
+  .propose .acts{display:flex;gap:8px}
+
+  .btn{padding:8px 14px;border-radius:9px;border:1px solid var(--line);background:var(--panel-2);color:var(--fg);
+    font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:.14s;white-space:nowrap}
+  .btn:hover{border-color:#2e3646;background:#1b212d}
+  .btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));border-color:transparent;color:#fff}
+  .btn.primary:hover{filter:brightness(1.08)}
+  .btn.codex{background:linear-gradient(135deg,#10a37f,#0d8168);border-color:transparent;color:#fff}
+  .btn.codex:hover{filter:brightness(1.08)}
+  .btn.ghost{background:transparent}
+  .btn.sm{padding:5px 11px;font-size:12px}
+
+  /* account cards */
+  .cards{display:flex;flex-direction:column;gap:11px}
+  .acct{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:15px 16px;transition:.16s;position:relative;overflow:hidden}
+  .acct.active{border-color:rgba(91,140,255,.55);box-shadow:0 0 0 1px rgba(91,140,255,.25),0 8px 30px -14px var(--accent-glow)}
+  .acct.engoff{opacity:.5}
+  .acct .top{display:flex;align-items:center;gap:12px}
+  .avatar{width:40px;height:40px;flex:0 0 40px;border-radius:11px;display:grid;place-items:center;font-size:16px;font-weight:800;color:#fff}
+  .acct .id{flex:1;min-width:0}
+  .acct .id .nm{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .acct .id .em{font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .plan{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--mut);text-transform:uppercase;letter-spacing:.4px}
+  .plan.max{color:#c4b5fd;border-color:rgba(155,123,255,.45);background:rgba(155,123,255,.12)}
+  .plan.pro{color:#aec4ff;border-color:#3a4a7a;background:rgba(91,140,255,.1)}
+  .plan.api{color:#9be9c9;border-color:var(--green);background:rgba(54,192,138,.1)}
+  .badge-active{font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:999px;color:#bfd6ff;
+    background:rgba(91,140,255,.16);border:1px solid var(--accent)}
+  .acct .actbtns{display:flex;gap:7px;flex:0 0 auto}
+
+  /* usage bars */
+  .usage{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px;margin-top:14px}
+  .u{}
+  .u .uh{display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:5px}
+  .u .uh .k{color:var(--mut)}
+  .u .uh .v{color:var(--fg);font-weight:600}
+  .u .track{height:9px;border-radius:6px;background:#0d1220;overflow:hidden}
+  .u .fill{height:100%;border-radius:6px;transition:width .5s cubic-bezier(.2,.8,.2,1),background .3s}
+  .u .rst{font-size:10.5px;color:var(--mute2);margin-top:4px}
+  .cred{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--mut);margin-top:12px;padding-top:11px;border-top:1px solid var(--line-soft)}
+  .cred .dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
+  .cred .dot.stale{background:var(--amber)}
+
+  .addbtn{display:flex;align-items:center;justify-content:center;gap:8px;padding:13px;border-radius:14px;
+    border:1px dashed #2e3646;background:transparent;color:var(--mut);font-size:13px;font-weight:600;cursor:pointer;
+    width:100%;transition:.15s;font-family:inherit;margin-top:11px}
+  .addbtn:hover{border-color:var(--accent);color:var(--accent)}
+
+  /* sim panel */
+  .sim{margin-top:30px;border:1px solid var(--line);border-radius:14px;background:var(--panel-2);padding:16px 18px}
+  .sim h3{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+  .sim p{font-size:12px;color:var(--mute2);margin-bottom:14px}
+  .simrow{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+  .simrow label{font-size:12.5px;color:var(--fg);width:130px;flex:0 0 130px}
+  .simrow input[type=range]{flex:1;accent-color:var(--accent)}
+  .simrow .val{width:52px;text-align:right;font-size:12.5px;color:var(--mut);font-variant-numeric:tabular-nums}
+
+  /* map note */
+  .note{margin-top:30px;border:1px solid var(--line-soft);border-radius:14px;background:var(--panel-2);padding:18px 20px}
+  .note h3{font-size:13px;margin-bottom:12px;color:var(--fg)}
+  .note ul{list-style:none;display:flex;flex-direction:column;gap:10px}
+  .note li{display:flex;gap:11px;font-size:12.5px;color:var(--mut);line-height:1.55}
+  .note li .n{flex:0 0 20px;height:20px;border-radius:6px;background:#20252f;color:var(--accent);
+    font-size:11px;font-weight:700;display:grid;place-items:center;margin-top:1px}
+  .note code{background:#0d1220;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:11.5px;color:#cdddff;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .note b{color:var(--fg)}
+
+  /* toast */
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);opacity:0;
+    background:#20252f;border:1px solid var(--line);border-radius:11px;padding:12px 18px;font-size:13px;
+    box-shadow:0 12px 40px -10px rgba(0,0,0,.6);transition:.28s;pointer-events:none;z-index:50}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  #toast b{color:#bfd6ff}
+
+  /* modal */
+  .scrim{position:fixed;inset:0;background:rgba(6,8,12,.6);backdrop-filter:blur(2px);display:none;place-items:center;z-index:40}
+  .scrim.show{display:grid}
+  .modal{width:min(460px,92vw);background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px;box-shadow:0 24px 70px -20px rgba(0,0,0,.7)}
+  .modal h3{font-size:16px;margin-bottom:6px}
+  .modal p{font-size:12.5px;color:var(--mut);margin-bottom:16px;line-height:1.55}
+  .modal .field{margin-bottom:12px}
+  .modal .field label{display:block;font-size:11.5px;color:var(--mut);margin-bottom:5px;font-weight:600}
+  .modal input{width:100%;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:var(--panel-2);color:var(--fg);font-size:13px;font-family:inherit}
+  .modal input:focus{outline:none;border-color:var(--accent)}
+  .modal .cap{font-size:11.5px;color:var(--mute2);background:#0d1220;border:1px solid var(--line-soft);border-radius:9px;padding:10px 12px;margin-bottom:16px;line-height:1.5}
+  .modal .row{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="proto">⚠︎ <b>리뷰용 프로토타입</b> — 실제 앱 로직/크리덴셜은 건드리지 않는 목업입니다. 눌러보며 UX만 판단해 주세요. 데이터는 전부 가짜입니다.</div>
+
+  <h1>계정 관리 &amp; Codex 폴백</h1>
+  <div class="sub">여러 Claude 로그인 계정을 슬롯으로 관리하고, 한도 소진이 감지되면 Codex 전환을 제안합니다 (teamclude식 · 수동 확정).</div>
+
+  <!-- ENGINE SWITCHER -->
+  <h2>실행 엔진</h2>
+  <div class="engbar">
+    <span class="lbl">워커 실행 엔진</span>
+    <div class="segmented" id="segmented">
+      <button class="seg on" data-eng="claude"><span class="dot"></span>Claude Code</button>
+      <button class="seg" data-eng="codex"><span class="dot"></span>Codex</button>
+    </div>
+    <span class="route">헤드리스 워커 라우팅 → <b id="routeName">Claude · 상현</b></span>
+  </div>
+
+  <!-- FALLBACK PROPOSAL -->
+  <div class="propose" id="propose">
+    <div class="ic">⚡️</div>
+    <div class="msg">
+      <b id="propTitle">활성 계정 '상현'의 5시간 한도가 거의 찼어요 (92%)</b>
+      <small>약 12분 뒤 리셋됩니다. 다른 계정으로 바꾸거나 Codex 엔진으로 전환할 수 있어요.</small>
+    </div>
+    <div class="acts">
+      <button class="btn sm ghost" onclick="dismissProposal()">나중에</button>
+      <button class="btn sm" onclick="rotateAccount()">다른 계정</button>
+      <button class="btn sm codex" onclick="switchEngine('codex')">Codex로 전환</button>
+    </div>
+  </div>
+
+  <!-- CLAUDE ACCOUNTS -->
+  <h2 style="margin-top:22px">Claude 계정 <span style="color:var(--mute2);font-weight:400;text-transform:none;letter-spacing:0">— 로그인 크리덴셜 슬롯</span></h2>
+  <div class="cards" id="claudeCards"></div>
+  <button class="addbtn" onclick="openAdd()">＋ Claude 계정 추가 <span style="color:var(--mute2);font-weight:400">(현재 로그인 상태를 슬롯으로 저장)</span></button>
+
+  <!-- CODEX -->
+  <h2 style="margin-top:26px">Codex</h2>
+  <div class="cards" id="codexCards"></div>
+
+  <!-- SIMULATION -->
+  <div class="sim">
+    <h3>⚙︎ 시뮬레이션 (프로토타입 전용)</h3>
+    <p>실제로는 <code>~/.claude/projects</code> 트랜스크립트에서 사용량을 계산합니다. 여기서는 슬라이더로 한도를 밀어 올려 "전환 제안" 배너가 언제 뜨는지 확인하세요.</p>
+    <div class="simrow">
+      <label>활성 계정 5h 사용률</label>
+      <input type="range" id="sim5h" min="0" max="100" value="46" oninput="onSim()">
+      <span class="val" id="sim5hVal">46%</span>
+    </div>
+    <div class="simrow">
+      <label>활성 계정 주간 사용률</label>
+      <input type="range" id="simWk" min="0" max="100" value="58" oninput="onSim()">
+      <span class="val" id="simWkVal">58%</span>
+    </div>
+    <div class="simrow">
+      <label>제안 임계값</label>
+      <input type="range" id="simTh" min="50" max="100" value="85" oninput="onSim()">
+      <span class="val" id="simThVal">85%</span>
+    </div>
+  </div>
+
+  <!-- MAPPING NOTE -->
+  <div class="note">
+    <h3>이 화면이 실제로 하는 일 (판단용 메모)</h3>
+    <ul>
+      <li><span class="n">1</span><span><b>계정 슬롯 = 크리덴셜 스냅샷.</b> "계정 추가"는 현재 로그인된 <code>~/.claude/.credentials.json</code>(+ Keychain OAuth 토큰)을 이름 붙여 저장합니다. "활성화"는 저장된 슬롯을 다시 <code>~/.claude</code>로 스왑 — teamclude와 동일한 방식입니다.</span></li>
+      <li><span class="n">2</span><span><b>계정별 독립 한도.</b> 각 계정은 자기만의 5시간/주간 한도를 가집니다. 사용량은 그 계정으로 실행된 세션의 토큰을 트랜스크립트에서 합산해 추정합니다.</span></li>
+      <li><span class="n">3</span><span><b>Codex 폴백은 "제안 → 수동 확정".</b> 활성 계정이 임계값을 넘으면 배너로 제안만 하고, 실제 전환은 버튼을 눌러야 일어납니다. 자동으로 몰래 바꾸지 않습니다.</span></li>
+      <li><span class="n">4</span><span><b>엔진 전환 = 워커 라우팅 변경.</b> 헤드리스 워커(<code>claude -p</code>)를 <code>codex exec</code>로 바꿔 실행합니다. Codex CLI는 현재 미설치 상태라, 승인하시면 설치/연동을 다음 단계에서 진행합니다.</span></li>
+    </ul>
+  </div>
+</div>
+
+<!-- ADD MODAL -->
+<div class="scrim" id="scrim">
+  <div class="modal">
+    <h3>Claude 계정 슬롯 추가</h3>
+    <p>지금 <code>~/.claude</code>에 로그인된 계정을 슬롯으로 저장합니다. 나중에 이 슬롯을 활성화하면 로그인이 이 계정으로 되돌아갑니다.</p>
+    <div class="cap">📷 캡처 대상: <b>현재 로그인 크리덴셜</b><br><span style="color:var(--mut)">~/.claude/.credentials.json · Keychain: Claude Code-credentials</span></div>
+    <div class="field">
+      <label>슬롯 이름</label>
+      <input id="addName" placeholder="예: 회사 Max, 개인 Pro …" value="새 계정">
+    </div>
+    <div class="row">
+      <button class="btn ghost" onclick="closeAdd()">취소</button>
+      <button class="btn primary" onclick="confirmAdd()">현재 로그인 저장</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  // ---- mock state ----
+  const accounts = [
+    {id:'a1', name:'상현', email:'sanghyun@company.com', plan:'max', color:'#9b7bff', u5:46, uw:58, reset:'12분', cred:'fresh'},
+    {id:'a2', name:'개인 Pro', email:'me@gmail.com', plan:'pro', color:'#5b8cff', u5:12, uw:31, reset:'2시간', cred:'fresh'},
+    {id:'a3', name:'예비 Pro', email:'backup@gmail.com', plan:'pro', color:'#36c08a', u5:0, uw:8, reset:'—', cred:'stale'},
+  ];
+  const codex = {id:'cx', name:'Codex (OpenAI)', email:'codex exec · gpt-5', plan:'api', color:'#10a37f', u5:0, uw:22, reset:'—', cred:'missing'};
+  let engine = 'claude';       // 'claude' | 'codex'
+  let activeId = 'a1';
+  let proposalDismissed = false;
+
+  const barColor = p => p>=90?'var(--red)':p>=70?'var(--amber)':'var(--green)';
+
+  function acctCard(a, isCodex){
+    const active = !isCodex && a.id===activeId;
+    const engoff = isCodex ? engine!=='codex' : engine!=='claude';
+    const credTxt = a.cred==='fresh' ? '크리덴셜 저장됨 · 유효'
+                  : a.cred==='stale' ? '크리덴셜 저장됨 · 재로그인 권장'
+                  : 'Codex CLI 미설치';
+    const credDot = a.cred==='fresh' ? '' : 'stale';
+    const actBtns = isCodex
+      ? (engine==='codex' ? '<span class="badge-active">사용 중</span>'
+                          : `<button class="btn sm codex" onclick="switchEngine('codex')">엔진 전환</button>`)
+      : (active ? '<span class="badge-active">활성</span>'
+                : `<button class="btn sm" onclick="activate('${a.id}')">활성화</button>`);
+    return `<div class="acct ${active?'active':''} ${engoff?'engoff':''}">
+      <div class="top">
+        <div class="avatar" style="background:linear-gradient(135deg,${a.color},${shade(a.color)})">${(a.name[0]||'?')}</div>
+        <div class="id">
+          <div class="nm">${a.name} <span class="plan ${a.plan}">${a.plan==='max'?'Max':a.plan==='pro'?'Pro':'CLI'}</span></div>
+          <div class="em">${a.email}</div>
+        </div>
+        <div class="actbtns">${actBtns}</div>
+      </div>
+      <div class="usage">
+        <div class="u">
+          <div class="uh"><span class="k">5시간 창</span><span class="v">${a.u5}%</span></div>
+          <div class="track"><div class="fill" style="width:${a.u5}%;background:${barColor(a.u5)}"></div></div>
+          <div class="rst">리셋 ${a.reset}</div>
+        </div>
+        <div class="u">
+          <div class="uh"><span class="k">주간 한도</span><span class="v">${a.uw}%</span></div>
+          <div class="track"><div class="fill" style="width:${a.uw}%;background:${barColor(a.uw)}"></div></div>
+          <div class="rst">${isCodex?'월 크레딧 기준':'주간 리셋 · 화요일 09:00'}</div>
+        </div>
+      </div>
+      <div class="cred"><span class="dot ${credDot}"></span>${credTxt}</div>
+    </div>`;
+  }
+  function shade(hex){ // darken for gradient
+    const n=parseInt(hex.slice(1),16); let r=(n>>16)-40,g=((n>>8)&255)-40,b=(n&255)-40;
+    r=Math.max(0,r);g=Math.max(0,g);b=Math.max(0,b);
+    return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
+  }
+
+  function render(){
+    document.getElementById('claudeCards').innerHTML = accounts.map(a=>acctCard(a,false)).join('');
+    document.getElementById('codexCards').innerHTML = acctCard(codex,true);
+    document.querySelectorAll('.seg').forEach(s=>s.classList.toggle('on', s.dataset.eng===engine));
+    const act = accounts.find(a=>a.id===activeId);
+    document.getElementById('routeName').textContent = engine==='codex'
+      ? 'Codex · gpt-5' : 'Claude · '+(act?act.name:'—');
+    checkProposal();
+  }
+
+  function checkProposal(){
+    const th = +document.getElementById('simTh').value;
+    const act = accounts.find(a=>a.id===activeId);
+    const over = engine==='claude' && act && (act.u5>=th || act.uw>=th) && !proposalDismissed;
+    const el = document.getElementById('propose');
+    el.classList.toggle('show', !!over);
+    if(over){
+      const which = act.u5>=act.uw ? {k:'5시간', v:act.u5} : {k:'주간', v:act.uw};
+      document.getElementById('propTitle').textContent =
+        `활성 계정 '${act.name}'의 ${which.k} 한도가 거의 찼어요 (${which.v}%)`;
+    }
+  }
+
+  // ---- actions ----
+  function activate(id){
+    activeId=id; proposalDismissed=false;
+    const a=accounts.find(x=>x.id===id);
+    if(a){ document.getElementById('sim5h').value=a.u5; document.getElementById('simWk').value=a.uw; syncSimLabels(); }
+    render(); toast(`활성 계정 → <b>${a.name}</b> · 크리덴셜 스왑됨(목업)`);
+  }
+  function switchEngine(e){
+    engine=e; proposalDismissed=false; render();
+    toast(e==='codex' ? '엔진 → <b>Codex</b> · 워커가 codex exec 로 실행됩니다(목업)'
+                      : '엔진 → <b>Claude Code</b>');
+  }
+  function rotateAccount(){
+    const fresh = accounts.find(a=>a.id!==activeId && a.u5<50);
+    if(fresh){ activate(fresh.id); toast(`여유 있는 계정 <b>${fresh.name}</b>(으)로 전환(목업)`); }
+    else toast('여유 있는 다른 Claude 계정이 없어요 — Codex 전환을 고려하세요');
+  }
+  function dismissProposal(){ proposalDismissed=true; checkProposal(); }
+  document.getElementById('segmented').addEventListener('click',e=>{
+    const b=e.target.closest('.seg'); if(b) switchEngine(b.dataset.eng);
+  });
+
+  // ---- sim ----
+  function syncSimLabels(){
+    document.getElementById('sim5hVal').textContent=document.getElementById('sim5h').value+'%';
+    document.getElementById('simWkVal').textContent=document.getElementById('simWk').value+'%';
+    document.getElementById('simThVal').textContent=document.getElementById('simTh').value+'%';
+  }
+  function onSim(){
+    const act=accounts.find(a=>a.id===activeId);
+    if(act){ act.u5=+document.getElementById('sim5h').value; act.uw=+document.getElementById('simWk').value; }
+    proposalDismissed=false; syncSimLabels(); render();
+  }
+
+  // ---- add modal ----
+  function openAdd(){ document.getElementById('scrim').classList.add('show'); document.getElementById('addName').focus(); }
+  function closeAdd(){ document.getElementById('scrim').classList.remove('show'); }
+  function confirmAdd(){
+    const nm=document.getElementById('addName').value.trim()||'새 계정';
+    const colors=['#f5a623','#e2667d','#5b8cff','#36c08a','#9b7bff'];
+    accounts.push({id:'a'+Date.now(), name:nm, email:'(현재 로그인에서 캡처됨)', plan:'pro',
+      color:colors[accounts.length%colors.length], u5:0, uw:0, reset:'—', cred:'fresh'});
+    closeAdd(); render(); toast(`슬롯 <b>${nm}</b> 저장됨 · 현재 로그인 크리덴셜 캡처(목업)`);
+  }
+  document.getElementById('scrim').addEventListener('click',e=>{ if(e.target.id==='scrim') closeAdd(); });
+
+  // ---- toast ----
+  let toastT;
+  function toast(html){
+    const t=document.getElementById('toast'); t.innerHTML=html; t.classList.add('show');
+    clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2600);
+  }
+
+  syncSimLabels(); render();
+</script>
+</body>
+</html>

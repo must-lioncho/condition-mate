@@ -523,4 +523,26 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
             complete(alert.runModal())
         }
     }
+
+    // WebKit does NOT show the file picker for <input type="file"> unless the UI delegate
+    // implements this. With no implementation, clicking "파일 첨부" in the goal page silently
+    // did nothing (the goal's addFiles() never received any files). Present a native open panel
+    // and hand the chosen URLs back so FileReader can read + upload them.
+    func webView(_ webView: WKWebView,
+                 runOpenPanelWith parameters: WKOpenPanelParameters,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        let complete: (NSApplication.ModalResponse) -> Void = { resp in
+            completionHandler(resp == .OK ? panel.urls : nil)
+        }
+        if let win = webView.window {
+            panel.beginSheetModal(for: win, completionHandler: complete)
+        } else {
+            complete(panel.runModal())
+        }
+    }
 }

@@ -257,7 +257,7 @@ final class DashboardServer {
         } else if path.hasPrefix("/data.json") {
             send(conn, status: "200 OK", contentType: "application/json; charset=utf-8",
                  body: Data(self.data().utf8), extra: "")
-        } else if method == "GET" && (path.hasPrefix("/transcript") || path.hasPrefix("/breakdown") || path.hasPrefix("/worker") || path.hasPrefix("/cron") || path.hasPrefix("/goal") || path.hasPrefix("/bgm-player")) {
+        } else if method == "GET" && (path.hasPrefix("/transcript") || path.hasPrefix("/breakdown") || path.hasPrefix("/worker") || path.hasPrefix("/cron") || path.hasPrefix("/goal") || path.hasPrefix("/bgm-player") || path.hasPrefix("/bgm-timeline-test")) {
             if let pageHTML = self.page(path) {
                 send(conn, status: "200 OK", contentType: "text/html; charset=utf-8",
                      body: Data(pageHTML.utf8), extra: "")
