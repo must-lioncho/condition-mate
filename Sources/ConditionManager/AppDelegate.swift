@@ -13,7 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let reviewStore = ReviewStore()
     let trackPrefs = TrackPreferenceStore()
     let trackEvents = TrackEventLog()
+    let trackPlayStats = TrackPlayStatsStore()
+    let bgmPlan = BGMPlanMap()
     let pluginStore = PluginStore()
+    let equipment = EquipmentStore()
     let chatStore = ChatStore()
     private(set) var director: ConditionDirector!
 
@@ -24,14 +27,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         live: { [weak self] in self?.liveData() ?? "{}" },
         post: { [weak self] path, body in self?.handlePost(path, body) ?? "{}" },
         file: { [weak self] path in
+            if path.hasPrefix("/bgm-audio/") { return self?.serveBGMAudio(path) }
             if path.hasPrefix("/chat-img/") { return self?.serveChatImage(path) }
             if path.hasPrefix("/task-file") { return self?.serveTaskFile(path) }
+            if path.hasPrefix("/api/debug/snapshot") { return self?.serveSnapshot(path) }
             return self?.serveEvidence(path)
         },
         page: { [weak self] path in
+            if path.hasPrefix("/bgm-timeline-test") { return BGMTimelineTestContent.html() }
+            if path.hasPrefix("/session-continue-test") { return SessionContinueTestContent.html() }
+            if path.hasPrefix("/lounge-break-test") { return LoungeBreakTestContent.html() }
+            if path.hasPrefix("/bgm-player") { return BGMPlayerContent.html() }
+            if path.hasPrefix("/bgm-plan") { return BGMPlanContent.html() }
+            if path.hasPrefix("/equipment") { return EquipmentContent.html() }
             if path.hasPrefix("/goal") { return self?.goalPage(path) }
             if path.hasPrefix("/worker-log") { return self?.workerLogAllPage(path) }
             if path.hasPrefix("/worker") { return self?.workerLogPage(path) }
+            if path.hasPrefix("/cron") { return self?.cronPage() }
             if path.hasPrefix("/breakdown") { return self?.breakdownPage(path) }
             return self?.transcriptPage(path)
         },
@@ -65,11 +77,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if path.hasPrefix("/api/cli/sessions") {
                 return self?.cliSessionsJSON()
             }
+            if path.hasPrefix("/api/skills/history") {
+                return self?.skillHistoryJSON()
+            }
             if path.hasPrefix("/api/skills") {
                 return self?.skillsJSON()
             }
+            if path.hasPrefix("/api/agents") {
+                return self?.agentsJSON()
+            }
             if path.hasPrefix("/history.json") {
                 return self?.dashboardHistory(path)
+            }
+            if path.hasPrefix("/tokens.json") {
+                return self?.dashboardTokens(path)
+            }
+            if path.hasPrefix("/api/bgm/now") {
+                return self?.bgmNowJSON()
+            }
+            // 전략3 plan map + planner context (current slot, real theme folders).
+            if path.hasPrefix("/api/bgm/plan") {
+                return self?.bgmPlanJSON()
+            }
+            // Shared challenge+mute state for any surface that polls it directly (the rail's
+            // challenge dial). Includes elapsed active seconds so a page loading mid-session shows
+            // the right time.
+            if path.hasPrefix("/api/session/state") {
+                return self?.sessionStateJSON()
+            }
+            // 장비+숙련도 state (levels, market inflation, award ledger + plugin list)
+            // for the /equipment page and the rail's settings-menu level chip.
+            if path.hasPrefix("/api/equipment") {
+                return self?.equipmentJSON()
+            }
+            if path.hasPrefix("/api/bgm/stats") {
+                return self?.bgmStatsJSON(path)
+            }
+            if path.hasPrefix("/api/bgm/list") {
+                return self?.bgmListJSON()
+            }
+            // Lightweight worker snapshot for the standalone 크론(/cron) page — just the
+            // workers array, so that page never has to poll the heavy /data.json.
+            if path.hasPrefix("/workers.json") {
+                return self?.workersJSON()
             }
             return nil
         },
@@ -82,8 +132,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var siteRefreshing = false
 
     private var statusItem: NSStatusItem!
-    private var bard: MenuBarBard!
+    private var gauge: LightningGauge!
     private var menuController: MenuController!
+    // Single native app window (WKWebView) hosting both the dashboard and the BGM player, switched
+    // by an in-window toggle. Replaces the old browser-based dashboard entirely — no web browser.
+    private lazy var appWindow = AppWindowController()
+    // While the app window is OPEN (in EITHER .dashboard or .bgm mode) it owns audio output: native
+    // BGM stays muted the whole time (not just reactively), so the two never overlap ("음악이 두
+    // 번"). Released (native unmuted) only when the window closes. See AppWindowController's file
+    // header for why: the BGM webview keeps playing regardless of visible mode, so ownership must
+    // follow "window open", not "mode == .bgm" — the earlier mode-based rule left native audible
+    // in .dashboard mode while the BGM webview kept playing underneath (double audio).
+    private var windowOwnsAudio = false
+    // App-wide keyboard shortcuts (⌘M mute / ⌘S start·stop challenge). A LOCAL event monitor fires
+    // only while the app is active and for ANY of its windows/pages — exactly "앱을 활성화한 뒤 어느
+    // 페이지에서든" — without the system-wide Accessibility grant a global monitor would need.
+    private var shortcutMonitor: Any?
     private var heartbeat: Timer?
     private var tick: Int = 0
     // Smooth menu-bar APM: the heartbeat only fires at 1 Hz, so reading instantAPM
@@ -117,14 +181,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func totalSpanDisplaySec() -> Double {
         guard lastAnchorT > 0 else { return totalSpanBaseSec }
         let tail = Date().timeIntervalSince1970 - Double(lastAnchorT)
-        let live = (isWorking && tail < 6 * 3600) ? max(0, tail) : 0
+        let live = (isWorking && tail < 8 * 3600) ? max(0, tail) : 0
         return totalSpanBaseSec + live
     }
 
     // Master switch (Hubstaff-style Start/Stop Working). Tracking + music only
     // run while this is on. Auto-started on launch (see applicationDidFinishLaunching);
     // the menu button remains available to pause/resume mid-session.
-    private(set) var isWorking = false
+    // Single source of truth for the two live session flags (challenge on/off + music mute),
+    // shared by every surface — gauge widget, dropdown menu, dashboard, BGM player. See
+    // ChallengeSession. start/stopWorking and the mute path write through this object.
+    let session = ChallengeSession()
+    // Read-compat shim: many call sites read `isWorking` (is the challenge live?). The value now
+    // lives in `session`; this keeps those sites unchanged while there is one owner of the state.
+    var isWorking: Bool { session.isRunning }
     private(set) var sessionSeconds: Double = 0   // active seconds this session
     private(set) var liveStatus = "정지"
 
@@ -171,10 +241,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sessionSeenSize: [String: Int] = [:]
     private var sessionPendingAsk: [String: Bool] = [:]   // last tail had an unanswered AskUserQuestion
     private var sessionTurnEnded: [String: Bool] = [:]     // last tail was a finished assistant turn (awaiting human)
+    // Per-transcript token-by-day cache: parsing every ~/.claude/projects/*.jsonl on each
+    // poll would be costly, so remember (mtime, size) -> per-day token totals and re-parse a
+    // file only when it changes. Keyed by absolute path. Guarded by tokenDayLock.
+    private var tokenDayCache: [String: (mtime: Date, size: Int, days: [String: Int])] = [:]
+    private let tokenDayLock = NSLock()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        director = ConditionDirector(activity: activity, library: library, audio: audio, prefStore: trackPrefs)
+        AppLog.log("LAUNCH — bundle=\(Bundle.main.bundleIdentifier ?? "nil") argv0=\(CommandLine.arguments.first ?? "?") log=\(AppLog.fileURL.path)")
+        // Test hook: CM_QUIT_AFTER=<seconds> triggers the real NSApp.terminate quit path so the
+        // full shutdown sequence (applicationShouldTerminate/WillTerminate + window/audio cleanup)
+        // can be exercised headlessly and inspected in app.log.
+        if let s = ProcessInfo.processInfo.environment["CM_QUIT_AFTER"], let n = Double(s) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + n) { NSApp.terminate(nil) }
+        }
+        // Single instance: terminate any older copy already running (a dev auto-reload relaunch
+        // or a double-click). Two instances would each start BGM ("음악이 두 번") and one would
+        // linger after the other is quit ("앱을 껐는데 위젯이 남음").
+        Self.terminateOtherInstances()
+
+        // LSUIElement (menu-bar) apps have no application main menu, so the standard editing
+        // key equivalents (Cmd+C/V/X/A, Undo/Redo) are never dispatched to the responder chain.
+        // That breaks paste/copy inside the WKWebView's HTML inputs (e.g. the "목표 추가" modal —
+        // "붙여넣기가 안 됨"). Install a minimal Edit menu so these shortcuts reach paste:/copy:/… .
+        Self.installEditMenu()
+
+        director = ConditionDirector(activity: activity, library: library, audio: audio,
+                                     prefStore: trackPrefs, planMap: bgmPlan)
         audio.targetVolume = Float(Settings.shared.volume)
+        // Play-time accounting: AudioEngine times each audible segment; the store accrues
+        // per-track seconds/plays that feed the BGM 관리 "재생 시간 순위" section.
+        audio.onSegmentEnd = { [weak self] key, title, secs in
+            self?.trackPlayStats.addSeconds(key: key, title: title, seconds: secs)
+        }
+        audio.onTrackStart = { [weak self] key, title in
+            self?.trackPlayStats.bumpPlay(key: key, title: title)
+        }
 
         activity.start()
         reloadLibrary()
@@ -186,14 +288,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // the title never jiggles as the digit count changes (ofSize 0 = default).
             button.font = .monospacedDigitSystemFont(ofSize: 0, weight: .regular)
         }
-        // Pixel-art bard: idle by default, plays a buff performance once a minute
-        // while a work session is active. Drives only the button image; the clock
-        // text is the button title (updateStatusTitle).
-        bard = MenuBarBard { [weak self] image in
+        // Lightning condition gauge: a single bolt that charges bottom-up across
+        // five stages and shifts colour with the live condition (활동/개인 최고치
+        // 비율). Drives only the button image; the APM/clock text is the button
+        // title (updateStatusTitle).
+        gauge = LightningGauge { [weak self] image in
             self?.statusItem.button?.image = image
         }
         menuController = MenuController(delegate: self)
         statusItem.menu = menuController.menu
+
+        // In BGM mode the window owns audio: keep native muted the whole time so playback never
+        // doubles up, and hand it back on the dashboard / when the window closes.
+        appWindow.onOwnAudio = { [weak self] owns in
+            guard let self = self else { return }
+            self.windowOwnsAudio = owns
+            // While the window owns audio, native stays muted regardless of the user's mute intent
+            // (no double playback). When it hands audio back on close, native reflects the user's
+            // mute intent (session.isMuted) rather than blindly unmuting — so ⌘M made before closing
+            // is preserved.
+            self.applyNativeMute()
+            AppLog.log("app window owns audio=\(owns) -> native muted=\(self.audio.muted)")
+        }
+        // Closing the app window quits the entire app — the window and the menu-bar app terminate
+        // together (the user's goal: "같이 종료"). Dispatched async so we don't tear down while
+        // still inside the window's own windowWillClose.
+        appWindow.onUserClose = { [weak self] in
+            AppLog.log("app window user-closed -> quitting app (같이 종료)")
+            DispatchQueue.main.async { self?.quit() }
+        }
+
+        // App-wide keyboard shortcuts, active on any page while the app is frontmost:
+        //   ⌘M — 음원 뮤트 on/off      ⌘S — 챌린지 시작/중단
+        // Returning nil consumes the event so it never reaches the webview (⌘S "save", ⌘M "minimize").
+        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleShortcut(event) ?? event
+        }
 
         updateStatusTitle()
 
@@ -235,6 +365,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // later reuses the same listener.
         dashboard.start { _ in }
 
+        // Guaranteed zero-click BGM: auto-open the native BGM window (WKWebView with autoplay
+        // enabled) on launch so the activity BGM plays with the space effect immediately. Respect
+        // the master switch — if the user turned BGM off (e.g. by closing the window), don't force
+        // it back on at launch.
+        // Auto-open the app on launch on the DASHBOARD (its face is now the dashboard; the condition
+        // surface is reached via the rail's "컨디션 전체 보기"). BGM is still turned on so the BGM
+        // webview — created + parked off-view by ensureBuilt — is the live audio engine from launch,
+        // playing whenever a challenge runs. (Don't gate on musicEnabled: an earlier off-state would
+        // then silently skip opening the window.)
+        if Settings.shared.bgmWindowEnabled {
+            setBGMEnabled(true)
+            dashboard.start { [weak self] port in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    // Dev (CM_DEV): a dev-watch rebuild relaunches the process on every save, so
+                    // auto-popping the window in front here would keep covering the editor. Start
+                    // the server (done above) but leave the window closed — open it from the menu
+                    // bar when wanted. Opt back in for dashboard-UI sessions with CM_DEV_AUTO_OPEN=1.
+                    if AppPaths.isDev && !AppPaths.devAutoOpen {
+                        AppLog.log("dev mode (CM_DEV): skip launch auto-open — open the window from the menu bar")
+                        return
+                    }
+                    self.appWindow.autoOpen(port: port, mode: .dashboard)
+                }
+            }
+        }
+        AppLog.log("bgm auto-open on launch: bgmWindowEnabled=\(Settings.shared.bgmWindowEnabled)")
+
         // Resume any AI-queue candidates left pending by a previous run (loadQueue already
         // reverted orphaned "analyzing" items back to pending) so the "bump out" backlog
         // keeps draining across restarts.
@@ -242,12 +400,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        AppLog.log("applicationWillTerminate — stopping director + audio, closing BGM window")
         store.saveIfNeeded()
         director.stop()
+        audio.stop()
         activity.stop()
-        bard?.stop()
+        appWindow.closeForQuit()
+        gauge?.showIdle()
+        if let m = shortcutMonitor { NSEvent.removeMonitor(m); shortcutMonitor = nil }
         heartbeat?.invalidate()
         titleTimer?.invalidate()
+        AppLog.log("applicationWillTerminate — done")
+    }
+
+    // Log the quit request and let it proceed. If something ever blocked termination this would
+    // show us the app got the request but did not die.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        AppLog.log("applicationShouldTerminate — reply=terminateNow")
+        return .terminateNow
+    }
+
+    // Force-quit any other running copy of this app (same bundle id) so only one instance ever
+    // plays BGM or owns a menu-bar item. A bare SPM binary (no Info.plist / bundle id) is skipped.
+    // Build a minimal application main menu whose Edit submenu carries the standard editing
+    // actions with their conventional key equivalents. AppKit only routes Cmd+C/V/X/A (and
+    // Undo/Redo) to the first responder's copy:/paste:/cut:/selectAll: when a menu item exposes
+    // that key equivalent. Without a main menu (the default for LSUIElement apps) those shortcuts
+    // are swallowed, so pasting into the WKWebView-hosted dashboard inputs silently fails.
+    private static func installEditMenu() {
+        let mainMenu = NSMenu()
+
+        // A first (app) menu is conventional but not required for key equivalents; keep it minimal.
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+
+        let editMenuItem = NSMenuItem()
+        mainMenu.addItem(editMenuItem)
+        let editMenu = NSMenu(title: "Edit")
+        editMenuItem.submenu = editMenu
+
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Delete", action: #selector(NSText.delete(_:)), keyEquivalent: "")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    private static func terminateOtherInstances() {
+        guard let bundleID = Bundle.main.bundleIdentifier else {
+            AppLog.log("single-instance: no bundle id (bare binary) — skipping dedup")
+            return
+        }
+        let me = ProcessInfo.processInfo.processIdentifier
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != me }
+        AppLog.log("single-instance: found \(others.count) other instance(s): \(others.map { $0.processIdentifier })")
+        for app in others {
+            AppLog.log("single-instance: forceTerminate pid \(app.processIdentifier)")
+            app.forceTerminate()
+        }
     }
 
     // MARK: - Workers
@@ -269,8 +486,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // not core — installing that plugin is what brings BGM online.
         r.register(id: "autosave", name: "상태 저장",
                    detail: "누적 시간 디스크 플러시", interval: 30)
-        r.register(id: "bard", name: "메뉴바 음유시인",
-                   detail: "분당 버프 애니메이션(세션 활성 시)", interval: 60)
         r.register(id: "timeline-sample", name: "타임라인 기록",
                    detail: "분 단위 활동 샘플을 대시보드 타임라인에 적립", interval: sampleInterval)
         // QA agent: an EXTERNAL automation (launchd → claude -p, see Scripts/qa-scan.sh)
@@ -363,6 +578,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             p.arguments = [script.path]
             var env = ProcessInfo.processInfo.environment
             env["QA_FORCE"] = "1"
+            // qa-scan.sh runs a headless `claude -p` UI-QA worker; suppress its session so it
+            // is not mirrored as a dashboard goal (see Scripts/cc-session-hook.sh).
+            env["CM_SUPPRESS_SESSION_GOAL"] = "1"
             p.environment = env
             do { try p.run() } catch {
                 try? Data().write(to: Self.qaForceRunFlag)   // fall back to the flag
@@ -470,7 +688,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if !appOK {
             liveStatus = "대기 · 추적 앱이 활성 아님"
         } else {
-            liveStatus = "작업 중"
+            liveStatus = "챌린지 중"
         }
         // Log only when the live status actually changes, so the heartbeat log stays
         // readable (one transition line) instead of one row every second.
@@ -836,16 +1054,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatusTitle() {
         guard let button = statusItem.button else { return }
-        // 스포츠 모드: while working, show live APM (bounces up/down each heartbeat) —
-        // the same redline-relative number the dashboard gauge tweens, for in-the-moment
-        // focus and a bit of fun. Idle has no APM, so it falls through to the clock below.
+        // The lightning bolt (button image) IS the condition indicator now — it
+        // charges bottom-up across five stages from the live 활동/최고치 비율. Cheap
+        // to call every refresh; it only swaps the image when the stage changes.
+        gauge.update(norm: activity.conditionNorm, working: isWorking)
+        // 스포츠 모드: while working, show the 1-minute average APM — a realistic
+        // sustained pace rather than the twitchy instant value, so the digit no
+        // longer jumps up and down every second. The dashboard gauge still tweens
+        // the live instant APM for in-the-moment focus and fun. Idle has no APM, so
+        // it falls through to the clock below.
         if menuBarMode == .sports && isWorking {
-            // Glide the displayed value toward the live target. Asymmetric envelope
-            // (fast attack, slower release) keeps bursts twitchy while the descent
-            // stays smooth — matching the dashboard gauge's feel. At ~20 Hz these
-            // alphas converge in a few hundred ms; snap when essentially there so the
-            // digit settles instead of crawling the last fraction.
-            let target = activity.instantAPM
+            // Glide the displayed value toward the (already smooth) 1-min average.
+            // Asymmetric envelope keeps a brief rise snappy while the descent stays
+            // smooth; snap when essentially there so the digit settles instead of
+            // crawling the last fraction.
+            let target = activity.averageAPM
             let alpha = target >= displayedAPM ? 0.45 : 0.20
             displayedAPM += (target - displayedAPM) * alpha
             if abs(target - displayedAPM) < 0.5 { displayedAPM = target }
@@ -853,11 +1076,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // APM never exceeds 4 digits, so it stops growing and never jiggles.
             let s = String(Int(displayedAPM.rounded()))
             let pad = String(repeating: "\u{2007}", count: max(0, 4 - s.count))
-            button.title = " ⚡" + pad + s
+            // No ⚡ glyph here — the bolt now lives in the button image (the gauge).
+            // A leading space keeps a small gap between the bolt and the number.
+            button.title = " " + pad + s
             return
         }
         // 타임 모드 (and 스포츠 while idle): the 토탈 시간 work span — the exact same
-        // number the dashboard "토탈 시간" card shows (휴식·미팅 포함, 6h+ 공백 제외),
+        // number the dashboard "토탈 시간" card shows (휴식·미팅 포함, 8h+ 공백 제외),
         // e.g. 6:38. The total amount (총량) of the day, not a since-start session clock.
         button.title = " " + Formatting.clock(totalSpanDisplaySec())
     }
@@ -865,7 +1090,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Recompute the 토탈 시간 work span from today's per-minute samples — mirrors the
     // dashboard timeBuckets() total: anchors are minutes with input or a meeting; the
-    // span sums consecutive-anchor gaps under 6h (a 6h+ gap is 퇴근, excluded). Inferred
+    // span sums consecutive-anchor gaps under 8h (an 8h+ gap is 퇴근, excluded). Inferred
     // carry-forward minutes never change this telescoped sum, so we skip that pass.
     private func recomputeTotalSpan() {
         let samples = activityLog.todaySamplesParsed()
@@ -879,10 +1104,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var base = 0.0
         if let first = anchors.first {
             base = 60                          // the first anchored minute owns its 60s
-            let sixH = 6 * 3600
+            let offGap = 8 * 3600
             for i in 1..<anchors.count {
                 let gap = anchors[i] - anchors[i - 1]
-                if gap < sixH { base += Double(gap) }
+                if gap < offGap { base += Double(gap) }
             }
             lastAnchorT = anchors.last ?? first
         } else {
@@ -902,25 +1127,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Manual Start/Stop Working
 
-    func startWorking() {
+    func startWorking(mode: String? = nil) {
+        // Remember the rail's chosen session mode (pomodoro/sprint/unlimited) even
+        // when the session is already live: picking a mode during the launch
+        // countdown must still switch the auto-started session's BGM playlist.
+        if let mode = mode { director.setSessionMode(mode) }
         guard !isWorking else { return }
-        isWorking = true
+        // Each session opens on its mode's pinned first track (per-mode playlist).
+        director.armModeOpener()
+        session.setRunning(true)
         sessionSeconds = 0
         committedProfileKey = ""
         frontStableSeconds = 0
         activeAppLabel = ""
-        bard.startBuffing()
+        // The gauge follows the live condition on the heartbeat; updateStatusTitle
+        // below refreshes it immediately so the bolt lights up on session start.
         updateStatusTitle()
     }
 
     func stopWorking() {
         guard isWorking else { return }
-        isWorking = false
+        session.setRunning(false)
         committedProfileKey = ""
         activeAppLabel = ""
         director.pauseSession()
         store.saveIfNeeded()
-        bard.stop()
+        gauge.showIdle()
         updateStatusTitle()
     }
 
@@ -951,6 +1183,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isWorking ? stopWorking() : startWorking()
     }
 
+    // App-wide shortcut handler (see the local monitor in applicationDidFinishLaunching). Fires only
+    // while the app is active, on any window/page. Match Command exactly (no extra modifiers) so we
+    // don't hijack ⌘⇧M / ⌥⌘S etc. Returns nil to swallow the event, or the event to let it pass.
+    private func handleShortcut(_ event: NSEvent) -> NSEvent? {
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard mods == .command else { return event }
+        // Match the physical key (keyCode), not the typed character: with a Korean input source
+        // active, charactersIgnoringModifiers is "ㅡ"/"ㄴ" rather than "m"/"s", so a character
+        // match falls through and the unhandled ⌘-key beeps.
+        switch event.keyCode {
+        case 46: toggleMute();    return nil  // kVK_ANSI_M
+        case 1:  toggleWorking(); return nil  // kVK_ANSI_S
+        default: return event
+        }
+    }
+
+    // Mute/unmute the sound the user actually hears. `session.isMuted` is the single source of truth;
+    // this flips it and syncs the two audio sources. While the app window is open the BGM webview
+    // owns output (native stays force-muted — see windowOwnsAudio), so push the new state into the
+    // webview's own mute control for instant feedback; the /api/bgm/now poll (which now carries
+    // `muted`) reconciles the web as a backstop. When the window is closed the native AudioEngine is
+    // the source, handled by applyNativeMute.
+    func toggleMute() {
+        session.toggleMuted()
+        applyMuteToSurfaces()
+        AppLog.log("⌘M mute -> \(session.isMuted) (windowOpen=\(appWindow.isOpen) nativeMuted=\(audio.muted))")
+    }
+
+    // The one place that writes audio.muted for the mute axis. Native output reflects the user's
+    // mute intent, but stays force-muted while the app window owns audio (windowOwnsAudio) so the
+    // native player and the BGM webview never both make sound.
+    func applyNativeMute() { audio.muted = windowOwnsAudio || session.isMuted }
+
+    // Push the current mute state to every audio surface: the BGM webview (what the user actually
+    // hears while the window is open) and the native player. window.__setMute is idempotent, so
+    // echoing it back to a webview that already flipped its own control is a harmless no-op — which
+    // lets every surface (⌘M, the rail mute dot, the BGM player button) route through this one path.
+    private func applyMuteToSurfaces() {
+        if appWindow.isOpen { appWindow.setWebMute(session.isMuted) }
+        applyNativeMute()
+    }
+
+    // Remote mute control from any page (POST /api/session/mute): set the source of truth and sync
+    // all surfaces. Safe to call from the BGM webview itself — the echo back is a no-op (see above).
+    func setMutedRemote(_ muted: Bool) {
+        session.setMuted(muted)
+        applyMuteToSurfaces()
+    }
+
     // MARK: - Actions invoked by the menu
 
     func reloadLibrary() {
@@ -961,7 +1242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if ProcessInfo.processInfo.environment["CM_DEBUG"] != nil {
             let range = library.bpmRange.map { " range \(Int($0.min))-\(Int($0.max))" } ?? ""
             FileHandle.standardError.write(
-                "[ConditionManager] loaded \(library.tracks.count) tracks (skipped \(library.skippedCount))\(range)\n"
+                "[ConditionManager] loaded \(library.tracks.count) tracks (\(library.skippedCount) no-BPM defaulted)\(range)\n"
                     .data(using: .utf8)!
             )
             for t in library.tracks {
@@ -1026,6 +1307,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !Settings.shared.musicEnabled { director.stop() }
     }
 
+    // Explicit on/off for the BGM system, used by the dashboard BGM view's remote control
+    // (POST /api/bgm/control). Mirrors toggleMusic so the menu-bar widget and the dashboard
+    // stay in sync. Enabling lets the heartbeat gating start the director on its next tick;
+    // disabling stops it immediately (and unmutes, since the browser no longer owns output).
+    func setBGMEnabled(_ on: Bool) {
+        guard Settings.shared.musicEnabled != on else { return }
+        Settings.shared.musicEnabled = on
+        if !on { director.stop(); applyNativeMute() }
+    }
+
     // Explicit "I don't like this track" from the menu: down-weight + cooldown +
     // immediate switch (handled by the director), plus a context snapshot to the
     // event log so the algorithm can later learn *when* it was disliked.
@@ -1077,13 +1368,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Dashboard
 
+    // Open (and focus) the native app window on the dashboard — no browser. The in-window toggle
+    // can switch to BGM from here.
     func openDashboard() {
-        dashboard.start { port in
-            DispatchQueue.main.async {
-                if let url = URL(string: "http://127.0.0.1:\(port)/") {
-                    NSWorkspace.shared.open(url)
-                }
+        dashboard.start { [weak self] port in
+            DispatchQueue.main.async { self?.appWindow.show(port: port, mode: .dashboard) }
+        }
+    }
+
+    // Open (and focus) the native app window in BGM mode — the guaranteed-autoplay surface. Opening
+    // BGM is an explicit "I want BGM" action, so it turns the BGM system on (symmetric with close=off).
+    func openBGMWindow() {
+        setBGMEnabled(true)
+        dashboard.start { [weak self] port in
+            DispatchQueue.main.async { self?.appWindow.show(port: port, mode: .bgm) }
+        }
+    }
+
+    // Toggle whether the app window auto-opens (in BGM mode) on launch; turning it on opens it now.
+    func toggleBGMWindowAutoOpen() {
+        let on = !Settings.shared.bgmWindowEnabled
+        Settings.shared.bgmWindowEnabled = on
+        if on { openBGMWindow() }
+    }
+
+    // MARK: - Unified window-toggle menu entry (single item, replaces the old two "열기" entries)
+
+    // Read-only state for the menu label: is the window open, and which mode is it showing.
+    // Mirrors the in-window segmented toggle exactly — same appWindow, same `mode`.
+    var appWindowIsOpen: Bool { appWindow.isOpen }
+    var appWindowMode: AppWindowController.Mode { appWindow.mode }
+    // Test-only: see AppWindowController.testUserClose and the /api/debug/window-close handler.
+    func appWindowTestClose() { appWindow.testUserClose() }
+
+    // Test-only (SPEC.html screenshots): synchronously fetch a PNG snapshot of the app window's
+    // WKWebView, blocking the calling (server) thread with a semaphore since HTTP GET handlers here
+    // are synchronous while WKWebView.takeSnapshot is completion-based. See /api/debug/snapshot.
+    func appWindowSnapshotPNG(mode: AppWindowController.Mode, tab: String?) -> Data? {
+        let sema = DispatchSemaphore(value: 0)
+        var result: Data?
+        DispatchQueue.main.async {
+            self.appWindow.snapshotPNG(mode: mode, tab: tab) { png in
+                result = png
+                sema.signal()
             }
+        }
+        _ = sema.wait(timeout: .now() + 5)
+        return result
+    }
+
+    // Single toggle action for the unified menu entry:
+    //  - window closed -> open it (in whatever mode it last showed, i.e. appWindow.mode default)
+    //  - window open   -> switch ITS mode (same window, same toggle the in-window segmented
+    //    control drives), so the menu entry and the in-window toggle always agree.
+    func toggleAppWindowMode() {
+        if appWindow.isOpen {
+            let next: AppWindowController.Mode = (appWindow.mode == .bgm) ? .dashboard : .bgm
+            if next == .bgm { openBGMWindow() } else { openDashboard() }
+        } else {
+            if appWindow.mode == .bgm { openBGMWindow() } else { openDashboard() }
         }
     }
 
@@ -1428,6 +1771,129 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         """
     }
 
+    // GET /workers.json — the worker snapshot ONLY, so the standalone 크론(/cron) page can poll
+    // cheaply without pulling the heavy /data.json review payload. Main-thread read: the registry
+    // is mutated on main (heartbeat recordRun/Error), matching sessionStateJSON's pattern.
+    func workersJSON() -> String {
+        DispatchQueue.main.sync { "{\"workers\":\(WorkerRegistry.shared.snapshotJSON())}" }
+    }
+
+    // GET /cron — the 크론(주기 작업) surface as its OWN page, decoupled from the dashboard's view
+    // system. It embeds the shared session rail (so navigation/challenge dial stay consistent) and
+    // renders the worker status table from /workers.json on its own 5s poll. Nothing here depends on
+    // DashboardContent; the rail's cmNav routes 크론 here via location.href.
+    func cronPage() -> String {
+        return """
+        <!doctype html><html lang="ko"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>크론 · 주기 작업</title>
+        <style>
+          :root{--bg:#0e1116;--panel:#141821;--line:#222a36;--fg:#e6e9ef;--mut:#8a93a3;--accent:#5b8cff}
+          *{box-sizing:border-box}
+          body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif}
+          header{position:sticky;top:0;z-index:30;display:flex;align-items:center;justify-content:space-between;gap:12px;
+            background:rgba(14,17,22,.92);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:14px 20px}
+          header h1{margin:0;font-size:16px}
+          header .sub{color:var(--mut);font-size:12px;margin-top:2px}
+          header a{color:var(--accent);text-decoration:none;font-size:12px}
+          main{max-width:1080px;margin:0 auto;padding:18px 20px 80px}
+          .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+          /* narrow window → horizontal scroll instead of squeezing cells until Korean breaks per-glyph */
+          .tablewrap{overflow-x:auto}
+          table{width:100%;min-width:980px;border-collapse:collapse}
+          th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top;white-space:nowrap}
+          th{color:var(--mut);font-size:11px;letter-spacing:.04em;text-transform:uppercase}
+          /* 하는 일: the only column allowed to wrap (at word boundaries), so the table stays sane */
+          td:nth-child(3){white-space:normal;word-break:keep-all;min-width:280px}
+          tbody tr:hover{background:#171c26}
+          .muted{color:var(--mut)}
+          .empty{color:var(--mut);text-align:center;padding:24px 0}
+          .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;margin:2px 4px 2px 0;background:#1d2230;border:1px solid var(--line);white-space:nowrap}
+          .chip.bad{background:#2a1620;border-color:#5a2738;color:#ff9db0}
+          .btn{background:#1d2230;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;text-decoration:none;display:inline-block;white-space:nowrap}
+          .btn:hover{background:#242b3b}
+          .btn:disabled{opacity:.5;cursor:default}
+          .legend{color:var(--mut);font-size:12px;margin-top:10px;display:flex;gap:18px;flex-wrap:wrap}
+          .foot{color:var(--mut);font-size:11px;text-align:center;margin-top:18px}
+        </style></head>
+        <body>
+          <script>window.CM_PAGE='cron';</script>
+          \(SessionRail.html())
+          <header>
+            <div><h1>크론 · 주기 작업</h1><div class="sub">주기적으로 실행해야 하는 백그라운드 작업(워커)을 등록·관리합니다</div></div>
+            <a class="btn" href="/worker-log" target="_blank">전체 로그 타임라인</a>
+          </header>
+          <main>
+            <div class="panel">
+              <div class="tablewrap">
+              <table>
+                <thead><tr><th>워커</th><th>구분</th><th>하는 일</th><th>주기</th><th>마지막 실행</th><th>다음 실행</th><th>실행</th><th>상태</th><th>로그</th></tr></thead>
+                <tbody id="workerrows"><tr><td colspan="9" class="empty">불러오는 중…</td></tr></tbody>
+              </table>
+              </div>
+              <div class="legend"><span><span class="chip" style="margin:0">동작 중</span> = 일정대로 실행 중 · <span class="chip bad" style="margin:0">유휴</span> = 현재 멈춤(세션 비활성 등) · <span class="chip bad" style="margin:0">오류</span> = 데이터 싱크 이상(로그 확인) · <b>구분</b> 기본=항상 실행, 플러그인=연결 시에만, 자동화=외부 스케줄러(launchd)가 주기 실행, 수동=퇴근 시 손으로 실행(주기 칸은 1회 실행 중 라운드 간격)</span></div>
+            </div>
+            <div class="foot">127.0.0.1 로컬 전용</div>
+          </main>
+          <script>
+          function esc(s){ return (s||'-').replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+          function post(p,b){ return fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); }
+          function fmtInterval(s){ if(s>=60&&s%60===0) return (s/60)+'분'; return s+'초'; }
+          function fmtAgo(sec){ if(sec<0) return '아직 없음';
+            if(sec<60) return sec+'초 전'; var m=(sec/60)|0,s=sec%60; return m+'분 '+(s>0?s+'초 ':'')+'전'; }
+          var _workers=[], _workersBase=0;
+          function renderWorkers(arr){
+            _workers=Array.isArray(arr)?arr:[];
+            _workersBase=performance.now();
+            var rows=document.getElementById('workerrows');
+            if(!_workers.length){ rows.innerHTML='<tr><td colspan="9" class="empty">데이터 없음</td></tr>'; return; }
+            var ownerLabel=function(o,manual){
+              if(manual) return '<span class="chip" style="margin:0;background:#7a8699;color:#fff" title="퇴근 시 손으로 실행(Scripts/bug-hunt.sh) — 스케줄러가 돌리지 않음">수동</span>';
+              if(o==='qa') return '<span class="chip" style="margin:0;background:#3aa0ff;color:#fff" title="외부 자동화(launchd → claude -p)가 보고">자동화</span>';
+              if(o&&o!=='core') return '<span class="chip" style="margin:0;background:#9b7bff;color:#fff" title="'+esc(o)+'">플러그인</span>';
+              return '<span class="muted">기본</span>';
+            };
+            rows.innerHTML=_workers.map(function(w,i){
+              var off=w.enabled===false;
+              var badge;
+              if(off) badge='<span class="chip bad" title="사용자가 끔">꺼짐</span>';
+              else { badge=w.active?'<span class="chip">동작 중</span>':'<span class="chip bad">유휴</span>';
+                if(w.error) badge='<span class="chip bad" title="'+esc(w.errorMsg||'')+'">오류 ⚠</span> '+badge; }
+              var more=w.id?'<a class="btn" href="/worker?id='+encodeURIComponent(w.id)+'" target="_blank">자세히</a>':'';
+              var ctrl='';
+              if(w.toggleable) ctrl+=' <button class="btn" onclick="toggleWorker(\\''+esc(w.id)+'\\','+off+')">'+(off?'켜기':'끄기')+'</button>';
+              if(w.runnable) ctrl+=' <button class="btn" title="지금 한 번 실행" onclick="runWorker(this,\\''+esc(w.id)+'\\')"'+(off?' disabled':'')+'>즉시 실행</button>';
+              return '<tr'+(w.error&&!off?' style="background:rgba(226,102,125,0.08)"':'')+(off?' style="opacity:0.6"':'')+'><td><b>'+esc(w.name)+'</b></td>'
+                +'<td>'+ownerLabel(w.owner,w.manual)+'</td>'
+                +'<td class="muted">'+esc(w.detail)+'</td>'
+                +'<td'+(w.manual?' title="자동 실행 주기가 아니라, 1회 실행 동안 도는 라운드 간격"':'')+'>'+(w.manual?'라운드 '+fmtInterval(w.interval):fmtInterval(w.interval))+'</td>'
+                +'<td id="wk_ago_'+i+'">'+fmtAgo(w.agoSec)+'</td>'
+                +'<td id="wk_next_'+i+'">'+(!off&&w.active&&w.nextSec>=0?w.nextSec+'초 후':'–')+'</td>'
+                +'<td>'+(w.runs||0).toLocaleString()+'</td>'
+                +'<td>'+badge+'</td>'
+                +'<td>'+more+ctrl+'</td></tr>';
+            }).join('');
+          }
+          function toggleWorker(id,wasOff){ post('/api/worker/toggle',{id:id,enabled:wasOff}).then(function(){ setTimeout(load,300); }); }
+          function runWorker(btn,id){ if(btn){ btn.disabled=true; btn.textContent='실행 중…'; }
+            post('/api/worker/run',{id:id}).then(function(){ setTimeout(load,1500); }); }
+          function tickWorkers(){ if(!_workers.length) return;
+            var elapsed=Math.floor((performance.now()-_workersBase)/1000);
+            _workers.forEach(function(w,i){
+              if(w.agoSec>=0){ var a=document.getElementById('wk_ago_'+i); if(a) a.textContent=fmtAgo(w.agoSec+elapsed); }
+              if(w.active&&w.nextSec>=0){ var n=document.getElementById('wk_next_'+i);
+                if(n) n.textContent=Math.max(0,w.nextSec-elapsed)+'초 후'; }
+            });
+          }
+          function load(){ fetch('/workers.json').then(function(r){ return r.json(); })
+            .then(function(d){ renderWorkers(d.workers); }).catch(function(){}); }
+          load();
+          setInterval(tickWorkers,1000);
+          </script>
+        </body></html>
+        """
+    }
+
     private func htmlEscape(_ s: String) -> String {
         s.replacingOccurrences(of: "&", with: "&amp;")
          .replacingOccurrences(of: "<", with: "&lt;")
@@ -1714,6 +2180,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let date = df.string(from: Date())
         let nowApp = activeAppLabel.isEmpty ? "-" : activeAppLabel
         let nowProfile = director.isPlaying ? director.activeProfileLabel : "-"
+        let nowPlan: String
+        if director.isPlaying && director.rainActive {
+            let rem = director.rainRemaining.map { " \(Int($0/60))분" } ?? ""
+            nowPlan = "🌧 폭우 리셋\(rem)"
+        } else {
+            nowPlan = director.isPlaying ? (bgmPlan.slot()?.label ?? "-") : "-"
+        }
         let nowTrack = director.isPlaying ? (audio.currentTitle ?? "-") : "-"
         let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         let nowSite = chromeDomain.isEmpty ? "-" : chromeDomain
@@ -1735,8 +2208,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "dev":\(AppPaths.isCustom),"dataLabel":\(jsonString(AppPaths.label)),\
         "today":{"seconds":\(Int(store.todaySeconds)),"label":"\(todayLabel)"},\
         "total":{"seconds":\(Int(store.data.totalSeconds)),"label":"\(totalLabel)"},\
-        "now":{"working":\(isWorking),"status":"\(liveStatus)",\
-        "app":\(jsonString(nowApp)),"profile":\(jsonString(nowProfile)),"track":\(jsonString(nowTrack)),\
+        "now":{"working":\(isWorking),"muted":\(session.isMuted),"status":"\(liveStatus)",\
+        "app":\(jsonString(nowApp)),"profile":\(jsonString(nowProfile)),"plan":\(jsonString(nowPlan)),"track":\(jsonString(nowTrack)),\
         "site":\(jsonString(nowSite)),"key":\(Int(activity.keyRate)),"mouse":\(Int(activity.mouseRate)),\
         "tier":\(jsonString(nowTier.label)),"mult":\(nowTier.multiplier),\
         "apm":\(nowAPM),"norm":\(nowNormStr),"gear":\(nowGearJSON),\
@@ -1748,6 +2221,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         """
     }
 
+    // GET /api/session/state — the shared live state the sidebar rail's challenge dial polls:
+    // {working, muted} from the single source of truth, plus the current session's elapsed active
+    // seconds (so the dial shows the right time when a page loads mid-session). Kept separate from
+    // the heavier /data.json so any page (dashboard, goal) can poll it cheaply.
+    func sessionStateJSON() -> String {
+        DispatchQueue.main.sync {
+            // Current sprint's wall-clock window (epoch secs) so the dial's 스프린트 mode can count
+            // down to the sprint target; 0 when no sprint exists.
+            let sp = self.reviewStore.currentSprint
+            let spStart = sp?.startAt.map { Int($0.timeIntervalSince1970) } ?? 0
+            let spTarget = sp?.targetAt.map { Int($0.timeIntervalSince1970) } ?? 0
+            return "{\"working\":\(self.session.isRunning),\"muted\":\(self.session.isMuted),"
+                + "\"seconds\":\(Int(self.sessionSeconds)),\"today\":\(Int(self.store.todaySeconds)),"
+                + "\"bgm\":\(Settings.shared.musicEnabled),"
+                + "\"sprintStart\":\(spStart),\"sprintTarget\":\(spTarget)}"
+        }
+    }
+
+    // GET /api/equipment — 장비+숙련도 state for the equipment page and the rail's
+    // settings-menu level chip: per-category level/XP/need, average + overall level,
+    // market inflation, the recent award ledger, plus the live plugin list so the
+    // page renders one box per plugin (same serialized form as /data.json uses).
+    func equipmentJSON() -> String {
+        let payload = equipment.statePayload()
+        let base = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+        var s = String(decoding: base, as: UTF8.self)
+        if s.hasSuffix("}") {
+            s.removeLast()
+            s += ",\"plugins\":\(pluginStore.pluginsJSON())}"
+        }
+        return s
+    }
+
+    // USER-driven usage-event counts per equipment category over the last `window`
+    // seconds — the pomodoro EXP attribution input. Only deliberate user actions
+    // count: skills = skill executions (skillUsageEvents), chat = dashboard chat
+    // user messages. Autonomous activity is deliberately EXCLUDED — background
+    // workers fire 24/7 regardless of what the user does, so counting them would
+    // hand every pomodoro's EXP to 워커 (confirmed in testing). 위임/워커/팀/
+    // 플러그인 join once they have a user-action signal; with no usage at all the
+    // store falls back to 대화 (기본기).
+    private func equipmentUsage(within window: TimeInterval) -> [String: Int] {
+        let cutoff = Date().timeIntervalSince1970 - window
+        var usage: [String: Int] = [:]
+        usage["skills"] = skillUsageEvents().filter {
+            let e = ($0["epoch"] as? Double) ?? Double(($0["epoch"] as? Int) ?? 0)
+            return e >= cutoff
+        }.count
+        usage["chat"] = chatStore.messages.filter {
+            $0.role == "user" && $0.createdAt.timeIntervalSince1970 >= cutoff
+        }.count
+        return usage
+    }
+
     // GET /history.json?days=N -> compact per-day samples for the 히스토리 tab.
     // The browser runs the same carry-forward + timeBuckets + deep-focus logic on
     // each day, so daily 총/책상/집중 and 초집중 sessions match the today view exactly.
@@ -1756,6 +2283,114 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .first(where: { $0.name == "days" })?.value ?? ""
         let days = Int(daysStr) ?? 180
         return "{\"days\":\(activityLog.historyJSON(days: days))}"
+    }
+
+    // GET /tokens.json?days=N — real daily token usage summed from every Claude session
+    // transcript under ~/.claude/projects, bucketed by the local calendar day the message
+    // was written. This is the actual "how many tokens did I spend each day" timeline (the
+    // token view's goal-based g.tokens field is manually set and usually empty). Each day's
+    // total counts new input + output + cache-creation once; cache_read is excluded because
+    // it replays already-counted context every turn and would inflate totals by orders of
+    // magnitude (same convention as the per-session breakdown headline).
+    func dashboardTokens(_ path: String) -> String {
+        let daysStr = URLComponents(string: "http://x" + path)?.queryItems?
+            .first(where: { $0.name == "days" })?.value ?? ""
+        let days = max(1, Int(daysStr) ?? 90)
+        let fm = FileManager.default
+        // Only look back `days` from the start of today; a transcript touched before that
+        // window cannot contribute to any in-window day, so skip it by mtime (cheap stat).
+        let cutoff = Calendar.current.startOfDay(for: Date()).addingTimeInterval(-Double(days) * 86400)
+        let dayFmt = DateFormatter()
+        dayFmt.locale = Locale(identifier: "en_US_POSIX")
+        dayFmt.dateFormat = "yyyy-MM-dd"   // LOCAL time — same day boundary the rest of the UI uses
+
+        // Enumerate every project's *.jsonl. Missing base dir -> empty timeline.
+        guard let subs = try? fm.contentsOfDirectory(at: claudeProjectsBase,
+                includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+            return "{\"days\":[]}"
+        }
+        var files: [URL] = []
+        for dir in subs where (try? dir.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            let inner = (try? fm.contentsOfDirectory(at: dir,
+                includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey])) ?? []
+            for f in inner where f.pathExtension == "jsonl" { files.append(f) }
+        }
+
+        var totals: [String: Int] = [:]           // day -> tokens
+        var sessionsPerDay: [String: Set<String>] = [:]  // day -> distinct session files that spent tokens
+        for f in files {
+            let rv = try? f.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            let mtime = rv?.contentModificationDate ?? .distantPast
+            let size = rv?.fileSize ?? 0
+            if mtime < cutoff { continue }
+
+            let perDay = tokensByDay(file: f, mtime: mtime, size: size)
+            let sid = f.deletingPathExtension().lastPathComponent
+            for (day, tok) in perDay {
+                totals[day, default: 0] += tok
+                sessionsPerDay[day, default: []].insert(sid)
+            }
+        }
+
+        // Active human seconds per day — for the 가치 mode's time-efficiency weighting.
+        let activeSec = activityLog.activeSecondsByDay(days: days)
+
+        // Emit only in-window days (a long session can carry an out-of-window day), newest first.
+        let minDay = dayFmt.string(from: cutoff)
+        let rows = totals.keys.filter { $0 >= minDay }.sorted(by: >).map { day -> String in
+            let tokK = Int((Double(totals[day] ?? 0) / 1000.0).rounded())   // tokens -> K, matches UI unit
+            let sess = sessionsPerDay[day]?.count ?? 0
+            return "{\"day\":\(jsonString(day)),\"tokens\":\(totals[day] ?? 0),\"k\":\(tokK),"
+                + "\"sessions\":\(sess),\"activeSec\":\(activeSec[day] ?? 0)}"
+        }
+        return "{\"days\":[\(rows.joined(separator: ","))]}"
+    }
+
+    // Parse one transcript into per-local-day token totals (input + output + cache-creation;
+    // cache_read excluded to avoid replayed-context inflation). Cached by (mtime,size) so an
+    // unchanged file is never re-parsed — the live/growing session re-parses, completed ones
+    // stay cached. Shared by the daily timeline and the per-session goal total.
+    private func tokensByDay(file: URL, mtime: Date, size: Int) -> [String: Int] {
+        let key = file.path
+        tokenDayLock.lock()
+        let cached = tokenDayCache[key]
+        tokenDayLock.unlock()
+        if let c = cached, c.mtime == mtime, c.size == size { return c.days }
+
+        var perDay: [String: Int] = [:]
+        let dayFmt = DateFormatter()
+        dayFmt.locale = Locale(identifier: "en_US_POSIX")
+        dayFmt.dateFormat = "yyyy-MM-dd"   // LOCAL time — same day boundary as the rest of the UI
+        if let data = try? Data(contentsOf: file) {
+            String(decoding: data, as: UTF8.self).enumerateLines { line, _ in
+                guard let d = line.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                      (obj["type"] as? String) == "assistant",
+                      let msg = obj["message"] as? [String: Any],
+                      let usage = msg["usage"] as? [String: Any],
+                      let tsStr = obj["timestamp"] as? String,
+                      let ts = self.parseTS(tsStr) else { return }
+                let input = (usage["input_tokens"] as? Int) ?? 0
+                let output = (usage["output_tokens"] as? Int) ?? 0
+                let cc = (usage["cache_creation_input_tokens"] as? Int) ?? 0
+                let spent = input + output + cc
+                if spent == 0 { return }
+                perDay[dayFmt.string(from: ts), default: 0] += spent
+            }
+        }
+        tokenDayLock.lock(); tokenDayCache[key] = (mtime, size, perDay); tokenDayLock.unlock()
+        return perDay
+    }
+
+    // Real token total (in K) for a goal's linked Claude session, summed from its transcript.
+    // 0 when no transcript resolves. Cached via tokensByDay, so a completed goal parses once.
+    private func sessionTokenK(for goal: ReviewStore.Goal) -> Int {
+        guard let url = resolveTranscript(goal) else { return 0 }
+        let rv = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let mtime = rv?.contentModificationDate ?? .distantPast
+        let size = rv?.fileSize ?? 0
+        let total = tokensByDay(file: url, mtime: mtime, size: size).values.reduce(0, +)
+        return Int((Double(total) / 1000.0).rounded())
     }
 
     // Tiny real-time payload for the APM gauge, polled at 1 Hz (separate from the
@@ -1799,12 +2434,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         + "\"title\":\(jsonString(e.title)),\"href\":\(jsonString(href)),"
                         + "\"addedAt\":\(e.addedAt.timeIntervalSince1970)}"
                 }.joined(separator: ",")
+                // Tokens: the manual g.tokens field wins when set; otherwise fall back to the
+                // real total parsed from this goal's linked session transcript (cached), so the
+                // token view shows actual usage instead of an empty 0.
+                let effTokens = g.tokens > 0 ? g.tokens : self.sessionTokenK(for: g)
+                // Link chain (source-side): the client renders the link dot and follows these in export.
+                let links = g.links.map { jsonString($0) }.joined(separator: ",")
+                // Subtask summary (goal-NN/tasks/*): lets the dashboard 유형(type) filter
+                // render task rows under the goal — without this, an added task is invisible
+                // in the 목록 until the goal page is opened.
+                let tasks = self.subtaskSummaryJSON(seq: g.seq)
                 return "{\"id\":\(jsonString(g.id)),\"seq\":\(g.seq),\"text\":\(jsonString(g.text)),\"parent\":\(jsonString(g.parent)),"
+                    + "\"links\":[\(links)],"
                     + "\"status\":\(jsonString(g.status)),\"trackedSeconds\":\(g.trackedSeconds),\"startedAt\":\(started),\"waitingSince\":\(waiting),"
-                    + "\"energy\":\(g.energy),\"agents\":[\(agents)],\"tokens\":\(g.tokens),\"value\":\(g.value),"
+                    + "\"energy\":\(g.energy),\"agents\":[\(agents)],\"tokens\":\(effTokens),\"value\":\(g.value),"
                     + "\"evidence\":[\(evidence)],\"sessionId\":\(jsonString(g.sessionId)),"
                     + "\"targetAt\":\(target),\"completedAt\":\(completed),"
-                    + "\"sprint\":\(g.sprint),\"bump\":\(g.bump),\"released\":\(g.released),\"archived\":\(g.archived),\"priority\":\(jsonString(g.priority))}"
+                    + "\"sprint\":\(g.sprint),\"bump\":\(g.bump),\"released\":\(g.released),\"archived\":\(g.archived),\"priority\":\(jsonString(g.priority)),"
+                    + "\"tasks\":[\(tasks)]}"
             }
             .joined(separator: ",")
         // Release log (newest first): when each commit happened + the value it produced.
@@ -1836,9 +2483,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return "{\"id\":\(jsonString(item.id)),\"text\":\(jsonString(item.text)),"
                     + "\"parent\":\(jsonString(item.parent)),\"sprint\":\(item.sprint),"
                     + "\"status\":\(jsonString(item.status)),\"duplicate\":\(item.duplicate),"
+                    + "\"kind\":\(jsonString(item.kind)),"
+                    + "\"jobKind\":\(jsonString(item.jobKind)),\"title\":\(jsonString(item.title)),"
+                    + "\"resultHTML\":\(jsonString(item.resultHTML)),\"error\":\(jsonString(item.error)),"
                     + "\"note\":\(jsonString(item.note)),\"refining\":\(!item.refineSession.isEmpty),"
-                    + "\"refineSession\":\(jsonString(item.refineSession)),"
+                    + "\"refineSession\":\(jsonString(item.refineSession)),\"findOnly\":\(item.findOnly),"
+                    // AI placement verdict (Option D) — the queue card pre-fills the promote form
+                    // from these; the user can override parentSeq/priority at resolve time.
+                    + "\"placement\":\(jsonString(item.placement)),\"suggestedParentSeq\":\(item.suggestedParentSeq),"
+                    + "\"priority\":\(jsonString(item.priority)),\"confidence\":\(item.confidence),"
+                    + "\"rationale\":\(jsonString(item.rationale)),"
                     + "\"matches\":[\(matches)],\"createdAt\":\(item.createdAt.timeIntervalSince1970)}"
+            }
+            .joined(separator: ",")
+        // 큐 처리 히스토리 (newest first, last 30): what each resolution did — so the 큐 탭 can
+        // show the audit trail, link to the created goal/task, and offer 번복 (undo).
+        let queueHistory = reviewStore.queueHistory.suffix(30).reversed()
+            .map { h -> String in
+                "{\"id\":\(jsonString(h.id)),\"at\":\(h.at.timeIntervalSince1970),"
+                    + "\"action\":\(jsonString(h.action)),\"text\":\(jsonString(h.text)),"
+                    + "\"seq\":\(h.seq),\"parentSeq\":\(h.parentSeq),\"task\":\(jsonString(h.taskFolder)),"
+                    + "\"fallback\":\(h.fallback),\"undone\":\(h.undone)}"
             }
             .joined(separator: ",")
         let contribs = r.contributions
@@ -1849,7 +2514,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .joined(separator: ",")
         func optInt(_ v: Int?) -> String { v.map(String.init) ?? "null" }
         return "{\"goals\":[\(goals)],\"releases\":[\(releases)],\"sprints\":[\(sprints)],"
-            + "\"aiQueue\":[\(aiQueue)],"
+            + "\"aiQueue\":[\(aiQueue)],\"queueHistory\":[\(queueHistory)],"
             + "\"selfScore\":\(optInt(r.selfScore)),\"submittedSelf\":\(r.submittedSelf),"
             + "\"contributions\":{\(contribs)},\"notes\":{\(notes)},"
             + "\"aiScore\":\(optInt(r.aiScore)),\"aiNote\":\(jsonString(r.aiNote)),"
@@ -1900,9 +2565,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         skillsRoot.appendingPathComponent("skills", isDirectory: true)
     }
 
+    // Path to the append-only skill-usage log the PostToolUse hook (cc-skill-hook.sh) writes.
+    // One JSONL line per skill invocation: {epoch, ts, skill, session, cwd}. This file IS
+    // the history surfaced on the skills page.
+    private var skillUsageLog: URL {
+        AppPaths.base.appendingPathComponent("skill-usage.jsonl", isDirectory: false)
+    }
+
+    // Read + parse the usage log into events (newest LAST, i.e. file order). Each event is a
+    // dict with epoch/ts/skill/session/cwd. Malformed lines are skipped. Returns [] when the
+    // log does not exist yet (no skill has ever run).
+    private func skillUsageEvents() -> [[String: Any]] {
+        guard let text = try? String(contentsOf: skillUsageLog, encoding: .utf8) else { return [] }
+        var out: [[String: Any]] = []
+        for line in text.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty,
+                  let data = trimmed.data(using: .utf8),
+                  let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let skill = obj["skill"] as? String, !skill.isEmpty else { continue }
+            out.append(obj)
+        }
+        return out
+    }
+
+    // Aggregate the usage log per skill slug (lowercased) -> (count, lastEpoch). Used to
+    // stamp each skill row with its use count and last-used time.
+    private func skillUsageAgg() -> [String: (count: Int, lastEpoch: Double)] {
+        var agg: [String: (count: Int, lastEpoch: Double)] = [:]
+        for ev in skillUsageEvents() {
+            guard let slug = (ev["skill"] as? String)?.lowercased(), !slug.isEmpty else { continue }
+            let epoch = (ev["epoch"] as? Double) ?? Double((ev["epoch"] as? Int) ?? 0)
+            let prev = agg[slug] ?? (0, 0)
+            agg[slug] = (prev.count + 1, max(prev.lastEpoch, epoch))
+        }
+        return agg
+    }
+
     func skillsJSON() -> String {
         let fm = FileManager.default
         let dir = skillsDir
+        let usage = skillUsageAgg()
         var items: [[String: Any]] = []
         let keys: [URLResourceKey] = [.contentModificationDateKey, .isDirectoryKey]
         let entries = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys,
@@ -1922,6 +2625,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let dMod = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             let mMod = (try? skillMd.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             let updated = max(dMod, mMod)
+            // Merge usage stats. The hook records ONE slug per event; for user skills it is
+            // usually the folder name, but match on the frontmatter `name:` too so either
+            // form is counted. Union the candidate keys (they collapse when equal), summing
+            // counts and taking the latest use.
+            var useCount = 0
+            var lastEpoch = 0.0
+            var seenKeys = Set<String>()
+            for key in [meta.name.lowercased(), url.lastPathComponent.lowercased()] where !key.isEmpty {
+                guard seenKeys.insert(key).inserted, let u = usage[key] else { continue }
+                useCount += u.count
+                lastEpoch = max(lastEpoch, u.lastEpoch)
+            }
+            let lastUsed = lastEpoch > 0 ? Self.koShortDate(Date(timeIntervalSince1970: lastEpoch)) : ""
             items.append([
                 "name": meta.name,
                 "folder": url.lastPathComponent,
@@ -1931,6 +2647,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 "author": meta.author,
                 "updated": Self.koShortDate(updated),
                 "updatedTs": updated.timeIntervalSince1970,
+                "useCount": useCount,
+                "lastUsed": lastUsed,
+                "lastUsedTs": lastEpoch,
             ])
         }
         items.sort { (($0["updatedTs"] as? Double) ?? 0) > (($1["updatedTs"] as? Double) ?? 0) }
@@ -1939,6 +2658,266 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let payload: [String: Any] = ["dir": dir.path, "root": skillsRoot.path,
                                       "isDefault": Settings.shared.skillsRoot?.isEmpty ?? true,
                                       "skills": items]
+        let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    // Read-only feed for the 에이전트 page. Surfaces every skill that follows the
+    // "responsible agent" convention — a skill folder with an agent/ subfolder holding
+    // agent/ACTIVE (current version) and agent/vN-*.md (version history), plus ledger/*.jsonl
+    // run records. For each we compute: active version, per-version success (the retrospective
+    // arc that shows why a version was replaced), overall purpose-achievement rate, and a
+    // recent run timeline — so the user sees when the agent ran, whether it met its purpose,
+    // and when it needs replacing.
+    func agentsJSON() -> String {
+        let fm = FileManager.default
+        let agentsDir = skillsRoot.appendingPathComponent("agents", isDirectory: true)
+        let skillsBase = skillsDir
+        var items: [[String: Any]] = []
+        var history = loadAgentHistory()
+        var historyDirty = false
+        let isoFmt = ISO8601DateFormatter()
+        // Universal ledger of agent actions (keyed by "agent"); grouped per agent below into
+        // the 기능 역할 (function-role) tab so the user sees which roles each agent performs,
+        // how often, and — where recorded — how cleanly (rounds).
+        let updateLog = loadAgentUpdateLog()
+        let entries = (try? fm.contentsOfDirectory(at: agentsDir, includingPropertiesForKeys: nil,
+                                                   options: [.skipsHiddenFiles])) ?? []
+        for url in entries where url.pathExtension == "md" {
+            let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            let front = Self.parseFrontmatter(text)
+            let name = front["name"] ?? url.deletingPathExtension().lastPathComponent
+            let desc = front["description"] ?? ""
+            let model = front["model"] ?? "inherit"
+            let harness = front["harness"] ?? ""
+
+            // Modification history: ~/.claude/agents isn't git-tracked, so we snapshot each
+            // revision (keyed by a launch-stable content hash) stamped with the file's mtime.
+            // A new snapshot is recorded only when the file content actually changed, and each
+            // one carries the purpose (description) as it read then — so the user can see how
+            // the stated purpose evolved and whether an edit reflected the intended goal.
+            let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? Date()
+            let sig = Self.stableHash(text)
+            var hist = history[url.lastPathComponent] ?? []
+            if (hist.last?["sig"] as? String) != sig {
+                let snippet = desc.count > 200 ? String(desc.prefix(200)) + "…" : desc
+                hist.append(["ts": isoFmt.string(from: mtime), "model": model, "desc": snippet, "sig": sig])
+                if hist.count > 20 { hist = Array(hist.suffix(20)) }
+                history[url.lastPathComponent] = hist
+                historyDirty = true
+            }
+            let clientHist: [[String: Any]] = hist.map {
+                ["ts": $0["ts"] ?? "", "model": $0["model"] ?? "", "desc": $0["desc"] ?? ""]
+            }
+
+            // Join run history + retrospective from the harness skill this agent belongs to
+            // (declared via the agent's custom `harness:` frontmatter field).
+            var runs = 0, oks = 0
+            var lastTs = "", lastOutcome = "", retro = ""
+            var recent: [[String: Any]] = []
+            if !harness.isEmpty {
+                let hdir = skillsBase.appendingPathComponent(harness, isDirectory: true)
+                retro = (try? String(contentsOf: hdir.appendingPathComponent("retro.md"), encoding: .utf8)) ?? ""
+                let ledgerDir = hdir.appendingPathComponent("ledger", isDirectory: true)
+                let ledgerFiles = ((try? fm.contentsOfDirectory(at: ledgerDir, includingPropertiesForKeys: nil,
+                                                                options: [.skipsHiddenFiles])) ?? [])
+                    .filter { $0.pathExtension == "jsonl" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+                for lf in ledgerFiles {
+                    let t = (try? String(contentsOf: lf, encoding: .utf8)) ?? ""
+                    for line in t.split(separator: "\n") {
+                        guard let d = line.data(using: .utf8),
+                              let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { continue }
+                        if (o["summary"] as? Bool) == true { continue }
+                        let ts = (o["ts"] as? String) ?? ""
+                        if ts.isEmpty && o["report"] == nil && o["goal_id"] == nil { continue }
+                        let label = (o["after"] as? String) ?? (o["report"] as? String) ?? (o["reason"] as? String) ?? ""
+                        let note = (o["note"] as? String) ?? ""
+                        // Exclude non-attempts (dry-runs) and infra failures (app down) — neither
+                        // reflects whether the AGENT did its job well.
+                        if label.hasPrefix("(dry-run") || note.contains("http-error")
+                            || note.contains("spawn-error") { continue }
+                        let ok = ((o["ok"] as? Bool) ?? (o["synced"] as? Bool)) ?? false
+                        runs += 1; if ok { oks += 1 }
+                        lastTs = ts; lastOutcome = ok ? "ok" : "fail"
+                        recent.append(["ts": ts, "ok": ok, "label": label])
+                    }
+                }
+            } else {
+                // Standalone agents (no harness) don't own a harness ledger — their runs live in the
+                // universal agent-update-log, keyed by agent name. Derive the SAME run headline from
+                // there so they don't read as "기록 없음" despite an active ledger. `updateLog` is
+                // chronological, so the last match is the most recent run.
+                for o in updateLog where (o["agent"] as? String) == name {
+                    let ts = (o["ts"] as? String) ?? ""
+                    if ts.isEmpty { continue }
+                    // A missing `ok` means a recorded, completed action — count it as a success
+                    // unless the entry explicitly says otherwise.
+                    let ok = (o["ok"] as? Bool) ?? true
+                    let label = (o["func"] as? String) ?? (o["summary"] as? String)
+                        ?? (o["type"] as? String) ?? ""
+                    runs += 1; if ok { oks += 1 }
+                    lastTs = ts; lastOutcome = ok ? "ok" : "fail"
+                    recent.append(["ts": ts, "ok": ok, "label": label])
+                }
+            }
+            // Headline = success over the last 20 real runs (reflects the current agent, not
+            // dragged down by old ledger entries).
+            let window = recent.suffix(20)
+            let windowOks = window.filter { ($0["ok"] as? Bool) == true }.count
+            // Per-function-role rollup from the universal ledger (this agent's entries only).
+            let functions = Self.functionRoles(forAgent: name, in: updateLog)
+            items.append([
+                "name": name, "file": url.lastPathComponent, "desc": desc, "model": model,
+                "harness": harness, "retro": retro, "runs": runs, "oks": oks,
+                "okRate": runs > 0 ? Double(oks) / Double(runs) : 0,
+                "recentRate": window.isEmpty ? 0 : Double(windowOks) / Double(window.count),
+                "recentN": window.count, "lastTs": lastTs, "lastOutcome": lastOutcome,
+                "recent": Array(recent.suffix(40)), "history": clientHist, "functions": functions,
+            ])
+        }
+        items.sort { (($0["runs"] as? Int) ?? 0) > (($1["runs"] as? Int) ?? 0) }
+        if historyDirty { saveAgentHistory(history) }
+        let payload: [String: Any] = ["dir": agentsDir.path, "root": skillsRoot.path, "agents": items]
+        let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    // Generic YAML frontmatter -> [key: value] for top-level single-line scalar fields.
+    // Unwraps quoted scalars; skips comments, blank lines, and nested/indented values.
+    static func parseFrontmatter(_ text: String) -> [String: String] {
+        var map: [String: String] = [:]
+        let lines = text.components(separatedBy: "\n")
+        guard let first = lines.first, first.trimmingCharacters(in: .whitespaces) == "---" else { return map }
+        var i = 1
+        while i < lines.count {
+            let raw = lines[i]; i += 1
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            if trimmed == "---" { break }
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            if raw.hasPrefix(" ") || raw.hasPrefix("\t") { continue }   // nested value
+            guard let colon = raw.firstIndex(of: ":") else { continue }
+            let key = String(raw[raw.startIndex..<colon]).trimmingCharacters(in: .whitespaces)
+            var val = String(raw[raw.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            if val.count >= 2, (val.hasPrefix("\"") && val.hasSuffix("\"")) || (val.hasPrefix("'") && val.hasSuffix("'")) {
+                val = String(val.dropFirst().dropLast())
+            }
+            if !key.isEmpty { map[key] = val }
+        }
+        return map
+    }
+
+    // Deterministic (launch-stable) 64-bit FNV-1a hash. String.hashValue is per-process
+    // seeded, so it would flag every app restart as a content change — this doesn't.
+    static func stableHash(_ s: String) -> String {
+        var h: UInt64 = 0xcbf29ce484222325
+        for b in s.utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
+        return String(h, radix: 16)
+    }
+
+    // Per-agent modification history, persisted under the app data dir (never the read-only
+    // ~/.claude tree). Shape: { "<file>.md": [ {ts, model, desc, sig}, … ] }.
+    private var agentHistoryURL: URL { AppPaths.base.appendingPathComponent("agent-history.json") }
+    private func loadAgentHistory() -> [String: [[String: Any]]] {
+        guard let data = try? Data(contentsOf: agentHistoryURL),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: [[String: Any]]]
+        else { return [:] }
+        return obj
+    }
+    private func saveAgentHistory(_ h: [String: [[String: Any]]]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: h) else { return }
+        try? data.write(to: agentHistoryURL)
+    }
+
+    // The universal agent action ledger — one JSON line per action, keyed by "agent".
+    // Responsible agents (e.g. manager-qa) append to it whenever they perform a function-role
+    // or self-update. Minimum shape: {ts, agent, type, summary}; richer entries add
+    // {func, rounds, ok} so the 기능 역할 tab can grade HOW WELL a role was performed
+    // (round 1 = done in one pass; many rounds = the role was hard/mis-scoped).
+    // The universal ledger now lives under the data dir's `ledger/` folder. Older builds/agents
+    // appended it directly under the base — we still read that legacy path and merge (legacy first,
+    // so its older entries sort ahead of post-move ones), so nothing is lost during the move or if a
+    // straggler appends there mid-run.
+    private var agentUpdateLogURL: URL { AppPaths.base.appendingPathComponent("ledger/agent-update-log.jsonl") }
+    private var agentUpdateLogLegacyURL: URL { AppPaths.base.appendingPathComponent("agent-update-log.jsonl") }
+    private func loadAgentUpdateLog() -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        for url in [agentUpdateLogLegacyURL, agentUpdateLogURL] {
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            for line in text.split(separator: "\n") {
+                guard let d = line.data(using: .utf8),
+                      let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { continue }
+                out.append(o)
+            }
+        }
+        return out
+    }
+
+    // Roll an agent's ledger entries up into per-function-role rows: how many times each role
+    // was performed and — when the agent recorded `rounds` — how cleanly. This is the signal
+    // for "did this role get done well?": a role that keeps taking many rounds (or is performed
+    // far more than others) is a candidate to split out or update. Grouped by an explicit
+    // `func` label if present, else a human label mapped from `type`. Sorted by count desc.
+    static func functionRoles(forAgent name: String, in log: [[String: Any]]) -> [[String: Any]] {
+        func roleName(_ o: [String: Any]) -> String {
+            if let f = (o["func"] as? String)?.trimmingCharacters(in: .whitespaces), !f.isEmpty { return f }
+            switch (o["type"] as? String) ?? "" {
+            case "spec-update": return "SPEC 관리·동기화"
+            case "agent-update": return "에이전트 자기개선"
+            case "format-change": return "포맷 변경"
+            case let t where !t.isEmpty: return t
+            default: return "기타"
+            }
+        }
+        func roundsOf(_ o: [String: Any]) -> Int? {
+            if let i = o["rounds"] as? Int { return i }
+            if let n = o["rounds"] as? NSNumber { return n.intValue }
+            return nil
+        }
+        var order: [String] = []
+        var groups: [String: [[String: Any]]] = [:]
+        for o in log {
+            guard ((o["agent"] as? String) ?? "") == name else { continue }
+            let r = roleName(o)
+            if groups[r] == nil { groups[r] = []; order.append(r) }
+            groups[r]?.append(o)
+        }
+        var rows: [[String: Any]] = []
+        for r in order {
+            let entries = groups[r] ?? []
+            let roundsVals = entries.compactMap(roundsOf)
+            let sorted = entries.sorted { (($0["ts"] as? String) ?? "") > (($1["ts"] as? String) ?? "") }
+            let lastTs = sorted.first.flatMap { $0["ts"] as? String } ?? ""
+            let sample = sorted.first.flatMap { $0["summary"] as? String } ?? ""
+            var row: [String: Any] = [
+                "name": r, "count": entries.count, "lastTs": lastTs, "sample": sample,
+            ]
+            if !roundsVals.isEmpty {
+                row["avgRounds"] = Double(roundsVals.reduce(0, +)) / Double(roundsVals.count)
+                row["maxRounds"] = roundsVals.max() ?? 0
+            }
+            rows.append(row)
+        }
+        rows.sort { (($0["count"] as? Int) ?? 0) > (($1["count"] as? Int) ?? 0) }
+        return rows
+    }
+
+    // Chronological usage feed for the skills page "히스토리" tab — newest first, capped so a
+    // long-lived log never bloats the response. Each entry: skill / ts / epoch / cwd.
+    func skillHistoryJSON() -> String {
+        let events = skillUsageEvents().reversed()   // file order is oldest-first; show newest-first
+        let cap = 500
+        var rows: [[String: Any]] = []
+        for ev in events.prefix(cap) {
+            rows.append([
+                "skill": (ev["skill"] as? String) ?? "",
+                "ts": (ev["ts"] as? String) ?? "",
+                "epoch": (ev["epoch"] as? Double) ?? Double((ev["epoch"] as? Int) ?? 0),
+                "cwd": (ev["cwd"] as? String) ?? "",
+            ])
+        }
+        let payload: [String: Any] = ["events": rows, "count": rows.count,
+                                      "total": skillUsageEvents().count]
         let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
     }
@@ -1959,6 +2938,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? fm.createDirectory(at: base, withIntermediateDirectories: true)
                 NSWorkspace.shared.activateFileViewerSelecting([base])
             }
+        }
+        return "{\"ok\":true}"
+    }
+
+    // Reveal an official agent's .md file in ~/.claude/agents/ (selects the file in Finder;
+    // falls back to the agents folder). Same bare-name path-traversal guard as revealSkill.
+    func revealAgent(file: String) -> String {
+        let base = skillsRoot.appendingPathComponent("agents", isDirectory: true)
+        let safe = file.trimmingCharacters(in: .whitespaces)
+        let target = (!safe.isEmpty && !safe.contains("/") && !safe.contains(".."))
+            ? base.appendingPathComponent(safe) : base
+        DispatchQueue.main.async {
+            let fm = FileManager.default
+            let sel = fm.fileExists(atPath: target.path) ? target : base
+            NSWorkspace.shared.activateFileViewerSelecting([sel])
         }
         return "{\"ok\":true}"
     }
@@ -2142,10 +3136,142 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return aiDuplicateCheck(text: (obj["text"] as? String) ?? "",
                                     parent: (obj["parent"] as? String) ?? "")
         }
+        // BGM view took over playback in the browser (or released it): mute/unmute the
+        // native AudioEngine so the same track is not heard twice. Just a flag set on main.
+        if path == "/api/bgm/native" {
+            let mute = (obj["mute"] as? Bool) ?? false
+            // The app window's ownership latch wins: while the window is open (either mode), native
+            // stays muted even if the player (e.g. on a track switch) briefly asks to unmute.
+            DispatchQueue.main.sync { self.audio.muted = mute || self.windowOwnsAudio }
+            return "{\"ok\":true}"
+        }
+        // Test-only hook: headlessly switch the app window's mode without clicking the in-window
+        // segmented toggle, so QA can exercise the dashboard<->bgm switch (and the audio-ownership
+        // fix) in a scripted/CI run. Only reachable if the window is already open (see openInternal);
+        // does not open the window itself.
+        if path == "/api/debug/window-mode" {
+            let modeStr = (obj["mode"] as? String) ?? ""
+            guard let m = AppWindowController.Mode(rawValue: modeStr) else { return "{\"ok\":false}" }
+            DispatchQueue.main.sync {
+                if m == .bgm { self.openBGMWindow() } else { self.openDashboard() }
+            }
+            return "{\"ok\":true}"
+        }
+        // Test-only hook: headlessly simulate the user clicking the window's close button (real
+        // NSWindow.close(), so the genuine windowWillClose -> onUserClose -> quit() path runs) —
+        // lets QA exercise "closing the window quits the whole app" (SPEC Q1) without a real click.
+        if path == "/api/debug/window-close" {
+            DispatchQueue.main.sync { self.appWindowTestClose() }
+            return "{\"ok\":true}"
+        }
+        // BGM view remote control: turn the BGM system (the widget's master switch) on/off
+        // so the dashboard 액티비티 탭 and the menu-bar widget stay in sync. Mirrors the
+        // menu's toggleMusic; the heartbeat starts the director on the next tick.
+        if path == "/api/bgm/control" {
+            let action = (obj["action"] as? String) ?? ""
+            DispatchQueue.main.sync {
+                if action == "play" { self.setBGMEnabled(true) }
+                else if action == "stop" { self.setBGMEnabled(false) }
+            }
+            return "{\"ok\":true}"
+        }
+        // BGM view remote control for the CHALLENGE (work session) itself — the play button
+        // in the 액티비티 탭 doubles as "챌린지 시작/중단" so the dashboard and the menu-bar
+        // widget share one start/stop. Mirrors the menu's toggleWorking. Playback only makes
+        // sound while a session is live (inSession gate), so the play button starts the session
+        // here rather than only flipping the BGM master switch.
+        if path == "/api/session/control" {
+            let action = (obj["action"] as? String) ?? ""
+            // Optional session mode from the rail's challenge dial (pomodoro /
+            // sprint / unlimited) — selects the per-mode BGM playlist.
+            let mode = obj["mode"] as? String
+            DispatchQueue.main.sync {
+                if action == "start" { self.startWorking(mode: mode) }
+                else if action == "stop" { self.stopWorking() }
+            }
+            return "{\"ok\":true}"
+        }
+        // 포모도로 성공 보상 — the rail posts this when the pomodoro dial hits 25:00
+        // (cmChOnComplete). The last 25 minutes' real usage decides which equipment
+        // category receives the EXP (EquipmentStore.recordPomodoro); returns the
+        // refreshed equipment state so the caller can show the result.
+        if path == "/api/equipment/pomodoro" {
+            let usage = equipmentUsage(within: 25 * 60)
+            equipment.recordPomodoro(usage: usage)
+            return equipmentJSON()
+        }
+        // Canonical music-mute control — the ONE endpoint every surface (dashboard mute dot, BGM
+        // player, menu) posts to. {toggle:true} flips; {muted:bool} sets an explicit state. Source of
+        // truth is session.isMuted; native output is synced from it and other webviews reconcile via
+        // their poll. Returns the resulting {working,muted} so the caller can confirm.
+        if path == "/api/session/mute" {
+            return DispatchQueue.main.sync {
+                if (obj["toggle"] as? Bool) == true { self.toggleMute() }
+                else { self.setMutedRemote((obj["muted"] as? Bool) ?? self.session.isMuted) }
+                return self.session.stateJSON
+            }
+        }
+        // Switch the app window between the dashboard and the full condition (BGM) surface. Driven by
+        // the rail's condition popup ("컨디션 전체 보기") and the BGM page's "← 대시보드" back button —
+        // these replace the old titlebar segmented toggle. The two-webview switch is seamless and the
+        // BGM webview keeps playing throughout (audio untouched).
+        if path == "/api/window/mode" {
+            let mode = (obj["mode"] as? String) ?? ""
+            DispatchQueue.main.sync {
+                if mode == "condition" || mode == "bgm" { self.openBGMWindow() } else { self.openDashboard() }
+            }
+            return "{\"ok\":true}"
+        }
+        // 폭우 리셋 manual trigger — normally the director summons it from activity, but
+        // this lets QA and the user preview it on demand. {action:"start"} forces a rain
+        // reset now (bypassing eligibility + daily limit); {action:"stop"} ends it early.
+        // Require an EXPLICIT valid action so a malformed/empty body can't accidentally
+        // summon rain (it would otherwise fall through to the default and start).
+        if path == "/api/bgm/rain" {
+            guard let action = obj["action"] as? String, action == "start" || action == "stop" else {
+                return "{\"ok\":false,\"error\":\"action must be start|stop\"}"
+            }
+            DispatchQueue.main.sync { self.director?.triggerRain(stop: action == "stop") }
+            return "{\"ok\":true}"
+        }
+        // 전략3 plan-map replace — the 관리자 AI's safe write path (agents never edit
+        // bgm-plan.json directly, mirroring the goals convention). The body is the full
+        // plan JSON; it is validated before committing. Unknown theme folders are
+        // accepted (the library falls back rather than going silent) but reported so
+        // the planner can correct them.
+        if path == "/api/bgm/plan" {
+            guard let data = body.data(using: .utf8), !data.isEmpty else {
+                return "{\"ok\":false,\"error\":\"empty body\"}"
+            }
+            do {
+                let (plan, known): (BGMPlanMap.Plan, Set<String>) = try DispatchQueue.main.sync {
+                    let p = try self.bgmPlan.replace(jsonData: data)
+                    self.director?.planDidChange()
+                    return (p, Set(self.library.tracks.map(\.theme)))
+                }
+                let unknown = Set(plan.slots.flatMap(\.themes)).subtracting(known).sorted()
+                let unkJSON = "[" + unknown.map { jsonString($0) }.joined(separator: ",") + "]"
+                return "{\"ok\":true,\"slots\":\(plan.slots.count),\"unknownThemes\":\(unkJSON)}"
+            } catch {
+                return "{\"ok\":false,\"error\":\(jsonString(error.localizedDescription))}"
+            }
+        }
+        // Clear the per-track play-time history (BGM 관리 "재생 시간 순위" 초기화 버튼).
+        // {strategy:N} resets only that strategy's rows (the ranking filter's selection);
+        // {strategy:0} or no body resets every strategy. The strategy catalog survives.
+        if path == "/api/bgm/stats/reset" {
+            let n = (obj["strategy"] as? Int) ?? 0
+            DispatchQueue.main.sync { self.trackPlayStats.reset(strategy: n == 0 ? nil : n) }
+            return "{\"ok\":true}"
+        }
         // Reveal the skills folder (or one skill's folder) in Finder. Pure side effect
         // (no model, no goal state), so it is safe to handle here off-main.
         if path == "/api/skills/reveal" {
             return revealSkill(name: (obj["name"] as? String) ?? "")
+        }
+        // Agents page: reveal the official agent's .md file in ~/.claude/agents/.
+        if path == "/api/agents/reveal" {
+            return revealAgent(file: (obj["file"] as? String) ?? "")
         }
         // Save the user-edited one-line summary into the skill's SKILL.md. Pure file I/O.
         if path == "/api/skills/summary" {
@@ -2276,6 +3402,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard openClaudeResume(session: sess) else { return "{\"ok\":false,\"error\":\"launch-failed\"}" }
             return "{\"ok\":true,\"session\":\(jsonString(sess))}"
         }
+        // Goal-to-goal LINK: promote the source to top-level and record source→target.
+        // Separate sanctioned path from setParent (never nests). Custom JSON responses so
+        // the client can distinguish self/not-found; hence an early return block, not the
+        // default switch. See docs/specs/goal-link-and-generic-queue.md Phase 1.
+        if path == "/api/goal/link" {
+            let source = (obj["id"] as? String) ?? ""
+            let target = (obj["target"] as? String) ?? ""
+            guard !source.isEmpty, !target.isEmpty else { return "{\"ok\":false,\"error\":\"not-found\"}" }
+            if source == target { return "{\"ok\":false,\"error\":\"self\"}" }
+            return DispatchQueue.main.sync {
+                let bothExist = reviewStore.goals.contains(where: { $0.id == source })
+                    && reviewStore.goals.contains(where: { $0.id == target })
+                guard bothExist else { return "{\"ok\":false,\"error\":\"not-found\"}" }
+                reviewStore.linkGoal(id: source, to: target)
+                return "{\"ok\":true}"
+            }
+        }
+        if path == "/api/goal/unlink" {
+            let source = (obj["id"] as? String) ?? ""
+            let target = (obj["target"] as? String) ?? ""
+            guard !source.isEmpty, !target.isEmpty else { return "{\"ok\":false,\"error\":\"not-found\"}" }
+            return DispatchQueue.main.sync {
+                guard reviewStore.goals.contains(where: { $0.id == source }) else {
+                    return "{\"ok\":false,\"error\":\"not-found\"}"
+                }
+                reviewStore.unlinkGoal(id: source, from: target)
+                return "{\"ok\":true}"
+            }
+        }
         return DispatchQueue.main.sync {
             let day = reviewStore.todayKey
             switch path {
@@ -2283,7 +3438,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let text = obj["text"] as? String {
                     let sprint = (obj["sprint"] as? NSNumber)?.intValue ?? Int((obj["sprint"] as? String) ?? "") ?? 0
                     let bump = (obj["bump"] as? NSNumber)?.boolValue ?? (obj["bump"] as? Bool) ?? false
-                    reviewStore.addGoal(text: text, parent: (obj["parent"] as? String) ?? "", sprint: sprint, bump: bump)
+                    // A direct add lands as a real goal immediately. bump=true parks it in the
+                    // Bump out 인박스 (raw idea, 정리 전) at the bottom of the board; bump=false
+                    // creates a normal Backlog/Sprint goal. Neither routes through the AI 큐 —
+                    // that background dedup pipeline is the AI추가 button's job (queue/enqueue),
+                    // not a plain add. This keeps a dumped idea visible where the user put it
+                    // instead of disappearing into the queue and resurfacing in Backlog.
+                    reviewStore.addGoal(text: text, parent: (obj["parent"] as? String) ?? "",
+                                        sprint: sprint, bump: bump)
                 }
             case "/api/chat/reset":
                 chatStore.reset()
@@ -2305,20 +3467,126 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // it and flips it to ready for a one-tap 추가/수정/스킵 decision.
                 if let text = obj["text"] as? String {
                     let sprint = (obj["sprint"] as? NSNumber)?.intValue ?? Int((obj["sprint"] as? String) ?? "") ?? 0
+                    // `search:true` → 찾기만 후보(findOnly): 같은 큐·같은 dedup 분석을 돌리되 결과는
+                    // 비슷한 목표를 보여줄 뿐 목표를 만들지 않는다 (AI목표=찾고+만들기, 검색=찾기만).
+                    let findOnly = (obj["search"] as? Bool) ?? false
                     // `origin` carries the user's full raw prompt when the client has one
                     // richer than the goal line; the store defaults it to `text` otherwise.
                     if reviewStore.enqueuePending(text: text, parent: (obj["parent"] as? String) ?? "",
-                                                  sprint: sprint, origin: obj["origin"] as? String) != nil {
+                                                  sprint: sprint, origin: obj["origin"] as? String,
+                                                  findOnly: findOnly) != nil {
                         kickAIQueueWorker()
                     }
                 }
             case "/api/goal/queue/resolve":
-                // Resolve one queued candidate: add (promote to goal), edit (rewrite text,
-                // keep queued), or skip (drop).
+                // Resolve one queued candidate: add (promote to goal), task (file as a
+                // 부분과제 folder under an existing goal — no new goal number), edit (rewrite
+                // text, keep queued), or skip (drop). Every resolution is recorded in the
+                // queue history (queue-history.json) so the user can audit / 번복 it.
                 if let id = obj["id"] as? String {
-                    reviewStore.resolveQueueItem(id: id, action: (obj["action"] as? String) ?? "skip",
-                                                 text: obj["text"] as? String)
+                    if (obj["action"] as? String) == "task" {
+                        // Recurring-round path: attach the candidate to goal #parentSeq as a
+                        // tasks/<taskN> folder instead of minting a new goal (the old behavior
+                        // created e.g. goal325 when the user expected a task — see history).
+                        let pSeq = (obj["parentSeq"] as? NSNumber)?.intValue
+                            ?? Int((obj["parentSeq"] as? String) ?? "") ?? 0
+                        guard pSeq > 0, reviewStore.goals.contains(where: { $0.seq == pSeq }),
+                              let item = reviewStore.aiQueue.first(where: { $0.id == id }) else {
+                            return "{\"ok\":false,\"error\":\"bad-task-target\"}"
+                        }
+                        guard let folder = addSubtaskFolder(seq: pSeq, title: item.text, status: "",
+                                                            coin: "", week: "", outputs: "") else {
+                            return "{\"ok\":false,\"error\":\"create-failed\"}"
+                        }
+                        reviewStore.resolveQueueItemAsTask(id: id, parentSeq: pSeq, taskFolder: folder)
+                        return "{\"ok\":true,\"seq\":\(pSeq),\"task\":\(jsonString(folder)),\"asTask\":true}"
+                    }
+                    // parentSeq contract (must distinguish "key absent" from "explicit 0"):
+                    //  - key absent            → sentinel -1 = "no override, accept AI suggestion"
+                    //  - present, value 0      → explicit TOP-LEVEL override (ignore AI sub suggestion)
+                    //  - present, value > 0    → explicit parent #seq
+                    // priority (optional): USER override of the AI-suggested bucket.
+                    let hasParentSeq = obj["parentSeq"] != nil && !(obj["parentSeq"] is NSNull)
+                    let parentSeq: Int = hasParentSeq
+                        ? ((obj["parentSeq"] as? NSNumber)?.intValue ?? Int((obj["parentSeq"] as? String) ?? "") ?? 0)
+                        : -1
+                    let priority = obj["priority"] as? String
+                    let res = reviewStore.resolveQueueItem(id: id, action: (obj["action"] as? String) ?? "skip",
+                                                           text: obj["text"] as? String, parentSeq: parentSeq,
+                                                           priority: priority)
+                    // Return the created goal's #seq plus the EFFECTIVE placement (the parent it
+                    // actually attached under, and whether a requested sub-attach fell back to
+                    // top-level because it would break the 1-level tree) so the client can show
+                    // the right "열기" link / placement note.
+                    if let r = res {
+                        return "{\"ok\":true,\"seq\":\(r.seq),\"parentSeq\":\(r.parentSeq),"
+                            + "\"parentFallback\":\(r.parentFallback)}"
+                    }
                 }
+            case "/api/goal/queue/undo":
+                // 번복: revert one queue-history decision. Removes what the decision created
+                // (add → the goal, task → the tasks/<taskN> folder while still pristine) and
+                // restores the snapshotted candidate to the queue as "ready" for re-review.
+                if let hid = obj["id"] as? String {
+                    guard let entry = reviewStore.queueHistoryEntry(id: hid), !entry.undone else {
+                        return "{\"ok\":false,\"error\":\"not-found\"}"
+                    }
+                    if entry.action == "add", entry.seq > 0,
+                       let g = reviewStore.goals.first(where: { $0.seq == entry.seq }) {
+                        // Refuse when the goal grew children since — removeGoal cascades and
+                        // would delete work the queue decision never created.
+                        if reviewStore.goals.contains(where: { $0.parent == g.id }) {
+                            return "{\"ok\":false,\"error\":\"has-children\"}"
+                        }
+                        var r = reviewStore.review(day)
+                        r.notes.removeValue(forKey: g.id); r.contributions.removeValue(forKey: g.id)
+                        reviewStore.saveReview(r, day: day)
+                        reviewStore.removeGoal(id: g.id)
+                        try? FileManager.default.removeItem(at: Self.evidenceDir(goalId: g.id))
+                        if let adir = IssuePaths.attachmentsDir(seq: g.seq) {
+                            try? FileManager.default.removeItem(at: adir)
+                        }
+                    }
+                    if entry.action == "task", entry.seq > 0, !entry.taskFolder.isEmpty,
+                       let tdir = IssuePaths.taskDir(seq: entry.seq, task: entry.taskFolder) {
+                        // Only delete while the folder still holds nothing but our _task.md
+                        // anchor — never remove files the user added after the decision.
+                        let contents = (try? FileManager.default.contentsOfDirectory(atPath: tdir.path)) ?? []
+                        if contents.allSatisfy({ $0 == "_task.md" || $0 == ".DS_Store" }) {
+                            try? FileManager.default.removeItem(at: tdir)
+                        }
+                    }
+                    if reviewStore.undoQueueDecision(id: hid) != nil { return "{\"ok\":true}" }
+                    return "{\"ok\":false,\"error\":\"not-found\"}"
+                }
+            case "/api/queue/retry":
+                // Re-run a failed/finished queue job: clear its error, flip to pending, kick
+                // the worker. Used by the 재시도 button on a non-dedup job card.
+                if let id = obj["id"] as? String, reviewStore.retryQueueItem(id: id) {
+                    kickAIQueueWorker()
+                    return "{\"ok\":true}"
+                }
+                return "{\"ok\":false,\"error\":\"not-found\"}"
+            case "/api/queue/remove":
+                // Drop a finished job card from the queue. Guarded in the store: never removes
+                // an item still "analyzing" (the worker holds it).
+                if let id = obj["id"] as? String, reviewStore.removeQueueItem(id: id) {
+                    return "{\"ok\":true}"
+                }
+                return "{\"ok\":false,\"error\":\"not-found\"}"
+            case "/api/queue/enqueue-linkmap":
+                // Phase 3: "내보내기" enqueues a background linkmap job scoped to ONE root goal's
+                // link chain (fire-and-forget). The worker builds the node-link map + link-aware
+                // export off-main and posts the result as a 큐 card. Returns immediately.
+                if let root = obj["root"] as? String,
+                   let g = reviewStore.goals.first(where: { $0.id == root }) {
+                    let title = "내보내기 · goal-\(String(format: "%02d", g.seq))"
+                    if let jid = reviewStore.enqueueJob(jobKind: "linkmap", title: title, origin: root) {
+                        kickAIQueueWorker()
+                        return "{\"ok\":true,\"id\":\(jsonString(jid))}"
+                    }
+                }
+                return "{\"ok\":false,\"error\":\"not-found\"}"
             case "/api/goal/remove":
                 if let id = obj["id"] as? String {
                     // Clean up notes/contributions for the goal and its children.
@@ -2377,6 +3645,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         writeTitleOverride(for: g, title: g.text)
                     }
                 }
+            case "/api/goal/task":
+                // Add a 부분과제 (subtask) under an existing goal (goal-NN/tasks/taskN-…) instead
+                // of spawning a brand-new goal — e.g. a 주보상 패키지 becomes a task on goal-130.
+                // Called by the goal page's "+ 태스크 추가" form AND directly by an AI so tasks
+                // can be filed with or without the user. Auto-numbers taskN and writes a
+                // _task.md anchor with whatever metadata was supplied.
+                let seq = (obj["seq"] as? NSNumber)?.intValue ?? Int((obj["seq"] as? String) ?? "") ?? 0
+                let title = ((obj["title"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if seq > 0, !title.isEmpty {
+                    if let folder = addSubtaskFolder(
+                        seq: seq, title: title,
+                        status: (obj["status"] as? String) ?? "",
+                        coin: Self.numString(obj["coin"]), week: Self.numString(obj["week"]),
+                        outputs: (obj["outputs"] as? String) ?? "") {
+                        let id = folder.split(separator: "-").first.map(String.init) ?? folder
+                        return "{\"ok\":true,\"seq\":\(seq),\"id\":\(jsonString(id)),\"task\":\(jsonString(folder))}"
+                    }
+                    return "{\"ok\":false,\"error\":\"create-failed\"}"
+                }
+                return "{\"ok\":false,\"error\":\"bad-request\"}"
             case "/api/session/event":
                 // Driven by Claude Code session hooks (see Scripts/cc-session-hook.sh).
                 // event: start | active | idle | end. The goal is keyed by sessionId
@@ -2473,10 +3761,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     reviewStore.setGoalSprint(id: id, sprint: n)
                 }
             case "/api/goal/bump":
-                // Move a goal in/out of the Bump out inbox (raw idea tier below Backlog).
+                // Move a numbered goal into (bump=true) or out of (bump=false) the Bump out
+                // 인박스. The goal keeps its unique seq either way, so demotion is safe.
                 if let id = obj["id"] as? String {
-                    let on = (obj["bump"] as? NSNumber)?.boolValue ?? (obj["bump"] as? Bool) ?? true
-                    reviewStore.setGoalBump(id: id, bump: on)
+                    let bump = (obj["bump"] as? NSNumber)?.boolValue ?? (obj["bump"] as? Bool) ?? false
+                    reviewStore.setGoalBump(id: id, bump: bump)
                 }
             case "/api/sprint/create":
                 reviewStore.createSprint(goalText: (obj["goalText"] as? String) ?? "",
@@ -2713,20 +4002,242 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return nil
             }
             guard let item = item else { break }
+            // Branch on the generalized jobKind. Legacy items decode jobKind=="dedup" and take
+            // the UNCHANGED dedup path below. Non-dedup jobs run a per-kind runner and complete
+            // via completeJob. The worker stays single-serial (one item at a time).
+            if item.jobKind != "dedup" {
+                let (html, err) = runQueueJob(item)
+                DispatchQueue.main.sync {
+                    self.reviewStore.completeJob(id: item.id, resultHTML: html, error: err)
+                }
+                continue
+            }
             let v = aiDedupVerdict(text: item.text, origin: item.originPrompt)
             // ok=false (claude missing / spawn / parse failure) is NOT a gate: surface the
             // candidate as a clean, non-duplicate verdict so it still reaches the user for a
             // one-tap decision instead of getting stuck mid-queue.
             DispatchQueue.main.sync {
-                self.reviewStore.completeAnalysis(id: item.id, duplicate: v.duplicate,
-                                                  note: v.ok ? v.note : "", matches: v.matches)
+                self.reviewStore.completeAnalysis(id: item.id, duplicate: v.duplicate, kind: v.kind,
+                                                  note: v.ok ? v.note : "", matches: v.matches,
+                                                  placement: v.placement, suggestedParentSeq: v.suggestedParentSeq,
+                                                  priority: v.priority, confidence: v.confidence,
+                                                  rationale: v.ok ? v.rationale : "")
             }
         }
     }
 
+    // Per-kind runner hook for non-dedup queue jobs. Runs OFF main (called from drainAIQueue).
+    // Returns (resultHTML, error); a non-empty error surfaces a 재시도 button on the card.
+    // Phase 2 has no non-dedup producers yet — every kind is a stub that reports "not
+    // implemented". Phase 3 will supply the "linkmap" runner here (build map + export HTML).
+    private func runQueueJob(_ item: ReviewStore.AIQueueItem) -> (html: String, error: String) {
+        switch item.jobKind {
+        case "linkmap": return runLinkmapJob(item)   // Phase 3: node-link map + link-aware export
+        default:
+            return ("", "아직 지원하지 않는 작업 종류입니다: \(item.jobKind)")
+        }
+    }
+
+    // ---- Phase 3: linkmap / export job -------------------------------------------------
+    // A flattened goal snapshot the linkmap walker uses off-main (no store access after this).
+    private struct LinkmapNode {
+        let id: String; let seq: Int; let text: String; let parent: String
+        let status: String; let links: [String]
+    }
+
+    // Runs OFF main (invoked from drainAIQueue's non-dedup branch). Snapshots goals on main,
+    // walks the SINGLE root goal's link chain (parent-children + links, recursive, cycle-safe
+    // via a visited-set keyed by goal id), builds the node-link MAP HTML (solid edges =
+    // parent-child, purple dashed edges = links, plus a summary), builds a link-aware compressed
+    // export, and returns the combined HTML. No claude -p is needed (the export is a deterministic
+    // Markdown fold, so we avoid the LLM round-trip entirely).
+    private func runLinkmapJob(_ item: ReviewStore.AIQueueItem) -> (html: String, error: String) {
+        let rootId = item.originPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rootId.isEmpty else { return ("", "내보내기 대상(root) goal이 지정되지 않았습니다.") }
+        // (a) Snapshot goals on main — thread-safe store access, like aiDedupVerdict.
+        let snapshot: [LinkmapNode] = DispatchQueue.main.sync {
+            reviewStore.goals.map { LinkmapNode(id: $0.id, seq: $0.seq, text: $0.text,
+                                                parent: $0.parent, status: $0.status, links: $0.links) }
+        }
+        let byId = Dictionary(snapshot.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        guard let root = byId[rootId] else { return ("", "root goal을 찾을 수 없습니다: \(rootId)") }
+
+        // (b) Walk the chain from root with a visited-set. `order` is the include order (root
+        // first, then its parent-children, then its links, recursively). `edges` records every
+        // parent-child (solid) and link (dashed) edge for the map. `linkHops` counts followed
+        // link edges; `dupWarnings` records edges pointing at an already-visited node (a cycle
+        // or a fan-in) so the summary can surface them instead of the walk looping forever.
+        var visited = Set<String>()
+        var order: [String] = []
+        var edges: [(from: String, to: String, kind: String)] = []   // kind: "child" | "link"
+        var linkHops = 0
+        var dupWarnings: [String] = []
+
+        // Iterative DFS keyed by goal id — the visited-set makes a link cycle (01→233→…→01)
+        // terminate: the second time we reach 01 it is already visited, so we record a cycle
+        // warning and do NOT recurse again. Each goal is emitted into `order` exactly once.
+        func label(_ n: LinkmapNode) -> String { "goal-\(String(format: "%02d", n.seq))" }
+        func visit(_ id: String) {
+            guard let node = byId[id] else { return }
+            if visited.contains(id) { return }
+            visited.insert(id)
+            order.append(id)
+            // Parent-children first (solid edges), in seq order for a stable map.
+            let kids = snapshot.filter { $0.parent == id }.sorted { $0.seq < $1.seq }
+            for k in kids {
+                edges.append((from: id, to: k.id, kind: "child"))
+                if visited.contains(k.id) {
+                    dupWarnings.append("\(label(node)) → \(label(k)) (이미 포함됨)")
+                } else {
+                    visit(k.id)
+                }
+            }
+            // Then links (purple dashed edges), directional source → target.
+            for tgt in node.links {
+                guard let tnode = byId[tgt] else { continue }
+                edges.append((from: id, to: tgt, kind: "link"))
+                linkHops += 1
+                if visited.contains(tgt) {
+                    dupWarnings.append("\(label(node)) ↗ \(label(tnode)) (링크 순환/중복)")
+                } else {
+                    visit(tgt)
+                }
+            }
+        }
+        visit(rootId)
+
+        // (c) Build the node-link MAP as a self-contained inline HTML/SVG fragment.
+        let mapHTML = buildLinkmapMapHTML(order: order, edges: edges, byId: byId,
+                                          root: root, linkHops: linkHops, dupWarnings: dupWarnings)
+        // (d) Build the compressed export markdown (link-aware, same visited order).
+        let exportMD = buildLinkmapExportMarkdown(order: order, byId: byId, root: root)
+        // Render markdown into a simple <pre> block (deterministic; no LLM). The card's 다운로드
+        // grabs this whole resultHTML.
+        let exportHTML = "<h3 style=\"margin:14px 0 6px;font:600 14px system-ui\">압축 내보내기</h3>"
+            + "<pre style=\"white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;background:#0d1016;color:#c8d0de;padding:12px;border-radius:8px;overflow-x:auto\">"
+            + escapeHTML(exportMD) + "</pre>"
+        let full = "<div style=\"font:13px system-ui;color:#c8d0de\">" + mapHTML + exportHTML + "</div>"
+        return (full, "")
+    }
+
+    // Minimal HTML-escape for embedding text into the result fragment.
+    private func escapeHTML(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;")
+         .replacingOccurrences(of: "<", with: "&lt;")
+         .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+    // The APPROVED map design: nodes = rounded goal boxes stacked vertically; SOLID connectors =
+    // parent-child; PURPLE DASHED connectors = links; a summary block on top with included count,
+    // link hops, and any duplicate/cycle warnings. Compact inline SVG (no external assets).
+    private func buildLinkmapMapHTML(order: [String], edges: [(from: String, to: String, kind: String)],
+                                     byId: [String: LinkmapNode], root: LinkmapNode,
+                                     linkHops: Int, dupWarnings: [String]) -> String {
+        func label(_ n: LinkmapNode) -> String { "goal-\(String(format: "%02d", n.seq))" }
+        // Layout: one row per included goal. y is the node's vertical center; x is fixed.
+        let rowH = 54.0, boxW = 300.0, boxH = 34.0, padX = 24.0, padTop = 20.0
+        let width = boxW + padX * 2 + 40   // room for the link arcs on the right
+        let height = padTop * 2 + Double(order.count) * rowH
+        var yOf: [String: Double] = [:]
+        for (i, id) in order.enumerated() { yOf[id] = padTop + Double(i) * rowH + boxH / 2 }
+        let boxX = padX
+        var svg = "<svg viewBox=\"0 0 \(Int(width)) \(Int(height))\" width=\"100%\" style=\"max-width:\(Int(width))px\" xmlns=\"http://www.w3.org/2000/svg\">"
+        // Edges first (under the nodes).
+        for e in edges {
+            guard let y1 = yOf[e.from], let y2 = yOf[e.to] else { continue }
+            if e.kind == "child" {
+                // Solid parent-child connector: down the left gutter.
+                let gx = boxX - 8
+                svg += "<path d=\"M \(gx) \(y1) L \(gx) \(y2) L \(boxX) \(y2)\" fill=\"none\" stroke=\"#5b8cff\" stroke-width=\"2\"/>"
+            } else {
+                // Purple DASHED link connector: an arc down the right side.
+                let rx = boxX + boxW + 8
+                let mx = rx + 24
+                svg += "<path d=\"M \(rx) \(y1) C \(mx) \(y1), \(mx) \(y2), \(rx) \(y2)\" fill=\"none\" stroke=\"#9b7bff\" stroke-width=\"2\" stroke-dasharray=\"5 4\"/>"
+                svg += "<polygon points=\"\(rx-6),\(y2-4) \(rx),\(y2) \(rx-6),\(y2+4)\" fill=\"#9b7bff\"/>"
+            }
+        }
+        // Nodes.
+        let statusColor: [String: String] = ["done": "#36c08a", "in_progress": "#9be3fb"]
+        for id in order {
+            guard let n = byId[id], let cy = yOf[id] else { continue }
+            let y = cy - boxH / 2
+            let isRoot = (id == root.id)
+            let stroke = isRoot ? "#e8c15a" : "#2b3242"
+            let sw = isRoot ? "2" : "1"
+            let dot = statusColor[n.status] ?? "#6b7486"
+            svg += "<rect x=\"\(boxX)\" y=\"\(y)\" width=\"\(Int(boxW))\" height=\"\(Int(boxH))\" rx=\"8\" fill=\"#161a22\" stroke=\"\(stroke)\" stroke-width=\"\(sw)\"/>"
+            svg += "<circle cx=\"\(boxX+16)\" cy=\"\(cy)\" r=\"5\" fill=\"\(dot)\"/>"
+            let tag = label(n)
+            let title = n.text.count > 34 ? String(n.text.prefix(33)) + "…" : n.text
+            svg += "<text x=\"\(boxX+30)\" y=\"\(cy+4)\" font-family=\"system-ui\" font-size=\"12\" fill=\"#c8d0de\">"
+            svg += "<tspan fill=\"#8b93a7\">\(tag)</tspan>  \(escapeHTML(title))</text>"
+        }
+        svg += "</svg>"
+        // Summary block.
+        let warn = dupWarnings.isEmpty
+            ? "<span style=\"color:var(--green,#36c08a)\">순환/중복 없음</span>"
+            : "<span style=\"color:#e0a458\">경고 \(dupWarnings.count)건: " + escapeHTML(dupWarnings.joined(separator: " · ")) + "</span>"
+        let summary = "<div style=\"font:12px system-ui;color:#8b93a7;margin:2px 0 10px;line-height:1.6\">"
+            + "루트 <b style=\"color:#c8d0de\">\(label(root))</b> · 포함 <b style=\"color:#c8d0de\">\(order.count)</b>개 · 링크 홉 <b style=\"color:#c8d0de\">\(linkHops)</b> · " + warn
+            + "<br><span style=\"color:#5b8cff\">━</span> 부모-자식 &nbsp; <span style=\"color:#9b7bff\">┈┈▸</span> 링크</div>"
+        return "<h3 style=\"margin:0 0 6px;font:600 14px system-ui\">노드-링크 지도</h3>" + summary
+            + "<div style=\"overflow-x:auto\">" + svg + "</div>"
+    }
+
+    // Link-aware compressed export: emits each included goal once in visited order. Parent-child
+    // children are listed as bullets under their top goal; linked goals get their own section
+    // marked "↗ goal-NN (링크됨)". Same visited order guarantees no goal is emitted twice.
+    private func buildLinkmapExportMarkdown(order: [String], byId: [String: LinkmapNode], root: LinkmapNode) -> String {
+        func label(_ n: LinkmapNode) -> String { "goal-\(String(format: "%02d", n.seq))" }
+        func statusTag(_ s: String) -> String {
+            s == "done" ? " (완료)" : (s == "in_progress" ? " (진행)" : "")
+        }
+        var out = "# 내보내기 · \(label(root)) 링크 체인\n\n"
+        var emittedAsChild = Set<String>()   // ids already printed as a bullet child
+        for id in order {
+            guard let n = byId[id] else { continue }
+            if emittedAsChild.contains(id) { continue }
+            // A linked (non-root, promoted) goal is marked; the root and structural tops are plain.
+            if id != root.id && byId.values.contains(where: { $0.links.contains(id) }) {
+                out += "## ↗ \(label(n)) (링크됨) — \(n.text)\(statusTag(n.status))\n"
+            } else {
+                out += "## \(label(n)) — \(n.text)\(statusTag(n.status))\n"
+            }
+            // Its parent-children (only those in the visited order) as bullets.
+            let kids = order.compactMap { byId[$0] }.filter { $0.parent == id }.sorted { $0.seq < $1.seq }
+            for k in kids {
+                out += "- \(label(k)) \(k.text)\(statusTag(k.status))\n"
+                emittedAsChild.insert(k.id)
+            }
+            out += "\n"
+        }
+        return out
+    }
+
     // Verdict from the dedup judge. ok=false means the check could not run (no claude,
     // spawn/parse failure) — callers treat that as "not a duplicate" (best-effort gate).
-    struct DedupVerdict { var ok: Bool; var duplicate: Bool; var note: String; var matches: [ReviewStore.QueueMatch] }
+    // `kind` ∈ {new, recurring, duplicate}: recurring = repeats/continues an existing goal's
+    // work (nest under it); duplicate = same goal, nothing new (skip). `duplicate` stays true
+    // for BOTH overlap kinds so the "유사 목표 있음" flag is unchanged. Default "new" lets the
+    // best-effort early-return failures (ok:false) omit it.
+    // The judge verdict. Two orthogonal axes:
+    //   dedup axis   - duplicate/kind/matches: does this overlap an existing goal?
+    //   placement axis (Option D) - placement/suggestedParentSeq/priority/confidence/rationale:
+    //                  WHERE should the promoted goal land? These are advisory; the user can
+    //                  override every one at resolve time.
+    struct DedupVerdict {
+        var ok: Bool
+        var duplicate: Bool
+        var note: String
+        var matches: [ReviewStore.QueueMatch]
+        var kind: String = "new"
+        var placement: String = "top"       // "top" | "sub"
+        var suggestedParentSeq: Int = 0      // parent #seq when placement=="sub" (0 otherwise)
+        var priority: String = "medium"      // urgent | high | medium | low | lowest
+        var confidence: Double = 0           // 0.0...1.0
+        var rationale: String = ""           // short Korean placement reason
+    }
 
     // Core dedup judge shared by the synchronous /api/goal/aiAdd route and the background
     // queue worker. Runs an external `claude -p` (seconds, BLOCKING) — call OFF main.
@@ -2761,24 +4272,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Reframes the judge: a plain title match asks "same intent?" and misses recurring
         // work (a goal titled "주보상패키지 지급" that in fact holds the NSS report script the
         // user wants to run again). This tells the judge the surfaced goal ALREADY CONTAINS
-        // the prior work the new goal reuses, so a "repeat/continuation" is a match, not new.
+        // the prior work the new goal reuses, so a "repeat/continuation" is RECURRING (nest
+        // under it), which is distinct from a pointless DUPLICATE (skip).
         let relatedText = relatedLines.isEmpty ? "" : """
 
 
         ALREADY-EXISTS EVIDENCE — a keyword/time search over the user's own session transcripts \
         and goal files found that the EXISTING goal(s) below ALREADY CONTAIN the prior work (the \
         script, earlier reports, or subtasks) that this NEW goal refers to. When the new goal is \
-        phrased as repeating or reusing earlier work ("N일전에 만든 스크립트로 다시", "동일하게", \
-        "그때 만든 것으로"), it is almost never a genuinely new goal — it is a REPEAT or \
-        CONTINUATION of that existing goal's work and belongs under it as another run/subtask. In \
-        that case you MUST set "duplicate": true and include that goal in "matches", even if its \
-        title looks unrelated; "why" should say it continues/repeats that goal's existing work.
+        phrased as repeating or reusing earlier work ("일일/매일/주간", "N일전에 만든 스크립트로 다시", \
+        "동일하게", "그때 만든 것으로"), it is NOT a genuinely new goal — but it is also NOT a \
+        pointless duplicate: it is a RECURRING run/subtask of that existing goal's work and is \
+        worth tracking. In that case set "kind": "recurring" and put that goal in "matches" (even \
+        if its title looks unrelated); "why" should say it repeats/continues that goal's work. \
+        Reserve "kind": "duplicate" for when the SAME goal already fully covers this with nothing \
+        left to do.
         \(relatedLines.joined(separator: "\n"))
         """
         let prompt = """
-        You are a deduplication judge for a personal goal tracker. Decide whether a NEW goal \
-        duplicates or substantially overlaps any EXISTING goal (same intent, even if worded \
-        differently or in a different language).
+        You are a triage judge for a personal goal tracker. Classify a NEW goal against the \
+        EXISTING goals into exactly one of three kinds:
+        - "new": a genuinely new goal with no meaningful overlap.
+        - "recurring": repeats or continues the work of an existing goal (a routine, another \
+        daily/weekly run, or a subtask of it) — worth adding as a run UNDER that goal.
+        - "duplicate": the same goal already exists and re-adding it accomplishes nothing.
+
+        Then, ORTHOGONALLY, decide WHERE the goal should be placed:
+        - "placement": "top" for a stand-alone task or a brand-new parent goal; "sub" for a \
+        goal that clearly belongs UNDER an existing goal as a child/subtask.
+        - "suggestedParentSeq": when placement is "sub", the #seq of the parent goal it should \
+        nest under (0 when placement is "top"). Only suggest a TOP-LEVEL existing goal as parent.
+        - "priority": one of "urgent" | "high" | "medium" | "low" | "lowest" — your best guess \
+        at how important/time-sensitive this goal is (the user may override).
+        - "confidence": a number 0.0..1.0 for how sure you are about the placement.
+        - "rationale": one short Korean sentence explaining the placement decision.
+        A "recurring" goal is almost always placement "sub" under matches[0]. A "new" goal is \
+        usually placement "top" unless it is obviously a subtask of an existing goal.
 
         EXISTING GOALS (one per line as "#<seq> <title>"):
         \(listText.isEmpty ? "(none)" : listText)\(relatedText)
@@ -2787,8 +4316,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         \(candidate)
 
         Respond with ONLY a single JSON object, no prose, no code fences:
-        {"duplicate": true or false, "matches": [{"seq": <int of an existing goal>, "why": "<short reason in Korean>"}], "note": "<one short Korean sentence>"}
-        Use "duplicate": false with an empty "matches" array when the new goal is genuinely new.
+        {"kind": "new" | "recurring" | "duplicate", "matches": [{"seq": <int of an existing goal>, "why": "<short reason in Korean>"}], "note": "<one short Korean sentence>", "placement": "top" | "sub", "suggestedParentSeq": <int>, "priority": "urgent"|"high"|"medium"|"low"|"lowest", "confidence": <0.0..1.0>, "rationale": "<short Korean sentence>"}
+        For "recurring" and "duplicate", "matches" MUST list the related goal(s); the first is \
+        the one to nest under. Use "new" with an empty "matches" array when it is genuinely new.
         """
         // Spawn via a login shell so PATH/node resolve like the user's terminal; feed the
         // prompt on stdin to dodge arg-length and quoting pitfalls.
@@ -2798,10 +4328,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var env = ProcessInfo.processInfo.environment
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        // App-internal claude: these run under the project cwd, so the project's session
-        // hooks (cc-session-hook.sh) would otherwise mirror them into noise goals. The mark
-        // tells the hook to skip this session. See ReviewStore.recordSession for the backstop.
-        env["CM_INTERNAL_WORKER"] = "1"
+        // This is an internal headless `claude -p` worker, not user work. Flag it so the
+        // session hook (Scripts/cc-session-hook.sh) skips mirroring it as a dashboard goal —
+        // otherwise the worker's fixed system prompt shows up as an echo goal.
+        env["CM_SUPPRESS_SESSION_GOAL"] = "1"
         p.environment = env
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
@@ -2819,7 +4349,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let start = raw.firstIndex(of: "{"), let end = raw.lastIndex(of: "}"), start < end,
               let parsed = try? JSONSerialization.jsonObject(with: Data(raw[start...end].utf8)) as? [String: Any]
         else { return DedupVerdict(ok: false, duplicate: false, note: "", matches: []) }
-        let duplicate = (parsed["duplicate"] as? Bool) ?? false
         let note = (parsed["note"] as? String) ?? ""
         // Enrich each match with the existing goal's current title (snapshot lookup).
         let bySeq = Dictionary(snapshot.map { ($0.seq, $0.text) }, uniquingKeysWith: { a, _ in a })
@@ -2828,9 +4357,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let seq = (m["seq"] as? NSNumber)?.intValue, let gtext = bySeq[seq] else { return nil }
             return ReviewStore.QueueMatch(seq: seq, text: gtext, why: (m["why"] as? String) ?? "")
         }
-        // A duplicate verdict is only actionable if it actually points at a known goal.
-        let dupFinal = duplicate && !matches.isEmpty
-        return DedupVerdict(ok: true, duplicate: dupFinal, note: note, matches: matches)
+        // Read the 3-way kind; fall back to the legacy boolean when an older model omits it.
+        let legacyDup = (parsed["duplicate"] as? Bool) ?? false
+        var kind = (parsed["kind"] as? String)?.lowercased() ?? ""
+        if !["new", "recurring", "duplicate"].contains(kind) { kind = legacyDup ? "duplicate" : "new" }
+        // recurring/duplicate need a concrete goal to act on; without one, treat as new.
+        if kind != "new" && matches.isEmpty { kind = "new" }
+        // `duplicate` flag stays true for BOTH overlap kinds (drives the "유사 목표 있음" line).
+        let dupFinal = kind != "new"
+
+        // Parse the ORTHOGONAL placement axis (Option D). All fields are advisory and
+        // defensively defaulted so an older model omitting them yields a sane "top" verdict.
+        var placement = (parsed["placement"] as? String)?.lowercased() ?? "top"
+        if placement != "sub" { placement = "top" }
+        // Suggested parent #seq must reference a live (existing) goal that is TOP-LEVEL; the
+        // ReviewStore setParent guard enforces this again at promotion, but validate here so a
+        // hallucinated / non-top-level #seq degrades cleanly to a top-level suggestion.
+        var suggestedParentSeq = (parsed["suggestedParentSeq"] as? NSNumber)?.intValue ?? 0
+        if suggestedParentSeq > 0 {
+            let known = Set(snapshot.map { $0.seq })
+            if !known.contains(suggestedParentSeq) { suggestedParentSeq = 0 }
+        }
+        // A "sub" placement with no usable parent is meaningless → fall back to "top".
+        if placement == "sub" {
+            // Prefer the model's explicit suggestion; else nest under the first dedup match.
+            if suggestedParentSeq == 0 { suggestedParentSeq = matches.first?.seq ?? 0 }
+            if suggestedParentSeq == 0 { placement = "top" }
+        }
+        var priority = (parsed["priority"] as? String)?.lowercased() ?? "medium"
+        if !ReviewStore.validPriorities.contains(priority) { priority = "medium" }
+        let confidence = max(0, min(1, (parsed["confidence"] as? NSNumber)?.doubleValue ?? 0))
+        let rationale = (parsed["rationale"] as? String) ?? ""
+
+        return DedupVerdict(ok: true, duplicate: dupFinal, note: note, matches: matches, kind: kind,
+                            placement: placement, suggestedParentSeq: suggestedParentSeq,
+                            priority: priority, confidence: confidence, rationale: rationale)
     }
 
     // Synchronous /api/goal/aiAdd: returns the verdict as JSON (kept for any direct caller).
@@ -2918,10 +4479,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var env = ProcessInfo.processInfo.environment
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        // App-internal claude: these run under the project cwd, so the project's session
-        // hooks (cc-session-hook.sh) would otherwise mirror them into noise goals. The mark
-        // tells the hook to skip this session. See ReviewStore.recordSession for the backstop.
-        env["CM_INTERNAL_WORKER"] = "1"
+        // This is an internal headless `claude -p` worker, not user work. Flag it so the
+        // session hook (Scripts/cc-session-hook.sh) skips mirroring it as a dashboard goal —
+        // otherwise the worker's fixed system prompt shows up as an echo goal.
+        env["CM_SUPPRESS_SESSION_GOAL"] = "1"
         p.environment = env
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
@@ -2991,10 +4552,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var env = ProcessInfo.processInfo.environment
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        // App-internal claude: these run under the project cwd, so the project's session
-        // hooks (cc-session-hook.sh) would otherwise mirror them into noise goals. The mark
-        // tells the hook to skip this session. See ReviewStore.recordSession for the backstop.
-        env["CM_INTERNAL_WORKER"] = "1"
+        // This is an internal headless `claude -p` worker, not user work. Flag it so the
+        // session hook (Scripts/cc-session-hook.sh) skips mirroring it as a dashboard goal —
+        // otherwise the worker's fixed system prompt shows up as an echo goal.
+        env["CM_SUPPRESS_SESSION_GOAL"] = "1"
         p.environment = env
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
@@ -3093,10 +4654,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var env = ProcessInfo.processInfo.environment
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        // App-internal claude: these run under the project cwd, so the project's session
-        // hooks (cc-session-hook.sh) would otherwise mirror them into noise goals. The mark
-        // tells the hook to skip this session. See ReviewStore.recordSession for the backstop.
-        env["CM_INTERNAL_WORKER"] = "1"
+        // This is an internal headless `claude -p` worker, not user work. Flag it so the
+        // session hook (Scripts/cc-session-hook.sh) skips mirroring it as a dashboard goal —
+        // otherwise the worker's fixed system prompt shows up as an echo goal.
+        env["CM_SUPPRESS_SESSION_GOAL"] = "1"
         p.environment = env
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
@@ -3272,10 +4833,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var env = ProcessInfo.processInfo.environment
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        // App-internal claude: these run under the project cwd, so the project's session
-        // hooks (cc-session-hook.sh) would otherwise mirror them into noise goals. The mark
-        // tells the hook to skip this session. See ReviewStore.recordSession for the backstop.
-        env["CM_INTERNAL_WORKER"] = "1"
+        // This is an internal headless `claude -p` worker, not user work. Flag it so the
+        // session hook (Scripts/cc-session-hook.sh) skips mirroring it as a dashboard goal —
+        // otherwise the worker's fixed system prompt shows up as an echo goal.
+        env["CM_SUPPRESS_SESSION_GOAL"] = "1"
         p.environment = env
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
@@ -3735,10 +5296,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var env = ProcessInfo.processInfo.environment
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        // App-internal claude: these run under the project cwd, so the project's session
-        // hooks (cc-session-hook.sh) would otherwise mirror them into noise goals. The mark
-        // tells the hook to skip this session. See ReviewStore.recordSession for the backstop.
-        env["CM_INTERNAL_WORKER"] = "1"
+        // This is an internal headless `claude -p` worker, not user work. Flag it so the
+        // session hook (Scripts/cc-session-hook.sh) skips mirroring it as a dashboard goal —
+        // otherwise the worker's fixed system prompt shows up as an echo goal.
+        env["CM_SUPPRESS_SESSION_GOAL"] = "1"
         p.environment = env
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
@@ -3857,6 +5418,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for line in String(decoding: chunk, as: UTF8.self).split(separator: "\n") {
             guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                   let cwd = obj["cwd"] as? String, !cwd.isEmpty else { continue }
+            // Only hand back a directory that still exists. After the data store was
+            // consolidated to ~/.condition-manager, old transcripts still record a path like
+            // <repo>/.condition-manager/issue/goal-NN that no longer exists; returning it would
+            // make the resumed CLI's process.run() throw (surfacing as "pty-failed"). Returning
+            // nil instead lets cliCommand skip that resume tier and start fresh in the goal's
+            // current folder, which self-heals the stored cliSessionId on the next open.
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: cwd, isDirectory: &isDir), isDir.boolValue else { return nil }
             return cwd
         }
         return nil
@@ -4164,6 +5733,210 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let url = dir.appendingPathComponent(name)
         guard let bytes = try? Data(contentsOf: url) else { return nil }
         return (bytes, Self.mimeType(name), name)
+    }
+
+    // MARK: BGM view (library manager + venue player)
+
+    // GET /api/bgm/list — the BGM library (BPMLibrary, scanned from the music folder)
+    // as JSON for the BGM view's player. id is the index into library.tracks; the player
+    // streams that file from /bgm-audio/<id>. Snapshots on main so we never race the load.
+    func bgmListJSON() -> String {
+        func esc(_ s: String) -> String {
+            var o = ""
+            for c in s.unicodeScalars {
+                switch c {
+                case "\"": o += "\\\""
+                case "\\": o += "\\\\"
+                case "\n": o += "\\n"
+                case "\r": o += "\\r"
+                case "\t": o += "\\t"
+                default:
+                    if c.value < 0x20 { o += String(format: "\\u%04x", c.value) }
+                    else { o.unicodeScalars.append(c) }
+                }
+            }
+            return o
+        }
+        let tracks = DispatchQueue.main.sync { library.tracks }
+        let items = tracks.enumerated().map { (i, t) -> String in
+            let bpm = t.bpm > 0 ? String(Int(t.bpm.rounded())) : "0"
+            return "{\"id\":\(i),\"title\":\"\(esc(t.title))\",\"bpm\":\(bpm)}"
+        }
+        return "{\"tracks\":[\(items.joined(separator: ","))]}"
+    }
+
+    // GET /api/bgm/stats[?strategy=N] — per-track cumulative play time, ranked
+    // longest-first, for the BGM 관리 page's "재생 시간 순위" section. Merges the persisted
+    // totals with the still-open segment (audio.currentSegment) so a long-playing track
+    // shows fresh time without writing on every tick. bpm is looked up from the current
+    // library by file name.
+    //
+    // Strategy filter: no param → the ACTIVE strategy (the default view watches the
+    // current strategy's data accumulate); strategy=0 → 전체 (merged across strategies);
+    // strategy=N → that strategy only. The response also carries the strategy catalog
+    // (전략 히스토리 section) so the page needs no extra endpoint.
+    func bgmStatsJSON(_ path: String) -> String {
+        func esc(_ s: String) -> String {
+            var o = ""
+            for c in s.unicodeScalars {
+                switch c {
+                case "\"": o += "\\\""
+                case "\\": o += "\\\\"
+                case "\n": o += "\\n"
+                case "\r": o += "\\r"
+                case "\t": o += "\\t"
+                default:
+                    if c.value < 0x20 { o += String(format: "\\u%04x", c.value) }
+                    else { o.unicodeScalars.append(c) }
+                }
+            }
+            return o
+        }
+        // strategy=0 → 전체 (nil filter); missing → active strategy; N → that strategy.
+        let stratParam = URLComponents(string: "http://x" + path)?.queryItems?
+            .first(where: { $0.name == "strategy" })?.value
+        return DispatchQueue.main.sync {
+            let active = trackPlayStats.activeStrategy
+            let filter: Int?
+            if let raw = stratParam, let n = Int(raw) { filter = (n == 0) ? nil : n }
+            else { filter = active }
+            var totals = trackPlayStats.totals(strategy: filter)
+            // Fold in the in-flight segment so the currently playing track counts live.
+            // The open segment accrues under the ACTIVE strategy, so it only belongs in
+            // views that include it (전체 or the active strategy itself).
+            var liveKey: String? = nil
+            if let seg = audio.currentSegment(), filter == nil || filter == active {
+                liveKey = seg.key
+                var s = totals[seg.key] ?? TrackPlayStat(key: seg.key, title: seg.title, strategy: active)
+                if !seg.title.isEmpty && seg.title != "-" { s.title = seg.title }
+                s.seconds += seg.seconds
+                totals[seg.key] = s
+            }
+            let bpmByKey = Dictionary(library.tracks.map { ($0.url.lastPathComponent, $0.bpm) },
+                                      uniquingKeysWith: { a, _ in a })
+            let sorted = totals.values.sorted {
+                $0.seconds != $1.seconds ? $0.seconds > $1.seconds : $0.plays > $1.plays
+            }
+            let items = sorted.map { s -> String in
+                let bpm = bpmByKey[s.key] ?? 0
+                let bpmStr = bpm > 0 ? String(Int(bpm.rounded())) : "0"
+                let cur = (s.key == liveKey)
+                return "{\"title\":\"\(esc(s.title))\",\"seconds\":\(Int(s.seconds.rounded())),"
+                    + "\"plays\":\(s.plays),\"bpm\":\(bpmStr),\"current\":\(cur)}"
+            }
+            let total = Int(totals.values.reduce(0.0) { $0 + $1.seconds }.rounded())
+            // Strategy catalog for the 전략 히스토리 section + the filter buttons.
+            let strategies = trackPlayStats.strategies.map { s -> String in
+                "{\"id\":\(s.id),\"name\":\"\(esc(s.name))\",\"start\":\"\(esc(s.startedAt))\","
+                    + "\"end\":\"\(esc(s.endedAt))\",\"summary\":\"\(esc(s.summary))\","
+                    + "\"retro\":\"\(esc(s.retro))\"}"
+            }
+            return "{\"total\":\(total),\"strategy\":\(filter ?? 0),\"activeStrategy\":\(active),"
+                + "\"strategies\":[\(strategies.joined(separator: ","))],"
+                + "\"tracks\":[\(items.joined(separator: ","))]}"
+        }
+    }
+
+    // GET /api/bgm/now — what the activity-driven BGM (ConditionDirector) is playing right
+    // now: the current track's library id (so the BGM view's 액티비티 탭 can load the SAME
+    // file via /bgm-audio/<id>), plus condition/phase/target-BPM/profile for the status
+    // card. id = -1 when nothing is playing or the track isn't in the library.
+    // GET /api/bgm/plan — the 전략3 plan map plus live planning context: the slot
+    // resolved for "now" and the theme folders that actually exist in the library,
+    // so a planning pass (관리자 AI) can only reference real pools.
+    func bgmPlanJSON() -> String {
+        DispatchQueue.main.sync {
+            var counts: [String: Int] = [:]
+            for t in library.tracks where !t.theme.isEmpty { counts[t.theme, default: 0] += 1 }
+            let themes = counts.keys.sorted()
+            let themesJSON = "[" + themes.map { jsonString($0) }.joined(separator: ",") + "]"
+            let countsJSON = "{" + themes.map { "\(jsonString($0)):\(counts[$0] ?? 0)" }.joined(separator: ",") + "}"
+            let slot = bgmPlan.slot()
+            return "{\"plan\":\(bgmPlan.planJSON()),"
+                + "\"currentSlot\":\(jsonString(slot?.label ?? "")),"
+                + "\"themes\":\(themesJSON),"
+                + "\"themeCounts\":\(countsJSON)}"
+        }
+    }
+
+    func bgmNowJSON() -> String {
+        func esc(_ s: String) -> String {
+            var o = ""
+            for c in s.unicodeScalars {
+                switch c {
+                case "\"": o += "\\\""
+                case "\\": o += "\\\\"
+                case "\n", "\r", "\t": o += " "
+                default:
+                    if c.value < 0x20 { o += " " } else { o.unicodeScalars.append(c) }
+                }
+            }
+            return o
+        }
+        return DispatchQueue.main.sync {
+            guard let director = self.director else {
+                return "{\"on\":false,\"playing\":false,\"working\":false,\"muted\":\(self.session.isMuted),\"id\":-1,\"title\":\"\",\"bpm\":0,\"phase\":\"-\",\"profile\":\"-\"}"
+            }
+            let tracks = library.tracks
+            let id = audio.currentURL.flatMap { u in tracks.firstIndex(where: { $0.url == u }) } ?? -1
+            // `on` = the BGM system is engaged (widget master on & director running). `playing`
+            // = a resolvable track is actually streaming right now (id valid). They differ during
+            // warm-up or a library reload — the client uses `on` for the live dot and `id>=0` to
+            // decide there's a real track to follow, so it never lands in a stuck limbo.
+            let on = director.isPlaying
+            let playing = on && !audio.isPaused && id >= 0
+            let title = audio.currentTitle ?? ""
+            let phase = director.isIdleMode ? "IDLE" : (director.isActive ? director.phase.rawValue : "-")
+            let profile = on ? director.activeProfileLabel : "-"
+            // 전략3 plan slot: resolve live (not the director's cache) so the label is
+            // right even before the first decision tick. A live 폭우 리셋 overrides the
+            // shown situation (it wins over the plan gate).
+            let plan: String
+            if director.rainActive {
+                let rem = director.rainRemaining.map { " \(Int($0/60))분" } ?? ""
+                plan = "🌧 폭우 리셋\(rem)"
+            } else {
+                plan = self.bgmPlan.slot()?.label ?? "-"
+            }
+            let bpm = Int(director.targetBPM.rounded())
+            return "{\"on\":\(on),\"playing\":\(playing),\"working\":\(self.isWorking),\"muted\":\(self.session.isMuted),\"id\":\(id),\"title\":\"\(esc(title))\","
+                + "\"bpm\":\(bpm),\"phase\":\"\(esc(phase))\",\"profile\":\"\(esc(profile))\",\"plan\":\"\(esc(plan))\"}"
+        }
+    }
+
+    // GET /bgm-audio/<id> — stream one library track's raw file bytes. Same-origin, so the
+    // BGM player's createMediaElementSource and offline .wav export are not CORS-tainted.
+    // The track url is snapshotted on main; the (possibly large) file read stays off-main.
+    func serveBGMAudio(_ path: String) -> (Data, String, String)? {
+        let comps = path.split(separator: "/").map(String.init)   // ["bgm-audio", id]
+        guard comps.count >= 2, comps[0] == "bgm-audio", let id = Int(comps[1]) else { return nil }
+        let url: URL? = DispatchQueue.main.sync {
+            let t = library.tracks
+            return (id >= 0 && id < t.count) ? t[id].url : nil
+        }
+        guard let u = url, let bytes = try? Data(contentsOf: u) else { return nil }
+        let mime: String
+        switch u.pathExtension.lowercased() {
+        case "mp3":          mime = "audio/mpeg"
+        case "m4a", "aac":   mime = "audio/mp4"
+        case "wav":          mime = "audio/wav"
+        case "aiff", "aif":  mime = "audio/aiff"
+        case "caf":          mime = "audio/x-caf"
+        default:             mime = "application/octet-stream"
+        }
+        return (bytes, mime, u.lastPathComponent)
+    }
+
+    // GET /api/debug/snapshot?mode=bgm|dashboard[&tab=activity|debug] — QA-only PNG snapshot of the
+    // app window's WKWebView, used to embed real per-page screenshots in SPEC.html. Requires the
+    // window to already be open (does not open it itself, mirroring /api/debug/window-mode).
+    func serveSnapshot(_ path: String) -> (Data, String, String)? {
+        let q = URLComponents(string: "http://x" + path)?.queryItems ?? []
+        let modeStr = q.first(where: { $0.name == "mode" })?.value ?? "bgm"
+        let tab = q.first(where: { $0.name == "tab" })?.value
+        guard let mode = AppWindowController.Mode(rawValue: modeStr) else { return nil }
+        guard let png = appWindowSnapshotPNG(mode: mode, tab: tab) else { return nil }
+        return (png, "image/png", "snapshot.png")
     }
 
     // MARK: Goal page (/goal?n=<NN>[&t=<task>])
@@ -4524,6 +6297,117 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return "<span class=\"st \(cls)\">\(htmlEscape(label))</span>"
     }
 
+    // Coerce a JSON value that may arrive as a string or a number into a trimmed string
+    // (coin/week come in either shape from the client or an AI caller). "" when absent.
+    private static func numString(_ v: Any?) -> String {
+        if let s = v as? String { return s.trimmingCharacters(in: .whitespaces) }
+        if let n = v as? NSNumber { return n.stringValue }
+        return ""
+    }
+
+    // Folder-safe slug for a subtask title: path separators, colons, quotes and hashes
+    // become '-', whitespace collapses to '-', repeats fold, edges trim, capped at 40.
+    // Korean is preserved. Mirrors the constraints IssuePaths.taskDir enforces so the
+    // "taskN-<slug>" folder is always creatable.
+    private static func taskSlug(_ s: String) -> String {
+        var out = ""
+        for ch in s {
+            if ch == "/" || ch == "\\" || ch == ":" || ch == "#" || ch == "\"" || ch.isNewline || ch == "\t" || ch == " " {
+                out.append("-")
+            } else { out.append(ch) }
+        }
+        while out.contains("--") { out = out.replacingOccurrences(of: "--", with: "-") }
+        out = out.trimmingCharacters(in: CharacterSet(charactersIn: "-. "))
+        return String(out.prefix(40))
+    }
+
+    // Create a new 부분과제 folder (goal-NN/tasks/taskN-<slug>) and write its _task.md anchor.
+    // The next task number is 1 + the largest leading number across existing task* folders,
+    // so it never collides even when earlier tasks were archived. Returns the new folder
+    // name, or nil for an invalid goal number or a filesystem failure.
+    private func addSubtaskFolder(seq: Int, title: String, status: String,
+                                  coin: String, week: String, outputs: String) -> String? {
+        guard let tasksDir = IssuePaths.tasksDir(seq: seq) else { return nil }
+        let fm = FileManager.default
+        try? fm.createDirectory(at: tasksDir, withIntermediateDirectories: true)
+        var maxN = 0
+        if let entries = try? fm.contentsOfDirectory(atPath: tasksDir.path) {
+            for name in entries where name.lowercased().hasPrefix("task") {
+                var d = ""
+                for ch in name.dropFirst(4) { if ch.isNumber { d.append(ch) } else { break } }
+                if let n = Int(d) { maxN = max(maxN, n) }
+            }
+        }
+        let n = maxN + 1
+        let slug = Self.taskSlug(title)
+        let folder = "task\(n)" + (slug.isEmpty ? "" : "-\(slug)")
+        guard let dir = IssuePaths.taskDir(seq: seq, task: folder) else { return nil }
+        do { try fm.createDirectory(at: dir, withIntermediateDirectories: true) }
+        catch { return nil }
+        // Single-line the title so it can't break the frontmatter fences.
+        let oneLine = title.replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+        let st = status.trimmingCharacters(in: .whitespacesAndNewlines)
+        let statusVal = st.isEmpty ? "TODO" : st.uppercased()
+        var md = "---\nid: task\(n)\ntitle: \(oneLine)\nstatus: \(statusVal)\n"
+        if !coin.isEmpty { md += "coin: \(coin)\n" }
+        if !week.isEmpty { md += "week: \(week)\n" }
+        if !outputs.isEmpty { md += "outputs: \(outputs)\n" }
+        md += "---\n"
+        try? md.write(to: dir.appendingPathComponent("_task.md"), atomically: true, encoding: .utf8)
+        return folder
+    }
+
+    // Compact subtask summary for /data.json: one JSON object per ACTIVE (non-archived)
+    // tasks/<taskN> folder — {folder,id,title,status}. The dashboard 목록 renders these as
+    // task rows when the 유형(type) filter includes 'task'. Goals without a tasks/ folder
+    // return "" after a single failed directory read, so the per-poll cost stays tiny.
+    private func subtaskSummaryJSON(seq: Int) -> String {
+        guard let dir = IssuePaths.tasksDir(seq: seq),
+              let entries = try? FileManager.default.contentsOfDirectory(
+                  at: dir, includingPropertiesForKeys: [.isDirectoryKey],
+                  options: [.skipsHiddenFiles])
+        else { return "" }
+        struct Row { var name, id, title, status: String }
+        var rows: [Row] = []
+        for url in entries {
+            let name = url.lastPathComponent
+            // _session_isolation etc.; archived subtasks stay off the active dashboard list.
+            if name.hasPrefix("_") || name.hasPrefix("archived") { continue }
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            guard isDir else { continue }
+            var id = name, title = "", status = ""
+            let anchor = url.appendingPathComponent("_task.md")
+            if let data = try? Data(contentsOf: anchor) {
+                let md = String(decoding: data, as: UTF8.self)
+                id = taskField(md, "id") ?? name
+                title = taskField(md, "title") ?? ""
+                status = taskField(md, "status") ?? ""
+            } else if let dash = name.firstIndex(of: "-") {
+                // No anchor: split "task1-round1-kwt" into id "task1" + title "round1-kwt".
+                id = String(name[name.startIndex..<dash])
+                title = String(name[name.index(after: dash)...])
+            }
+            if status.uppercased() == "ARCHIVED" { continue }
+            rows.append(Row(name: name, id: id, title: title, status: status))
+        }
+        // Same ordering as the goal-page table: leading task number, then name.
+        func numKey(_ n: String) -> Int {
+            var d = ""
+            for ch in n { if ch.isNumber { d.append(ch) } else if !d.isEmpty { break } }
+            return Int(d) ?? 9999
+        }
+        rows.sort { a, b in
+            let an = numKey(a.name), bn = numKey(b.name)
+            if an != bn { return an < bn }
+            return a.name < b.name
+        }
+        return rows.map {
+            "{\"folder\":\(jsonString($0.name)),\"id\":\(jsonString($0.id)),"
+                + "\"title\":\(jsonString($0.title)),\"status\":\(jsonString($0.status))}"
+        }.joined(separator: ",")
+    }
+
     // Render the goal's tasks/ subfolders as a Jira-style 부분과제 table. Each child folder
     // is one subtask; a _task.md anchor (frontmatter id/title/status/coin/week/outputs)
     // supplies metadata, else the folder name is split into a short id + title. Returns ""
@@ -4532,9 +6416,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func renderSubtasks(seq: Int) -> String {
         guard let dir = IssuePaths.tasksDir(seq: seq) else { return "" }
         let fm = FileManager.default
-        guard let entries = try? fm.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
-        else { return "" }
+        // Missing tasks/ folder is fine — the section still renders its shell so the
+        // "+ 태스크 추가" control is available on every goal (0건 included).
+        let entries = (try? fm.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
         struct Row { var name, id, title, status, coin, week, outputs: String }
         var rows: [Row] = []
         for url in entries {
@@ -4565,7 +6450,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             rows.append(Row(name: name, id: id, title: title, status: status,
                             coin: coin, week: week, outputs: outputs))
         }
-        if rows.isEmpty { return "" }
         // Leading task number drives order (task1…task26); archived folders sink to the end.
         func numKey(_ n: String) -> Int {
             var d = ""
@@ -4602,12 +6486,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             body += "</tr>"
         }
         // 상태 filter menu (mirrors the dashboard's Active/Archived/All control). All rows
-        // ship in the HTML; the select just toggles row visibility client-side.
-        let tools = "<div class=\"subt-tools\"><label class=\"subt-flt\">상태 <select class=\"modesel\" onchange=\"filterSubtasks(this.value)\"><option value=\"active\" selected>활성</option><option value=\"archived\">보관</option><option value=\"all\">전체</option></select></label></div>"
+        // ship in the HTML; the select just toggles row visibility client-side. The
+        // "+ 태스크 추가" control opens an inline form that POSTs /api/goal/task — the same
+        // endpoint an AI calls to file a task under this goal (e.g. a 주보상 패키지) instead
+        // of creating a whole new goal.
+        let tools = """
+          <div class="subt-tools">
+            <label class="subt-flt">상태 <select class="modesel" onchange="filterSubtasks(this.value)"><option value="active" selected>활성</option><option value="archived">보관</option><option value="all">전체</option></select></label>
+            <button type="button" class="subt-addbtn" onclick="addSubtaskToggle()">+ 태스크 추가</button>
+          </div>
+          <div id="subtAddForm" class="subt-addform" style="display:none">
+            <input id="subtAddTitle" type="text" placeholder="제목 (예: 주보상 패키지)" onkeydown="if(event.key==='Enter')submitSubtask()" />
+            <select id="subtAddStatus" class="modesel">
+              <option value="TODO" selected>대기</option>
+              <option value="DOING">진행</option>
+              <option value="DONE">완료</option>
+              <option value="BLOCKED">막힘</option>
+            </select>
+            <input id="subtAddCoin" type="text" class="subt-addsm" placeholder="코인" />
+            <input id="subtAddWeek" type="text" class="subt-addsm" placeholder="주차" />
+            <input id="subtAddOut" type="text" placeholder="산출물" />
+            <button id="subtAddBtn" type="button" class="subt-addgo" onclick="submitSubtask()">추가</button>
+          </div>
+        """
+        // Empty goals still render the table shell (with a muted hint row) so the section
+        // reads as an intentional place to add tasks, not a rendering gap.
+        let tbody = rows.isEmpty
+            ? "<tr class=\"subt-empty\"><td colspan=\"5\">아직 부분과제가 없습니다. “+ 태스크 추가”로 만들어 보세요.</td></tr>"
+            : body
         let table = """
           <table class="subtasks">
             <thead><tr><th>태스크</th><th>제목</th><th>상태</th><th>코인·주차</th><th>산출물</th></tr></thead>
-            <tbody>\(body)</tbody>
+            <tbody>\(tbody)</tbody>
           </table>
         """
         let head = "<h2 class=\"atth\" onclick=\"toggleTasks()\">부분과제 <span id=\"subtCount\" class=\"subt-count\">\(activeCount)건</span> <span id=\"tasksToggle\" class=\"att-toggle\">▾ 접기</span></h2>"
@@ -4954,6 +6864,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             });
             var c=document.getElementById('subtCount'); if(c) c.textContent=shown+'건';
           }
+          // 부분과제 추가: reveal the inline form and focus the title.
+          function addSubtaskToggle(){
+            var f=document.getElementById('subtAddForm'); if(!f) return;
+            var open=(f.style.display==='none'); f.style.display=open?'':'none';
+            if(open){ var t=document.getElementById('subtAddTitle'); if(t) t.focus(); }
+          }
+          // POST /api/goal/task — creates a tasks/<taskN> folder under this goal and reloads
+          // to show it. The same endpoint the AI uses, so a task can be filed with or without
+          // the user. 제목 is required; 상태/코인/주차/산출물 are optional metadata.
+          function submitSubtask(){
+            var titleEl=document.getElementById('subtAddTitle'); if(!titleEl) return;
+            var title=titleEl.value.trim(); if(!title){ titleEl.focus(); return; }
+            var g=function(id){ var e=document.getElementById(id); return e?e.value.trim():''; };
+            var btn=document.getElementById('subtAddBtn'); if(btn) btn.disabled=true;
+            fetch('/api/goal/task',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({seq:SEQ,title:title,status:g('subtAddStatus'),
+                coin:g('subtAddCoin'),week:g('subtAddWeek'),outputs:g('subtAddOut')})})
+              .then(function(r){return r.json();})
+              .then(function(d){ if(d&&d.ok){ location.reload(); }
+                else { if(btn) btn.disabled=false; alert('태스크 추가 실패'); } })
+              .catch(function(){ if(btn) btn.disabled=false; });
+          }
           function renderChat(d){
             var box=document.getElementById('chatbody'); box.innerHTML='';
             var msgs=(d&&d.messages)||[];
@@ -5212,7 +7144,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           *{box-sizing:border-box}
           html,body{height:100%}
           body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden}
-          header{flex:none;background:rgba(14,17,22,.92);border-bottom:1px solid var(--line);padding:14px 20px}
+          /* This page loads in the app's fullSizeContentView WKWebView, so the header renders up
+             under the transparent titlebar. The native TitlebarDragView (AppWindow.swift) covers the
+             top ~28pt strip and swallows mouse-down there as a window-drag — everything past the 160px
+             traffic-light exclusion, which (rail expanded) includes the back link. Pad the header top
+             so the interactive '← 대시보드' link clears that band; the empty strip above it stays
+             draggable. Matches DashboardContent's own top-strip offset. */
+          header{flex:none;background:rgba(14,17,22,.92);border-bottom:1px solid var(--line);padding:36px 20px 14px}
           header a.back{color:var(--accent);text-decoration:none;font-size:12px}
           header h1{margin:6px 0 2px;font-size:17px}
           header .num{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--line);color:var(--accent);font-variant-numeric:tabular-nums;margin-right:6px}
@@ -5290,11 +7228,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           .subt-count{font-size:11px;color:var(--mut);text-transform:none;letter-spacing:0;font-variant-numeric:tabular-nums}
           .subt-tools{display:flex;align-items:center;gap:8px;margin:2px 0 8px}
           .subt-flt{display:inline-flex;align-items:center;gap:6px;color:var(--mut);font-size:12px}
+          .subt-addbtn{margin-left:auto;background:transparent;border:1px solid var(--line);color:var(--accent);border-radius:7px;padding:5px 10px;font-size:12px;cursor:pointer}
+          .subt-addbtn:hover{border-color:var(--accent)}
+          .subt-addform{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 10px}
+          .subt-addform input{background:#1b2230;border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:6px 8px;font-size:12px}
+          .subt-addform input:focus{outline:none;border-color:var(--accent)}
+          .subt-addform #subtAddTitle{flex:1;min-width:160px}
+          .subt-addform .subt-addsm{width:64px}
+          .subt-addform .subt-addgo{background:var(--accent);border:1px solid var(--accent);color:#0b0f17;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer}
+          .subt-addform .subt-addgo:disabled{opacity:.5;cursor:default}
+          table.subtasks .subt-empty td{color:var(--mut);text-align:center;padding:14px 10px}
           table.subtasks{width:100%;border-collapse:collapse;font-size:13px;margin:2px 0 6px}
           table.subtasks th{text-align:left;color:var(--mut);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.03em;padding:6px 10px;border-bottom:1px solid var(--line)}
           table.subtasks td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
           table.subtasks tbody tr:hover td{background:var(--panel)}
-          table.subtasks .tid{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent);white-space:nowrap}
+          table.subtasks .tid{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}
+          table.subtasks .tid a.tlink{color:var(--accent);text-decoration:none;border-bottom:1px dashed transparent}
+          table.subtasks .tid a.tlink:hover{border-bottom-color:var(--accent)}
           table.subtasks .ttitle{color:var(--fg);word-break:break-word}
           table.subtasks .tmeta{color:var(--mut);white-space:nowrap}
           table.subtasks .tout code{color:var(--green)}
@@ -5570,6 +7520,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func quit() {
+        AppLog.log("quit() — menu 종료 pressed -> dashboard.stop + NSApp.terminate")
         dashboard.stop()
         NSApp.terminate(nil)
     }

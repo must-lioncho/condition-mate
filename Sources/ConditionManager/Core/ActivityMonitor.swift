@@ -25,6 +25,27 @@ final class ActivityMonitor {
     // Live APM as a 0...1 fraction of the fixed redline.
     var apmNorm: Double { min(1.0, instantAPM / apmRedline) }
 
+    // Rolling 1-minute average APM (actual actions over the trailing 60s, scaled
+    // to per-minute). The menu-bar widget reads this instead of instantAPM so the
+    // number reflects a realistic sustained pace and stops flickering up and down
+    // each second — while the dashboard gauge keeps using the twitchy instant APM.
+    private(set) var averageAPM: Double = 0
+    private var minuteBuckets: [Int] = []           // per-tick event counts over the trailing minute
+    private let apmAverageSeconds: Double = 60.0
+
+    // Condition signal (0...1) for the menu-bar lightning gauge: the 1-minute
+    // average APM against a *fixed* gauge redline — a tachometer, not a
+    // personal-best tracker. An adaptive "÷ your own recent peak" ratio was tried
+    // first but self-normalises to ~1.0 whenever you keep working (the peak hugs
+    // the current average and decays only ~1%/5s), which pinned the gauge at Lv5
+    // regardless of how low the absolute pace was. A fixed scale (like apmNorm)
+    // makes the five stages track real intensity. This redline is lower than
+    // apmRedline so the stages span a realistic sustained-work band on the menu
+    // bar instead of sitting near the floor. Tune `gaugeRedline` to taste: the
+    // stage boundaries fall at 20/40/60/80% of it (Lv5 ≈ gaugeRedline APM).
+    let gaugeRedline: Double = 150
+    var conditionNorm: Double { min(1.0, averageAPM / gaugeRedline) }
+
     private(set) var lastEventDate: Date = Date()
 
     private var monitors: [Any] = []
@@ -58,27 +79,19 @@ final class ActivityMonitor {
             .keyDown, .flagsChanged,
             .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel
         ]
+        // Global monitor: events dispatched to *other* apps.
         if let m = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] event in
-            guard let self = self else { return }
-            let now = Date()
-            switch event.type {
-            case .keyDown, .flagsChanged:
-                self.keyCount += 1
-            case .scrollWheel:
-                // Collapse a continuous scroll burst into a single activity:
-                // skip events that fall within the coalescing gap of the last.
-                if let last = self.lastScrollDate, now.timeIntervalSince(last) < self.scrollCoalesceGap {
-                    self.lastScrollDate = now
-                    self.lastEventDate = now   // still "active", just not a new activity
-                    return
-                }
-                self.lastScrollDate = now
-                self.mouseCount += 1
-            default:
-                self.mouseCount += 1
-            }
-            self.liveCount += 1
-            self.lastEventDate = now
+            self?.record(event)
+        }) {
+            monitors.append(m)
+        }
+        // Local monitor: events dispatched to *our own* windows (dashboard,
+        // settings, follow-up windows). Global monitors never see these, so
+        // without this, working inside Condition Manager reads as zero activity.
+        // Return the event unchanged so normal handling proceeds.
+        if let m = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
+            self?.record(event)
+            return event
         }) {
             monitors.append(m)
         }
@@ -91,11 +104,36 @@ final class ActivityMonitor {
         }
     }
 
+    // Tally one input event into the rolling counters. Shared by the global and
+    // local monitors so our own windows count the same as any other app.
+    private func record(_ event: NSEvent) {
+        let now = Date()
+        switch event.type {
+        case .keyDown, .flagsChanged:
+            keyCount += 1
+        case .scrollWheel:
+            // Collapse a continuous scroll burst into a single activity:
+            // skip events that fall within the coalescing gap of the last.
+            if let last = lastScrollDate, now.timeIntervalSince(last) < scrollCoalesceGap {
+                lastScrollDate = now
+                lastEventDate = now   // still "active", just not a new activity
+                return
+            }
+            lastScrollDate = now
+            mouseCount += 1
+        default:
+            mouseCount += 1
+        }
+        liveCount += 1
+        lastEventDate = now
+    }
+
     // 10 Hz: roll sub-second event counts through a short window and recompute the
     // live APM, so the gauge rises and falls quickly against the fixed redline.
     private func liveSample() {
-        apmBuckets.append(liveCount)
+        let live = liveCount
         liveCount = 0
+        apmBuckets.append(live)
         let maxBuckets = max(1, Int((apmWindowSeconds / liveInterval).rounded()))
         if apmBuckets.count > maxBuckets { apmBuckets.removeFirst() }
         let sum = apmBuckets.reduce(0, +)
@@ -109,6 +147,17 @@ final class ActivityMonitor {
         } else {
             instantAPM += (raw - instantAPM) * releaseAlpha
         }
+
+        // Rolling 1-minute average: sum the same per-tick counts over a 60s window.
+        // Before the window fills, scale by the elapsed span so it reads correctly
+        // from the first minute. This is a plain average, no envelope, so the
+        // menu-bar number moves smoothly instead of twitching each second.
+        minuteBuckets.append(live)
+        let maxMinute = max(1, Int((apmAverageSeconds / liveInterval).rounded()))
+        if minuteBuckets.count > maxMinute { minuteBuckets.removeFirst() }
+        let mSum = minuteBuckets.reduce(0, +)
+        let mSpan = Double(minuteBuckets.count) * liveInterval
+        averageAPM = Double(mSum) * 60.0 / max(liveInterval, mSpan)
     }
 
     private func sample() {
@@ -121,6 +170,7 @@ final class ActivityMonitor {
         mouseSmoothed = mouseSmoothed * (1 - smoothingAlpha) + mousePerMin * smoothingAlpha
         keyRate = keySmoothed
         mouseRate = mouseSmoothed
+
         WorkerRegistry.shared.recordRun("activity-sample",
             why: "5초 입력 집계·평활화",
             effect: "APM \(Int(instantAPM)) · ⌨ \(Int(keyRate))/분 · 🖱 \(Int(mouseRate))/분")

@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>챌린지 시작 · UX 테스트</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#12161f; --panel-2:#171c27;
+    --line:#232a37; --line-soft:#1b212c;
+    --text:#e7ebf2; --text-dim:#8b95a7; --text-mute:#5c6577;
+    --blue:#3b82f6; --blue-2:#2563eb; --blue-glow:rgba(59,130,246,.55);
+    --green:#22c55e; --amber:#f59e0b; --red:#ef4444;
+    font-synthesis:none;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Pretendard","Segoe UI",Roboto,sans-serif;
+    background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;overflow:hidden;
+  }
+  .app{display:flex;height:100vh}
+
+  /* ============ SIDEBAR ============ */
+  .sidebar{
+    width:248px;flex:0 0 248px;background:#0d1017;
+    border-right:1px solid var(--line-soft);
+    display:flex;flex-direction:column;padding:16px 16px 18px;
+  }
+  .brand{display:flex;align-items:center;gap:10px;padding:6px 4px 6px}
+  .brand .logo{width:30px;height:30px;border-radius:9px;
+    background:linear-gradient(135deg,#34d399,#3b82f6);box-shadow:0 4px 14px rgba(52,211,153,.3)}
+  .brand b{font-size:16px;letter-spacing:-.2px}
+
+  /* ---- START ZONE (idle only) ---- */
+  .start-zone{
+    overflow:hidden;max-height:520px;opacity:1;
+    transition:max-height .5s cubic-bezier(.2,.8,.2,1),opacity .35s ease,transform .5s cubic-bezier(.2,.8,.2,1),margin .5s;
+    margin-top:14px;
+  }
+  .sidebar[data-state="running"] .start-zone{
+    max-height:0;opacity:0;transform:translateY(28px);margin-top:0;pointer-events:none;
+  }
+  .sz-inner{display:flex;flex-direction:column;align-items:center;padding:10px 0 4px;text-align:center}
+
+  /* variant A: DIAL */
+  .sv{display:none}
+  .start-zone[data-variant="dial"] .sv-dial{display:block}
+  .start-zone[data-variant="card"] .sv-card{display:flex}
+  .start-zone[data-variant="mini"] .sv-mini{display:flex}
+
+  .dial{position:relative;width:150px;height:150px}
+  .dial svg{position:absolute;inset:0}
+  .dial .rot{transform:rotate(-90deg);transform-origin:75px 75px}
+  .dial .track{fill:none;stroke:#1e2634;stroke-width:6}
+  .dial .prog{fill:none;stroke:url(#g1);stroke-width:6;stroke-linecap:round;
+    stroke-dasharray:427;stroke-dashoffset:384;transition:stroke-dashoffset .4s ease}
+  /* the 1-lap-per-second orbiting pixel */
+  .orbit{transform-origin:75px 75px;animation:orbit 1s linear infinite}
+  .orbit-dot{fill:#bfd6ff;filter:drop-shadow(0 0 4px rgba(96,165,250,.9))}
+  .dial .btn{
+    position:absolute;inset:22px;border-radius:50%;border:none;cursor:pointer;
+    background:linear-gradient(135deg,var(--blue),var(--blue-2));display:grid;place-items:center;
+    box-shadow:0 12px 30px -8px var(--blue-glow),inset 0 1px 0 rgba(255,255,255,.25);transition:.18s;
+  }
+  .dial .btn:hover{transform:scale(1.04)}
+  .dial .btn:active{transform:scale(.96)}
+  .dial .btn .tri{width:0;height:0;border-style:solid;border-width:16px 0 16px 26px;
+    border-color:transparent transparent transparent #fff;margin-left:6px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.25))}
+  .dial .pulse{position:absolute;inset:22px;border-radius:50%;pointer-events:none;
+    box-shadow:0 0 0 0 var(--blue-glow);animation:ring 2.6s infinite}
+
+  /* variant B: CARD */
+  .sv-card{
+    width:100%;align-items:center;gap:12px;padding:14px;border-radius:15px;cursor:pointer;
+    background:linear-gradient(135deg,rgba(59,130,246,.14),rgba(37,99,235,.06));
+    border:1px solid #1e3a5f;transition:.16s;position:relative;overflow:hidden;
+  }
+  .sv-card:hover{transform:translateY(-1px);border-color:#2f5c94}
+  .sv-card .cplay{width:44px;height:44px;flex:0 0 44px;border-radius:12px;
+    background:linear-gradient(135deg,var(--blue),var(--blue-2));display:grid;place-items:center;
+    box-shadow:0 8px 20px -6px var(--blue-glow)}
+  .sv-card .cplay .tri{width:0;height:0;border-style:solid;border-width:9px 0 9px 15px;
+    border-color:transparent transparent transparent #fff;margin-left:3px}
+  .sv-card .ctxt{text-align:left;flex:1}
+  .sv-card .ctxt b{font-size:15px;display:block}
+  .sv-card .ctxt small{font-size:12px;color:var(--text-dim)}
+  .sv-card .cbar{position:absolute;left:0;bottom:0;height:3px;width:38%;
+    background:linear-gradient(90deg,#60a5fa,#2563eb)}
+
+  /* variant C: MINI */
+  .sv-mini{
+    width:100%;align-items:center;gap:10px;padding:11px 14px;border-radius:12px;cursor:pointer;
+    background:var(--panel-2);border:1px solid var(--line);transition:.16s;
+  }
+  .sv-mini:hover{border-color:var(--blue);background:rgba(59,130,246,.1)}
+  .sv-mini .mplay{width:30px;height:30px;border-radius:50%;flex:0 0 30px;
+    background:linear-gradient(135deg,var(--blue),var(--blue-2));display:grid;place-items:center}
+  .sv-mini .mplay .tri{width:0;height:0;border-style:solid;border-width:6px 0 6px 10px;
+    border-color:transparent transparent transparent #fff;margin-left:2px}
+  .sv-mini b{font-size:14px}
+
+  .sz-title{font-size:17px;font-weight:800;letter-spacing:-.3px;margin-top:16px}
+  .sz-sub{font-size:12px;color:var(--text-mute);margin-top:5px;line-height:1.5;padding:0 6px}
+  .presets{display:flex;gap:6px;margin-top:14px;justify-content:center;flex-wrap:wrap}
+  .chip{padding:7px 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel-2);
+    color:var(--text-dim);font-size:12px;font-weight:700;cursor:pointer;transition:.14s}
+  .chip:hover{color:var(--text);border-color:#2e3646}
+  .chip.on{background:rgba(59,130,246,.16);border-color:var(--blue);color:#bfd6ff}
+
+  /* ---- NAV ZONE (running only) ---- */
+  .nav-zone{overflow:hidden;max-height:0;opacity:0;
+    transition:max-height .5s cubic-bezier(.2,.8,.2,1) .08s,opacity .4s ease .12s}
+  .sidebar[data-state="running"] .nav-zone{max-height:340px;opacity:1}
+  .newchat{display:flex;align-items:center;gap:8px;margin-top:14px;padding:11px 12px;border-radius:11px;
+    border:1px solid var(--line);background:var(--panel-2);color:var(--text);font-size:14px;font-weight:600;cursor:pointer;transition:.15s}
+  .newchat:hover{border-color:#2e3646;background:#1b212d}
+  .nav{margin-top:14px;display:flex;flex-direction:column;gap:2px}
+  .nav a{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:9px;
+    color:var(--text-dim);font-size:14px;text-decoration:none;cursor:pointer;transition:.12s}
+  .nav a.active{background:var(--panel-2);color:var(--text)}
+  .nav a:hover{color:var(--text)}
+  .nav .ico{width:18px;text-align:center;opacity:.9}
+  .side-label{font-size:11px;letter-spacing:.6px;color:var(--text-mute);text-transform:uppercase;
+    margin:18px 6px 6px;font-weight:700}
+
+  .side-spacer{flex:1;min-height:20px}
+
+  /* ---- SESSION CARD (running, docks bottom) ---- */
+  .side-session{
+    opacity:0;transform:translateY(18px);pointer-events:none;
+    transition:opacity .45s ease .16s,transform .5s cubic-bezier(.2,.8,.2,1) .16s;
+    padding:14px;border-radius:14px;
+    background:linear-gradient(160deg,#132033,#12161f);border:1px solid #1e3a5f;
+  }
+  .sidebar[data-state="running"] .side-session{opacity:1;transform:none;pointer-events:auto}
+  .ss-top{display:flex;align-items:center;gap:9px;margin-bottom:10px}
+  .ss-top .livedot{position:relative;width:11px;height:11px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 0 0 rgba(34,197,94,.6);animation:beat 1.6s infinite;flex:0 0 11px;
+    cursor:pointer;border:none;padding:0;transition:background .18s,box-shadow .18s}
+  .ss-top .livedot:hover{filter:brightness(1.15)}
+  .ss-top .livedot.muted{background:#5c6577;animation:none;box-shadow:none}
+  /* small mute slash for clarity */
+  .ss-top .livedot.muted::after{content:"";position:absolute;left:1.5px;top:4.5px;width:8px;height:2px;
+    background:#fff;border-radius:2px;transform:rotate(-45deg);box-shadow:0 0 0 1px rgba(0,0,0,.25)}
+  .ss-name{font-size:12px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ss-body{display:flex;align-items:center;gap:12px}
+  .ss-ring{position:relative;width:48px;height:48px;flex:0 0 48px}
+  .ss-ring svg{position:absolute;inset:0}
+  .ss-ring .rot{transform:rotate(-90deg);transform-origin:24px 24px}
+  .ss-ring .track{fill:none;stroke:#1e2634;stroke-width:4}
+  .ss-ring .prog{fill:none;stroke:#34d399;stroke-width:4;stroke-linecap:round;
+    stroke-dasharray:113;stroke-dashoffset:113;transition:stroke-dashoffset .4s linear}
+  .ss-ring .orbit{transform-origin:24px 24px;animation:orbit 1s linear infinite}
+  .ss-ring .orbit-dot{fill:#7ee2a0;filter:drop-shadow(0 0 3px rgba(126,226,160,.9))}
+  .ss-stop{position:absolute;inset:13px;border-radius:50%;border:none;cursor:pointer;
+    background:rgba(239,68,68,.9);display:grid;place-items:center;transition:.15s}
+  .ss-stop:hover{background:var(--red)}
+  .ss-stop .sq{width:11px;height:11px;border-radius:3px;background:#fff}
+  .ss-time{font-size:26px;font-weight:800;letter-spacing:.5px;font-variant-numeric:tabular-nums;line-height:1}
+  .ss-sub{font-size:11px;color:var(--text-mute);margin-top:10px}
+
+  /* ============ MAIN ============ */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .topbar{padding:20px 26px 0}
+  .topbar h1{font-size:22px;font-weight:700;letter-spacing:-.3px}
+  .topbar p{font-size:13px;color:var(--text-mute);margin-top:4px}
+  .tabs{display:flex;gap:22px;padding:16px 26px 0;border-bottom:1px solid var(--line-soft);
+    overflow-x:auto;white-space:nowrap}
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{padding:10px 2px 14px;font-size:14px;color:var(--text-dim);cursor:pointer;
+    border-bottom:2px solid transparent;font-weight:600}
+  .tab.active{color:var(--text);border-bottom-color:var(--blue)}
+  .tab .badge{background:var(--blue);color:#fff;font-size:11px;border-radius:8px;padding:1px 6px;margin-left:6px}
+  .content{flex:1;overflow-y:auto;padding:22px 26px 60px}
+  .content::-webkit-scrollbar{width:10px}
+  .content::-webkit-scrollbar-thumb{background:#202632;border-radius:8px;border:3px solid var(--bg)}
+
+  .sprint{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .sprint-head{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line-soft)}
+  .sp-id{font-size:12px;color:var(--text-dim);background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:3px 9px;font-weight:700}
+  .sp-name{color:var(--text-dim);font-size:14px}
+  .sp-time{font-variant-numeric:tabular-nums;font-weight:700;color:var(--green);font-size:16px}
+  .spacer{flex:1}
+  .cnt{display:flex;gap:6px}
+  .cnt span{font-size:12px;border-radius:7px;padding:2px 8px;border:1px solid var(--line);color:var(--text-dim)}
+  .cnt .g{color:#7ee2a0;border-color:#1f5c33}
+  .complete{background:rgba(34,197,94,.12);border:1px solid #1f5c33;color:#7ee2a0;padding:7px 14px;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer}
+  .goal-group{border-bottom:1px solid var(--line-soft)}
+  .goal-parent{display:flex;align-items:center;gap:10px;padding:13px 16px}
+  .gp-id{font-size:12px;background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:3px 10px;color:var(--text-dim);font-weight:600}
+  .gp-name{font-weight:700;font-size:15px}
+  .status{font-size:12px;padding:5px 12px;border-radius:8px;border:1px solid var(--line);color:var(--text-dim)}
+  .status.ontrack{background:rgba(59,130,246,.12);border-color:#1e3a5f;color:#8fbcff}
+  .goal-child{display:flex;align-items:center;gap:12px;padding:11px 16px 11px 40px;color:var(--text-dim)}
+  .goal-child:hover{background:var(--panel-2)}
+  .gc-id{font-size:11px;color:var(--text-mute);background:#10141c;border:1px solid var(--line-soft);border-radius:999px;padding:2px 9px}
+  .gc-name{flex:1;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .num{font-size:12px;color:var(--text-mute);font-variant-numeric:tabular-nums}
+  .pill-done{font-size:12px;color:#7ee2a0;border:1px solid #1f5c33;border-radius:7px;padding:3px 10px;background:rgba(34,197,94,.1)}
+  .goal-play{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:var(--panel-2);
+    display:grid;place-items:center;cursor:pointer;opacity:0;transition:.14s}
+  .goal-child:hover .goal-play{opacity:1}
+  .goal-play:hover{border-color:var(--blue);background:rgba(59,130,246,.15)}
+  .goal-play .t{width:0;height:0;border-style:solid;border-width:5px 0 5px 8px;border-color:transparent transparent transparent #8fbcff;margin-left:2px}
+
+  /* ============ prototype control ============ */
+  .proto{position:fixed;left:16px;bottom:16px;z-index:80;
+    background:rgba(13,16,23,.92);backdrop-filter:blur(10px);border:1px solid var(--line);
+    border-radius:12px;padding:8px;display:flex;flex-direction:column;gap:8px;
+    box-shadow:0 20px 50px -20px #000;width:236px}
+  .proto.hidden{display:none}
+  .proto .ph{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text-mute);
+    font-weight:800;padding:2px 4px;display:flex;align-items:center;gap:6px}
+  .proto .ph .d{width:6px;height:6px;border-radius:50%;background:var(--amber)}
+  .proto .ph .x{margin-left:auto;width:20px;height:20px;border-radius:6px;border:1px solid var(--line);
+    background:var(--panel);color:var(--text-dim);cursor:pointer;font-size:13px;line-height:1;
+    display:grid;place-items:center;transition:.14s}
+  .proto .ph .x:hover{color:var(--text);border-color:#2e3646;background:var(--panel-2)}
+  /* reopen bubble */
+  .proto-reopen{position:fixed;left:16px;bottom:16px;z-index:80;display:none;
+    align-items:center;gap:7px;padding:8px 13px;border-radius:999px;cursor:pointer;
+    background:rgba(13,16,23,.92);backdrop-filter:blur(10px);border:1px solid var(--line);
+    color:var(--text-dim);font-size:12px;font-weight:700;box-shadow:0 12px 30px -12px #000;transition:.14s}
+  .proto-reopen.show{display:flex}
+  .proto-reopen:hover{color:var(--text);border-color:#2e3646}
+  .proto-reopen .d{width:6px;height:6px;border-radius:50%;background:var(--amber)}
+  .seg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:3px;gap:2px}
+  .seg button{flex:1;border:none;background:transparent;color:var(--text-dim);font-size:12px;font-weight:700;padding:7px 4px;border-radius:6px;cursor:pointer;transition:.12s}
+  .seg button.on{background:var(--blue);color:#fff}
+  .proto .hint{font-size:11px;color:var(--text-mute);line-height:1.5;padding:0 4px}
+
+  @keyframes orbit{to{transform:rotate(360deg)}}
+  @keyframes ring{0%{box-shadow:0 0 0 0 var(--blue-glow)}70%{box-shadow:0 0 0 20px rgba(59,130,246,0)}100%{box-shadow:0 0 0 0 rgba(59,130,246,0)}}
+  @keyframes beat{0%{box-shadow:0 0 0 0 rgba(34,197,94,.6)}70%{box-shadow:0 0 0 7px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+</style>
+</head>
+<body>
+
+<div class="proto" id="proto">
+  <div class="ph"><span class="d"></span>프로토타입 · 스타트 버튼 3안<button class="x" id="protoClose" title="닫기 (새로고침하면 다시 나옵니다)">×</button></div>
+  <div class="seg" id="seg">
+    <button data-v="dial" class="on">A 다이얼</button>
+    <button data-v="card">B 카드</button>
+    <button data-v="mini">C 미니</button>
+  </div>
+  <div class="hint" id="hint">로고 아래 스타트 버튼을 누르면 세션이 맨 아래로 내려가고 메뉴가 나타납니다. 링 위 작은 픽셀은 1초에 한 바퀴 돕니다.</div>
+</div>
+<div class="proto-reopen" id="protoReopen"><span class="d"></span>프로토타입 열기</div>
+
+<div class="app">
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar" data-state="idle">
+    <div class="brand"><div class="logo"></div><b>ConditionMate</b></div>
+
+    <!-- START ZONE (idle) -->
+    <div class="start-zone" id="startZone" data-variant="dial">
+      <div class="sz-inner">
+        <!-- A dial -->
+        <div class="sv sv-dial">
+          <div class="dial">
+            <svg viewBox="0 0 150 150">
+              <defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#60a5fa"/><stop offset="1" stop-color="#2563eb"/>
+              </linearGradient></defs>
+              <g class="rot">
+                <circle class="track" cx="75" cy="75" r="68"/>
+                <circle class="prog" id="prog" cx="75" cy="75" r="68"/>
+              </g>
+              <g class="orbit"><circle class="orbit-dot" cx="75" cy="7" r="3"/></g>
+            </svg>
+            <div class="pulse"></div>
+            <button class="btn" data-start><span class="tri"></span></button>
+          </div>
+        </div>
+        <!-- B card -->
+        <button class="sv sv-card" data-start>
+          <span class="cplay"><span class="tri"></span></span>
+          <span class="ctxt"><b>챌린지 시작</b><small id="cardSub">25분 집중</small></span>
+          <span class="cbar"></span>
+        </button>
+        <!-- C mini -->
+        <button class="sv sv-mini" data-start>
+          <span class="mplay"><span class="tri"></span></span><b>챌린지 시작</b>
+        </button>
+
+        <div class="sz-title">챌린지 시작</div>
+        <div class="sz-sub">지금 시작하면 <b style="color:var(--text)">MPC정리 &amp; 시즌1</b> 목표에 시간이 쌓여요</div>
+        <div class="presets" id="presets">
+          <div class="chip on" data-min="25">25분</div>
+          <div class="chip" data-min="50">50분</div>
+          <div class="chip" data-min="0">무제한</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NAV ZONE (running) -->
+    <div class="nav-zone">
+      <div class="newchat"><span>＋</span> 새 대화</div>
+      <nav class="nav">
+        <a class="active"><span class="ico">▦</span> 대시보드</a>
+        <a><span class="ico">🧩</span> 스킬</a>
+        <a><span class="ico">🤖</span> 에이전트</a>
+      </nav>
+      <div class="side-label">세션</div>
+    </div>
+
+    <div class="side-spacer"></div>
+
+    <!-- SESSION CARD (running, bottom) -->
+    <div class="side-session" id="sideSession">
+      <div class="ss-top"><button class="livedot" id="muteBtn" title="음원 뮤트 / 해제"></button><span class="ss-name" id="ssName">MPC정리 &amp; 시즌1 정리</span></div>
+      <div class="ss-body">
+        <div class="ss-ring">
+          <svg viewBox="0 0 48 48">
+            <g class="rot">
+              <circle class="track" cx="24" cy="24" r="18"/>
+              <circle class="prog" id="ssProg" cx="24" cy="24" r="18"/>
+            </g>
+            <g class="orbit"><circle class="orbit-dot" cx="24" cy="4" r="2.2"/></g>
+          </svg>
+          <button class="ss-stop" data-stop><span class="sq"></span></button>
+        </div>
+        <div class="ss-time" id="ssTime">0:00</div>
+      </div>
+      <div class="ss-sub" id="ssSub">챌린지 진행 중 · 목표에 시간 적립</div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="topbar">
+      <h1>오늘 활동 · 챌린지</h1>
+      <p>2026-07-06 (Mon) · 분당 기록</p>
+    </div>
+    <div class="tabs">
+      <div class="tab active">스프린트</div><div class="tab">목록</div><div class="tab">그룹</div>
+      <div class="tab">테이블</div><div class="tab">토큰</div><div class="tab">일정</div>
+      <div class="tab">히스토리</div><div class="tab">큐 <span class="badge">4</span></div>
+    </div>
+    <div class="content">
+      <section class="sprint">
+        <div class="sprint-head">
+          <span class="sp-id">26-11</span><span class="sp-name">예상 결과 미정</span>
+          <span class="sp-time">01:54:37</span><span class="spacer"></span>
+          <span class="cnt"><span>16</span><span>3</span><span class="g">20</span></span>
+          <span class="complete">Complete sprint</span>
+        </div>
+        <div class="goal-group">
+          <div class="goal-parent"><span class="gp-id">goal-01</span><span class="gp-name">MPC정리 &amp; 시즌1 정리</span><span class="spacer"></span><span class="status ontrack">On Track</span></div>
+          <div class="goal-child"><span class="gc-id">goal-130</span><span class="gc-name">주보상패키지 지급</span><span class="num">01</span><span class="goal-play"><span class="t"></span></span></div>
+        </div>
+        <div class="goal-group">
+          <div class="goal-parent"><span class="gp-id">goal-02</span><span class="gp-name">Condition Manager</span><span class="spacer"></span><span class="status ontrack">On Track</span></div>
+          <div class="goal-child"><span class="gc-id">goal-227</span><span class="gc-name">위젯 숫자 1분 평균으로 완만하게</span><span class="pill-done">완료</span><span class="goal-play"><span class="t"></span></span></div>
+          <div class="goal-child"><span class="gc-id">goal-230</span><span class="gc-name">위젯 캐릭터 빼고 번개 5단계 집중</span><span class="pill-done">완료</span><span class="goal-play"><span class="t"></span></span></div>
+          <div class="goal-child"><span class="gc-id">goal-233</span><span class="gc-name">NSS 일일 보고서 생성</span><span class="pill-done">완료</span><span class="goal-play"><span class="t"></span></span></div>
+          <div class="goal-child"><span class="gc-id">goal-234</span><span class="gc-name">목표 중복 판정기</span><span class="pill-done">완료</span><span class="goal-play"><span class="t"></span></span></div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var DIAL_C=427, SS_C=113;
+  var running=false, seconds=0, targetMin=25, timer=null;
+
+  var sidebar=document.getElementById('sidebar'),
+      startZone=document.getElementById('startZone'),
+      prog=document.getElementById('prog'),
+      ssProg=document.getElementById('ssProg'),
+      ssTime=document.getElementById('ssTime'),
+      ssName=document.getElementById('ssName'),
+      cardSub=document.getElementById('cardSub'),
+      presets=document.getElementById('presets');
+
+  function fmt(s){var h=Math.floor(s/3600),m=Math.floor(s%3600/60),ss=s%60;
+    var mm=(m<10&&h>0?'0':'')+m,sss=(ss<10?'0':'')+ss;return (h>0?h+':':'')+mm+':'+sss;}
+
+  function frac(){
+    if(targetMin>0) return Math.min(seconds/(targetMin*60),1);
+    return (seconds%60)/60; // unlimited: per-minute sweep
+  }
+  function render(){
+    ssTime.textContent=fmt(seconds);
+    var f=frac();
+    ssProg.style.strokeDashoffset=SS_C*(1-f);
+    // idle dial shows a preview arc of the selected preset
+    prog.style.strokeDashoffset=running?DIAL_C*(1-f):DIAL_C*0.9;
+  }
+  function updatePreview(){
+    var label=targetMin>0?targetMin+'분 집중':'무제한';
+    cardSub.textContent=label;
+  }
+
+  function start(goalName){
+    if(goalName){ssName.textContent=goalName;}
+    running=true; seconds=0;
+    sidebar.dataset.state='running';
+    clearInterval(timer);
+    timer=setInterval(function(){
+      seconds++; render();
+      if(targetMin>0 && seconds>=targetMin*60){ finish(); }
+    },1000);
+    render();
+  }
+  function finish(){
+    running=false; clearInterval(timer);
+    sidebar.dataset.state='idle';
+    render();
+  }
+
+  document.querySelectorAll('[data-start]').forEach(function(b){b.addEventListener('click',function(){ if(!running) start(); });});
+  document.querySelectorAll('[data-stop]').forEach(function(b){b.addEventListener('click',finish);});
+
+  presets.addEventListener('click',function(e){
+    var c=e.target.closest('.chip'); if(!c)return;
+    [].forEach.call(presets.children,function(x){x.classList.remove('on')});
+    c.classList.add('on'); targetMin=parseInt(c.dataset.min,10); updatePreview(); render();
+  });
+
+  document.querySelectorAll('.goal-play').forEach(function(p){
+    p.addEventListener('click',function(){
+      var name=p.parentElement.querySelector('.gc-name').textContent;
+      if(!running) start(name); else ssName.textContent=name;
+    });
+  });
+
+  // variant switch
+  var hints={
+    dial:'A · 다이얼: 로고 아래 큰 원형 버튼. 링 위 픽셀이 1초에 한 바퀴 돌아 살아있는 느낌. 가장 강한 시작 유도.',
+    card:'B · 카드: 재생 아이콘 + 라벨 + 하단 진행바. 세로 공간을 덜 쓰면서 선택한 시간을 함께 표시.',
+    mini:'C · 미니: 얇은 한 줄 버튼. 공간 최소, 익숙한 리스트 느낌을 유지하고 싶을 때.'
+  };
+  document.getElementById('seg').addEventListener('click',function(e){
+    var b=e.target.closest('button'); if(!b)return;
+    [].forEach.call(this.children,function(x){x.classList.toggle('on',x===b)});
+    startZone.dataset.variant=b.dataset.v;
+    document.getElementById('hint').textContent=hints[b.dataset.v];
+  });
+
+  // mute toggle — green(재생) <-> red(뮤트)
+  var muted=false, muteBtn=document.getElementById('muteBtn'), ssSub=document.getElementById('ssSub');
+  muteBtn.addEventListener('click',function(){
+    muted=!muted;
+    muteBtn.classList.toggle('muted',muted);
+    muteBtn.title=muted?'음원 켜기':'음원 뮤트';
+    ssSub.textContent=(muted?'음원 꺼짐':'챌린지 진행 중')+' · 목표에 시간 적립';
+  });
+
+  // proto panel close / reopen (state is not persisted, so refresh restores it)
+  var proto=document.getElementById('proto'), reopen=document.getElementById('protoReopen');
+  document.getElementById('protoClose').addEventListener('click',function(){
+    proto.classList.add('hidden'); reopen.classList.add('show');
+  });
+  reopen.addEventListener('click',function(){
+    proto.classList.remove('hidden'); reopen.classList.remove('show');
+  });
+
+  updatePreview(); render();
+})();
+</script>
+</body>
+</html>

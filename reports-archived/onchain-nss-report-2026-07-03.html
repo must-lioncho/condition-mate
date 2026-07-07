@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>온체인 · NSS 일일 보고 — 2026-07-03</title>
+<style>
+  :root{
+    --card:#ffffff; --line:#e3e6ec;
+    --text:#1a1f2b; --muted:#6b7280; --accent:#2563eb; --green:#059669;
+    --red:#dc2626; --amber:#d97706; --violet:#7c3aed; --teal:#0891b2;
+    --a4w:210mm; --a4h:297mm; --pad:12mm;
+  }
+  @page{ size:A4 portrait; margin:0; }
+  *{box-sizing:border-box;
+    -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;}
+  body{margin:0;background:#eceef2;color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+    -webkit-font-smoothing:antialiased;}
+
+  .toolbar{position:fixed;top:18px;right:18px;z-index:50;}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:10px;
+    padding:11px 18px;font-size:14px;font-weight:600;cursor:pointer;
+    box-shadow:0 4px 14px rgba(37,99,235,.28);}
+  .btn:hover{filter:brightness(1.08);}
+
+  #report{padding:24px 0 60px;}
+  .page{width:var(--a4w);min-height:var(--a4h);margin:0 auto 24px;background:var(--card);
+    padding:var(--pad);box-shadow:0 2px 16px rgba(16,24,40,.12);display:flex;flex-direction:column;}
+
+  h1{font-size:21px;margin:0;font-weight:700;letter-spacing:-.3px;}
+  .sub{color:var(--muted);font-size:12.5px;margin-top:6px;line-height:1.7;}
+  .ref{display:inline-block;background:rgba(37,99,235,.08);color:var(--accent);
+    border:1px solid rgba(37,99,235,.35);border-radius:7px;padding:3px 10px;font-weight:700;font-size:12.5px;}
+  .hr{height:1px;background:var(--line);margin:16px 0 18px;}
+
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px;}
+  .kpi{border:1px solid var(--line);border-radius:12px;padding:12px 13px;}
+  .kpi .label{color:var(--muted);font-size:11px;margin-bottom:7px;}
+  .kpi .val{font-size:18px;font-weight:700;letter-spacing:-.5px;white-space:nowrap;}
+  .kpi .unit{font-size:10.5px;color:var(--muted);font-weight:500;margin-left:3px;}
+  .kpi.green .val{color:var(--green);} .kpi.violet .val{color:var(--violet);}
+  .kpi.amber .val{color:var(--amber);} .kpi.teal .val{color:var(--teal);}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .card{border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:16px;}
+  .card h2{font-size:14px;margin:0 0 12px;font-weight:700;display:flex;align-items:center;gap:8px;}
+  .card h2 .u{color:var(--muted);font-weight:500;font-size:11px;margin-left:auto;}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th,td{padding:8px 9px;text-align:right;border-bottom:1px solid var(--line);}
+  th:first-child,td:first-child{text-align:left;}
+  thead th{color:var(--muted);font-weight:600;font-size:11.5px;}
+  tbody tr:last-child td{border-bottom:none;}
+  tfoot td{font-weight:700;border-top:2px solid var(--line);}
+  .pos{color:var(--green);} .neg{color:var(--red);}
+
+  footer{margin-top:auto;color:var(--muted);font-size:11.5px;text-align:center;padding-top:18px;}
+
+  @media print{
+    html,body{background:#fff;margin:0;}
+    .toolbar{display:none !important;}
+    #report{padding:0;margin:0;}
+    .page{width:210mm;height:297mm;min-height:auto;margin:0;box-shadow:none;
+      overflow:hidden;page-break-after:always;break-after:page;}
+    .page:last-child{page-break-after:auto;break-after:auto;}
+  }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button class="btn" onclick="downloadPDF()">🖨 PDF 저장 (인쇄)</button>
+  <div style="font-size:11px;color:#6b7280;text-align:right;margin-top:6px;">대상 → 'PDF로 저장' 선택</div>
+</div>
+
+<div id="report">
+  <!-- ===== PAGE 1 ===== -->
+  <section class="page">
+    <header>
+      <h1>온체인 · NSS 일일 보고</h1>
+      <div class="sub"><span class="ref">⏱ 기준시각 2026-07-03 09:00 KST</span> · 온체인 스냅샷 = 매일 09:00 KST · NSS = DB 2026-07-03 기준<br>
+      USDT / KWT / SUT 온체인 + NSS(Super Save) 현황 · <b>핵심 지표 = 유입 토탈</b> (출금은 보안 목적 이동)</div>
+    </header>
+    <div class="hr"></div>
+
+    <div class="kpis">
+      <div class="kpi green"><div class="label">USDT 유입 토탈</div><div class="val">304,931.22<span class="unit">USDT</span></div></div>
+      <div class="kpi teal"><div class="label">KWT 유입 토탈</div><div class="val">29.52<span class="unit">억 KWT</span></div></div>
+      <div class="kpi green"><div class="label">SUT 유입 토탈</div><div class="val">1,077,398<span class="unit">SUT</span></div></div>
+      <div class="kpi violet"><div class="label">NSS 누적 USDT</div><div class="val">1,697,760<span class="unit">USDT</span></div></div>
+      <div class="kpi amber"><div class="label">NSS 누적 구독자</div><div class="val">336<span class="unit">명/796건</span></div></div>
+    </div>
+
+    <div class="grid"><div class="card"><h2><span class="dot" style="background:#059669"></span>USDT 온체인 (입금/출금)</h2><div id="chart_USDT"></div></div><div class="card"><h2><span class="dot" style="background:#0891b2"></span>KWT 온체인 (입금/출금)<span class="u">단위 : 억</span></h2><div id="chart_KWT"></div></div></div>
+    <div class="grid"><div class="card" style="margin-bottom:0"><h2><span class="dot" style="background:#2563eb"></span>SUT 온체인 (입금/출금)</h2><div id="chart_SUT"></div></div><div class="card" style="margin-bottom:0"><h2><span class="dot" style="background:var(--violet)"></span>NSS 일별 신규 (승인일 기준)</h2><div id="chart_NSS"></div></div></div>
+
+    <footer>1 / 2 · 기준시각 2026-07-03 09:00 KST</footer>
+  </section>
+
+  <!-- ===== PAGE 2 ===== -->
+  <section class="page">
+    <header><h1>상세 데이터</h1>
+      <div class="sub">온체인 입출금 내역 및 NSS 일별·누적 · 최근 4일 (06-30 ~ 07-03)</div>
+    </header>
+    <div class="hr"></div>
+
+    <div class="grid">
+      <div class="card"><h2>USDT 온체인 상세</h2>
+        <table>
+          <thead><tr><th>시각</th><th>입금</th><th>출금</th></tr></thead>
+          <tbody>
+            <tr><td>06-30 09:00</td><td>81,150</td><td class="neg">1,349</td></tr>
+            <tr><td>07-01 09:00</td><td>88,300</td><td>0</td></tr>
+            <tr><td>07-02 09:00</td><td>82,350</td><td>0</td></tr>
+            <tr><td>07-03 09:00</td><td>53,131.22</td><td class="neg">1,000.2</td></tr>
+          </tbody>
+          <tfoot><tr><td>유입 토탈</td><td class="pos">304,931.22</td><td>2,349.2</td></tr></tfoot>
+        </table></div><div class="card"><h2>SUT 온체인 상세</h2>
+        <table>
+          <thead><tr><th>시각</th><th>입금</th><th>출금</th></tr></thead>
+          <tbody>
+            <tr><td>06-30 09:00</td><td>363,711</td><td class="neg">11,429</td></tr>
+            <tr><td>07-01 09:00</td><td>282,163</td><td class="neg">16,175</td></tr>
+            <tr><td>07-02 09:00</td><td>284,859</td><td class="neg">1,235</td></tr>
+            <tr><td>07-03 09:00</td><td>146,665</td><td class="neg">1,689</td></tr>
+          </tbody>
+          <tfoot><tr><td>유입 토탈</td><td class="pos">1,077,398</td><td>30,528</td></tr></tfoot>
+        </table></div>
+    </div>
+
+    <div class="card"><h2>KWT 온체인 상세</h2>
+        <table>
+          <thead><tr><th>시각</th><th>입금</th><th>출금</th></tr></thead>
+          <tbody>
+            <tr><td>06-30 09:00</td><td>15,187,196</td><td class="neg">20,736,588</td></tr>
+            <tr><td>07-01 09:00</td><td>1,480,128,813.21</td><td class="neg">121,255,500</td></tr>
+            <tr><td>07-02 09:00</td><td>1,094,606,316</td><td class="neg">5,483,469</td></tr>
+            <tr><td>07-03 09:00</td><td>361,731,322</td><td>0</td></tr>
+          </tbody>
+          <tfoot><tr><td>유입 토탈</td><td class="pos">2,951,653,647.21</td><td>147,475,557</td></tr></tfoot>
+        </table></div>
+
+    <div class="card">
+      <h2>NSS 일별 상세 · 누적</h2>
+      <table>
+        <thead><tr><th>일자</th><th>계약</th><th>인원</th><th>USDT</th></tr></thead>
+        <tbody>
+          <tr><td>2026-06-30</td><td>128</td><td>78</td><td>247,900.00</td></tr>
+          <tr><td>2026-07-01</td><td>134</td><td>85</td><td>252,800.00</td></tr>
+          <tr><td>2026-07-02</td><td>87</td><td>60</td><td>250,100.00</td></tr>
+          <tr><td>2026-07-03</td><td>58</td><td>39</td><td>186,760.00</td></tr>
+        </tbody>
+        <tfoot>
+          <tr><td>일별 합계 (4일)</td><td>407</td><td>262</td><td>937,560.00</td></tr>
+          <tr><td>누적 (S2 Approved)</td><td>796</td><td>336</td><td>1,697,760.00</td></tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <footer>2 / 2 · 기준시각 2026-07-03 09:00 KST</footer>
+  </section>
+</div>
+
+<script>
+function fmt(v){ return Number(v).toLocaleString(); }
+function fmtEok(v){ return v===0 ? '0' : (v/1e8).toFixed(2)+'억'; }
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+function drawBars(boxId, cats, series, subLabels, valFmt){
+  valFmt = valFmt || fmt;
+  var W=340, padL=10, padR=10, top=30, plotH=150, baseY=top+plotH;
+  var hasSub = !!subLabels;
+  var totalH = baseY + (hasSub?34:20);
+  var max=0;
+  series.forEach(function(s){ s.data.forEach(function(v){ if(v>max) max=v; }); });
+  var n=cats.length, slot=(W-padL-padR)/n;
+  var bw = series.length>1 ? 22 : 34, gapB=6;
+  var s='<svg viewBox="0 0 '+W+' '+totalH+'" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block">';
+  var lw=series.length*72, lx=W/2 - lw/2 + 14;
+  series.forEach(function(se,i){
+    var x=lx+i*72;
+    s+='<rect x="'+x+'" y="8" width="11" height="11" rx="2" fill="'+se.color+'"/>';
+    s+='<text x="'+(x+16)+'" y="17.5" font-size="11" fill="#1a1f2b">'+esc(se.name)+'</text>';
+  });
+  s+='<line x1="'+padL+'" y1="'+baseY+'" x2="'+(W-padR)+'" y2="'+baseY+'" stroke="#e3e6ec" stroke-width="1"/>';
+  cats.forEach(function(c,ci){
+    var cx=padL+slot*ci+slot/2;
+    var groupW=series.length*bw+(series.length-1)*gapB;
+    var startX=cx-groupW/2;
+    series.forEach(function(se,si){
+      var v=se.data[ci];
+      var h = max>0 ? (v/max*plotH) : 0; if(v>0 && h<2) h=2;
+      var x=startX+si*(bw+gapB), y=baseY-h;
+      s+='<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw+'" height="'+h.toFixed(1)+'" rx="3" fill="'+se.color+'"/>';
+      s+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(y-4).toFixed(1)+'" font-size="9" fill="#6b7280" text-anchor="middle">'+valFmt(v)+'</text>';
+    });
+    s+='<text x="'+cx.toFixed(1)+'" y="'+(baseY+15)+'" font-size="11" fill="#1a1f2b" text-anchor="middle" font-weight="600">'+esc(c)+'</text>';
+    if(hasSub){ s+='<text x="'+cx.toFixed(1)+'" y="'+(baseY+29)+'" font-size="9.5" fill="#6b7280" text-anchor="middle">'+esc(subLabels[ci])+'</text>'; }
+  });
+  s+='</svg>';
+  document.getElementById(boxId).innerHTML=s;
+}
+
+drawBars('chart_USDT', ["06-30", "07-01", "07-02", "07-03"], [
+  {name:'입금', color:'#059669', data:[81150, 88300, 82350, 53131.22]},
+  {name:'출금', color:'#dc2626', data:[1349, 0, 0, 1000.2]}
+]);
+drawBars('chart_KWT', ["06-30", "07-01", "07-02", "07-03"], [
+  {name:'입금', color:'#0891b2', data:[15187196, 1480128813.21, 1094606316, 361731322]},
+  {name:'출금', color:'#dc2626', data:[20736588, 121255500, 5483469, 0]}
+], null, fmtEok);
+drawBars('chart_SUT', ["06-30", "07-01", "07-02", "07-03"], [
+  {name:'입금', color:'#2563eb', data:[363711, 282163, 284859, 146665]},
+  {name:'출금', color:'#dc2626', data:[11429, 16175, 1235, 1689]}
+]);
+drawBars('chart_NSS', ["06-30", "07-01", "07-02", "07-03"], [
+  {name:'USDT 금액', color:'#7c3aed', data:[247900, 252800, 250100, 186760]}
+], ["계약 128 · 78명", "계약 134 · 85명", "계약 87 · 60명", "계약 58 · 39명"]);
+
+function downloadPDF(){ window.print(); }
+</script>
+</body>
+</html>

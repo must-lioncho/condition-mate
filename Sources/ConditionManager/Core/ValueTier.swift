@@ -51,7 +51,12 @@ struct ValueTier {
         "127.0.0.1", "localhost", "claude.ai",
     ]
 
+    // Our own app (main window + follow-up windows) counts as active (집중):
+    // deliberately engaging with the tracker is focused work, not rest.
+    static let ownAppPrefix = "com.lioncho.conditionmanager"
+
     static func classify(bundleID: String, site: String) -> ValueTier {
+        if bundleID.hasPrefix(ownAppPrefix) { return .active }
         if editorApps.contains(bundleID) { return .active }
         if browserApps.contains(bundleID) {
             let host = site.lowercased()

@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>AI 큐 노티 UX 테스트 — 인라인 큐 박스 vs 상단 노티+큐 탭</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Dashboard palette replica (DashboardContent.swift :root) */
+  :root{
+    --bg:#0f1115; --panel:#171a21; --line:#232733; --mut:#8b93a7; --fg:#e7ebf3;
+    --accent:#5b8cff; --green:#36c08a; --red:#e2667d;
+    --purple:#a78bfa; /* 대기=보라 (status-color convention) */
+  }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--fg);
+    font:14px/1.55 -apple-system,"Apple SD Gothic Neo",sans-serif; padding:28px 24px 80px }
+  h1{ font-size:19px; margin:0 0 6px }
+  .lead{ color:var(--mut); font-size:13px; max-width:820px; margin-bottom:6px }
+  .lead b{ color:#c6d0e2 }
+  .problem{ max-width:820px; background:#131722; border:1px solid var(--line); border-radius:12px;
+    padding:12px 16px; font-size:12.5px; color:#9aa5b8; margin:14px 0 20px }
+  .problem b{ color:var(--fg) }
+
+  /* ===== experiment controls ===== */
+  .ctrl{ display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin-bottom:16px }
+  .seg{ display:inline-flex; background:#131722; border:1px solid var(--line); border-radius:10px; padding:3px }
+  .seg button{ border:none; background:none; color:var(--mut); font-size:12.5px; font-weight:600;
+    padding:6px 14px; border-radius:8px; cursor:pointer }
+  .seg button.on{ background:#232b3d; color:var(--fg) }
+  .seg button.on.reco{ background:rgba(91,140,255,.22); color:#b9cdff }
+  .ctrl .lab{ font-size:11.5px; color:var(--mut); margin-right:-8px }
+  .scenario{ font-size:12px; color:#8fa0bd; background:#12161f; border:1px dashed #2a3142;
+    border-radius:10px; padding:9px 14px }
+  .scenario b{ color:#c6d0e2 }
+
+  /* ===== mock app window ===== */
+  .win{ max-width:1080px; background:var(--bg); border:1px solid #2a3142; border-radius:14px;
+    overflow:hidden; box-shadow:0 18px 60px rgba(0,0,0,.5) }
+  .winbar{ display:flex; gap:6px; padding:10px 14px; background:#12151d; border-bottom:1px solid var(--line) }
+  .winbar i{ width:11px; height:11px; border-radius:50%; background:#2a3142 }
+
+  /* tab bar (vtab replica) + noti slot on the right */
+  .tabrow{ display:flex; align-items:center; gap:2px; padding:4px 14px 0; border-bottom:1px solid var(--line); background:#12151d }
+  .vtab{ position:relative; display:inline-flex; align-items:center; gap:6px; background:none; border:none;
+    border-bottom:2px solid transparent; color:var(--mut); padding:8px 10px 9px; font-size:13px;
+    font-weight:600; cursor:pointer; border-radius:6px 6px 0 0; font-family:inherit }
+  .vtab:hover{ color:#c6d0e2 }
+  .vtab.active{ color:var(--fg); border-bottom-color:var(--accent) }
+  .vtab .qhint-badge{ display:inline-block; margin-left:2px; min-width:15px; padding:0 4px; border-radius:8px;
+    background:var(--accent); color:#0a0e17; font-size:10px; font-weight:700; text-align:center; line-height:15px }
+  .tab-sp{ flex:1 }
+
+  /* ===== proposed noti pill (variant A: inline in tab bar) ===== */
+  .noti{ display:none; align-items:center; gap:7px; border:1px solid var(--line); background:#151b28;
+    border-radius:999px; padding:5px 12px 5px 10px; font-size:12px; font-weight:600; cursor:pointer;
+    color:var(--fg); font-family:inherit; margin-bottom:3px; transition:border-color .2s,background .2s }
+  .noti:hover{ border-color:var(--accent) }
+  .noti .nd{ width:7px; height:7px; border-radius:50%; flex:none }
+  .noti.run{ display:inline-flex; color:#b9cdff; border-color:#2c3c63 }
+  .noti.run .nd{ background:var(--accent); animation:qpulse 1s infinite }
+  .noti.ready{ display:inline-flex; color:#cfc3f7; border-color:#4b3d78; background:rgba(167,139,250,.10) }
+  .noti.ready .nd{ background:var(--purple); animation:none }
+  .noti .arr{ color:var(--mut); font-size:11px; margin-left:1px }
+  @keyframes qpulse{ 0%,100%{ opacity:1 } 50%{ opacity:.25 } }
+
+  /* variant B: floating toast, top-right over content */
+  .stagewrap{ position:relative }
+  .toastwrap{ position:absolute; top:12px; right:16px; z-index:40; display:flex; flex-direction:column;
+    gap:8px; align-items:flex-end; pointer-events:none }
+  .toastwrap .noti{ pointer-events:auto; box-shadow:0 8px 28px rgba(0,0,0,.45); padding:8px 14px 8px 12px }
+
+  /* confirm toast (post-resolve) */
+  .confirm-toast{ display:none; pointer-events:auto; align-items:center; gap:8px; border:1px solid #2a5a3c;
+    background:rgba(54,192,138,.10); color:#9fe3c6; border-radius:10px; padding:8px 14px; font-size:12px;
+    font-weight:600; box-shadow:0 8px 28px rgba(0,0,0,.45) }
+  .confirm-toast.show{ display:inline-flex }
+
+  /* ===== content area ===== */
+  .content{ padding:16px 18px 22px; min-height:480px }
+  .viewpane{ display:none } .viewpane.on{ display:block }
+
+  /* input bar */
+  .addbar{ display:flex; gap:8px; margin-bottom:16px }
+  .addbar input{ flex:1; background:#10141d; border:1px solid var(--line); border-radius:9px;
+    color:var(--fg); font:inherit; font-size:13px; padding:9px 12px }
+  .addbar input:focus{ outline:none; border-color:var(--accent) }
+  .btn{ background:#1a2130; border:1px solid #2a3142; color:var(--fg); font:inherit; font-size:12.5px;
+    font-weight:600; border-radius:8px; padding:8px 14px; cursor:pointer; white-space:nowrap }
+  .btn:hover{ border-color:var(--accent) }
+  .btn.primary{ background:rgba(91,140,255,.18); border-color:#33508f; color:#b9cdff }
+
+  /* sprint section + goal rows (screenshot replica) */
+  .spsec{ border:1px dashed #2a3142; border-radius:12px; padding:10px 12px 12px; margin-bottom:14px }
+  .sphd{ display:flex; align-items:center; gap:10px; font-weight:700; font-size:14px; padding:2px 4px 8px }
+  .sphd .cnt{ margin-left:auto; color:var(--mut); font-size:11px; font-weight:600 }
+  .grow{ display:flex; align-items:center; gap:10px; background:var(--panel); border:1px solid var(--line);
+    border-radius:10px; padding:10px 12px; margin-bottom:8px }
+  .grow .grip{ color:#4a5266; cursor:grab; font-size:12px }
+  .grow .bar3{ width:14px; height:2px; background:#d9a441; box-shadow:0 -4px 0 #d9a441, 0 4px 0 #d9a441; margin:0 2px }
+  .gpill{ background:#10141d; border:1px solid #2a3142; border-radius:999px; padding:2px 10px;
+    font-size:11.5px; color:#aab6cf; font-weight:600; white-space:nowrap }
+  .gtitle{ flex:1; min-width:0; font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .parent{ font-size:11px; color:var(--mut); border:1px solid var(--line); border-radius:999px; padding:2px 9px; white-space:nowrap }
+  .stat{ font-size:11.5px; font-weight:600; border:1px solid #33508f; color:#9db8f5; border-radius:7px;
+    padding:3px 9px; white-space:nowrap }
+  .stat.wait{ border-color:#4b3d78; color:#cfc3f7 }
+
+  /* ===== AI queue box (aiQueueBoxHTML replica) ===== */
+  .qbox{ border:1px solid #26304a; border-radius:12px; background:#121724; padding:12px 14px; margin:12px 0 4px }
+  .qbox-hd{ display:flex; align-items:center; gap:10px; margin-bottom:8px }
+  .qbox-hd .t{ font-weight:600 }
+  .qbox-hd .cnts{ margin-left:auto; color:var(--mut); font-size:12px }
+  .qrun{ display:inline-flex; align-items:center; gap:5px; color:var(--accent); font-weight:600; font-size:12px }
+  .qrun .qdot{ width:7px; height:7px; border-radius:50%; background:var(--accent); animation:qpulse 1s infinite }
+  .qitem-title{ font-size:13.5px; font-weight:600; margin:8px 2px }
+  .qitem-analyzing{ display:flex; align-items:center; gap:9px; color:var(--mut); font-size:12.5px;
+    background:#0f131b; border:1px solid var(--line); border-radius:8px; padding:9px 12px; margin-top:6px }
+  .qopts{ display:flex; flex-direction:column; gap:7px; margin-top:8px }
+  .qopt{ display:flex; gap:10px; align-items:flex-start; border:1px solid var(--line); border-radius:8px;
+    padding:8px 11px; cursor:pointer; background:#0f131b; transition:border-color .15s,background .15s }
+  .qopt:hover{ border-color:var(--accent); background:#131a28 }
+  .qopt.rec{ border-color:#2a5a3c; background:rgba(54,192,138,.06) }
+  .qopt.rec:hover{ border-color:var(--green) }
+  .qnum{ flex:none; width:22px; height:22px; border-radius:6px; background:#1a2130; border:1px solid #2a3142;
+    color:var(--mut); font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center }
+  .qopt.rec .qnum{ background:#123024; border-color:#2a5a3c; color:var(--green) }
+  .qopt-label{ font-size:13px; font-weight:600 }
+  .qopt-label .recb{ font-size:10.5px; color:var(--green); border:1px solid #2a5a3c; border-radius:999px; padding:1px 7px; margin-left:6px }
+  .qopt-desc{ font-size:12px; color:var(--mut); margin-top:3px; line-height:1.45 }
+  .qopt input{ width:100%; background:#0c1018; border:1px solid #33508f; border-radius:7px; color:var(--fg);
+    font:inherit; font-size:12px; padding:7px 10px; margin-top:4px }
+  .qsim{ font-size:11.5px; color:var(--mut); margin-top:10px }
+  .qsim a{ color:var(--accent); text-decoration:none }
+  .qbox .dest{ font-size:11px; color:#8fa0bd; border:1px solid #2a3142; border-radius:999px; padding:2px 9px; margin-left:8px; font-weight:400 }
+
+  /* queue tab pane */
+  .qempty{ color:var(--mut); font-size:13px; padding:40px 0; text-align:center }
+  .qhist{ margin-top:18px }
+  .qhist .hd{ color:var(--mut); font-size:12px; margin-bottom:6px }
+  .qhist .row{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:#9aa5b8;
+    border:1px solid var(--line); border-radius:8px; padding:7px 11px; margin-bottom:6px }
+  .qhist .row b{ color:#9fe3c6; font-weight:600 }
+
+  .note{ max-width:820px; margin-top:22px; font-size:12px; color:#8fa0bd; line-height:1.7 }
+  .note b{ color:#c6d0e2 }
+  kbd{ background:#1a2130; border:1px solid #2a3142; border-radius:5px; padding:1px 6px; font-size:11px }
+</style>
+</head>
+<body>
+
+<h1>AI 큐 노티 UX 테스트</h1>
+<div class="lead">AI로 목표를 추가했을 때 — <b>현재</b>는 목표 리스트 한가운데에 큐 박스가 끼어들고,
+<b>제안</b>은 리스트를 깨끗하게 유지한 채 우상단 노티(큐 작동중 → 검토 대기)로 알리고, 노티를 누르면 큐 탭으로 이동합니다.</div>
+<div class="problem"><b>체험 방법:</b> 아래 모의 대시보드에서 <b>AI추가</b>를 눌러보세요 (여러 번 눌러 쌓아도 됩니다).
+분석 3.5초 후 검토 대기로 바뀝니다. 모드를 전환해 같은 동작을 두 UX로 비교해보세요.</div>
+
+<div class="ctrl">
+  <span class="lab">UX 모드</span>
+  <div class="seg" id="modeSeg">
+    <button data-m="current" onclick="setMode('current')">현재 — 인라인 큐 박스</button>
+    <button data-m="proposed" class="reco" onclick="setMode('proposed')">제안 — 노티 + 큐 탭</button>
+  </div>
+  <span class="lab" id="ntLab">노티 스타일</span>
+  <div class="seg" id="ntSeg">
+    <button data-n="pill" class="reco" onclick="setNoti('pill')">A. 탭바 상태 필</button>
+    <button data-n="toast" onclick="setNoti('toast')">B. 플로팅 토스트</button>
+  </div>
+</div>
+
+<div class="win">
+  <div class="winbar"><i></i><i></i><i></i></div>
+  <div class="tabrow">
+    <button class="vtab" data-v="input" onclick="setView('input')">목록</button>
+    <button class="vtab" data-v="sprint" onclick="setView('sprint')">스프린트</button>
+    <button class="vtab" data-v="queue" onclick="setView('queue')"><span>큐</span></button>
+    <span class="tab-sp"></span>
+    <button class="noti" id="notiPill" onclick="setView('queue')"><span class="nd"></span><span class="nt"></span><span class="arr">→</span></button>
+  </div>
+
+  <div class="stagewrap">
+    <!-- variant B: floating toasts -->
+    <div class="toastwrap" id="toastWrap">
+      <button class="noti" id="notiToast" onclick="setView('queue')"><span class="nd"></span><span class="nt"></span><span class="arr">→</span></button>
+      <div class="confirm-toast" id="confirmToast"></div>
+    </div>
+
+    <div class="content">
+      <!-- ============ SPRINT VIEW (screenshot replica) ============ -->
+      <div class="viewpane" id="pane-sprint">
+        <div class="addbar">
+          <input id="addInput" value="NSS 일일 리포트 7월8일 오전9시 기준" spellcheck="false">
+          <button class="btn primary" onclick="enqueue()">AI추가</button>
+        </div>
+
+        <div class="spsec">
+          <div class="sphd">▾ Sprint 12 <span class="cnt">진행 중</span></div>
+          <div class="grow"><span class="grip">⠿</span><span class="bar3"></span><span class="gpill">goal-55</span>
+            <span class="gtitle">에이전트를 사용하다보니 책상 시간 집중시간이 비현실적이 되는 문제가 있음</span>
+            <span class="parent">↳ 부모 goal-02</span><span class="stat wait">대기</span></div>
+          <div class="grow"><span class="grip">⠿</span><span class="bar3"></span><span class="gpill">goal-75</span>
+            <span class="gtitle">QA 에이전트 만들기</span>
+            <span class="parent">↳ 부모 goal-02</span><span class="stat wait">대기</span></div>
+          <div class="grow"><span class="grip">⠿</span><span class="bar3"></span><span class="gpill">goal-323</span>
+            <span class="gtitle">granfana인데 이것을 api로 결과를 테이블차트로 얻을수있는 기능이…</span>
+            <span class="stat">진행</span></div>
+          <!-- CURRENT UX: inline queue box lands here, pushing the board apart -->
+          <div id="inlineQ1"></div>
+        </div>
+
+        <div class="spsec">
+          <div class="sphd">▾ Bump out <span class="cnt">아이디어</span></div>
+          <div class="grow"><span class="grip">⠿</span><span class="bar3"></span><span class="gpill">goal-324</span>
+            <span class="gtitle">팀리드 호출 포로모로 와.스프린트 트래커 각각에 맞는 음원 리스트를 구성…</span>
+            <span class="stat">진행</span></div>
+          <div id="inlineQ2"></div>
+        </div>
+      </div>
+
+      <!-- ============ LIST VIEW (simplified) ============ -->
+      <div class="viewpane" id="pane-input">
+        <div class="addbar">
+          <input id="addInput2" value="NSS 일일 리포트 7월8일 오전9시 기준" spellcheck="false">
+          <button class="btn primary" onclick="enqueue(true)">AI추가</button>
+        </div>
+        <div class="grow"><span class="grip">⠿</span><span class="bar3"></span><span class="gpill">goal-102</span>
+          <span class="gtitle">버그 헌터 한번만 작동하고 말음</span><span class="parent">↳ 부모 goal-02</span><span class="stat wait">대기</span></div>
+        <div class="grow"><span class="grip">⠿</span><span class="bar3"></span><span class="gpill">goal-240</span>
+          <span class="gtitle">NSS 일일 리포트 만들어 - 7월4일 오전9시 기준</span><span class="stat">진행</span></div>
+        <div class="grow"><span class="grip">⠿</span><span class="bar3"></span><span class="gpill">goal-323</span>
+          <span class="gtitle">granfana인데 이것을 api로 결과를 테이블차트로 얻을수있는 기능이…</span><span class="stat">진행</span></div>
+        <div id="inlineQ0"></div>
+      </div>
+
+      <!-- ============ QUEUE TAB ============ -->
+      <div class="viewpane" id="pane-queue">
+        <div id="queueHost"></div>
+        <div class="qhist" id="qHist" style="display:none">
+          <div class="hd">처리 히스토리</div>
+          <div id="qHistRows"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>설계 노트</b><br>
+  · <b>실행 중</b>은 액센트 파랑 펄스, <b>검토 대기</b>는 보라 — 상태표시에 빨강/녹색 신호등을 쓰지 않는 기존 컨벤션을 따랐습니다 (녹색은 "추가됨" 확인에만).<br>
+  · 노티는 <b>큐 탭을 보고 있는 동안 숨김</b> — 이미 보고 있는 곳을 가리키지 않도록. 기존 큐 탭 카운트 배지는 노티가 대체합니다 (신호 단일화).<br>
+  · 스프린트로 담긴 항목은 인라인 위치 대신 큐 탭 카드에 <b>목적지 라벨</b>(→ Sprint 12)로 표기해 정보를 보존합니다.<br>
+  · 검토 카드의 번호 선택( <kbd>1</kbd>~<kbd>4</kbd> )과 추천 로직은 실제 대시보드 것을 그대로 복제했습니다.
+</div>
+
+<script>
+'use strict';
+let MODE='current', NOTI='pill', VIEW='sprint';
+let items=[], hist=[], seq=325, idc=0;
+
+function $(id){ return document.getElementById(id); }
+
+function setMode(m){ MODE=m; document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.m===m));
+  const dim=(m!=='proposed'); $('ntSeg').style.opacity=dim?'.35':'1'; $('ntLab').style.opacity=dim?'.35':'1';
+  $('ntSeg').style.pointerEvents=dim?'none':'auto'; render(); }
+function setNoti(n){ NOTI=n; document.querySelectorAll('#ntSeg button').forEach(b=>b.classList.toggle('on',b.dataset.n===n)); render(); }
+function setView(v){ VIEW=v; document.querySelectorAll('.vtab').forEach(b=>b.classList.toggle('active',b.dataset.v===v));
+  document.querySelectorAll('.viewpane').forEach(p=>p.classList.toggle('on', p.id==='pane-'+v)); render(); }
+
+// enqueue: AI추가 — analyzing 3.5s, then ready with options (dedup vs #240 like the real thing)
+function enqueue(fromList){
+  const inp=fromList?$('addInput2'):$('addInput');
+  const text=(inp.value||'').trim(); if(!text) return;
+  const it={ id:'q'+(++idc), text:text, status:'analyzing', sprint:fromList?0:12 };
+  items.push(it); render();
+  setTimeout(()=>{ if(it.status==='analyzing'){ it.status='ready'; render(); } }, 3500);
+}
+
+function resolveIt(id, action){
+  const i=items.findIndex(x=>x.id===id); if(i<0) return;
+  const it=items[i]; items.splice(i,1);
+  const msg = action==='run'  ? '✓ #240 아래 런으로 추가됨 · #'+(++seq)
+            : action==='new'  ? '✓ 최상위 목표로 추가됨 · #'+(++seq)
+            : action==='skip' ? '버림 (스킵)'
+            : '✓ 직접 지시로 처리됨 · #'+(++seq);
+  hist.unshift({t:it.text, msg:msg});
+  if(MODE==='proposed' && action!=='skip'){
+    const ct=$('confirmToast'); ct.textContent=msg; ct.classList.add('show');
+    setTimeout(()=>ct.classList.remove('show'), 2600);
+  }
+  render();
+}
+
+// ---- queue box HTML (replica of aiQueueBoxHTML) ----
+function qboxHTML(list, showDest){
+  if(!list.length) return '';
+  const analyzing=list.filter(x=>x.status==='analyzing').length;
+  const ready=list.filter(x=>x.status==='ready').length;
+  const run=analyzing?'<span class="qrun"><span class="qdot"></span>실행 중</span>':'';
+  const cnts=[]; if(analyzing) cnts.push('큐 '+analyzing+'건'); if(ready) cnts.push('검토 대기 '+ready+'건');
+  let h='<div class="qbox"><div class="qbox-hd"><span class="t">🤖 AI 큐</span>'+run
+       +'<span class="cnts">'+cnts.join(' · ')+'</span></div>';
+  list.forEach(it=>{
+    const dest=showDest?('<span class="dest">→ '+(it.sprint?('Sprint '+it.sprint):'백로그')+'</span>'):'';
+    h+='<div class="qitem-title">'+esc(it.text)+dest+'</div>';
+    if(it.status==='analyzing'){
+      h+='<div class="qitem-analyzing"><span class="qrun"><span class="qdot"></span></span>중복·배치 분석 중…</div>';
+    }else{
+      h+='<div class="qopts">'
+        +'<div class="qopt rec" onclick="resolveIt(\''+it.id+'\',\'run\')"><span class="qnum">1</span><div>'
+          +'<div class="qopt-label">#240 아래에 이번 회차 추가<span class="recb">추천</span></div>'
+          +'<div class="qopt-desc">매일 반복되는 NSS 일일 리포트라 새 목표가 아니라 기존 목표 아래 런으로 추가하는 것을 추천합니다.</div></div></div>'
+        +'<div class="qopt" onclick="resolveIt(\''+it.id+'\',\'new\')"><span class="qnum">2</span><div>'
+          +'<div class="qopt-label">별도 새 목표로 추가</div><div class="qopt-desc">#240와 무관하게 최상위 목표로 추가합니다.</div></div></div>'
+        +'<div class="qopt" onclick="resolveIt(\''+it.id+'\',\'skip\')"><span class="qnum">3</span><div>'
+          +'<div class="qopt-label">스킵</div><div class="qopt-desc">이번 회차는 추적하지 않고 버립니다.</div></div></div>'
+        +'<div class="qopt" onclick="event.stopPropagation()"><span class="qnum">4</span><div style="flex:1">'
+          +'<div class="qopt-label">기타 (직접 지시)</div>'
+          +'<input placeholder="예: 문구를 \'스크립트화\'로 바꾸고 자동 발송까지 포함해줘 — Enter 제출" '
+          +'onkeydown="if(event.key===\'Enter\')resolveIt(\''+it.id+'\',\'other\')"></div></div>'
+        +'</div>'
+        +'<div class="qsim">유사: <a href="#" onclick="return false">#240</a> NSS 일일 리포트 만들어 - 7월4일 오전9시 기준, '
+        +'<a href="#" onclick="return false">#294</a> 7월6일 · 번호를 입력하거나 항목을 클릭하세요</div>';
+    }
+  });
+  return h+'</div>';
+}
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+
+// ---- render everything from state ----
+function render(){
+  const analyzing=items.filter(x=>x.status==='analyzing').length;
+  const ready=items.filter(x=>x.status==='ready').length;
+
+  // inline boxes: CURRENT mode only (sprint sections by destination + list view)
+  $('inlineQ1').innerHTML=(MODE==='current')?qboxHTML(items.filter(x=>x.sprint===12)):'';
+  $('inlineQ2').innerHTML='';
+  $('inlineQ0').innerHTML=(MODE==='current')?qboxHTML(items.filter(x=>x.sprint===0)):'';
+
+  // queue tab: always the full queue (destination labels in proposed mode)
+  $('queueHost').innerHTML=items.length?qboxHTML(items, MODE==='proposed')
+    :'<div class="qempty">큐가 비어 있습니다 — 목록/스프린트에서 AI추가를 눌러보세요.</div>';
+  $('qHist').style.display=hist.length?'block':'none';
+  $('qHistRows').innerHTML=hist.map(h=>'<div class="row"><b>'+esc(h.msg)+'</b><span style="opacity:.7">'+esc(h.t)+'</span></div>').join('');
+
+  // queue tab badge: CURRENT behavior (ready count only, hidden on queue tab)
+  const tab=document.querySelector('.vtab[data-v="queue"] span');
+  let b=tab.querySelector('.qhint-badge'); if(b) b.remove();
+  if(MODE==='current' && ready>0 && VIEW!=='queue'){
+    b=document.createElement('span'); b.className='qhint-badge'; b.textContent=ready; tab.appendChild(b);
+  }
+
+  // PROPOSED noti: run state (blue pulse) or ready state (purple), hidden on queue tab
+  const pill=$('notiPill'), toast=$('notiToast');
+  [pill,toast].forEach(n=>{ n.classList.remove('run','ready'); });
+  if(MODE==='proposed' && VIEW!=='queue' && (analyzing+ready)>0){
+    const n=(NOTI==='pill')?pill:toast;
+    if(ready>0){ n.classList.add('ready'); n.querySelector('.nt').textContent='🤖 검토 대기 '+ready+'건'+(analyzing?' · 실행 중 '+analyzing:''); }
+    else{ n.classList.add('run'); n.querySelector('.nt').textContent='🤖 큐 실행 중 '+analyzing+'건'; }
+  }
+}
+
+setMode('current'); setNoti('pill'); setView('sprint');
+</script>
+</body>
+</html>

@@ -17,7 +17,7 @@ BGM 템포로 컨디션을 끌어올려 최상의 퍼포먼스 상태를 유지�
 ### 1. 타임 트래킹 (특정 앱 활성 시간)
 - 사용자가 지정한 "추적 대상 앱"이 frontmost일 때만 시간 누적.
 - 입력이 일정 시간(기본 60초) 없으면 자동 일시정지(idle).
-- 누적 시간은 `~/Library/Application Support/ConditionManager/stats.json`에 저장.
+- 누적 시간은 `~/.condition-manager/stats.json`에 저장.
 - 마일스톤(10/50/100/200/500/1000/2000/5000/10000h)으로 성장감 제공.
 
 ### 2. 컨디션 디렉터 (BGM 템포 제어)
@@ -95,7 +95,7 @@ raw 시간 × 배수는 "잠정 가치"일 뿐, 9시간 매크로처럼 조작 �
 3. **관리자 승인**: 준비 중 (stub)
 
 **확정 가치 = 잠정 × 셀프% × AI신뢰도%**. 대시보드 "오늘 가치(확정)" 카드 = 승인 전 0, 옆에 (현재 생성 X) 잠정값.
-목표/리뷰/AI는 대시보드에서 직접 입력(로컬 서버 POST), `~/Library/Application Support/ConditionManager/review/`에 저장.
+목표/리뷰/AI는 대시보드에서 직접 입력(로컬 서버 POST), `~/.condition-manager/review/`에 저장.
 
 **목표 계층 + 리포트:**
 - 목표 추가는 **그냥 빠르게 무한 추가**(Enter 연타). 추가 시 부모 선택 없음.
@@ -120,7 +120,7 @@ raw 시간 × 배수는 "잠정 가치"일 뿐, 9시간 매크로처럼 조작 �
 - **앱별 BGM (적절성 디버그)**: 앱마다 어떤 전략으로 어떤 트랙이 재생됐는지 표로 표시.
   트랙 BPM이 그 전략의 밴드를 벗어나면 **빨강(⚠)으로 경고** → "이 앱에 부적절한 BGM이 나왔나"를 한눈에 검증.
 - 상단 카드: 오늘 작업 / 현재 상태 / 누적 + "지금: 앱·전략·BGM" 라이브 라인. 5초마다 자동 갱신.
-- 데이터: `~/Library/Application Support/ConditionManager/activity/activity-YYYY-MM-DD.jsonl`
+- 데이터: `~/.condition-manager/activity/activity-YYYY-MM-DD.jsonl`
   (분당 1줄: 활동량·작업초·앱·전략·트랙·BPM, 최근 7일 보관). 서버는 평소엔 떠 있지 않아 메모리 부담 없음, 루프백 전용이라 외부 접근 불가.
 
 ## BGM 음원 준비 (로컬 BPM 폴더)

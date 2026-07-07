@@ -52,6 +52,12 @@ final class ReviewStore {
         // command, so a goal worked across several sessions can be picked back up.
         var linkedSessions: [String] = []
 
+        // Goal-to-goal LINKS (source side records the link). The display hierarchy stays
+        // flat 1-level; a link does NOT nest goals. Creating a link promotes THIS goal to
+        // top-level (parent="") and appends the target's id here. Only export/compression
+        // follows links (directional: source → target). See docs/specs/goal-link-and-generic-queue.md.
+        var links: [String] = []   // linked goal ids (child side records the link; display stays flat)
+
         // Concurrency-aware AI work fields. These only matter once two or more goals
         // run in_progress at once (only possible with AI), where naive parallelism
         // wastes tokens and degrades quality. They make that trade-off visible:
@@ -110,7 +116,7 @@ final class ReviewStore {
              waitingSince: Date? = nil, waitKind: String = "",
              energy: Int = 0, agents: [String] = [], tokens: Int = 0, value: Int = 0,
              evidence: [Evidence] = [], sessionId: String = "", transcriptPath: String = "",
-             linkedSessions: [String] = [],
+             linkedSessions: [String] = [], links: [String] = [],
              targetAt: Date? = nil, completedAt: Date? = nil,
              sprint: Int = 0, bump: Bool = false, released: Bool = false, releaseId: String = "",
              archived: Bool = false,
@@ -120,7 +126,7 @@ final class ReviewStore {
             self.waitingSince = waitingSince; self.waitKind = waitKind
             self.energy = energy; self.agents = agents; self.tokens = tokens; self.value = value
             self.evidence = evidence; self.sessionId = sessionId; self.transcriptPath = transcriptPath
-            self.linkedSessions = linkedSessions
+            self.linkedSessions = linkedSessions; self.links = links
             self.targetAt = targetAt; self.completedAt = completedAt
             self.sprint = sprint; self.bump = bump; self.released = released; self.releaseId = releaseId
             self.archived = archived
@@ -132,7 +138,7 @@ final class ReviewStore {
         // key (it ignores default values), wiping every goal on load — so decode each
         // optional-with-default field via decodeIfPresent and fall back to its default.
         enum CodingKeys: String, CodingKey {
-            case id, seq, text, parent, status, trackedSeconds, startedAt, waitingSince, waitKind, energy, agents, tokens, value, evidence, sessionId, transcriptPath, linkedSessions, targetAt, completedAt, sprint, bump, released, releaseId, archived, priority
+            case id, seq, text, parent, status, trackedSeconds, startedAt, waitingSince, waitKind, energy, agents, tokens, value, evidence, sessionId, transcriptPath, linkedSessions, links, targetAt, completedAt, sprint, bump, released, releaseId, archived, priority
         }
         init(from dec: Decoder) throws {
             let c = try dec.container(keyedBy: CodingKeys.self)
@@ -153,6 +159,7 @@ final class ReviewStore {
             sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId) ?? ""
             transcriptPath = try c.decodeIfPresent(String.self, forKey: .transcriptPath) ?? ""
             linkedSessions = try c.decodeIfPresent([String].self, forKey: .linkedSessions) ?? []
+            links = try c.decodeIfPresent([String].self, forKey: .links) ?? []
             targetAt = try c.decodeIfPresent(Date.self, forKey: .targetAt)
             completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
             sprint = try c.decodeIfPresent(Int.self, forKey: .sprint) ?? 0
@@ -303,7 +310,15 @@ final class ReviewStore {
         // Legacy items parked before this field existed default to "ready" (they were
         // already analyzed when they hit the old "later" pile), so they behave as before.
         var status: String = "ready"
-        var duplicate: Bool = false      // AI verdict: candidate overlaps an existing goal
+        var duplicate: Bool = false      // AI verdict: candidate overlaps an existing goal (recurring OR duplicate)
+        // AI verdict axis distinguishing WHY it overlaps, so the review UI can recommend the
+        // right action instead of always "skip":
+        //   new       - genuinely new goal → recommend 추가 (top-level).
+        //   recurring - repeats/continues an existing goal's work (matches[0]) → recommend
+        //               adding it as a run/subtask UNDER that goal, not skipping.
+        //   duplicate - the same goal already exists with nothing new to do → recommend 스킵.
+        // Legacy items (analyzed before this field) decode as duplicate?"duplicate":"new".
+        var kind: String = "new"
         // Claude session id for the prompt-refine CONVERSATION on this item. The refine
         // loop (프롬프트 → 생성 → 새 결과 → 다시 프롬프트) continues ONE session so each new
         // prompt builds on the prior turns and the similar-goal context, instead of starting
@@ -315,15 +330,56 @@ final class ReviewStore {
         // (RelatedGoalSearch) mines to find related goals whose title never mentions
         // the work. Defaults to the candidate text when no richer prompt was supplied.
         var originPrompt: String = ""
+        // Generalized async-job fields (Phase 2). The AI 큐 is no longer dedup-only; it is a
+        // general background-job queue. Legacy queue.json items have none of these keys, so
+        // every one decodes to jobKind=="dedup" and behaves exactly as before.
+        //   jobKind    - "dedup" (legacy AI 큐 candidate) | "linkmap" | "report" | ... (Phase 3+ producers).
+        //   title      - human label for the queue card (falls back to `text` when empty).
+        //   resultHTML - rendered HTML result for non-dedup jobs (shown in the card).
+        //   error      - non-empty when a non-dedup job failed; the card shows it + a 재시도 button.
+        var jobKind: String = "dedup"
+        var title: String = ""
+        var resultHTML: String = ""
+        var error: String = ""
+        // 검색(찾기만) 후보: AI목표와 똑같이 dedup 분석(RelatedGoalSearch + judge)을 돌려 비슷한
+        // 기존 목표(matches)를 찾지만, 결과 카드는 그 매치만 보여줄 뿐 목표를 만들지 않는다.
+        // (AI목표 = 찾고+만들기, 검색 = 찾기만). Legacy items decode to false.
+        var findOnly: Bool = false
 
-        enum CodingKeys: String, CodingKey { case id, text, parent, sprint, note, matches, createdAt, status, duplicate, refineSession, originPrompt }
+        // AI PLACEMENT VERDICT (Option D — orthogonal to the dedup `kind` axis above). The
+        // judge now also decides WHERE the promoted goal should land, so the queue card can
+        // pre-fill the promote form. These are SUGGESTIONS: the user can override every one of
+        // them at resolve time (resolveQueueItem honors client-supplied parentSeq/priority).
+        //   placement        - "top": stand-alone task or a brand-new parent (no parent).
+        //                       "sub": attach UNDER an existing goal (suggestedParentSeq).
+        //   suggestedParentSeq - #seq of the suggested parent when placement=="sub" (0 for top).
+        //   priority         - AI-suggested 5-level bucket (mirrors Goal.priority values).
+        //   confidence       - 0.0...1.0 self-rated confidence in the placement call.
+        //   rationale        - short Korean sentence explaining the placement (card tooltip).
+        // Legacy items (parked before Option D) decode placement="top", confidence=0 so the
+        // card falls back to "새 태스크로 추가" exactly as before.
+        var placement: String = "top"
+        var suggestedParentSeq: Int = 0
+        var priority: String = "medium"
+        var confidence: Double = 0
+        var rationale: String = ""
+
+        enum CodingKeys: String, CodingKey { case id, text, parent, sprint, note, matches, createdAt, status, duplicate, kind, refineSession, originPrompt, jobKind, title, resultHTML, error, findOnly, placement, suggestedParentSeq, priority, confidence, rationale }
         init(id: String, text: String, parent: String = "", sprint: Int = 0, note: String = "",
              matches: [QueueMatch] = [], createdAt: Date, status: String = "ready", duplicate: Bool = false,
-             refineSession: String = "", originPrompt: String = "") {
+             kind: String = "new", refineSession: String = "", originPrompt: String = "",
+             jobKind: String = "dedup", title: String = "", resultHTML: String = "", error: String = "",
+             findOnly: Bool = false,
+             placement: String = "top", suggestedParentSeq: Int = 0, priority: String = "medium",
+             confidence: Double = 0, rationale: String = "") {
             self.id = id; self.text = text; self.parent = parent; self.sprint = sprint
             self.note = note; self.matches = matches; self.createdAt = createdAt
-            self.status = status; self.duplicate = duplicate; self.refineSession = refineSession
+            self.status = status; self.duplicate = duplicate; self.kind = kind; self.refineSession = refineSession
             self.originPrompt = originPrompt
+            self.jobKind = jobKind; self.title = title; self.resultHTML = resultHTML; self.error = error
+            self.findOnly = findOnly
+            self.placement = placement; self.suggestedParentSeq = suggestedParentSeq
+            self.priority = priority; self.confidence = confidence; self.rationale = rationale
         }
         init(from dec: Decoder) throws {
             let c = try dec.container(keyedBy: CodingKeys.self)
@@ -336,8 +392,56 @@ final class ReviewStore {
             createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
             status = try c.decodeIfPresent(String.self, forKey: .status) ?? "ready"
             duplicate = try c.decodeIfPresent(Bool.self, forKey: .duplicate) ?? false
+            kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? (duplicate ? "duplicate" : "new")
             refineSession = try c.decodeIfPresent(String.self, forKey: .refineSession) ?? ""
             originPrompt = try c.decodeIfPresent(String.self, forKey: .originPrompt) ?? ""
+            jobKind = try c.decodeIfPresent(String.self, forKey: .jobKind) ?? "dedup"
+            title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+            resultHTML = try c.decodeIfPresent(String.self, forKey: .resultHTML) ?? ""
+            error = try c.decodeIfPresent(String.self, forKey: .error) ?? ""
+            findOnly = try c.decodeIfPresent(Bool.self, forKey: .findOnly) ?? false
+            placement = try c.decodeIfPresent(String.self, forKey: .placement) ?? "top"
+            suggestedParentSeq = try c.decodeIfPresent(Int.self, forKey: .suggestedParentSeq) ?? 0
+            priority = try c.decodeIfPresent(String.self, forKey: .priority) ?? "medium"
+            confidence = try c.decodeIfPresent(Double.self, forKey: .confidence) ?? 0
+            rationale = try c.decodeIfPresent(String.self, forKey: .rationale) ?? ""
+        }
+    }
+
+    // One resolved queue decision, kept so the user can audit what happened ("제대로 됐나"),
+    // jump to the result, or 번복 (undo) it from the 큐 탭's 히스토리 section. `item` snapshots
+    // the full candidate at resolve time so an undo can restore it to the queue exactly as it
+    // was — verdict, matches and placement included — without re-running the AI analysis.
+    struct QueueHistoryEntry: Codable {
+        var id: String
+        var at: Date
+        var action: String            // "add" | "task" | "skip" | "edit"
+        var text: String              // candidate text at resolve time (display snapshot)
+        var seq: Int = 0              // add: created goal #seq · task: PARENT goal #seq · else 0
+        var parentSeq: Int = 0        // add: effective parent #seq (0 = top-level)
+        var taskFolder: String = ""   // task: created tasks/<folder> name under the parent goal
+        var fallback: Bool = false    // add: requested sub-attach fell back to top-level
+        var undone: Bool = false      // set once 번복 restored the item / removed the result
+        var item: AIQueueItem? = nil  // restore snapshot (nil for edit entries — item stays queued)
+        enum CodingKeys: String, CodingKey { case id, at, action, text, seq, parentSeq, taskFolder, fallback, undone, item }
+        init(id: String, at: Date, action: String, text: String, seq: Int = 0, parentSeq: Int = 0,
+             taskFolder: String = "", fallback: Bool = false, undone: Bool = false, item: AIQueueItem? = nil) {
+            self.id = id; self.at = at; self.action = action; self.text = text
+            self.seq = seq; self.parentSeq = parentSeq; self.taskFolder = taskFolder
+            self.fallback = fallback; self.undone = undone; self.item = item
+        }
+        init(from dec: Decoder) throws {
+            let c = try dec.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            at = try c.decodeIfPresent(Date.self, forKey: .at) ?? Date(timeIntervalSince1970: 0)
+            action = try c.decodeIfPresent(String.self, forKey: .action) ?? "skip"
+            text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+            seq = try c.decodeIfPresent(Int.self, forKey: .seq) ?? 0
+            parentSeq = try c.decodeIfPresent(Int.self, forKey: .parentSeq) ?? 0
+            taskFolder = try c.decodeIfPresent(String.self, forKey: .taskFolder) ?? ""
+            fallback = try c.decodeIfPresent(Bool.self, forKey: .fallback) ?? false
+            undone = try c.decodeIfPresent(Bool.self, forKey: .undone) ?? false
+            item = try c.decodeIfPresent(AIQueueItem.self, forKey: .item)
         }
     }
 
@@ -368,11 +472,21 @@ final class ReviewStore {
     private let releasesURL: URL
     private let sprintsURL: URL
     private let queueURL: URL
+    private let queueHistoryURL: URL
     private let dayFmt: DateFormatter
     private(set) var goals: [Goal] = []
     private(set) var releases: [Release] = []
     private(set) var sprints: [Sprint] = []
     private(set) var aiQueue: [AIQueueItem] = []
+    private(set) var queueHistory: [QueueHistoryEntry] = []
+
+    // The "current" sprint for live timers (the challenge dial's 스프린트 mode): the open (not
+    // closed) sprint with the highest number; if every sprint is closed, the highest-numbered one.
+    // nil when no sprints exist.
+    var currentSprint: Sprint? {
+        sprints.filter { !$0.closed }.max(by: { $0.number < $1.number })
+            ?? sprints.max(by: { $0.number < $1.number })
+    }
 
     init() {
         dir = AppPaths.sub("review")
@@ -380,6 +494,7 @@ final class ReviewStore {
         releasesURL = dir.appendingPathComponent("releases.json")
         sprintsURL = dir.appendingPathComponent("sprints.json")
         queueURL = dir.appendingPathComponent("ai-queue.json")
+        queueHistoryURL = dir.appendingPathComponent("queue-history.json")
 
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -390,6 +505,7 @@ final class ReviewStore {
         loadReleases()
         loadSprints()
         loadQueue()
+        loadQueueHistory()
     }
 
     var todayKey: String { dayFmt.string(from: Date()) }
@@ -464,13 +580,24 @@ final class ReviewStore {
         }
         if let data = try? JSONEncoder().encode(goals) { try? data.write(to: goalsURL, options: .atomic) }
     }
-    func addGoal(text: String, parent: String = "", sprint: Int = 0, bump: Bool = false) {
+    // Returns the new goal's #seq (0 if the text was empty and nothing was added), so
+    // callers can build a link to the created goal's page.
+    //
+    // NUMBERING RULE: a real Goal is minted here — and ONLY here — with a UNIQUE, IMMUTABLE
+    // seq. `bump: true` marks it as a raw brain-dump idea so it lands in the Bump out 인박스
+    // (정리 전) at the bottom of the board instead of Backlog; it's still a real numbered goal,
+    // so promotion (setGoalSprint) just clears the flag without renumbering. The AI 큐
+    // (queue.json) remains a separate dedup path reached only via enqueuePending (AI추가) — a
+    // plain add never routes through it.
+    @discardableResult
+    func addGoal(text: String, parent: String = "", sprint: Int = 0, bump: Bool = false) -> Int {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return }
-        // A bumped goal is an un-sorted idea — it belongs to no sprint yet (sprint stays 0).
-        goals.append(Goal(id: UUID().uuidString, seq: nextSeq(), text: t, parent: parent,
-                          sprint: bump ? 0 : max(0, sprint), bump: bump))
+        guard !t.isEmpty else { return 0 }
+        let seq = nextSeq()
+        goals.append(Goal(id: UUID().uuidString, seq: seq, text: t, parent: parent,
+                          sprint: max(0, sprint), bump: bump))
         saveGoals()
+        return seq
     }
     func removeGoal(id: String) {
         // Remove the goal and re-parent (delete) its children too.
@@ -496,6 +623,66 @@ final class ReviewStore {
     private func saveQueue() {
         if let data = try? JSONEncoder().encode(aiQueue) { try? data.write(to: queueURL, options: .atomic) }
     }
+
+    // MARK: 큐 처리 히스토리 (decision audit + 번복)
+
+    private func loadQueueHistory() {
+        guard FileManager.default.fileExists(atPath: queueHistoryURL.path),
+              let data = try? Data(contentsOf: queueHistoryURL),
+              let h = try? JSONDecoder().decode([QueueHistoryEntry].self, from: data) else { return }
+        queueHistory = h
+    }
+    private func saveQueueHistory() {
+        // Oldest-first on disk; capped so years of resolutions can't grow the file unbounded.
+        if queueHistory.count > 200 { queueHistory.removeFirst(queueHistory.count - 200) }
+        if let data = try? JSONEncoder().encode(queueHistory) { try? data.write(to: queueHistoryURL, options: .atomic) }
+    }
+    private func logQueueDecision(action: String, item: AIQueueItem, seq: Int = 0, parentSeq: Int = 0,
+                                  taskFolder: String = "", fallback: Bool = false, snapshot: Bool = true) {
+        queueHistory.append(QueueHistoryEntry(id: UUID().uuidString, at: Date(), action: action,
+                                              text: item.text, seq: seq, parentSeq: parentSeq,
+                                              taskFolder: taskFolder, fallback: fallback,
+                                              item: snapshot ? item : nil))
+        saveQueueHistory()
+    }
+    func queueHistoryEntry(id: String) -> QueueHistoryEntry? {
+        queueHistory.first(where: { $0.id == id })
+    }
+    // 번복: mark the entry undone and put the snapshotted candidate BACK in the queue as
+    // "ready" (its verdict/matches were snapshotted, so no re-analysis is needed). The caller
+    // is responsible for removing what the decision created (the goal / task folder) BEFORE
+    // calling this — see the /api/goal/queue/undo handler. Returns the entry on success; nil
+    // when missing, already undone, or not an undoable action. Call on main.
+    @discardableResult
+    func undoQueueDecision(id: String) -> QueueHistoryEntry? {
+        guard let idx = queueHistory.firstIndex(where: { $0.id == id }) else { return nil }
+        let entry = queueHistory[idx]
+        guard !entry.undone, ["add", "task", "skip"].contains(entry.action) else { return nil }
+        if let item = entry.item, !aiQueue.contains(where: { $0.id == item.id }) {
+            var restored = item
+            restored.status = "ready"   // verdict is snapshotted — straight back to review
+            aiQueue.append(restored)
+            saveQueue()
+        }
+        queueHistory[idx].undone = true
+        saveQueueHistory()
+        return entry
+    }
+
+    // Promote a queued candidate into a 부분과제 (tasks/<taskN> folder) under goal #parentSeq
+    // instead of minting a new numbered goal — the recurring-round path. The caller creates
+    // the folder first (AppDelegate owns the IssuePaths file I/O); this removes the candidate
+    // from the queue and records the history entry. Call on main.
+    @discardableResult
+    func resolveQueueItemAsTask(id: String, parentSeq: Int, taskFolder: String) -> Bool {
+        guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return false }
+        let item = aiQueue[idx]
+        aiQueue.remove(at: idx)
+        saveQueue()
+        logQueueDecision(action: "task", item: item, seq: parentSeq, parentSeq: parentSeq,
+                         taskFolder: taskFolder)
+        return true
+    }
     // Park a flagged candidate for later review (the legacy "later" button). Lands as
     // "ready" because the verdict (note/matches) is already known at this point.
     func addQueueItem(text: String, parent: String, note: String, matches: [QueueMatch]) {
@@ -510,7 +697,8 @@ final class ReviewStore {
     // never waits on the AI. The background worker (kickAIQueueWorker) picks it up, analyzes
     // it, and flips it to "ready". Returns the new id (caller kicks the worker).
     @discardableResult
-    func enqueuePending(text: String, parent: String = "", sprint: Int = 0, origin: String? = nil) -> String? {
+    func enqueuePending(text: String, parent: String = "", sprint: Int = 0, origin: String? = nil,
+                        findOnly: Bool = false) -> String? {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return nil }
         // Snapshot the raw prompt now so refine can't erase the hints (defaults to the
@@ -518,7 +706,8 @@ final class ReviewStore {
         let o = (origin ?? t).trimmingCharacters(in: .whitespacesAndNewlines)
         let id = UUID().uuidString
         aiQueue.append(AIQueueItem(id: id, text: t, parent: parent, sprint: max(0, sprint),
-                                   createdAt: Date(), status: "pending", originPrompt: o.isEmpty ? t : o))
+                                   createdAt: Date(), status: "pending", originPrompt: o.isEmpty ? t : o,
+                                   findOnly: findOnly))
         saveQueue()
         return id
     }
@@ -535,13 +724,74 @@ final class ReviewStore {
 
     // Worker step 2: record the AI verdict and flip the item to "ready" for user review.
     // No-op if the item was resolved/skipped while analysis was in flight. Call on main.
-    func completeAnalysis(id: String, duplicate: Bool, note: String, matches: [QueueMatch]) {
+    // Besides the dedup axis (duplicate/kind/matches) this now also persists the orthogonal
+    // PLACEMENT verdict (placement/suggestedParentSeq/priority/confidence/rationale) so the
+    // queue card can pre-fill the promote form. `priority` is validated against the 5-level
+    // bucket; an unknown value falls back to "medium".
+    func completeAnalysis(id: String, duplicate: Bool, kind: String, note: String, matches: [QueueMatch],
+                          placement: String = "top", suggestedParentSeq: Int = 0,
+                          priority: String = "medium", confidence: Double = 0, rationale: String = "") {
         guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return }
         aiQueue[idx].status = "ready"
         aiQueue[idx].duplicate = duplicate
+        aiQueue[idx].kind = kind
         aiQueue[idx].note = note
         aiQueue[idx].matches = matches
+        aiQueue[idx].placement = (placement == "sub") ? "sub" : "top"
+        aiQueue[idx].suggestedParentSeq = max(0, suggestedParentSeq)
+        aiQueue[idx].priority = ReviewStore.validPriorities.contains(priority) ? priority : "medium"
+        aiQueue[idx].confidence = max(0, min(1, confidence))
+        aiQueue[idx].rationale = rationale
         saveQueue()
+    }
+
+    // Generic job enqueue (Phase 2): park a non-dedup background job (linkmap/report/...)
+    // as "pending" so the serial worker picks it up. Parallel to enqueuePending, but sets
+    // jobKind/title instead of a dedup candidate. Returns the new id (caller kicks the worker).
+    @discardableResult
+    func enqueueJob(jobKind: String, title: String, origin: String? = nil) -> String? {
+        let k = jobKind.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !k.isEmpty else { return nil }
+        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let o = (origin ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = UUID().uuidString
+        aiQueue.append(AIQueueItem(id: id, text: t, createdAt: Date(), status: "pending",
+                                   originPrompt: o, jobKind: k, title: t))
+        saveQueue()
+        return id
+    }
+
+    // Worker step 2 for non-dedup jobs: record the rendered result (or error) and flip the
+    // item to "ready". Parallel to completeAnalysis. No-op if the item was removed meanwhile.
+    func completeJob(id: String, resultHTML: String, error: String = "") {
+        guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return }
+        aiQueue[idx].status = "ready"
+        aiQueue[idx].resultHTML = resultHTML
+        aiQueue[idx].error = error
+        saveQueue()
+    }
+
+    // Phase 2 queue-tab actions ------------------------------------------------------------
+    // Re-enqueue a failed/finished job: clear its error and flip it back to "pending" so the
+    // worker re-runs it. Returns true if the item exists (caller kicks the worker).
+    @discardableResult
+    func retryQueueItem(id: String) -> Bool {
+        guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return false }
+        aiQueue[idx].status = "pending"
+        aiQueue[idx].error = ""
+        saveQueue()
+        return true
+    }
+
+    // Drop a finished job card. Guard: never remove an item that is still "analyzing"
+    // (the worker holds it). Returns true when an item was actually removed.
+    @discardableResult
+    func removeQueueItem(id: String) -> Bool {
+        guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return false }
+        guard aiQueue[idx].status != "analyzing" else { return false }
+        aiQueue.remove(at: idx)
+        saveQueue()
+        return true
     }
 
     // Prompt-refine: replace a queued candidate's text (and refinement note) with a
@@ -565,25 +815,112 @@ final class ReviewStore {
     // True when any candidate still needs analysis — used to decide whether to (re)kick
     // the worker (e.g. on launch, to resume items left pending by a previous run).
     var hasPendingAnalysis: Bool { aiQueue.contains { $0.status == "pending" } }
+    // The structured result of promoting a queued candidate ("add"). Carries the new goal's
+    // #seq plus whether the AI/user's requested parent actually took — so the caller (and the
+    // dashboard) can tell the user "attached under #N" vs "couldn't nest, added at top level".
+    struct ResolveResult {
+        var seq: Int              // the newly created goal's #seq
+        var parentSeq: Int        // the effective parent #seq (0 = top-level)
+        var parentFallback: Bool  // true when a requested sub-parent was rejected → fell back to top
+    }
+
     // Resolve one queued candidate. "add" promotes it to a real goal (using `text` if
     // given, else the stored text), "edit" rewrites the stored text and keeps it queued,
     // "skip" (or anything else) just drops it.
-    func resolveQueueItem(id: String, action: String, text: String?) {
-        guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return }
+    //
+    // PROMOTION (Option A + D, one call): "add" is the ONLY place an un-numbered idea becomes
+    // a numbered Goal — addGoal mints the seq here. Parent resolution honors the USER's
+    // override first. The `parentSeq` argument distinguishes "no override" from "explicit
+    // top-level": a sentinel of -1 (or below) means "no override → use the AI's
+    // suggestedParentSeq when placement==sub, else top-level"; 0 means "explicit TOP-LEVEL
+    // (ignore the AI's sub suggestion)"; > 0 means "explicit parent #seq". If the resolved parent is a
+    // valid top-level goal, setParent attaches the new goal as a sub-task; the 1-level-tree
+    // guard inside setParent (parent must itself be top-level; a goal with children can't be
+    // re-parented) is RESPECTED — if attaching would create 2-level nesting or a cycle, it is
+    // rejected and the goal stays TOP-LEVEL (parentFallback=true). Priority is applied when the
+    // client (or AI) supplied a valid bucket.
+    // Returns a ResolveResult on "add" (so the caller can report placement), nil otherwise.
+    @discardableResult
+    func resolveQueueItem(id: String, action: String, text: String?, parentSeq: Int = -1,
+                          priority: String? = nil) -> ResolveResult? {
+        guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return nil }
         let item = aiQueue[idx]
+        var result: ResolveResult? = nil
         switch action {
         case "add":
             let final = (text?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? item.text
-            addGoal(text: final, parent: item.parent, sprint: item.sprint)
+            // Parent #seq precedence: explicit client override (>= 0, including an explicit 0 =
+            // force top-level) > AI suggestion (sub only) > stored parent. A sentinel < 0 means
+            // the client passed no override, so we defer to the AI's suggestion.
+            //
+            // `forceTopLevel` records an EXPLICIT parentSeq==0 from the client — this must win
+            // over the queue item's own stored parent below (an explicit "make it top-level"
+            // override should never silently fall back to a stored sub-parent).
+            let forceTopLevel = (parentSeq == 0)
+            let effParentSeq: Int
+            if parentSeq >= 0 {
+                // Explicit client override (0 = force top-level, > 0 = specific parent #seq).
+                effParentSeq = parentSeq
+            } else if item.placement == "sub" && item.suggestedParentSeq > 0 {
+                effParentSeq = item.suggestedParentSeq
+            } else {
+                effParentSeq = 0
+            }
+            // Create the goal top-level first (unique seq minted in addGoal), then attempt the
+            // sub-attach through setParent so its 1-level guard is the single source of truth.
+            let newSeq = addGoal(text: final, sprint: item.sprint)
+            // Locate the just-created goal by seq (addGoal appends it).
+            guard let gIdx = goals.firstIndex(where: { $0.seq == newSeq }) else {
+                aiQueue.remove(at: idx); saveQueue()
+                return newSeq > 0 ? ResolveResult(seq: newSeq, parentSeq: 0, parentFallback: false) : nil
+            }
+            let newGoalId = goals[gIdx].id
+            var attachedParentSeq = 0
+            var fallback = false
+            // Resolve the requested parent #seq to a live goal id; a stale/absent #seq or the
+            // queue item's own stored parent id both feed the same guarded attach.
+            let requestedParentId: String
+            if effParentSeq > 0 {
+                requestedParentId = goals.first(where: { $0.seq == effParentSeq })?.id ?? ""
+            } else if forceTopLevel {
+                requestedParentId = ""   // explicit top-level override wins over any stored parent
+            } else {
+                requestedParentId = item.parent   // may be "" (top-level)
+            }
+            if !requestedParentId.isEmpty {
+                setParent(id: newGoalId, parent: requestedParentId)   // enforces 1-level tree
+                // Verify the attach actually took (setParent rejects 2-level / cycles silently).
+                if let after = goals.first(where: { $0.id == newGoalId }), after.parent == requestedParentId {
+                    attachedParentSeq = goals.first(where: { $0.id == requestedParentId })?.seq ?? 0
+                } else {
+                    // Rejected by the 1-level guard → the goal stays top-level. Note the fallback
+                    // only when a sub-attach was actually requested (not for a plain top-level add).
+                    fallback = (effParentSeq > 0)
+                }
+            }
+            // Apply the (AI- or client-suggested) priority when valid; empty/invalid = keep default.
+            let wantPriority = priority?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? (item.priority.isEmpty ? nil : item.priority)
+            if let pr = wantPriority, ReviewStore.validPriorities.contains(pr) {
+                setGoalPriority(ids: [newGoalId], priority: pr)
+            }
             aiQueue.remove(at: idx)
+            result = ResolveResult(seq: newSeq, parentSeq: attachedParentSeq, parentFallback: fallback)
+            logQueueDecision(action: "add", item: item, seq: newSeq, parentSeq: attachedParentSeq,
+                             fallback: fallback)
         case "edit":
             let t = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !t.isEmpty else { return }
+            guard !t.isEmpty else { return nil }
             aiQueue[idx].text = t
+            // Audit-only (not undoable): the item stays queued, so no restore snapshot.
+            logQueueDecision(action: "edit", item: aiQueue[idx], snapshot: false)
         default:   // "skip" and unknown actions drop the item
             aiQueue.remove(at: idx)
+            // Closing a 검색(찾기만) result card is not a decision — keep it out of history.
+            if !item.findOnly { logQueueDecision(action: "skip", item: item) }
         }
         saveQueue()
+        return result
     }
 
     // Reorder goals to match the given id order (priority list, drag-and-drop).
@@ -642,6 +979,31 @@ final class ReviewStore {
         if changed { saveGoals() }
     }
 
+    // MARK: Goal links
+
+    // Link source→target: promote the source to top-level (parent="") AND record the link.
+    // Flat display is preserved; only export follows links. This is a SEPARATE sanctioned
+    // path from setParent — it never nests and never touches the setParent flat-hierarchy
+    // guards. No-op if either id is missing, ids are equal, or the link already exists.
+    func linkGoal(id source: String, to target: String) {
+        guard source != target,
+              let sIdx = goals.firstIndex(where: { $0.id == source }),
+              goals.contains(where: { $0.id == target }) else { return }
+        goals[sIdx].parent = ""                       // promote source to top-level
+        if !goals[sIdx].links.contains(target) {      // idempotent append
+            goals[sIdx].links.append(target)
+        }
+        saveGoals()
+    }
+
+    // Remove a source→target link. Does NOT re-parent (promotion is a one-way, user-confirmed
+    // act — see Phase 1 Q2). No-op if the source goal is missing.
+    func unlinkGoal(id source: String, from target: String) {
+        guard let sIdx = goals.firstIndex(where: { $0.id == source }) else { return }
+        goals[sIdx].links.removeAll { $0 == target }
+        saveGoals()
+    }
+
     // MARK: Sprint / Release
 
     // Assign (or clear with 0) a goal's sprint number. Negative is clamped to 0.
@@ -654,13 +1016,14 @@ final class ReviewStore {
         saveGoals()
     }
 
-    // Move a goal into (bump=true) or out of (bump=false) the Bump out inbox — the raw
-    // idea pile below Backlog. Bumping clears sprint membership (an idea belongs to no
-    // sprint yet); un-bumping drops it into Backlog (sprint 0) to be organized next.
+    // Move a goal into (bump=true) or out of (bump=false) the Bump out 인박스. The goal keeps
+    // its UNIQUE, IMMUTABLE seq either way — demotion no longer strands a number because a
+    // bumped goal is still a real numbered goal, just parked in the raw-idea tier. Promotion
+    // (setGoalSprint) also clears the flag.
     func setGoalBump(id: String, bump: Bool) {
         guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
+        guard goals[idx].bump != bump else { return }
         goals[idx].bump = bump
-        if bump { goals[idx].sprint = 0 }
         saveGoals()
     }
 
@@ -711,19 +1074,27 @@ final class ReviewStore {
     }
 
     // Release (커밋) the finished work: take every done, not-yet-released goal matching the
-    // filter and commit it. Completion is judged by each goal's OWN status — a PARENT is NEVER
-    // auto-committed from its finished children. A big parent is a long-lived history container
-    // the user closes MANUALLY (sets its own status to done) only when the work branches; until
-    // then it stays active so all lineage lives under one goal. Sprint membership still uses the
-    // EFFECTIVE (inherited) sprint so completed sub-items (own sprint 0) ship with the parent's
-    // sprint group they visually belong to. Results are GROUPED BY SPRINT — one Release record
-    // per sprint number — so the release log always shows which sprint shipped (번호 + 결과물).
-    // Each released sprint is also marked closed, dropping it from the 스프린트 관리 list.
+    // filter and commit it. Completion mirrors the board's derivedStatus rollup: a goal's own
+    // done status, OR a parent whose every child is terminal (완료/취소, with at least one 완료)
+    // — such a parent has no remaining tasks and ships together with its children instead of
+    // carrying forward as an empty shell. Sprint membership still uses the EFFECTIVE (inherited)
+    // sprint so completed sub-items (own sprint 0) ship with the parent's sprint group they
+    // visually belong to. Results are GROUPED BY SPRINT — one Release record per sprint number —
+    // so the release log always shows which sprint shipped (번호 + 결과물). Each released sprint
+    // is also marked closed, dropping it from the 스프린트 관리 list.
     // `sprint == nil` releases across all sprints (still grouped per sprint).
+    private func isEffectivelyDone(_ g: Goal) -> Bool {
+        if g.status == "done" { return true }
+        let kids = goals.filter { $0.parent == g.id }
+        guard !kids.isEmpty else { return false }
+        let terminal = kids.allSatisfy { $0.status == "done" || $0.status == "cancelled" }
+        return terminal && kids.contains { $0.status == "done" }
+    }
+
     @discardableResult
     func releaseSprint(_ sprint: Int?) -> [Release] {
         let targets = goals.indices.filter { i in
-            !goals[i].released && goals[i].status == "done" &&
+            !goals[i].released && isEffectivelyDone(goals[i]) &&
             (sprint == nil || effectiveSprint(goals[i]) == sprint!)
         }
         guard !targets.isEmpty else { return [] }
@@ -1005,12 +1376,6 @@ final class ReviewStore {
             idx = i
             if !label.isEmpty { goals[idx].text = label }   // refresh to the current aiTitle
         } else {
-            // Backstop for the marker in the session hook: the app's own internal claude
-            // workers (dedup/semantic/triage judges, UI-QA/bug-hunt passes) run with a
-            // system prompt that echoes into the title as "You are a ...". They should be
-            // filtered at the hook (CM_INTERNAL_WORKER), but if one slips through, never
-            // MINT a new goal from that system-prompt echo — it is not a user objective.
-            if label.hasPrefix("You are ") { return }
             let title = label.isEmpty ? "Claude 세션 \(sid.prefix(8))" : label
             goals.append(Goal(id: UUID().uuidString, seq: nextSeq(), text: title, sessionId: sid))
             idx = goals.count - 1

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>NSS 모니터 일일 보고</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; color: #1e293b; background: #fff; padding: 28px; }
+  h1 { font-size: 20px; margin-bottom: 6px; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  .sub { font-size: 12.5px; color: #475569; line-height: 1.8; margin-bottom: 14px; }
+  .desc { font-size: 12px; color: #64748b; margin-bottom: 8px; }
+  section { margin-top: 34px; }
+  table { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+  table.half { width: auto; min-width: 420px; }
+  th, td { border: 1px solid #cbd5e1; padding: 4px 8px; text-align: right; white-space: nowrap; }
+  th { background: #f1f5f9; font-weight: 700; text-align: center; }
+  th.grp { background: #e2e8f0; }
+  td.date, td.left { text-align: left; }
+  td.date { font-weight: 600; }
+  td.mono { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; }
+  td.tot { background: #f8fafc; font-weight: 600; }
+  td.neg { color: #dc2626; }
+  td.note { text-align: left; white-space: normal; min-width: 140px; color: #475569; }
+  tr.sum td { background: #f1f5f9; font-weight: 700; }
+  .dayrow { display: flex; gap: 14px; align-items: flex-start; }
+  .daybox { flex: 1; }
+  .dayhead { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+  .daytotal { color: #2563eb; }
+  .toolbar { margin-top: 18px; }
+  .toolbar button { padding: 8px 18px; font-size: 13px; border: 1px solid #cbd5e1; border-radius: 8px; background: #f8fafc; cursor: pointer; }
+  @media print {
+    @page { size: A4 landscape; margin: 8mm; }
+    body { padding: 0; }
+    .toolbar { display: none; }
+    section { break-before: page; margin-top: 0; }
+  }
+</style>
+</head>
+<body>
+  <h1>NSS 모니터 일일 보고</h1>
+  <div class="sub">온체인 기준: 오전 9시 ~ 다음날 오전 9시 (KST)<br>
+  오프체인 기준시각: 2026-07-08 05:07 KST</div>
+  
+  <table>
+    <tr>
+      <th class="grp" rowspan="2">DATE</th>
+      <th class="grp" colspan="2">USDT</th>
+      <th class="grp" colspan="2">SUT</th>
+      <th class="grp" colspan="5">SUT</th>
+      <th class="grp" colspan="2">신용매수가</th>
+      <th class="grp" colspan="2">주정산 지급</th>
+      <th class="grp" colspan="2">신규가입</th>
+      <th class="grp" rowspan="2">비고</th>
+    </tr>
+    <tr>
+      <th>총계</th><th>일 유입량</th><th>총계</th><th>일 유입량</th>
+      <th>NSS</th><th>DeCT DUTY</th><th>REAL DCR</th><th>DATA</th><th>GAP</th>
+      <th>NSS</th><th>DCR</th><th>인원</th><th>USDT</th><th>인원</th><th>USDT</th>
+    </tr>
+    <tr><td class="date">2026-06-27</td><td class="tot">16,000</td><td>-</td><td class="tot">1,273</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>1,200</td><td>960</td><td>-</td><td>-</td><td>-</td><td>-</td><td class="note">16,000 테더 해쉬 구매 - 익일 참여로 인정</td></tr><tr><td class="date">2026-06-28</td><td class="tot">120,700</td><td>104,700</td><td class="tot">374,924</td><td>373,651</td><td>181,050</td><td>-</td><td>226,313</td><td>192,601</td><td class="neg">-33,712</td><td>1,200</td><td>960</td><td>-</td><td>-</td><td>3</td><td>88,700</td><td class="note">수량 오차, 소수점 등 실 수량과 계산식의 차이가 발생 가능</td></tr><tr><td class="date">2026-06-29</td><td class="tot">268,500</td><td>147,800</td><td class="tot">861,218</td><td>486,294</td><td>221,700</td><td>-</td><td>277,125</td><td>264,594</td><td class="neg">-12,531</td><td>1,200</td><td>960</td><td>-</td><td>-</td><td>1</td><td>4,040</td><td class="note"></td></tr><tr><td class="date">2026-06-30</td><td class="tot">349,650</td><td>81,150</td><td class="tot">1,224,929</td><td>363,711</td><td>121,725</td><td>-</td><td>152,156</td><td>241,986</td><td>89,830</td><td>1,200</td><td>960</td><td>-</td><td>-</td><td>-</td><td>-</td><td class="note"></td></tr><tr><td class="date">2026-07-01</td><td class="tot">437,950</td><td>88,300</td><td class="tot">1,507,092</td><td>282,163</td><td>132,450</td><td>-</td><td>165,563</td><td>149,713</td><td class="neg">-15,850</td><td>1,200</td><td>960</td><td>-</td><td>-</td><td>2</td><td>5,980</td><td class="note"></td></tr><tr><td class="date">2026-07-02</td><td class="tot">520,300</td><td>82,350</td><td class="tot">1,791,951</td><td>284,859</td><td>123,525</td><td>-</td><td>154,406</td><td>161,334</td><td>6,928</td><td>1,200</td><td>960</td><td>-</td><td>-</td><td>1</td><td>56,400</td><td class="note"></td></tr><tr><td class="date">2026-07-03</td><td class="tot">589,031</td><td>68,731</td><td class="tot">1,995,286</td><td>203,335</td><td>103,097</td><td>-</td><td>128,871</td><td>100,239</td><td class="neg">-28,632</td><td>1,200</td><td>960</td><td>-</td><td>-</td><td>-</td><td>-</td><td class="note">(21:36) NSS 참여 수량 오차 문제 해결</td></tr><tr><td class="date">2026-07-04</td><td class="tot">609,421</td><td>20,390</td><td class="tot">2,065,139</td><td>69,853</td><td>30,585</td><td>-</td><td>38,231</td><td>39,268</td><td>1,037</td><td>1,200</td><td>960</td><td>-</td><td>-</td><td>-</td><td>-</td><td class="note"></td></tr><tr><td class="date">2026-07-05</td><td class="tot">648,611</td><td>39,190</td><td class="tot">2,206,455</td><td>141,316</td><td>58,785</td><td>6,645</td><td>73,481</td><td>82,531</td><td>2,405</td><td>1,200</td><td>960</td><td>-</td><td>-</td><td>-</td><td>-</td><td class="note"></td></tr><tr><td class="date">2026-07-06</td><td class="tot">731,120</td><td>94,080</td><td class="tot">2,520,556</td><td>314,101</td><td>141,120</td><td>-</td><td>176,400</td><td>172,981</td><td class="neg">-3,419</td><td>1,200</td><td>960</td><td>200</td><td>11,571</td><td>-</td><td>-</td><td class="note">NSS 첫 주정산 지급일</td></tr><tr><td class="date">2026-07-07</td><td class="tot">759,282</td><td>30,920</td><td class="tot">2,644,848</td><td>124,292</td><td>46,380</td><td>-</td><td>57,975</td><td>77,912</td><td>19,937</td><td>1,200</td><td>960</td><td>45</td><td>2,759</td><td>1</td><td>2,000</td><td class="note"></td></tr>
+  </table>
+  <section>
+  <h2>일별 신규 참여자</h2>
+  <p class="desc">그날 처음 참여한 사람 수입니다. 이전 시즌 경험자도 포함됩니다.<br>
+  (1페이지 표의 "신규가입"은 이전 시즌 경험이 전혀 없는 <b>완전 신규</b>만 센 것이라 기준이 다릅니다.)</p>
+  <table class="half">
+    <tr><th>날짜</th><th>신규 참여 인원</th></tr>
+    <tr><td class="left">2026-06-28</td><td>93</td></tr><tr><td class="left">2026-06-29</td><td>91</td></tr><tr><td class="left">2026-06-30</td><td>45</td></tr><tr><td class="left">2026-07-01</td><td>59</td></tr><tr><td class="left">2026-07-02</td><td>28</td></tr><tr><td class="left">2026-07-03</td><td>20</td></tr><tr><td class="left">2026-07-04</td><td>17</td></tr><tr><td class="left">2026-07-05</td><td>15</td></tr><tr><td class="left">2026-07-06</td><td>15</td></tr><tr><td class="left">2026-07-07</td><td>15</td></tr>
+    <tr class="sum"><td class="left">합계</td><td>398</td></tr>
+  </table></section>
+  <section>
+  <h2>신규가입 검증 샘플 (2026-07-07 금액 상위 5명)</h2>
+  <p class="desc">기준일에 처음 참여한 유저입니다. user-id로 시스템에서 직접 대조할 수 있습니다.<br>
+  "완전 신규"는 이전 시즌 경험까지 전혀 없는 유저 표시입니다.</p>
+  <table class="half">
+    <tr><th>user-id</th><th>가입일</th><th>계약 수</th><th>USDT</th><th>완전 신규</th></tr>
+    <tr><td class="left mono">c84c770c-842e-4ff3-b217-c009eb662781</td><td>2026-07-07</td><td>1</td><td>4,000</td><td>-</td></tr><tr><td class="left mono">f0d5a5b0-9d10-45a6-8fce-00f75162b120</td><td>2026-07-07</td><td>2</td><td>2,500</td><td>-</td></tr><tr><td class="left mono">33e97ff9-d11d-4393-8127-f893d8fb7e5d</td><td>2026-07-07</td><td>1</td><td>2,200</td><td>-</td></tr><tr><td class="left mono">b975c7ae-498c-499a-be39-668e9a695480</td><td>2026-07-07</td><td>1</td><td>2,000</td><td>○</td></tr><tr><td class="left mono">117d5f52-9a87-4699-b145-4c65be96bde3</td><td>2026-07-07</td><td>1</td><td>2,000</td><td>-</td></tr>
+  </table></section>
+  <section>
+  <h2>커뮤니티별 참여 금액 (전체, USDT 많은 순)</h2>
+  <p class="desc">이 표의 USDT는 잔여 신용이 아니라 <b>추정 참여 금액</b>입니다.
+  기록된 금액을 2.4로 나눠 계산합니다 (예: 기록 2,400 USDT → 참여 1,000 USDT).<br>
+  DECT 참여분도 포함되어 있으며, 현재는 따로 구분하지 않습니다.</p>
+  <table class="half">
+    <tr><th>커뮤니티</th><th>인원</th><th>계약 수</th><th>총 USDT</th></tr>
+    <tr><td class="left">(none)</td><td>32</td><td>242</td><td>76,450</td></tr><tr><td class="left">서천</td><td>15</td><td>57</td><td>71,525</td></tr><tr><td class="left">문정</td><td>25</td><td>112</td><td>71,492</td></tr><tr><td class="left">전주 완산</td><td>16</td><td>43</td><td>61,925</td></tr><tr><td class="left">목포</td><td>20</td><td>70</td><td>52,658</td></tr><tr><td class="left">서울 도봉구</td><td>23</td><td>79</td><td>47,350</td></tr><tr><td class="left">구미</td><td>24</td><td>71</td><td>41,733</td></tr><tr><td class="left">부산 진구</td><td>13</td><td>25</td><td>34,250</td></tr><tr><td class="left">울산 중구</td><td>7</td><td>16</td><td>29,875</td></tr><tr><td class="left">울산 남구</td><td>9</td><td>16</td><td>29,408</td></tr><tr><td class="left">광주 광산</td><td>10</td><td>24</td><td>28,783</td></tr><tr><td class="left">여수</td><td>12</td><td>28</td><td>27,483</td></tr><tr><td class="left">안동</td><td>13</td><td>38</td><td>27,250</td></tr><tr><td class="left">인천 연수구</td><td>8</td><td>22</td><td>24,250</td></tr><tr><td class="left">대전 서구</td><td>11</td><td>26</td><td>18,633</td></tr><tr><td class="left">서울 노원구</td><td>10</td><td>32</td><td>18,075</td></tr><tr><td class="left">의정부</td><td>9</td><td>30</td><td>15,083</td></tr><tr><td class="left">부천</td><td>8</td><td>31</td><td>14,783</td></tr><tr><td class="left">서울 마포구</td><td>10</td><td>30</td><td>14,450</td></tr><tr><td class="left">서울 은평구</td><td>2</td><td>5</td><td>13,458</td></tr><tr><td class="left">강릉</td><td>10</td><td>31</td><td>12,617</td></tr><tr><td class="left">논산</td><td>3</td><td>7</td><td>10,933</td></tr><tr><td class="left">나주</td><td>4</td><td>11</td><td>10,558</td></tr><tr><td class="left">진주</td><td>1</td><td>1</td><td>10,417</td></tr><tr><td class="left">평택</td><td>6</td><td>21</td><td>9,758</td></tr><tr><td class="left">대전 중구</td><td>8</td><td>23</td><td>9,600</td></tr><tr><td class="left">포항</td><td>2</td><td>3</td><td>9,167</td></tr><tr><td class="left">전주 덕진</td><td>4</td><td>11</td><td>9,142</td></tr><tr><td class="left">익산</td><td>7</td><td>24</td><td>9,042</td></tr><tr><td class="left">대전 유성구</td><td>7</td><td>17</td><td>8,758</td></tr><tr><td class="left">대구 북구</td><td>6</td><td>15</td><td>8,475</td></tr><tr><td class="left">성남</td><td>8</td><td>18</td><td>8,150</td></tr><tr><td class="left">안산</td><td>4</td><td>15</td><td>7,800</td></tr><tr><td class="left">용인 동백</td><td>6</td><td>11</td><td>7,767</td></tr><tr><td class="left">광주동구</td><td>2</td><td>7</td><td>6,858</td></tr><tr><td class="left">수원 팔달구</td><td>7</td><td>13</td><td>6,608</td></tr><tr><td class="left">광주 북구</td><td>4</td><td>16</td><td>5,475</td></tr><tr><td class="left">군산</td><td>3</td><td>11</td><td>5,033</td></tr><tr><td class="left">광명</td><td>5</td><td>7</td><td>5,000</td></tr><tr><td class="left">김해</td><td>5</td><td>7</td><td>5,000</td></tr><tr><td class="left">대구 동구</td><td>5</td><td>10</td><td>4,700</td></tr><tr><td class="left">대전 대덕구</td><td>4</td><td>10</td><td>4,683</td></tr><tr><td class="left">고양 덕양</td><td>4</td><td>11</td><td>4,408</td></tr><tr><td class="left">안양</td><td>2</td><td>7</td><td>4,317</td></tr><tr><td class="left">서울 성동구</td><td>4</td><td>6</td><td>3,833</td></tr><tr><td class="left">서울 강동구</td><td>3</td><td>10</td><td>3,550</td></tr><tr><td class="left">울산 울주</td><td>3</td><td>7</td><td>3,442</td></tr><tr><td class="left">청주</td><td>3</td><td>7</td><td>3,208</td></tr><tr><td class="left">춘천</td><td>2</td><td>7</td><td>2,692</td></tr><tr><td class="left">마산</td><td>2</td><td>5</td><td>2,183</td></tr><tr><td class="left">세종</td><td>3</td><td>5</td><td>2,142</td></tr><tr><td class="left">남양주 별내</td><td>1</td><td>2</td><td>2,083</td></tr><tr><td class="left">아산</td><td>2</td><td>6</td><td>2,017</td></tr><tr><td class="left">홍성</td><td>2</td><td>4</td><td>1,767</td></tr><tr><td class="left">하남</td><td>2</td><td>3</td><td>1,750</td></tr><tr><td class="left">천안</td><td>2</td><td>3</td><td>1,683</td></tr><tr><td class="left">제주</td><td>1</td><td>2</td><td>1,167</td></tr><tr><td class="left">서산</td><td>1</td><td>2</td><td>1,042</td></tr><tr><td class="left">화성 동탄</td><td>1</td><td>2</td><td>942</td></tr><tr><td class="left">대구 달서구</td><td>1</td><td>3</td><td>933</td></tr><tr><td class="left">당진</td><td>1</td><td>2</td><td>917</td></tr><tr><td class="left">파주</td><td>1</td><td>2</td><td>917</td></tr><tr><td class="left">지원팀</td><td>1</td><td>2</td><td>850</td></tr><tr><td class="left">인천 서구(청라)</td><td>1</td><td>2</td><td>850</td></tr><tr><td class="left">서울 강남구</td><td>1</td><td>1</td><td>833</td></tr><tr><td class="left">김제</td><td>1</td><td>1</td><td>833</td></tr><tr><td class="left">원주</td><td>1</td><td>1</td><td>833</td></tr><tr><td class="left">서울 강서구</td><td>1</td><td>1</td><td>833</td></tr><tr><td class="left">태백</td><td>1</td><td>1</td><td>833</td></tr>
+    <tr class="sum"><td class="left">합계</td><td>436</td><td>1,391</td><td>945,316</td></tr>
+  </table></section>
+  <section>
+  <h2>커뮤니티별 신규 가입 (최근 3일)</h2>
+  <div class="dayrow">
+    <div class="daybox">
+      <div class="dayhead">2026-07-07 <span class="daytotal">15명</span></div>
+      <table><tr><th>커뮤니티</th><th>신규</th></tr><tr><td class="left">전주 완산</td><td>5</td></tr><tr><td class="left">용인 동백</td><td>2</td></tr><tr><td class="left">서울 노원구</td><td>1</td></tr><tr><td class="left">하남</td><td>1</td></tr><tr><td class="left">김해</td><td>1</td></tr><tr><td class="left">대구 동구</td><td>1</td></tr><tr><td class="left">원주</td><td>1</td></tr><tr><td class="left">서울 마포구</td><td>1</td></tr><tr><td class="left">울산 남구</td><td>1</td></tr><tr><td class="left">서천</td><td>1</td></tr></table>
+    </div>
+    <div class="daybox">
+      <div class="dayhead">2026-07-06 <span class="daytotal">15명</span></div>
+      <table><tr><th>커뮤니티</th><th>신규</th></tr><tr><td class="left">울산 중구</td><td>4</td></tr><tr><td class="left">김해</td><td>2</td></tr><tr><td class="left">대전 서구</td><td>1</td></tr><tr><td class="left">서천</td><td>1</td></tr><tr><td class="left">전주 완산</td><td>1</td></tr><tr><td class="left">서울 도봉구</td><td>1</td></tr><tr><td class="left">강릉</td><td>1</td></tr><tr><td class="left">목포</td><td>1</td></tr><tr><td class="left">성남</td><td>1</td></tr><tr><td class="left">인천 연수구</td><td>1</td></tr><tr><td class="left">부산 진구</td><td>1</td></tr></table>
+    </div>
+    <div class="daybox">
+      <div class="dayhead">2026-07-05 <span class="daytotal">15명</span></div>
+      <table><tr><th>커뮤니티</th><th>신규</th></tr><tr><td class="left">부산 진구</td><td>3</td></tr><tr><td class="left">논산</td><td>2</td></tr><tr><td class="left">대전 서구</td><td>2</td></tr><tr><td class="left">성남</td><td>1</td></tr><tr><td class="left">광주 광산</td><td>1</td></tr><tr><td class="left">대전 대덕구</td><td>1</td></tr><tr><td class="left">서울 도봉구</td><td>1</td></tr><tr><td class="left">마산</td><td>1</td></tr><tr><td class="left">강릉</td><td>1</td></tr><tr><td class="left">김해</td><td>1</td></tr><tr><td class="left">목포</td><td>1</td></tr></table>
+    </div></div></section>
+  <div class="toolbar"><button onclick="window.print()">PDF 저장</button></div>
+</body>
+</html>

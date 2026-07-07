@@ -33,11 +33,6 @@ WORKER_ID="qa-agent"
 # `python3`, and `curl` resolve.
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
-# `claude -p` below runs under the project dir, where the project session hooks
-# (cc-session-hook.sh) fire. Mark the environment so the hook skips mirroring this internal
-# QA session into a dashboard goal — this script reports its own status via /api/worker/ping.
-export CM_INTERNAL_WORKER=1
-
 # Project root = two levels up from this script (…/condition-manager/Scripts/qa-scan.sh).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -45,12 +40,10 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # --- Resolve the data dir + dashboard port (mirrors cc-session-hook.sh) ----------
 if [ -n "${CM_DATA_DIR:-}" ]; then
   data_dir="$CM_DATA_DIR"
-elif [ -d "$PROJECT_DIR/../../.condition-manager" ]; then
-  data_dir="$(cd "$PROJECT_DIR/../.." && pwd)/.condition-manager"
 elif [ -d "$PROJECT_DIR/.localdata" ]; then
   data_dir="$PROJECT_DIR/.localdata"
 else
-  data_dir="$HOME/Library/Application Support/ConditionManager"
+  data_dir="$HOME/.condition-manager"
 fi
 port_file="$data_dir/dashboard.port"
 

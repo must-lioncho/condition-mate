@@ -1,7 +1,7 @@
 import Foundation
 
 // Lightweight persistence of user preferences, backed by a JSON file under AppPaths.base
-// (dev: <root>/.localdata/settings.json, installed: Application Support/.../settings.json).
+// (dev: <root>/.localdata/settings.json, installed: ~/.condition-manager/settings.json).
 //
 // WHY a file, not UserDefaults: the dev binary launched by Scripts/dev-run.sh is an
 // UNBUNDLED SwiftPM executable (no Info.plist → Bundle.main.bundleIdentifier == nil).
@@ -39,6 +39,7 @@ final class Settings {
         static let uiPrefs        = "cm.uiPrefs"
         static let conditionMate  = "cm.conditionMate"
         static let skillsRoot     = "cm.skillsRoot"
+        static let bgmWindow      = "cm.bgmWindowEnabled"
     }
 
     // Defaults for values the user has not touched. Mirrors the old register(defaults:).
@@ -51,7 +52,8 @@ final class Settings {
         K.idleVolScale: 0.5,
         K.musicEnabled: true,
         K.trackingEnabled: true,
-        K.volume: 0.8
+        K.volume: 0.8,
+        K.bgmWindow: true
     ]
 
     private let fileURL: URL
@@ -226,6 +228,12 @@ final class Settings {
     var musicEnabled: Bool {
         get { bool(K.musicEnabled) }
         set { set(newValue, K.musicEnabled) }
+    }
+    // Auto-open the native BGM window (an in-app WKWebView with autoplay enabled) on launch,
+    // so the activity BGM plays with the space effect with zero clicks. Default on.
+    var bgmWindowEnabled: Bool {
+        get { bool(K.bgmWindow) }
+        set { set(newValue, K.bgmWindow) }
     }
     var trackingEnabled: Bool {
         get { bool(K.trackingEnabled) }

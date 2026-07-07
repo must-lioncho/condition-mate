@@ -16,11 +16,6 @@ set -u
 WORKER_ID="qa-fix"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
-# `claude -p` below runs under the project dir, where the project session hooks
-# (cc-session-hook.sh) fire. Mark the environment so the hook skips mirroring this internal
-# fix session into a dashboard goal — this script reports via /api/worker/ping.
-export CM_INTERNAL_WORKER=1
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -31,9 +26,8 @@ goal_src="$PROJECT_DIR/.claude/issue/goal-${nn}.md"
 
 # --- data dir + port (mirror qa-scan.sh) -----------------------------------------
 if [ -n "${CM_DATA_DIR:-}" ]; then data_dir="$CM_DATA_DIR"
-elif [ -d "$PROJECT_DIR/../../.condition-manager" ]; then data_dir="$(cd "$PROJECT_DIR/../.." && pwd)/.condition-manager"
 elif [ -d "$PROJECT_DIR/.localdata" ]; then data_dir="$PROJECT_DIR/.localdata"
-else data_dir="$HOME/Library/Application Support/ConditionManager"; fi
+else data_dir="$HOME/.condition-manager"; fi
 port=""; [ -f "$data_dir/dashboard.port" ] && port="$(tr -dc '0-9' < "$data_dir/dashboard.port")"
 
 ping() {

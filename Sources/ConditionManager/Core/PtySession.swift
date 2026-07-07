@@ -26,7 +26,10 @@ final class PtySession {
     init?(command: String, cwd: String, cols: UInt16, rows: UInt16) {
         var m: Int32 = 0, s: Int32 = 0
         var win = winsize(ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0)
-        guard openpty(&m, &s, nil, nil, &win) == 0 else { return nil }
+        guard openpty(&m, &s, nil, nil, &win) == 0 else {
+            AppLog.log("cli pty openpty failed errno=\(errno) cwd=\(cwd)")
+            return nil
+        }
         master = m
 
         // Login shell so PATH/profile match an ordinary terminal; exec so claude becomes
@@ -48,7 +51,13 @@ final class PtySession {
             guard let self else { return }
             self.lock.lock(); self.aliveFlag = false; self.lock.unlock()
         }
-        do { try process.run() } catch { close(m); close(s); return nil }
+        do { try process.run() } catch {
+            // Most commonly the cwd no longer exists (e.g. a resumed session whose recorded
+            // working directory was removed by a data-store move) — log it so the otherwise
+            // silent "pty-failed" the dashboard shows can be traced.
+            AppLog.log("cli pty run failed cwd=\(cwd) err=\(error.localizedDescription)")
+            close(m); close(s); return nil
+        }
         close(s)   // the child holds the slave; the parent only needs the master
 
         // Drain the master into the buffer as output arrives.

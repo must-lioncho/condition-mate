@@ -2,16 +2,28 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "report-preview",
+      "name": "scratchpad-static",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8731", "--directory", "reports"],
-      "port": 8731
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8931",
+        "--directory",
+        "/private/tmp/claude-501/-Users-lioncho-Work-departtment-service-projects-condition-manager/6abb7bd2-c82b-414f-9e21-ee78b38ea61e/scratchpad"
+      ],
+      "port": 8931
     },
     {
-      "name": "root-preview",
+      "name": "repo-static",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8732", "--directory", "."],
-      "port": 8732
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8932",
+        "--directory",
+        "/Users/lioncho/Work/departtment_service/projects/condition-manager"
+      ],
+      "port": 8932
     }
   ]
 }
