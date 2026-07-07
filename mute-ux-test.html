@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>뮤트 UX 테스트 — 헤드폰 아이콘 vs 설정 팝업</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Matches the session-rail dark palette (SessionRail.swift) so variants read in-context. */
+  :root{
+    --bg:#0b0f16; --card:#0f141d; --card-hi:#141b28; --line:#1c2230;
+    --txt:#dbe2ee; --sub:#6b7589; --dim:#5d6678;
+    --menu:#171d2b; --menu-line:#2a3450;
+    --blue:#3b82f6; --green:#22c55e; --mutegray:#5c6577;
+  }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt);
+    font:14px/1.55 -apple-system,"Apple SD Gothic Neo",sans-serif; padding:28px 24px 60px }
+  h1{ font-size:19px; margin:0 0 6px }
+  .lead{ color:var(--sub); font-size:13px; max-width:760px; margin-bottom:6px }
+  .lead b{ color:#aeb9cc }
+  .problem{ max-width:760px; background:#131a26; border:1px solid var(--line); border-radius:12px;
+    padding:12px 16px; font-size:12.5px; color:#9aa5b8; margin:14px 0 26px }
+  .problem b{ color:#dbe2ee }
+
+  .grid{ display:flex; flex-wrap:wrap; gap:22px; align-items:flex-start }
+  .variant{ width:300px; background:#0d1219; border:1px solid var(--line); border-radius:14px; overflow:hidden }
+  .variant.reco{ border-color:#2f6bff; box-shadow:0 0 0 1px rgba(47,107,255,.35), 0 12px 40px rgba(0,0,0,.4) }
+  .v-head{ padding:12px 14px 10px; border-bottom:1px solid var(--line) }
+  .v-head .tag{ display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.4px;
+    padding:2px 8px; border-radius:999px; background:#1c2536; color:#8fa4c9; margin-bottom:6px }
+  .variant.reco .v-head .tag{ background:#1f3a75; color:#9ec1ff }
+  .v-head h2{ font-size:14px; margin:0 0 3px }
+  .v-head p{ margin:0; font-size:11.5px; color:var(--sub) }
+
+  /* the rail replica area */
+  .stage{ padding:60px 14px 14px; position:relative; background:
+    linear-gradient(#0b0f16, #0c1119) }
+
+  /* ===== replica of .cmcond-bar ===== */
+  .bar{ display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:10px;
+    cursor:pointer; border:1px solid var(--line); background:var(--card); position:relative; user-select:none }
+  .bar:hover{ background:var(--card-hi) }
+  .meta{ min-width:0; flex:1; pointer-events:none }
+  .track{ color:var(--txt); font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .subl{ color:var(--sub); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .chev{ color:var(--dim); flex:none; font-size:11px; transition:transform .15s; padding:4px 2px }
+  .bar.open .chev{ transform:rotate(180deg) }
+  .muted-state .track{ color:#8a93a5 }
+
+  /* ===== headphone icon (SVG) + listening animation ===== */
+  .hp{ position:relative; width:30px; height:30px; flex:none; display:flex;
+    align-items:center; justify-content:center; border-radius:8px }
+  .hp svg{ width:19px; height:19px; display:block }
+  .hp .cup{ stroke:#c3cddd; fill:none; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round }
+  /* equalizer bars between the ear cups = "audible" */
+  .hp .eq rect{ fill:var(--green); transform-origin:center 13.5px }
+  .hp .eq rect:nth-child(1){ animation:eq 1.05s ease-in-out infinite }
+  .hp .eq rect:nth-child(2){ animation:eq 1.05s ease-in-out -.35s infinite }
+  .hp .eq rect:nth-child(3){ animation:eq 1.05s ease-in-out -.7s infinite }
+  @keyframes eq{ 0%,100%{ transform:scaleY(.35) } 50%{ transform:scaleY(1) } }
+  /* soft ring pulse behind the icon while audible (same grammar as cmch-mute beat) */
+  .hp::before{ content:""; position:absolute; inset:4px; border-radius:50%;
+    box-shadow:0 0 0 0 rgba(34,197,94,.45); animation:beat 1.6s infinite; pointer-events:none }
+  @keyframes beat{ 0%{ box-shadow:0 0 0 0 rgba(34,197,94,.45) } 70%{ box-shadow:0 0 0 7px rgba(34,197,94,0) } 100%{ box-shadow:0 0 0 0 rgba(34,197,94,0) } }
+  /* muted: gray, animation stopped, diagonal strike */
+  .muted-state .hp::before{ animation:none; box-shadow:none }
+  .muted-state .hp .cup{ stroke:var(--mutegray) }
+  .muted-state .hp .eq rect{ fill:var(--mutegray); animation:none; transform:scaleY(.35) }
+  .muted-state .hp::after{ content:""; position:absolute; left:4px; top:14px; width:22px; height:2px;
+    background:#e7ecf4; border-radius:2px; transform:rotate(-45deg);
+    box-shadow:0 0 0 2.5px var(--card) }
+  .muted-state .bar:hover .hp::after{ box-shadow:0 0 0 2.5px var(--card-hi) }
+
+  /* variant A/D: the icon is its own button with a visible hover hit-area */
+  .hp.btn{ cursor:pointer }
+  .hp.btn:hover{ background:#1d2636; }
+  .hp.btn:hover .cup{ stroke:#eef3fb }
+  /* tooltip */
+  .hp.btn:hover .tip{ opacity:1; transform:translate(-50%,0) }
+  .tip{ position:absolute; bottom:calc(100% + 7px); left:50%; transform:translate(-50%,3px);
+    opacity:0; transition:.12s; pointer-events:none; white-space:nowrap;
+    background:#1f2735; border:1px solid #2c3752; color:#cdd6e6;
+    font-size:10.5px; padding:3px 8px; border-radius:6px; z-index:5 }
+
+  /* variant C: chevron is the settings button */
+  .chev.btn{ cursor:pointer; padding:6px 8px; border-radius:7px; margin:-4px -6px -4px 0 }
+  .chev.btn:hover{ background:#222c40; color:#c3cddd }
+
+  /* ===== replica settings menu (opens above the bar) ===== */
+  .menu{ position:absolute; left:14px; right:14px; bottom:calc(100% - 46px); display:none;
+    padding:6px; border-radius:12px; background:var(--menu); border:1px solid var(--menu-line);
+    box-shadow:0 -8px 30px rgba(0,0,0,.5); z-index:4 }
+  .bar-wrap{ position:relative }
+  .bar-wrap .menu{ left:0; right:0; bottom:calc(100% + 6px) }
+  .menu.show{ display:block }
+  .mrow{ display:flex; align-items:center; gap:8px; padding:8px 10px; font-size:12.5px; color:#c8cfdb }
+  .mrow .lbl{ flex:1 }
+  .tog{ flex:none; border:1px solid #2f3a54; background:#20283a; color:#e7ecf4; border-radius:999px;
+    padding:4px 12px; font-size:12px; font-weight:600; cursor:pointer }
+  .tog.on{ background:#1f5bd0; border-color:#2f6bff }
+  .mfull{ width:100%; margin-top:4px; border:0; background:#20283a; color:#e7ecf4; border-radius:9px;
+    padding:8px 10px; font-size:12px; text-align:left; cursor:pointer }
+  .mfull:hover{ background:#28324a }
+
+  /* per-card interaction log */
+  .log{ margin:10px 14px 14px; font-size:11px; color:#7d8798; background:#0a0e15;
+    border:1px solid #161c28; border-radius:9px; padding:7px 10px; min-height:34px }
+  .log b{ color:#b7c2d6; font-weight:600 }
+  .log .ev{ display:block }
+  .log .ev.new{ color:#9ec1ff }
+
+  .v-notes{ padding:0 14px 14px; font-size:11.5px; color:#8b95a8 }
+  .v-notes .pro::before{ content:"+ "; color:#7fb2ff; font-weight:700 }
+  .v-notes .con::before{ content:"− "; color:#e0a35c; font-weight:700 }
+  .v-notes div{ margin-top:3px }
+
+  .reco-box{ max-width:760px; margin-top:30px; background:#101a2e; border:1px solid #24406e;
+    border-radius:12px; padding:14px 18px; font-size:13px; color:#b9c6dd }
+  .reco-box b{ color:#dbe6f8 }
+  .reco-box ul{ margin:8px 0 0; padding-left:18px }
+  .reco-box li{ margin-top:4px }
+</style>
+</head>
+<body>
+
+<h1>뮤트 UX 테스트 — 헤드폰 아이콘이 "들리는 중"을 말하게 하기</h1>
+<div class="lead">
+  컨셉: 헤드폰 아이콘이 <b>재생 중이면 이퀄라이저 애니메이션</b>으로 "들리는 중"을 표현하고,
+  <b>뮤트면 회색 + 사선</b>이 그어지며 애니메이션이 멈춘다. (챌린지 다이얼의 녹색 비트 점과 같은 문법)
+</div>
+<div class="problem">
+  <b>풀어야 할 문제:</b> 현재 하단 스트립은 <b>행 전체 클릭 = 설정 팝업</b>이다.
+  아이콘에 뮤트 토글을 얹으면 "이 줄을 누르면 무슨 일이 생기는가"가 모호해진다.
+  아래 4개 시안을 직접 클릭해보고 어느 쪽이 헷갈리지 않는지 비교. 각 카드 하단 로그에 실제로 일어난 동작이 찍힌다.
+</div>
+
+<div class="grid" id="grid"></div>
+
+<div class="reco-box">
+  <b>추천: D안 (아이콘 = 뮤트 숏컷 + 메뉴 안에도 음소거 행 중복 제공)</b>
+  <ul>
+    <li>아이콘은 <b>별도 히트영역</b>(hover 시 배경+툴팁 "음소거")으로 분리 — hover 순간 "이건 버튼"임이 드러나 행 클릭(설정)과 시각적으로 구분된다.</li>
+    <li>같은 기능을 <b>설정 팝업 안 '음소거' 행에도 중복</b>으로 둔다 — 아이콘을 버튼으로 인지 못한 사용자도 기존 경로(설정 열기)로 항상 도달 가능. 숏컷을 몰라도 손해가 없으므로 "혼동"이 실패로 이어지지 않는다.</li>
+    <li>뮤트 시 서브텍스트에 <b>"음소거됨"</b>을 병기 — 사선+회색과 함께 상태를 텍스트로도 이중 표기.</li>
+    <li>색 문법 준수: 들리는 중 = 녹색 비트(기존 cmch-mute와 동일), 뮤트 = 회색+흰 사선. 상태표시용 빨강/녹색 신호등은 쓰지 않음.</li>
+  </ul>
+</div>
+
+<script>
+(function(){
+  var HP_SVG =
+    '<svg viewBox="0 0 30 30" aria-hidden="true">'
+    + '<path class="cup" d="M6.5 17.5v-3.2a8.5 8.5 0 0 1 17 0v3.2"/>'
+    + '<rect class="cup" x="4.6" y="16.2" width="4.2" height="6.4" rx="2.1" fill="none"/>'
+    + '<rect class="cup" x="21.2" y="16.2" width="4.2" height="6.4" rx="2.1" fill="none"/>'
+    + '<g class="eq">'
+    +   '<rect x="12.1" y="15.2" width="1.8" height="5.4" rx="0.9"/>'
+    +   '<rect x="14.6" y="13.6" width="1.8" height="7" rx="0.9"/>'
+    +   '<rect x="17.1" y="15.2" width="1.8" height="5.4" rx="0.9"/>'
+    + '</g></svg>';
+
+  var VARIANTS = [
+    { id:'A', tag:'A안', title:'아이콘 = 뮤트 버튼 (히트영역 분리)',
+      desc:'아이콘 클릭 → 뮤트 토글. 나머지 행 클릭 → 설정 팝업(기존 그대로).',
+      iconBtn:true, rowAction:'menu', chevBtn:false, menuMuteRow:false,
+      notes:[ ['pro','뮤트가 원클릭 — 가장 빠른 경로'],
+              ['pro','hover 배경+툴팁으로 "버튼임"이 드러남'],
+              ['con','아이콘이 버튼인 걸 모르면 발견 못함 (뮤트 경로가 이것뿐)'] ] },
+    { id:'B', tag:'B안', title:'아이콘 = 상태표시 전용',
+      desc:'아이콘은 애니메이션/사선으로 상태만 보여줌. 뮤트는 설정 팝업 안에서만.',
+      iconBtn:false, rowAction:'menu', chevBtn:false, menuMuteRow:true,
+      notes:[ ['pro','클릭 규칙이 하나뿐 — 혼동 원천 차단'],
+              ['pro','구현 최소 (아이콘 스타일만 추가)'],
+              ['con','뮤트까지 2클릭 — 자주 쓰는 동작치곤 느림'] ] },
+    { id:'C', tag:'C안', title:'행 = 뮤트, 셰브론 = 설정 (우선순위 역전)',
+      desc:'행 아무 데나 클릭 → 뮤트 토글. 설정은 오른쪽 ⌄ 셰브론으로만.',
+      iconBtn:false, rowAction:'mute', chevBtn:true, menuMuteRow:false,
+      notes:[ ['pro','자주 쓰는 동작(뮤트)에 제일 큰 히트영역'],
+              ['con','기존 습관(행=설정)을 깨뜨림 — 전환 비용'],
+              ['con','설정 진입점이 작은 셰브론 하나로 축소'] ] },
+    { id:'D', tag:'D안 · 추천', title:'A안 + 메뉴 안 음소거 행 중복', reco:true,
+      desc:'아이콘 클릭 → 뮤트(숏컷). 행 클릭 → 설정 팝업(안에 음소거 행도 있음). 뮤트 시 서브텍스트에 "음소거됨" 병기.',
+      iconBtn:true, rowAction:'menu', chevBtn:false, menuMuteRow:true, mutedLabel:true,
+      notes:[ ['pro','숏컷을 몰라도 기존 경로로 항상 도달 — 혼동이 실패가 안 됨'],
+              ['pro','상태를 아이콘(사선)+텍스트("음소거됨") 이중 표기'],
+              ['con','같은 기능이 두 곳 — 문서/툴팁으로 커버 필요'] ] }
+  ];
+
+  var grid = document.getElementById('grid');
+
+  VARIANTS.forEach(function(v){
+    var card = document.createElement('div');
+    card.className = 'variant' + (v.reco ? ' reco' : '');
+    card.innerHTML =
+      '<div class="v-head"><span class="tag">'+v.tag+'</span>'
+      + '<h2>'+v.title+'</h2><p>'+v.desc+'</p></div>'
+      + '<div class="stage"><div class="bar-wrap">'
+      +   '<div class="menu"></div>'
+      +   '<div class="bar"><span class="hp'+(v.iconBtn?' btn':'')+'">'+HP_SVG
+      +     (v.iconBtn?'<span class="tip"></span>':'')+'</span>'
+      +   '<div class="meta"><div class="track">[096] 유리문 속 세계</div>'
+      +     '<div class="subl">WARMUP · 70 BPM</div></div>'
+      +   '<span class="chev'+(v.chevBtn?' btn':'')+'">⌄</span></div>'
+      + '</div></div>'
+      + '<div class="log"><b>동작 로그</b><span class="ev" style="color:#59637a">아직 없음 — 클릭해보세요</span></div>'
+      + '<div class="v-notes">'
+      +   v.notes.map(function(n){ return '<div class="'+n[0]+'">'+n[1]+'</div>'; }).join('')
+      + '</div>';
+    grid.appendChild(card);
+
+    var state = { muted:false, menuOpen:false };
+    var wrap = card.querySelector('.bar-wrap');
+    var bar  = card.querySelector('.bar');
+    var menu = card.querySelector('.menu');
+    var hp   = card.querySelector('.hp');
+    var chev = card.querySelector('.chev');
+    var subl = card.querySelector('.subl');
+    var log  = card.querySelector('.log');
+    var tip  = card.querySelector('.tip');
+
+    function addLog(msg){
+      var prev = log.querySelectorAll('.ev');
+      prev.forEach(function(p){ p.classList.remove('new'); });
+      if (prev.length >= 3) prev[prev.length-1].remove();
+      var ev = document.createElement('span');
+      ev.className = 'ev new'; ev.textContent = '· ' + msg;
+      var first = log.querySelector('.ev');
+      if (first && first.textContent.indexOf('아직 없음') >= 0) first.remove();
+      log.insertBefore(ev, log.querySelector('.ev'));
+    }
+
+    function renderMenu(){
+      var h = '<div class="mrow"><span class="lbl">BGM 음악</span>'
+        + '<button class="tog on" data-act="bgm">켬</button></div>';
+      if (v.menuMuteRow){
+        h += '<div class="mrow"><span class="lbl">음소거</span>'
+          + '<button class="tog'+(state.muted?' on':'')+'" data-act="mute">'
+          + (state.muted?'켬':'끔') + '</button></div>';
+      }
+      h += '<button class="mfull" data-act="full">🎛  컨디션 전체 보기 →</button>';
+      menu.innerHTML = h;
+    }
+
+    function render(){
+      wrap.classList.toggle('muted-state', state.muted);
+      bar.classList.toggle('open', state.menuOpen);
+      menu.classList.toggle('show', state.menuOpen);
+      if (tip) tip.textContent = state.muted ? '음소거 해제' : '음소거';
+      subl.textContent = (v.mutedLabel && state.muted)
+        ? '음소거됨 · WARMUP · 70 BPM' : 'WARMUP · 70 BPM';
+      if (state.menuOpen) renderMenu();
+    }
+
+    function toggleMute(src){
+      state.muted = !state.muted;
+      addLog((state.muted?'음소거 ON':'음소거 해제') + ' (' + src + ')');
+      render();
+    }
+    function toggleMenu(src){
+      state.menuOpen = !state.menuOpen;
+      addLog((state.menuOpen?'설정 팝업 열림':'설정 팝업 닫힘') + ' (' + src + ')');
+      render();
+    }
+
+    if (v.iconBtn) hp.addEventListener('click', function(e){ e.stopPropagation(); toggleMute('아이콘'); });
+    if (v.chevBtn) chev.addEventListener('click', function(e){ e.stopPropagation(); toggleMenu('셰브론'); });
+    bar.addEventListener('click', function(){
+      if (v.rowAction === 'mute') toggleMute('행 클릭'); else toggleMenu('행 클릭');
+    });
+    menu.addEventListener('click', function(e){
+      var act = e.target.getAttribute && e.target.getAttribute('data-act');
+      if (act === 'mute') toggleMute('메뉴 행');
+      else if (act === 'bgm') addLog('BGM 켬/끔 (메뉴 행) — 데모에선 상태 미반영');
+      else if (act === 'full') addLog('컨디션 전체 보기 클릭');
+      e.stopPropagation();
+    });
+
+    render();
+  });
+})();
+</script>
+</body>
+</html>

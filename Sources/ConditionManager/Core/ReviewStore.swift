@@ -408,6 +408,43 @@ final class ReviewStore {
         }
     }
 
+    // One resolved queue decision, kept so the user can audit what happened ("제대로 됐나"),
+    // jump to the result, or 번복 (undo) it from the 큐 탭's 히스토리 section. `item` snapshots
+    // the full candidate at resolve time so an undo can restore it to the queue exactly as it
+    // was — verdict, matches and placement included — without re-running the AI analysis.
+    struct QueueHistoryEntry: Codable {
+        var id: String
+        var at: Date
+        var action: String            // "add" | "task" | "skip" | "edit"
+        var text: String              // candidate text at resolve time (display snapshot)
+        var seq: Int = 0              // add: created goal #seq · task: PARENT goal #seq · else 0
+        var parentSeq: Int = 0        // add: effective parent #seq (0 = top-level)
+        var taskFolder: String = ""   // task: created tasks/<folder> name under the parent goal
+        var fallback: Bool = false    // add: requested sub-attach fell back to top-level
+        var undone: Bool = false      // set once 번복 restored the item / removed the result
+        var item: AIQueueItem? = nil  // restore snapshot (nil for edit entries — item stays queued)
+        enum CodingKeys: String, CodingKey { case id, at, action, text, seq, parentSeq, taskFolder, fallback, undone, item }
+        init(id: String, at: Date, action: String, text: String, seq: Int = 0, parentSeq: Int = 0,
+             taskFolder: String = "", fallback: Bool = false, undone: Bool = false, item: AIQueueItem? = nil) {
+            self.id = id; self.at = at; self.action = action; self.text = text
+            self.seq = seq; self.parentSeq = parentSeq; self.taskFolder = taskFolder
+            self.fallback = fallback; self.undone = undone; self.item = item
+        }
+        init(from dec: Decoder) throws {
+            let c = try dec.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            at = try c.decodeIfPresent(Date.self, forKey: .at) ?? Date(timeIntervalSince1970: 0)
+            action = try c.decodeIfPresent(String.self, forKey: .action) ?? "skip"
+            text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+            seq = try c.decodeIfPresent(Int.self, forKey: .seq) ?? 0
+            parentSeq = try c.decodeIfPresent(Int.self, forKey: .parentSeq) ?? 0
+            taskFolder = try c.decodeIfPresent(String.self, forKey: .taskFolder) ?? ""
+            fallback = try c.decodeIfPresent(Bool.self, forKey: .fallback) ?? false
+            undone = try c.decodeIfPresent(Bool.self, forKey: .undone) ?? false
+            item = try c.decodeIfPresent(AIQueueItem.self, forKey: .item)
+        }
+    }
+
     // Valid status values; anything else is rejected. `waiting` (응답 대기) is the
     // parked-for-human state: the clock is stopped (startedAt nil) while in it.
     // backlog  - 대기: the loop's queue. The ONLY status the auto-loop picks up.
@@ -435,11 +472,13 @@ final class ReviewStore {
     private let releasesURL: URL
     private let sprintsURL: URL
     private let queueURL: URL
+    private let queueHistoryURL: URL
     private let dayFmt: DateFormatter
     private(set) var goals: [Goal] = []
     private(set) var releases: [Release] = []
     private(set) var sprints: [Sprint] = []
     private(set) var aiQueue: [AIQueueItem] = []
+    private(set) var queueHistory: [QueueHistoryEntry] = []
 
     // The "current" sprint for live timers (the challenge dial's 스프린트 mode): the open (not
     // closed) sprint with the highest number; if every sprint is closed, the highest-numbered one.
@@ -455,6 +494,7 @@ final class ReviewStore {
         releasesURL = dir.appendingPathComponent("releases.json")
         sprintsURL = dir.appendingPathComponent("sprints.json")
         queueURL = dir.appendingPathComponent("ai-queue.json")
+        queueHistoryURL = dir.appendingPathComponent("queue-history.json")
 
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -465,6 +505,7 @@ final class ReviewStore {
         loadReleases()
         loadSprints()
         loadQueue()
+        loadQueueHistory()
     }
 
     var todayKey: String { dayFmt.string(from: Date()) }
@@ -581,6 +622,66 @@ final class ReviewStore {
     }
     private func saveQueue() {
         if let data = try? JSONEncoder().encode(aiQueue) { try? data.write(to: queueURL, options: .atomic) }
+    }
+
+    // MARK: 큐 처리 히스토리 (decision audit + 번복)
+
+    private func loadQueueHistory() {
+        guard FileManager.default.fileExists(atPath: queueHistoryURL.path),
+              let data = try? Data(contentsOf: queueHistoryURL),
+              let h = try? JSONDecoder().decode([QueueHistoryEntry].self, from: data) else { return }
+        queueHistory = h
+    }
+    private func saveQueueHistory() {
+        // Oldest-first on disk; capped so years of resolutions can't grow the file unbounded.
+        if queueHistory.count > 200 { queueHistory.removeFirst(queueHistory.count - 200) }
+        if let data = try? JSONEncoder().encode(queueHistory) { try? data.write(to: queueHistoryURL, options: .atomic) }
+    }
+    private func logQueueDecision(action: String, item: AIQueueItem, seq: Int = 0, parentSeq: Int = 0,
+                                  taskFolder: String = "", fallback: Bool = false, snapshot: Bool = true) {
+        queueHistory.append(QueueHistoryEntry(id: UUID().uuidString, at: Date(), action: action,
+                                              text: item.text, seq: seq, parentSeq: parentSeq,
+                                              taskFolder: taskFolder, fallback: fallback,
+                                              item: snapshot ? item : nil))
+        saveQueueHistory()
+    }
+    func queueHistoryEntry(id: String) -> QueueHistoryEntry? {
+        queueHistory.first(where: { $0.id == id })
+    }
+    // 번복: mark the entry undone and put the snapshotted candidate BACK in the queue as
+    // "ready" (its verdict/matches were snapshotted, so no re-analysis is needed). The caller
+    // is responsible for removing what the decision created (the goal / task folder) BEFORE
+    // calling this — see the /api/goal/queue/undo handler. Returns the entry on success; nil
+    // when missing, already undone, or not an undoable action. Call on main.
+    @discardableResult
+    func undoQueueDecision(id: String) -> QueueHistoryEntry? {
+        guard let idx = queueHistory.firstIndex(where: { $0.id == id }) else { return nil }
+        let entry = queueHistory[idx]
+        guard !entry.undone, ["add", "task", "skip"].contains(entry.action) else { return nil }
+        if let item = entry.item, !aiQueue.contains(where: { $0.id == item.id }) {
+            var restored = item
+            restored.status = "ready"   // verdict is snapshotted — straight back to review
+            aiQueue.append(restored)
+            saveQueue()
+        }
+        queueHistory[idx].undone = true
+        saveQueueHistory()
+        return entry
+    }
+
+    // Promote a queued candidate into a 부분과제 (tasks/<taskN> folder) under goal #parentSeq
+    // instead of minting a new numbered goal — the recurring-round path. The caller creates
+    // the folder first (AppDelegate owns the IssuePaths file I/O); this removes the candidate
+    // from the queue and records the history entry. Call on main.
+    @discardableResult
+    func resolveQueueItemAsTask(id: String, parentSeq: Int, taskFolder: String) -> Bool {
+        guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return false }
+        let item = aiQueue[idx]
+        aiQueue.remove(at: idx)
+        saveQueue()
+        logQueueDecision(action: "task", item: item, seq: parentSeq, parentSeq: parentSeq,
+                         taskFolder: taskFolder)
+        return true
     }
     // Park a flagged candidate for later review (the legacy "later" button). Lands as
     // "ready" because the verdict (note/matches) is already known at this point.
@@ -805,12 +906,18 @@ final class ReviewStore {
             }
             aiQueue.remove(at: idx)
             result = ResolveResult(seq: newSeq, parentSeq: attachedParentSeq, parentFallback: fallback)
+            logQueueDecision(action: "add", item: item, seq: newSeq, parentSeq: attachedParentSeq,
+                             fallback: fallback)
         case "edit":
             let t = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !t.isEmpty else { return nil }
             aiQueue[idx].text = t
+            // Audit-only (not undoable): the item stays queued, so no restore snapshot.
+            logQueueDecision(action: "edit", item: aiQueue[idx], snapshot: false)
         default:   // "skip" and unknown actions drop the item
             aiQueue.remove(at: idx)
+            // Closing a 검색(찾기만) result card is not a decision — keep it out of history.
+            if !item.findOnly { logQueueDecision(action: "skip", item: item) }
         }
         saveQueue()
         return result
@@ -967,19 +1074,27 @@ final class ReviewStore {
     }
 
     // Release (커밋) the finished work: take every done, not-yet-released goal matching the
-    // filter and commit it. Completion is judged by each goal's OWN status — a PARENT is NEVER
-    // auto-committed from its finished children. A big parent is a long-lived history container
-    // the user closes MANUALLY (sets its own status to done) only when the work branches; until
-    // then it stays active so all lineage lives under one goal. Sprint membership still uses the
-    // EFFECTIVE (inherited) sprint so completed sub-items (own sprint 0) ship with the parent's
-    // sprint group they visually belong to. Results are GROUPED BY SPRINT — one Release record
-    // per sprint number — so the release log always shows which sprint shipped (번호 + 결과물).
-    // Each released sprint is also marked closed, dropping it from the 스프린트 관리 list.
+    // filter and commit it. Completion mirrors the board's derivedStatus rollup: a goal's own
+    // done status, OR a parent whose every child is terminal (완료/취소, with at least one 완료)
+    // — such a parent has no remaining tasks and ships together with its children instead of
+    // carrying forward as an empty shell. Sprint membership still uses the EFFECTIVE (inherited)
+    // sprint so completed sub-items (own sprint 0) ship with the parent's sprint group they
+    // visually belong to. Results are GROUPED BY SPRINT — one Release record per sprint number —
+    // so the release log always shows which sprint shipped (번호 + 결과물). Each released sprint
+    // is also marked closed, dropping it from the 스프린트 관리 list.
     // `sprint == nil` releases across all sprints (still grouped per sprint).
+    private func isEffectivelyDone(_ g: Goal) -> Bool {
+        if g.status == "done" { return true }
+        let kids = goals.filter { $0.parent == g.id }
+        guard !kids.isEmpty else { return false }
+        let terminal = kids.allSatisfy { $0.status == "done" || $0.status == "cancelled" }
+        return terminal && kids.contains { $0.status == "done" }
+    }
+
     @discardableResult
     func releaseSprint(_ sprint: Int?) -> [Release] {
         let targets = goals.indices.filter { i in
-            !goals[i].released && goals[i].status == "done" &&
+            !goals[i].released && isEffectivelyDone(goals[i]) &&
             (sprint == nil || effectiveSprint(goals[i]) == sprint!)
         }
         guard !targets.isEmpty else { return [] }

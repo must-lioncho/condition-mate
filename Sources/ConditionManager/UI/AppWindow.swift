@@ -479,6 +479,21 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
     // these. With no implementation the panels resolve to their defaults (confirm→false,
     // prompt→nil), which is why confirm-guarded actions in the dashboard did nothing.
 
+    // WebKit also drops target="_blank" links and window.open() unless the UI delegate handles
+    // the new-window request — clicking 전체 로그 타임라인(/worker-log) on the 크론 page, or the
+    // dashboard's transcript/breakdown viewers, silently did nothing. This app has a single
+    // webview window, so hand the URL to the default browser instead of spawning a webview.
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        // Logged because a silent window.open is invisible to the user AND to app.log —
+        // the 플랜 맵 button's "click did nothing" report was undiagnosable without this.
+        AppLog.log("app-window window.open \(navigationAction.request.url?.absoluteString ?? "nil")")
+        if let url = navigationAction.request.url, url.scheme?.hasPrefix("http") == true {
+            NSWorkspace.shared.open(url)
+        }
+        return nil
+    }
+
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let alert = NSAlert()

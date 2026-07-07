@@ -863,10 +863,15 @@ PASS로 재검증함(라이브 근거는 위 DASH-6/DASH-7의 RESOLVED 메모 �
 **Purpose / 목적:** **EN:** the loopback `DashboardServer` (`AppDelegate.swift` handlers + `Dashboard/DashboardServer.swift`) backing every page above — the data/control plane all pages talk to. **KO:** 위의 모든 페이지를 뒷받침하는 루프백 `DashboardServer`(`AppDelegate.swift` 핸들러 + `Dashboard/DashboardServer.swift`)다 — 모든 페이지가 호출하는 데이터/제어 계층.
 
 - **EP-1 — `GET /api/bgm/now`.**
-  EN: Returns `{on,playing,id,title,bpm,phase,profile}`. `id=-1` when nothing resolvable.
-  KO: `{on,playing,id,title,bpm,phase,profile}`를 반환. 재생 가능한 트랙이 없으면 `id=-1`.
+  EN: Returns `{on,playing,id,title,bpm,phase,profile,plan}`. `id=-1` when nothing resolvable;
+  `plan` (added 2026-07-08) is the 전략3 plan-map slot label currently governing selection
+  ("-" when the plan has a gap or BGM is off).
+  KO: `{on,playing,id,title,bpm,phase,profile,plan}`를 반환. 재생 가능한 트랙이 없으면 `id=-1`.
+  `plan`(2026-07-08 추가)은 지금 선곡을 지배하는 전략3 플랜 맵 슬롯 라벨(플랜 공백/BGM 꺼짐이면 "-").
   Verify: `curl http://127.0.0.1:<port>/api/bgm/now` — confirmed 2026-07-05:
-  `{"on":true,"playing":true,"id":0,"title":"QA [120]","bpm":70,"phase":"WARMUP","profile":"기본"}`.
+  `{"on":true,"playing":true,"id":0,"title":"QA [120]","bpm":70,"phase":"WARMUP","profile":"기본"}`;
+  `plan` field confirmed 2026-07-08 (isolated instance): `"plan":"QA 전용 슬롯"` reflected within one
+  decision tick after a plan replace.
 - **EP-2 — `GET /api/bgm/list`.**
   EN: Returns `{tracks:[{id,title,bpm}...]}` from the current library.
   KO: 현재 라이브러리의 `{tracks:[{id,title,bpm}...]}`를 반환.
@@ -957,6 +962,57 @@ PASS로 재검증함(라이브 근거는 위 DASH-6/DASH-7의 RESOLVED 메모 �
   리스트에 넣을 GET 라우트 자체가 없다).
   Verify: see DASH-8 evidence block — non-blocking return, not-found guard, cycle-safe result all
   confirmed live 2026-07-06 on the isolated instance.
+- **EP-10 — `GET /api/bgm/plan` / `POST /api/bgm/plan` (added 2026-07-08, 전략3 · 플랜 맵).**
+  EN: The 전략3 plan map assigns a themed track pool (first-level subfolders of the music root —
+  `office/`, `ship/`, `steel/`, ...) to each (day × "HH:mm"–"HH:mm") slot. `days` accepts a
+  specific day `mon`..`sun`, the bands `weekday`/`weekend`, or `all`; resolution priority is
+  specific day > band > all, file order within a pass (added 2026-07-08: the seed plan gives every
+  weekday its own theme arc). The `ConditionDirector` gates its adaptive selection to the active
+  slot's themes (mode playlists are the fallback when no slot matches). The plan lives at
+  `<data>/bgm-plan.json` (`BGMPlanMap.swift`; seeded with a built-in default when missing/corrupt).
+  GET returns `{plan,currentSlot,themes,themeCounts}` — `themes` lists the folders that actually
+  exist in the library so a planning agent only references real pools. POST replaces the whole plan
+  after validation (bad days/time/empty slots/themes ->
+  `{"ok":false,"error":<reason>}`); on success returns `{"ok":true,"slots":N,"unknownThemes":[...]}`
+  and forces an audible move into the new pool (`planDidChange`). Agents must use the POST (never
+  write the file directly — same convention as goals). BPM-less tracks load at defaultBPM=110
+  instead of being skipped (`BPMLibrary.swift`), and within a BPM-flat pool the director rotates by
+  recency + a 240s dwell instead of BPM distance. Strategy catalog: `track-playstats.json` gains
+  id 3 "플랜 맵" and `activeStrategy` migrates 2->3 idempotently (`TrackPlayStats.swift`).
+  KO: 전략3 플랜 맵은 (요일 × "HH:mm"–"HH:mm") 슬롯마다 테마 곡 풀(음원 루트의 1단계 하위폴더 —
+  `office/`, `ship/`, `steel/`, ...)을 지정한다. `days`는 개별 요일 `mon`..`sun`, 밴드
+  `weekday`/`weekend`, `all`을 받으며 우선순위는 개별 요일 > 밴드 > all, 같은 패스 안에서는 파일
+  순서(2026-07-08 추가: 시드 플랜은 월~금 각 요일이 고유한 테마 구성을 가짐). `ConditionDirector`는
+  적응 선곡을 활성 슬롯의 테마로 제한한다(슬롯이 안 잡히면 모드 플레이리스트가 폴백). 플랜은
+  `<data>/bgm-plan.json`에 저장되며(`BGMPlanMap.swift`; 없거나 깨지면 내장 기본 플랜으로 시드)
+  GET은 `{plan,currentSlot,themes,themeCounts}`를 반환한다 — `themes`는 라이브러리에 실존하는
+  폴더 목록이라 계획 에이전트가 실재하는 풀만 참조할 수 있다. POST는 검증 후 플랜 전체를 교체하고(잘못된 days/시간/빈
+  slots·themes -> `{"ok":false,"error":<사유>}`), 성공 시 `{"ok":true,"slots":N,"unknownThemes":
+  [...]}`를 반환하며 새 풀로 즉시 가청 전환한다(`planDidChange`). 에이전트는 파일을 직접 쓰지 말고
+  반드시 POST를 사용한다(goals와 동일 규약). BPM 없는 곡은 스킵되지 않고 defaultBPM=110으로
+  로드되며(`BPMLibrary.swift`), BPM이 동일한 풀 안에서는 BPM 거리 대신 최근재생 페널티 + 240초
+  체류로 회전한다. 전략 카탈로그: `track-playstats.json`에 id 3 "플랜 맵"이 추가되고
+  `activeStrategy`가 2->3으로 멱등 마이그레이션된다(`TrackPlayStats.swift`).
+  A read-only visualization page `GET /bgm-plan` (`BGMPlanContent.swift`) renders the plan as
+  day-band × 24h timeline strips — one colored block per slot (overnight wrap drawn as two
+  segments), a "지금 HH:MM" cursor on today's band, the governing slot highlighted, and per-slot
+  detail cards (theme chips with real track counts from `themeCounts`, pinned opener, planner
+  note). Opened from the BGM player's "계획" chip (`window.open` -> default browser).
+  KO 추가: 읽기 전용 시각화 페이지 `GET /bgm-plan`(`BGMPlanContent.swift`)이 플랜을 요일 밴드 ×
+  24시간 타임라인 띠로 렌더링한다 — 슬롯마다 색 블록(자정 넘김은 두 조각), 오늘 밴드에 "지금
+  HH:MM" 커서, 현재 지배 슬롯 하이라이트, 슬롯별 상세 카드(실제 곡 수가 붙은 테마 칩·고정 첫 곡·
+  기획 노트). BGM 플레이어의 "계획" 칩에서 열린다(`window.open` -> 기본 브라우저).
+  Verify: isolated instance 2026-07-08 (manager-qa) — library `loaded 187 tracks (164 no-BPM
+  defaulted) range 82-172`; GET at 04:30 KST Wed -> `currentSlot:"저녁 · 라운지 바람"` + 16 real
+  themes; playing track confirmed inside the slot's theme folder (`bgm/challenge/The Memory
+  Era.mp3` under a QA slot); POST rejections (`days:"someday"`, empty slots/themes, bad JSON, empty
+  body) all `ok:false` with reasons, valid plan -> `ok:true` + audible switch (id 126->151);
+  fresh-install stats seed ids 1/2/3 + `activeStrategy:3`, pre-placed v2 file (`activeStrategy:2`,
+  ids 1·2) migrates to 3 with id 2 closed and stat rows preserved; plan file deleted mid-run -> no
+  crash, in-memory plan persists; unknown-theme plan -> reported in `unknownThemes`, blocked-pool
+  fallback keeps music playing (no silence). `/bgm-plan` page verified 2026-07-08 via node DOM-stub
+  render (13/13 assertions: band strips, wrap split, now cursor, counts, opener/note) plus a
+  static-server screenshot pass.
 
 ### Intent audit — P6
 EN: Code matches intent — PASS on EP-1..EP-6 and EP-7..EP-9 (added 2026-07-06), live-verified this

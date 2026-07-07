@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>장비+숙련도 시스템 테스트 — 포모도로 EXP · 평균 레벨 Lv1~Lv7</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Matches the session-rail dark palette (SessionRail.swift) so the mock reads in-context. */
+  :root{
+    --bg:#0b0f16; --card:#0f141d; --card-hi:#141b28; --line:#1c2230;
+    --txt:#dbe2ee; --sub:#6b7589; --dim:#5d6678;
+    --menu:#171d2b; --menu-line:#2a3450;
+    --blue:#3b82f6; --purple:#a97bff;
+    /* LightningGauge.swift level colors */
+    --lv-cyan:#33c9e6; --lv-red:#f05045; --lv-purple:#a97bff;
+  }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt);
+    font:14px/1.55 -apple-system,"Apple SD Gothic Neo",sans-serif; padding:28px 24px 80px }
+  h1{ font-size:19px; margin:0 0 6px }
+  h2{ font-size:15px; margin:34px 0 4px }
+  .lead{ color:var(--sub); font-size:13px; max-width:780px; margin-bottom:6px }
+  .lead b{ color:#aeb9cc }
+  .plan{ max-width:780px; background:#131a26; border:1px solid var(--line); border-radius:12px;
+    padding:12px 16px; font-size:12.5px; color:#9aa5b8; margin:14px 0 10px }
+  .plan b{ color:#dbe2ee }
+  .plan ul{ margin:6px 0 0; padding-left:18px }
+  .plan li{ margin:3px 0 }
+
+  /* ===== Section A: settings-menu replica (cmcond-menu) ===== */
+  .menu-mock{ width:280px; background:var(--menu); border:1px solid var(--menu-line);
+    border-radius:12px; padding:8px; margin-top:12px }
+  .cmcond-row{ display:flex; align-items:center; justify-content:space-between;
+    padding:7px 9px; border-radius:8px; font-size:12.5px }
+  .cmcond-row .lbl{ color:var(--txt) }
+  .cmcond-tog{ background:#20283a; border:1px solid var(--menu-line); color:#8fa4c9;
+    border-radius:999px; font-size:11px; padding:2px 10px; cursor:pointer }
+  .cmcond-full{ display:flex; align-items:center; justify-content:space-between; width:100%;
+    background:#20283a; border:1px solid var(--menu-line); color:var(--txt);
+    border-radius:9px; font-size:12.5px; padding:9px 11px; cursor:pointer;
+    margin-top:4px; text-align:left; font-family:inherit }
+  .cmcond-full:hover{ background:#28324a }
+  .cmcond-full .lvchip{ font-size:11px; font-weight:800; letter-spacing:.3px;
+    padding:2px 9px; border-radius:999px; background:#123039; color:var(--lv-cyan);
+    border:1px solid #1d4b57 }
+
+  /* ===== Section B: equipment page (character + proficiency slots) ===== */
+  .equip-wrap{ max-width:960px; background:#0d1219; border:1px solid var(--line);
+    border-radius:16px; padding:20px; margin-top:12px }
+  .equip-head{ display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin-bottom:4px }
+  .equip-head h3{ margin:0; font-size:16px }
+  .lv-big{ font-size:15px; font-weight:800; letter-spacing:.3px }
+  .lv-name{ color:var(--sub); font-size:12.5px }
+  .lv-avg{ color:var(--dim); font-size:11.5px; margin-left:auto }
+  .lv-bar{ height:7px; background:#151b28; border:1px solid var(--line); border-radius:999px;
+    overflow:hidden; margin:10px 0 18px }
+  .lv-bar i{ display:block; height:100%; border-radius:999px; transition:width .35s, background .35s }
+
+  /* market EXP inflation strip */
+  .market{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:-6px 0 18px;
+    padding:8px 12px; background:#131a26; border:1px solid var(--line); border-radius:10px;
+    font-size:12px; color:#9aa5b8 }
+  .market b{ color:#dbe2ee }
+  .market .mk-ico{ font-size:14px }
+  .market .mk-date{ font-size:10.5px; color:var(--dim) }
+
+  .equip-grid{ display:grid; grid-template-columns:270px 1fr 250px; gap:18px; align-items:start }
+  @media (max-width:860px){ .equip-grid{ grid-template-columns:1fr } }
+
+  .slot-col h4, .plug-area h4{ margin:0 0 8px; font-size:12px; color:var(--sub);
+    font-weight:700; letter-spacing:.4px }
+  .slot{ padding:9px 11px; margin-bottom:8px;
+    background:var(--card); border:1px solid var(--line); border-radius:11px; cursor:pointer;
+    user-select:none; transition:border-color .15s, background .15s; position:relative }
+  .slot:hover{ background:var(--card-hi) }
+  .slot .top{ display:flex; align-items:center; gap:9px }
+  .slot .ico{ width:32px; height:32px; flex:none; display:flex; align-items:center;
+    justify-content:center; font-size:17px; background:#131a26; border-radius:9px;
+    border:1px solid var(--line) }
+  .slot .nm{ font-size:12.5px; font-weight:600 }
+  .slot .ds{ font-size:10.5px; color:var(--sub); line-height:1.3 }
+  .slot .lvchip{ margin-left:auto; font-size:10px; font-weight:800; letter-spacing:.4px;
+    padding:2px 8px; border-radius:999px; background:#1a2130; color:var(--dim); flex:none }
+  .slot.lit{ border-color:#2f6bff }
+  .slot.lit .lvchip{ background:#1f3a75; color:#9ec1ff }
+  .slot.max .lvchip{ background:#241f3a; color:var(--lv-purple) }
+  /* per-slot XP bar */
+  .xp{ height:4px; background:#151b28; border-radius:999px; overflow:hidden; margin-top:7px }
+  .xp i{ display:block; height:100%; background:#2f6bff; border-radius:999px;
+    transition:width .3s }
+  .slot.max .xp i{ background:var(--lv-purple) }
+  .xptxt{ font-size:9.5px; color:var(--dim); margin-top:3px; text-align:right }
+  /* usage counter badge shown while a pomodoro runs */
+  .use{ display:none; position:absolute; top:-7px; right:-6px; min-width:20px; height:20px;
+    border-radius:999px; background:#2f6bff; color:#fff; font-size:10.5px; font-weight:800;
+    align-items:center; justify-content:center; padding:0 5px;
+    box-shadow:0 2px 8px rgba(0,0,0,.5) }
+  body.pomo-on .use{ display:flex }
+  body.pomo-on .slot{ box-shadow:inset 0 0 0 1px rgba(47,107,255,.18) }
+  .gain{ position:absolute; right:8px; top:-4px; font-size:11px; font-weight:800;
+    color:var(--lv-cyan); animation:rise 1.4s ease-out forwards; pointer-events:none }
+  @keyframes rise{ 0%{ opacity:0; transform:translateY(6px) } 15%{ opacity:1 }
+    100%{ opacity:0; transform:translateY(-18px) } }
+
+  /* character in the middle: 8-head-tall human avatar with body-part equip anchors */
+  .char{ text-align:center; padding:6px 8px 8px }
+  .char .fig{ position:relative; width:230px; height:352px; margin:0 auto;
+    background:radial-gradient(ellipse 60% 45% at 50% 46%, rgba(51,201,230,.10), transparent 70%);
+    transition:background .4s }
+  .char .fig svg{ position:absolute; left:50%; top:6px; transform:translateX(-50%);
+    filter:drop-shadow(0 0 12px rgba(51,201,230,.45)); transition:filter .4s;
+    animation:breath 2.6s ease-in-out infinite }
+  .char .fig svg .body{ fill:#141b28; stroke:#3a465f; stroke-width:2 }
+  .char .fig svg .limb{ fill:none; stroke:#141b28; stroke-width:13; stroke-linecap:round }
+  .char .fig svg .limb-edge{ fill:none; stroke:#3a465f; stroke-width:15; stroke-linecap:round }
+  /* body-part mini equip chips anchored around the figure */
+  .mini{ position:absolute; display:flex; align-items:center; gap:4px; padding:3px 7px;
+    background:var(--card); border:1px solid var(--line); border-radius:8px;
+    font-size:10px; cursor:pointer; user-select:none; z-index:2; white-space:nowrap }
+  .mini:hover{ background:var(--card-hi) }
+  .mini .ic{ font-size:12px }
+  .mini .lv{ font-weight:800; color:var(--dim) }
+  .mini .part{ color:var(--dim); font-size:8.5px; letter-spacing:.3px }
+  .mini.lit{ border-color:#2f6bff } .mini.lit .lv{ color:#9ec1ff }
+  .mini.max{ border-color:#3d3560 } .mini.max .lv{ color:var(--lv-purple) }
+  .mini.future{ border-style:dashed; opacity:.45; cursor:default }
+  @keyframes breath{ 0%,100%{ opacity:.78 } 50%{ opacity:1 } }
+  .char .who{ margin-top:10px; font-size:12.5px; color:var(--sub) }
+  .char .who b{ color:var(--txt) }
+  .char .auto-badge{ display:none; margin:10px auto 0; width:fit-content; font-size:11px;
+    font-weight:800; letter-spacing:.5px; padding:4px 14px; border-radius:999px;
+    background:#241f3a; color:var(--lv-purple); border:1px solid #3d3560;
+    animation:breath 1.4s ease-in-out infinite }
+  .char.lv7 .auto-badge{ display:block }
+
+  /* plugin boxes */
+  .plug-grid{ display:grid; grid-template-columns:repeat(2, 1fr); gap:8px }
+  .plug{ padding:10px; background:var(--card); border:1px solid var(--line); border-radius:11px;
+    cursor:pointer; user-select:none; min-height:74px; position:relative;
+    transition:border-color .15s, background .15s }
+  .plug:hover{ background:var(--card-hi) }
+  .plug .ico{ font-size:17px }
+  .plug .nm{ font-size:11.5px; font-weight:600; margin-top:4px }
+  .plug .st{ font-size:10px; color:var(--dim); margin-top:2px }
+  .plug.empty{ border-style:dashed; cursor:default; opacity:.55; display:flex;
+    align-items:center; justify-content:center; color:var(--dim); font-size:11px }
+
+  /* ===== Section C: pomodoro simulator ===== */
+  .pomo{ max-width:960px; background:#0d1219; border:1px solid var(--line); border-radius:16px;
+    padding:18px 20px; margin-top:12px; display:flex; gap:22px; flex-wrap:wrap; align-items:center }
+  .pomo .clock{ font-size:34px; font-weight:800; font-variant-numeric:tabular-nums; width:120px }
+  .pomo .clock small{ display:block; font-size:10.5px; font-weight:600; color:var(--sub);
+    letter-spacing:.4px }
+  .pomo .ring{ height:7px; background:#151b28; border:1px solid var(--line); border-radius:999px;
+    overflow:hidden; flex:1; min-width:180px }
+  .pomo .ring i{ display:block; height:100%; background:var(--lv-red); border-radius:999px;
+    transition:width .5s linear }
+  .pbtn{ background:#20283a; border:1px solid var(--menu-line); color:var(--txt);
+    border-radius:9px; font-size:12.5px; padding:9px 16px; cursor:pointer; font-family:inherit }
+  .pbtn:hover{ background:#28324a }
+  .pbtn.primary{ background:#1f3a75; border-color:#2f6bff; color:#cfe0ff }
+  .pbtn.primary:hover{ background:#254590 }
+  .pomo-hint{ width:100%; font-size:12px; color:var(--sub) }
+  .pomo-log{ max-width:960px; margin-top:10px; font-size:12px; color:#9aa5b8 }
+  .pomo-log div{ padding:7px 12px; background:#131a26; border:1px solid var(--line);
+    border-radius:9px; margin-bottom:6px }
+  .pomo-log b{ color:#dbe2ee }
+  .pomo-log .win{ color:var(--lv-cyan); font-weight:700 }
+
+  /* ===== Section D: level table ===== */
+  .lv-table{ max-width:780px; border-collapse:collapse; margin-top:12px; font-size:12.5px }
+  .lv-table th, .lv-table td{ border:1px solid var(--line); padding:8px 12px; text-align:left }
+  .lv-table th{ background:#131a26; color:#9aa5b8; font-size:11.5px }
+  .lv-table td:first-child{ font-weight:800; white-space:nowrap }
+  .lv-table tr.cur td{ background:#111a2e }
+  .c-cyan{ color:var(--lv-cyan) } .c-red{ color:var(--lv-red) } .c-purple{ color:var(--lv-purple) }
+  .note{ max-width:780px; color:var(--sub); font-size:12px; margin-top:10px }
+</style>
+</head>
+<body>
+
+<h1>⚔️ 장비 + 숙련도 시스템 — 기획 + 인터랙션 테스트</h1>
+<p class="lead">장비는 <b>장착</b>으로 끝나지 않고 <b>숙련도(EXP)</b>가 함께 자랍니다.
+전체 레벨 = <b>장비 숙련도의 평균</b>이고, 평균이 7이 되면 <b>Lv.7 완전자율</b>입니다.
+경험치는 <b>포모도로(25분) 성공</b> 시 지급되며, 그 세션에서 <b>가장 많이 사용한 기술</b>에 자동 부여됩니다.</p>
+
+<div class="plan">
+  <b>기획 요약 (v2 — 숙련도 반영)</b>
+  <ul>
+    <li><b>장비 6종</b> = 네비 능력(대화·스킬·위임·워커·팀) + 플러그인. 각 장비에 숙련도 <b>Lv.0(미장착) ~ Lv.7(마스터)</b> + EXP 게이지.</li>
+    <li><b>전체 레벨 = 6개 장비 숙련도의 평균(반올림, 최소 1)</b>. 예: 대화 6 + 스킬 4 + 나머지 0 → 평균 1.7 → <b>Lv.2</b> (현재). 전 장비 마스터(평균 7) → <b>Lv.7 완전자율</b>.</li>
+    <li><b>EXP 지급 규칙</b>: 포모도로 25분 성공 → +80 XP. 세션 동안의 사용 이벤트(스킬 실행, 대화 메시지, 에이전트 호출, 워커 실행, 플러그인 활동)를 집계해 <b>최다 사용 기술 1곳에 전액 자동 부여</b>. 사용 기록이 없으면 대화(기본기)에 부여. 실패/중단 시 지급 없음.</li>
+    <li><b>시장 경험치 (레벨 밸런싱)</b>: 필요 EXP에 시장 인플레이션을 곱함. 한 달에 한 번 새 모델이 나온다고 보고 <b>시장 레벨이 매월 +1</b>, 그때마다 <b>필요 EXP ×1.3</b> (누적 1.3^(시장Lv−1)). 300 XP 정도로 7레벨 도달이 가능하던 것을 시장이 성장할수록 어렵게 만들어, "지금의 완전자율"이 미래에는 평범해지는 것을 반영. 이미 획득한 레벨은 유지, 앞으로의 레벨업만 비싸짐.</li>
+    <li>필요 EXP = (60 + 레벨×40) × 1.3^(시장Lv−1) → 고레벨 + 시장 성장 이중 브레이크. 곡선·배율은 튜닝 파라미터.</li>
+    <li><b>8등신 아바타</b>: 캐릭터는 사람 형태(머리=키의 1/8) 실루엣이고, 장비는 RPG처럼 <b>부위에 착용</b> — 머리=대화, 무기=스킬, 방패=위임, 갑옷=플러그인, 어깨=팀, 신발=워커. 목걸이·반지 등 <b>빈 부위가 남아 있어 아이템을 계속 늘릴 수 있음</b>.</li>
+    <li>실구현: 사용 이벤트는 이미 있는 로그(스킬 실행 기록, goal/API 호출, 워커 실행, 에이전트 ledger)에서 포모도로 시간창으로 집계. 숙련도 원장은 ~/.condition-manager/equipment.json, 조회는 /api/equipment.</li>
+    <li>색 문법: 레벨 구간 시안(1–3)→레드(4–5)→퍼플(6–7) = 메뉴바 라이트닝 게이지 재사용. 진행/활성=블루 (신호등 녹·적 금지 규칙 준수).</li>
+  </ul>
+</div>
+
+<h2>A. 설정 메뉴 진입점 (cmcond-menu 레플리카)</h2>
+<p class="lead">"플러그인 관리" 아래 <b>장비</b> 행 + 현재 평균 레벨 칩.</p>
+<div class="menu-mock">
+  <div class="cmcond-row"><span class="lbl">BGM 음악</span><button class="cmcond-tog">ON</button></div>
+  <div class="cmcond-row"><span class="lbl">음소거</span><button class="cmcond-tog">—</button></div>
+  <button class="cmcond-full">🎛&nbsp; 컨디션 전체 보기 →</button>
+  <button class="cmcond-full">🧩&nbsp; 플러그인 관리</button>
+  <button class="cmcond-full" onclick="document.getElementById('equip').scrollIntoView({behavior:'smooth'})">
+    <span>⚔️&nbsp; 장비</span><span class="lvchip" id="menuLv">Lv.2</span>
+  </button>
+</div>
+
+<h2 id="equip">B. 장비창 — 캐릭터 + 숙련도 슬롯</h2>
+<p class="lead">포모도로가 <b>진행 중일 때</b> 슬롯을 클릭하면 "그 기술을 사용했다"는 이벤트가 기록됩니다(우상단 카운터).
+포모도로 성공 시 최다 사용 기술에 EXP가 들어가고 레벨·평균·아우라가 갱신됩니다.</p>
+
+<div class="equip-wrap">
+  <div class="equip-head">
+    <h3>내 장비</h3>
+    <span class="lv-big" id="lvBig">Lv.2</span>
+    <span class="lv-name" id="lvName">스킬 사용</span>
+    <span class="lv-avg" id="lvAvg">평균 숙련도 1.7 / 7</span>
+  </div>
+  <div class="lv-bar"><i id="lvFill" style="width:28.6%; background:var(--lv-cyan)"></i></div>
+
+  <!-- market EXP inflation strip -->
+  <div class="market">
+    <span class="mk-ico">📈</span>
+    <span>시장 경험치 — <b id="mkLv">시장 Lv.1</b> · 필요 XP <b id="mkInf">×1.00</b></span>
+    <span class="mk-date" id="mkDate">2026-07 기준</span>
+    <button class="pbtn" onclick="marketBump()" style="margin-left:auto; padding:6px 12px; font-size:11.5px">
+      🚀 새 모델 출시 (+1달, 시뮬)</button>
+  </div>
+
+  <div class="equip-grid">
+    <!-- left: nav ability slots with proficiency -->
+    <div class="slot-col">
+      <h4>네비게이션 능력</h4>
+      <div class="slot" data-cat="chat" onclick="use('chat')">
+        <span class="use" id="use-chat">0</span>
+        <div class="top"><div class="ico">💬</div>
+          <div><div class="nm">대화</div><div class="ds">대화로 목표 생성</div></div>
+          <span class="lvchip" id="lv-chat">Lv.6</span></div>
+        <div class="xp"><i id="xp-chat"></i></div><div class="xptxt" id="xt-chat"></div>
+      </div>
+      <div class="slot" data-cat="skills" onclick="use('skills')">
+        <span class="use" id="use-skills">0</span>
+        <div class="top"><div class="ico">🎯</div>
+          <div><div class="nm">스킬</div><div class="ds">반복 업무를 스킬로 실행</div></div>
+          <span class="lvchip" id="lv-skills">Lv.4</span></div>
+        <div class="xp"><i id="xp-skills"></i></div><div class="xptxt" id="xt-skills"></div>
+      </div>
+      <div class="slot" data-cat="delegate" onclick="use('delegate')">
+        <span class="use" id="use-delegate">0</span>
+        <div class="top"><div class="ico">🤝</div>
+          <div><div class="nm">위임</div><div class="ds">책임 에이전트에게 위임</div></div>
+          <span class="lvchip" id="lv-delegate">Lv.0</span></div>
+        <div class="xp"><i id="xp-delegate"></i></div><div class="xptxt" id="xt-delegate"></div>
+      </div>
+      <div class="slot" data-cat="cron" onclick="use('cron')">
+        <span class="use" id="use-cron">0</span>
+        <div class="top"><div class="ico">⏰</div>
+          <div><div class="nm">워커</div><div class="ds">주기 업무 자동 실행</div></div>
+          <span class="lvchip" id="lv-cron">Lv.0</span></div>
+        <div class="xp"><i id="xp-cron"></i></div><div class="xptxt" id="xt-cron"></div>
+      </div>
+      <div class="slot" data-cat="team" onclick="use('team')">
+        <span class="use" id="use-team">0</span>
+        <div class="top"><div class="ico">👥</div>
+          <div><div class="nm">팀</div><div class="ds">teamlead 오케스트레이션</div></div>
+          <span class="lvchip" id="lv-team">Lv.0</span></div>
+        <div class="xp"><i id="xp-team"></i></div><div class="xptxt" id="xt-team"></div>
+      </div>
+    </div>
+
+    <!-- center: 8-head-tall human avatar with body-part equip anchors -->
+    <div class="char" id="char">
+      <div class="fig" id="fig">
+        <svg id="avatar" width="140" height="340" viewBox="0 0 140 340">
+          <!-- arms (8등신: head unit 40px, feet at y=320) -->
+          <polyline class="limb-edge" points="46,68 34,120 30,160"/>
+          <polyline class="limb-edge" points="94,68 106,120 110,160"/>
+          <polyline class="limb" points="46,68 34,120 30,160"/>
+          <polyline class="limb" points="94,68 106,120 110,160"/>
+          <!-- legs -->
+          <polyline class="limb-edge" points="58,178 56,245 55,306"/>
+          <polyline class="limb-edge" points="82,178 84,245 85,306"/>
+          <polyline class="limb" points="58,178 56,245 55,306"/>
+          <polyline class="limb" points="82,178 84,245 85,306"/>
+          <!-- feet -->
+          <ellipse class="body" cx="50" cy="314" rx="13" ry="6"/>
+          <ellipse class="body" cx="90" cy="314" rx="13" ry="6"/>
+          <!-- torso: shoulders y60 → waist y140 → hips y168 -->
+          <path class="body" d="M40 62 Q70 54 100 62 L92 140 Q94 150 96 166 Q70 176 44 166 Q46 150 48 140 Z"/>
+          <!-- neck & head (head = 1/8 of height) -->
+          <rect class="body" x="63" y="46" width="14" height="14" rx="4"/>
+          <circle class="body" cx="70" cy="29" r="19"/>
+        </svg>
+        <!-- body-part anchors: click = "이 기술 사용" (포모도로 중) -->
+        <div class="mini" id="mini-chat" onclick="use('chat')" style="left:142px; top:14px">
+          <span class="ic">💬</span><span class="part">머리</span><span class="lv" id="mlv-chat">Lv.6</span></div>
+        <div class="mini future" style="left:14px; top:36px" title="미래 아이템 슬롯">
+          <span class="ic">📿</span><span class="part">목걸이</span></div>
+        <div class="mini" id="mini-team" onclick="use('team')" style="left:6px; top:76px">
+          <span class="ic">👥</span><span class="part">어깨</span><span class="lv" id="mlv-team">Lv.0</span></div>
+        <div class="mini" id="mini-plugin" onclick="use('plugin')" style="left:144px; top:104px">
+          <span class="ic">🧩</span><span class="part">갑옷</span><span class="lv" id="mlv-plugin">Lv.0</span></div>
+        <div class="mini" id="mini-skills" onclick="use('skills')" style="left:0px; top:158px">
+          <span class="ic">🎯</span><span class="part">무기</span><span class="lv" id="mlv-skills">Lv.4</span></div>
+        <div class="mini" id="mini-delegate" onclick="use('delegate')" style="left:152px; top:158px">
+          <span class="ic">🤝</span><span class="part">방패</span><span class="lv" id="mlv-delegate">Lv.0</span></div>
+        <div class="mini future" style="left:150px; top:210px" title="미래 아이템 슬롯">
+          <span class="ic">💍</span><span class="part">반지</span></div>
+        <div class="mini" id="mini-cron" onclick="use('cron')" style="left:12px; top:298px">
+          <span class="ic">⏰</span><span class="part">신발</span><span class="lv" id="mlv-cron">Lv.0</span></div>
+      </div>
+      <div class="who"><b>lioncho</b> · 컨디션 매니저</div>
+      <div class="auto-badge">완 전 자 율</div>
+    </div>
+
+    <!-- right: plugin category (one box per plugin) -->
+    <div class="plug-area">
+      <h4>플러그인</h4>
+      <div class="slot" data-cat="plugin" onclick="use('plugin')" style="margin-bottom:10px">
+        <span class="use" id="use-plugin">0</span>
+        <div class="top"><div class="ico">🧩</div>
+          <div><div class="nm">플러그인 숙련도</div><div class="ds">연결·활용 전체</div></div>
+          <span class="lvchip" id="lv-plugin">Lv.0</span></div>
+        <div class="xp"><i id="xp-plugin"></i></div><div class="xptxt" id="xt-plugin"></div>
+      </div>
+      <div class="plug-grid">
+        <div class="plug" onclick="use('plugin')">
+          <div class="ico">🖥️</div><div class="nm">Claude Desktop</div><div class="st">미연결</div>
+        </div>
+        <div class="plug" onclick="use('plugin')">
+          <div class="ico">🎵</div><div class="nm">컨디션 메이트</div><div class="st">설치됨</div>
+        </div>
+        <div class="plug empty">빈 슬롯</div>
+        <div class="plug empty">빈 슬롯</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>C. 포모도로 → EXP 시뮬레이터</h2>
+<p class="lead">데모에서는 25분을 <b>25초</b>로 압축. 시작 후 위 장비창에서 사용한 기술을 클릭하고, 완료되면 최다 사용 기술에 <b>+80 XP</b>.</p>
+<div class="pomo">
+  <div class="clock"><span id="clock">25:00</span><small id="pomoState">대기</small></div>
+  <div class="ring"><i id="ringFill" style="width:0%"></i></div>
+  <button class="pbtn primary" id="btnStart" onclick="pomoStart()">▶ 포모도로 시작</button>
+  <button class="pbtn" id="btnFF" onclick="pomoFinish(true)" disabled>⏩ 빨리 감기(성공 처리)</button>
+  <button class="pbtn" id="btnAbort" onclick="pomoAbort()" disabled>✕ 중단(실패)</button>
+  <div class="pomo-hint">규칙: 성공 시에만 지급 · 최다 사용 기술 1곳에 전액 · 동률이면 먼저 도달한 기술 · 사용 기록 없으면 대화에 부여</div>
+</div>
+<div class="pomo-log" id="pomoLog"></div>
+
+<h2>D. 전체 레벨 정의 (평균 숙련도 기준)</h2>
+<table class="lv-table" id="lvTable">
+  <tr><th>전체 레벨</th><th>이름</th><th>의미 (평균 숙련도 반올림)</th></tr>
+  <tr data-lv="1"><td class="c-cyan">Lv.1</td><td>대화형</td><td>chat만 사용하는 기본 상태</td></tr>
+  <tr data-lv="2"><td class="c-cyan">Lv.2</td><td>스킬 사용</td><td>스킬 숙련이 쌓이기 시작 ← <b>현재</b></td></tr>
+  <tr data-lv="3"><td class="c-cyan">Lv.3</td><td>플러그인 연동</td><td>플러그인까지 고르게 활용</td></tr>
+  <tr data-lv="4"><td class="c-red">Lv.4</td><td>에이전트 위임</td><td>위임 숙련이 평균을 끌어올림</td></tr>
+  <tr data-lv="5"><td class="c-red">Lv.5</td><td>워커 자동화</td><td>자동 실행이 일상화</td></tr>
+  <tr data-lv="6"><td class="c-purple">Lv.6</td><td>팀 오케스트레이션</td><td>전 장비 고숙련 (평균 6 이상)</td></tr>
+  <tr data-lv="7"><td class="c-purple">Lv.7</td><td><b>완전자율</b></td><td>전 장비 마스터 — 평균 7</td></tr>
+</table>
+<p class="note">이름은 대표 성장 경로일 뿐, 산정은 순서 무관(평균 기반). 한 장비만 몰아 올려도 평균이라 전체 레벨은 천천히 오름 —
+"골고루 다 써야 7"이라는 완전자율 취지와 일치. 실구현 시 평균·숙련도 계산은 서버가 하고 설정 칩과 장비창이 같은 /api/equipment 값을 공유.</p>
+
+<script>
+// ---- proficiency model -------------------------------------------------
+// Each equipment category: level 0..7 + xp toward next level.
+// Overall level = round(average of the 6 category levels), min 1.
+// xpNeed(lv) = XP required to go from lv to lv+1.
+var CAT_KEYS = ['chat','skills','delegate','cron','team','plugin'];
+var CAT_NAME = {chat:'대화', skills:'스킬', delegate:'위임', cron:'워커', team:'팀', plugin:'플러그인'};
+var prof = { // demo initial state: avg (6+4)/6 = 1.67 -> Lv.2 (current user)
+  chat:{lv:6, xp:20}, skills:{lv:4, xp:30}, delegate:{lv:0, xp:0},
+  cron:{lv:0, xp:0}, team:{lv:0, xp:0}, plugin:{lv:0, xp:0}
+};
+var LV = [
+  null,
+  {name:'대화형',            color:'var(--lv-cyan)',   glow:'51,201,230'},
+  {name:'스킬 사용',          color:'var(--lv-cyan)',   glow:'51,201,230'},
+  {name:'플러그인 연동',      color:'var(--lv-cyan)',   glow:'51,201,230'},
+  {name:'에이전트 위임',      color:'var(--lv-red)',    glow:'240,80,69'},
+  {name:'워커 자동화',        color:'var(--lv-red)',    glow:'240,80,69'},
+  {name:'팀 오케스트레이션',  color:'var(--lv-purple)', glow:'169,123,255'},
+  {name:'완전자율',           color:'var(--lv-purple)', glow:'169,123,255'}
+];
+// ---- market EXP (level balancing) ---------------------------------------
+// A new model ships roughly monthly -> market level +1 per month, and the XP
+// needed for every level-up inflates ×1.3 each step (compound). Earned levels
+// are kept; only future level-ups get more expensive.
+var market = {lv:1, epochY:2026, epochM:7};   // 시장 Lv.1 = 2026-07
+function inflation(){ return Math.pow(1.3, market.lv - 1); }
+function xpNeed(lv){ return Math.round((60 + lv*40) * inflation()); }
+
+function marketBump(){
+  market.lv++;
+  render();
+  logLine('🚀 새 모델 출시 — <b>시장 Lv.' + market.lv + '</b> · 필요 경험치 <b>×' +
+    inflation().toFixed(2) + '</b> 인플레이션 (예: Lv.4→5 승급에 ' + xpNeed(4) + ' XP)');
+}
+
+function addXp(cat, amount){
+  var p = prof[cat], ups = 0;
+  if (p.lv >= 7) return 0;
+  p.xp += amount;
+  while (p.lv < 7 && p.xp >= xpNeed(p.lv)){ p.xp -= xpNeed(p.lv); p.lv++; ups++; }
+  if (p.lv >= 7) p.xp = 0;
+  return ups;
+}
+
+function render(){
+  var sum = 0;
+  CAT_KEYS.forEach(function(k){
+    var p = prof[k];
+    sum += p.lv;
+    document.getElementById('lv-'+k).textContent = 'Lv.' + p.lv;
+    var slot = document.querySelector('.slot[data-cat="'+k+'"]');
+    slot.classList.toggle('lit', p.lv > 0 && p.lv < 7);
+    slot.classList.toggle('max', p.lv >= 7);
+    var pct = p.lv >= 7 ? 100 : Math.min(100, p.xp / xpNeed(p.lv) * 100);
+    document.getElementById('xp-'+k).style.width = pct + '%';
+    document.getElementById('xt-'+k).textContent =
+      p.lv >= 7 ? 'MASTER' : p.xp + ' / ' + xpNeed(p.lv) + ' XP';
+    // sync the body-part anchor chip on the avatar
+    var m = document.getElementById('mini-'+k);
+    if (m){
+      m.classList.toggle('lit', p.lv > 0 && p.lv < 7);
+      m.classList.toggle('max', p.lv >= 7);
+      document.getElementById('mlv-'+k).textContent = 'Lv.' + p.lv;
+    }
+  });
+  // market strip
+  document.getElementById('mkLv').textContent  = '시장 Lv.' + market.lv;
+  document.getElementById('mkInf').textContent = '×' + inflation().toFixed(2);
+  var mTot = market.epochM + market.lv - 1;
+  var mkY = market.epochY + Math.floor((mTot - 1) / 12);
+  var mkM = ((mTot - 1) % 12) + 1;
+  document.getElementById('mkDate').textContent =
+    mkY + '-' + String(mkM).padStart(2, '0') + ' 기준';
+
+  var avg = sum / CAT_KEYS.length;
+  var lv = Math.max(1, Math.round(avg));
+  var d = LV[lv];
+  document.getElementById('lvBig').textContent  = 'Lv.' + lv;
+  document.getElementById('menuLv').textContent = 'Lv.' + lv;
+  document.getElementById('menuLv').style.color = d.color;
+  document.getElementById('lvName').textContent = d.name;
+  document.getElementById('lvAvg').textContent  = '평균 숙련도 ' + avg.toFixed(1) + ' / 7';
+  var fill = document.getElementById('lvFill');
+  fill.style.width = (avg/7*100).toFixed(1) + '%';
+  fill.style.background = d.color;
+  document.getElementById('fig').style.background =
+    'radial-gradient(ellipse 60% 45% at 50% 46%, rgba(' + d.glow + ',.12), transparent 70%)';
+  document.getElementById('avatar').style.filter =
+    'drop-shadow(0 0 ' + (8 + lv*2.5) + 'px rgba(' + d.glow + ',.55))';
+  document.getElementById('char').classList.toggle('lv7', lv === 7);
+  document.querySelectorAll('#lvTable tr[data-lv]').forEach(function(tr){
+    tr.classList.toggle('cur', +tr.dataset.lv === lv);
+  });
+}
+
+// ---- pomodoro simulator ------------------------------------------------
+var DEMO_SECS = 25;              // 25 min compressed to 25 s for the demo
+var REWARD = 80;                 // XP per successful pomodoro
+var pomo = {running:false, left:0, timer:null, usage:{}, order:[]};
+
+function use(cat){
+  if (!pomo.running) return;     // usage only counts inside a pomodoro
+  pomo.usage[cat] = (pomo.usage[cat]||0) + 1;
+  if (pomo.order.indexOf(cat) < 0) pomo.order.push(cat); // tie-break: first to reach
+  document.getElementById('use-'+cat).textContent = pomo.usage[cat];
+}
+
+function pomoStart(){
+  pomo.running = true; pomo.left = DEMO_SECS; pomo.usage = {}; pomo.order = [];
+  CAT_KEYS.forEach(function(k){ document.getElementById('use-'+k).textContent = '0'; });
+  document.body.classList.add('pomo-on');
+  document.getElementById('pomoState').textContent = '집중 중 (데모 25초 = 25분)';
+  document.getElementById('btnStart').disabled = true;
+  document.getElementById('btnFF').disabled = false;
+  document.getElementById('btnAbort').disabled = false;
+  tick();
+  pomo.timer = setInterval(tick, 1000);
+}
+
+function tick(){
+  var simMin = Math.floor(pomo.left / DEMO_SECS * 25);
+  var mm = String(simMin).padStart(2,'0');
+  document.getElementById('clock').textContent = mm + ':00';
+  document.getElementById('ringFill').style.width =
+    ((DEMO_SECS - pomo.left) / DEMO_SECS * 100) + '%';
+  if (pomo.left <= 0){ pomoFinish(false); return; }
+  pomo.left--;
+}
+
+function pomoStop(){
+  pomo.running = false;
+  clearInterval(pomo.timer);
+  document.body.classList.remove('pomo-on');
+  document.getElementById('btnStart').disabled = false;
+  document.getElementById('btnFF').disabled = true;
+  document.getElementById('btnAbort').disabled = true;
+  document.getElementById('ringFill').style.width = '0%';
+  document.getElementById('clock').textContent = '25:00';
+}
+
+function pomoFinish(fastForward){
+  if (!pomo.running) return;
+  // pick the most-used category; ties go to whichever was used first; none -> chat
+  var best = null, bestN = -1;
+  pomo.order.forEach(function(k){
+    if (pomo.usage[k] > bestN){ best = k; bestN = pomo.usage[k]; }
+  });
+  var target = best || 'chat';
+  var n = bestN > 0 ? bestN : 0;
+  pomoStop();
+  document.getElementById('pomoState').textContent = '성공!';
+  var ups = addXp(target, REWARD);
+  render();
+  // floating "+80 XP" over the winning slot
+  var slot = document.querySelector('.slot[data-cat="'+target+'"]');
+  var g = document.createElement('span');
+  g.className = 'gain'; g.textContent = '+' + REWARD + ' XP';
+  slot.appendChild(g); setTimeout(function(){ g.remove(); }, 1500);
+  logLine('🍅 포모도로 성공 → <span class="win">' + CAT_NAME[target] + '</span>에 <b>+' + REWARD +
+    ' XP</b> (사용 ' + n + '회' + (best ? '' : ' — 기록 없음, 기본기(대화) 부여') + ')' +
+    (ups > 0 ? ' · <b>레벨 업! ' + CAT_NAME[target] + ' Lv.' + prof[target].lv + '</b>' : '') +
+    (fastForward ? ' <span style="color:var(--dim)">(빨리 감기)</span>' : ''));
+}
+
+function pomoAbort(){
+  if (!pomo.running) return;
+  pomoStop();
+  document.getElementById('pomoState').textContent = '중단됨';
+  logLine('✕ 포모도로 중단 — 경험치 지급 없음');
+}
+
+function logLine(html){
+  var d = document.createElement('div');
+  d.innerHTML = html;
+  var log = document.getElementById('pomoLog');
+  log.insertBefore(d, log.firstChild);
+}
+
+render();
+</script>
+</body>
+</html>

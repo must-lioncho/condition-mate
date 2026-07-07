@@ -14,7 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let trackPrefs = TrackPreferenceStore()
     let trackEvents = TrackEventLog()
     let trackPlayStats = TrackPlayStatsStore()
+    let bgmPlan = BGMPlanMap()
     let pluginStore = PluginStore()
+    let equipment = EquipmentStore()
     let chatStore = ChatStore()
     private(set) var director: ConditionDirector!
 
@@ -33,7 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         },
         page: { [weak self] path in
             if path.hasPrefix("/bgm-timeline-test") { return BGMTimelineTestContent.html() }
+            if path.hasPrefix("/session-continue-test") { return SessionContinueTestContent.html() }
+            if path.hasPrefix("/lounge-break-test") { return LoungeBreakTestContent.html() }
             if path.hasPrefix("/bgm-player") { return BGMPlayerContent.html() }
+            if path.hasPrefix("/bgm-plan") { return BGMPlanContent.html() }
+            if path.hasPrefix("/equipment") { return EquipmentContent.html() }
             if path.hasPrefix("/goal") { return self?.goalPage(path) }
             if path.hasPrefix("/worker-log") { return self?.workerLogAllPage(path) }
             if path.hasPrefix("/worker") { return self?.workerLogPage(path) }
@@ -89,14 +95,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if path.hasPrefix("/api/bgm/now") {
                 return self?.bgmNowJSON()
             }
+            // 전략3 plan map + planner context (current slot, real theme folders).
+            if path.hasPrefix("/api/bgm/plan") {
+                return self?.bgmPlanJSON()
+            }
             // Shared challenge+mute state for any surface that polls it directly (the rail's
             // challenge dial). Includes elapsed active seconds so a page loading mid-session shows
             // the right time.
             if path.hasPrefix("/api/session/state") {
                 return self?.sessionStateJSON()
             }
+            // 장비+숙련도 state (levels, market inflation, award ledger + plugin list)
+            // for the /equipment page and the rail's settings-menu level chip.
+            if path.hasPrefix("/api/equipment") {
+                return self?.equipmentJSON()
+            }
             if path.hasPrefix("/api/bgm/stats") {
-                return self?.bgmStatsJSON()
+                return self?.bgmStatsJSON(path)
             }
             if path.hasPrefix("/api/bgm/list") {
                 return self?.bgmListJSON()
@@ -251,7 +266,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // "붙여넣기가 안 됨"). Install a minimal Edit menu so these shortcuts reach paste:/copy:/… .
         Self.installEditMenu()
 
-        director = ConditionDirector(activity: activity, library: library, audio: audio, prefStore: trackPrefs)
+        director = ConditionDirector(activity: activity, library: library, audio: audio,
+                                     prefStore: trackPrefs, planMap: bgmPlan)
         audio.targetVolume = Float(Settings.shared.volume)
         // Play-time accounting: AudioEngine times each audible segment; the store accrues
         // per-track seconds/plays that feed the BGM 관리 "재생 시간 순위" section.
@@ -1100,8 +1116,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Manual Start/Stop Working
 
-    func startWorking() {
+    func startWorking(mode: String? = nil) {
+        // Remember the rail's chosen session mode (pomodoro/sprint/unlimited) even
+        // when the session is already live: picking a mode during the launch
+        // countdown must still switch the auto-started session's BGM playlist.
+        if let mode = mode { director.setSessionMode(mode) }
         guard !isWorking else { return }
+        // Each session opens on its mode's pinned first track (per-mode playlist).
+        director.armModeOpener()
         session.setRunning(true)
         sessionSeconds = 0
         committedProfileKey = ""
@@ -1156,10 +1178,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleShortcut(_ event: NSEvent) -> NSEvent? {
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard mods == .command else { return event }
-        switch event.charactersIgnoringModifiers?.lowercased() {
-        case "m": toggleMute();   return nil
-        case "s": toggleWorking(); return nil
-        default:  return event
+        // Match the physical key (keyCode), not the typed character: with a Korean input source
+        // active, charactersIgnoringModifiers is "ㅡ"/"ㄴ" rather than "m"/"s", so a character
+        // match falls through and the unhandled ⌘-key beeps.
+        switch event.keyCode {
+        case 46: toggleMute();    return nil  // kVK_ANSI_M
+        case 1:  toggleWorking(); return nil  // kVK_ANSI_S
+        default: return event
         }
     }
 
@@ -1206,7 +1231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if ProcessInfo.processInfo.environment["CM_DEBUG"] != nil {
             let range = library.bpmRange.map { " range \(Int($0.min))-\(Int($0.max))" } ?? ""
             FileHandle.standardError.write(
-                "[ConditionManager] loaded \(library.tracks.count) tracks (skipped \(library.skippedCount))\(range)\n"
+                "[ConditionManager] loaded \(library.tracks.count) tracks (\(library.skippedCount) no-BPM defaulted)\(range)\n"
                     .data(using: .utf8)!
             )
             for t in library.tracks {
@@ -1762,15 +1787,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           header a{color:var(--accent);text-decoration:none;font-size:12px}
           main{max-width:1080px;margin:0 auto;padding:18px 20px 80px}
           .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
-          table{width:100%;border-collapse:collapse}
-          th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+          /* narrow window → horizontal scroll instead of squeezing cells until Korean breaks per-glyph */
+          .tablewrap{overflow-x:auto}
+          table{width:100%;min-width:980px;border-collapse:collapse}
+          th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top;white-space:nowrap}
           th{color:var(--mut);font-size:11px;letter-spacing:.04em;text-transform:uppercase}
+          /* 하는 일: the only column allowed to wrap (at word boundaries), so the table stays sane */
+          td:nth-child(3){white-space:normal;word-break:keep-all;min-width:280px}
           tbody tr:hover{background:#171c26}
           .muted{color:var(--mut)}
           .empty{color:var(--mut);text-align:center;padding:24px 0}
-          .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;margin:2px 4px 2px 0;background:#1d2230;border:1px solid var(--line)}
+          .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;margin:2px 4px 2px 0;background:#1d2230;border:1px solid var(--line);white-space:nowrap}
           .chip.bad{background:#2a1620;border-color:#5a2738;color:#ff9db0}
-          .btn{background:#1d2230;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;text-decoration:none;display:inline-block}
+          .btn{background:#1d2230;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;text-decoration:none;display:inline-block;white-space:nowrap}
           .btn:hover{background:#242b3b}
           .btn:disabled{opacity:.5;cursor:default}
           .legend{color:var(--mut);font-size:12px;margin-top:10px;display:flex;gap:18px;flex-wrap:wrap}
@@ -1785,10 +1814,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           </header>
           <main>
             <div class="panel">
+              <div class="tablewrap">
               <table>
                 <thead><tr><th>워커</th><th>구분</th><th>하는 일</th><th>주기</th><th>마지막 실행</th><th>다음 실행</th><th>실행</th><th>상태</th><th>로그</th></tr></thead>
                 <tbody id="workerrows"><tr><td colspan="9" class="empty">불러오는 중…</td></tr></tbody>
               </table>
+              </div>
               <div class="legend"><span><span class="chip" style="margin:0">동작 중</span> = 일정대로 실행 중 · <span class="chip bad" style="margin:0">유휴</span> = 현재 멈춤(세션 비활성 등) · <span class="chip bad" style="margin:0">오류</span> = 데이터 싱크 이상(로그 확인) · <b>구분</b> 기본=항상 실행, 플러그인=연결 시에만, 자동화=외부 스케줄러(launchd)가 주기 실행, 수동=퇴근 시 손으로 실행(주기 칸은 1회 실행 중 라운드 간격)</span></div>
             </div>
             <div class="foot">127.0.0.1 로컬 전용</div>
@@ -2138,6 +2169,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let date = df.string(from: Date())
         let nowApp = activeAppLabel.isEmpty ? "-" : activeAppLabel
         let nowProfile = director.isPlaying ? director.activeProfileLabel : "-"
+        let nowPlan: String
+        if director.isPlaying && director.rainActive {
+            let rem = director.rainRemaining.map { " \(Int($0/60))분" } ?? ""
+            nowPlan = "🌧 폭우 리셋\(rem)"
+        } else {
+            nowPlan = director.isPlaying ? (bgmPlan.slot()?.label ?? "-") : "-"
+        }
         let nowTrack = director.isPlaying ? (audio.currentTitle ?? "-") : "-"
         let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         let nowSite = chromeDomain.isEmpty ? "-" : chromeDomain
@@ -2160,7 +2198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "today":{"seconds":\(Int(store.todaySeconds)),"label":"\(todayLabel)"},\
         "total":{"seconds":\(Int(store.data.totalSeconds)),"label":"\(totalLabel)"},\
         "now":{"working":\(isWorking),"muted":\(session.isMuted),"status":"\(liveStatus)",\
-        "app":\(jsonString(nowApp)),"profile":\(jsonString(nowProfile)),"track":\(jsonString(nowTrack)),\
+        "app":\(jsonString(nowApp)),"profile":\(jsonString(nowProfile)),"plan":\(jsonString(nowPlan)),"track":\(jsonString(nowTrack)),\
         "site":\(jsonString(nowSite)),"key":\(Int(activity.keyRate)),"mouse":\(Int(activity.mouseRate)),\
         "tier":\(jsonString(nowTier.label)),"mult":\(nowTier.multiplier),\
         "apm":\(nowAPM),"norm":\(nowNormStr),"gear":\(nowGearJSON),\
@@ -2188,6 +2226,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 + "\"bgm\":\(Settings.shared.musicEnabled),"
                 + "\"sprintStart\":\(spStart),\"sprintTarget\":\(spTarget)}"
         }
+    }
+
+    // GET /api/equipment — 장비+숙련도 state for the equipment page and the rail's
+    // settings-menu level chip: per-category level/XP/need, average + overall level,
+    // market inflation, the recent award ledger, plus the live plugin list so the
+    // page renders one box per plugin (same serialized form as /data.json uses).
+    func equipmentJSON() -> String {
+        let payload = equipment.statePayload()
+        let base = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+        var s = String(decoding: base, as: UTF8.self)
+        if s.hasSuffix("}") {
+            s.removeLast()
+            s += ",\"plugins\":\(pluginStore.pluginsJSON())}"
+        }
+        return s
+    }
+
+    // Real usage-event counts per equipment category over the last `window` seconds —
+    // the pomodoro EXP attribution input. v1 sources (all real logs, no estimates):
+    // skills = skill executions (skillUsageEvents), chat = dashboard chat user
+    // messages, cron = workers that fired. 위임/팀/플러그인 have no per-event log yet
+    // → absent (the store falls back to 대화/기본기 when nothing at all was counted).
+    private func equipmentUsage(within window: TimeInterval) -> [String: Int] {
+        let cutoff = Date().timeIntervalSince1970 - window
+        var usage: [String: Int] = [:]
+        usage["skills"] = skillUsageEvents().filter {
+            let e = ($0["epoch"] as? Double) ?? Double(($0["epoch"] as? Int) ?? 0)
+            return e >= cutoff
+        }.count
+        usage["chat"] = chatStore.messages.filter {
+            $0.role == "user" && $0.createdAt.timeIntervalSince1970 >= cutoff
+        }.count
+        usage["cron"] = WorkerRegistry.shared.runsWithin(window)
+        return usage
     }
 
     // GET /history.json?days=N -> compact per-day samples for the 히스토리 tab.
@@ -2355,13 +2427,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let effTokens = g.tokens > 0 ? g.tokens : self.sessionTokenK(for: g)
                 // Link chain (source-side): the client renders the link dot and follows these in export.
                 let links = g.links.map { jsonString($0) }.joined(separator: ",")
+                // Subtask summary (goal-NN/tasks/*): lets the dashboard 유형(type) filter
+                // render task rows under the goal — without this, an added task is invisible
+                // in the 목록 until the goal page is opened.
+                let tasks = self.subtaskSummaryJSON(seq: g.seq)
                 return "{\"id\":\(jsonString(g.id)),\"seq\":\(g.seq),\"text\":\(jsonString(g.text)),\"parent\":\(jsonString(g.parent)),"
                     + "\"links\":[\(links)],"
                     + "\"status\":\(jsonString(g.status)),\"trackedSeconds\":\(g.trackedSeconds),\"startedAt\":\(started),\"waitingSince\":\(waiting),"
                     + "\"energy\":\(g.energy),\"agents\":[\(agents)],\"tokens\":\(effTokens),\"value\":\(g.value),"
                     + "\"evidence\":[\(evidence)],\"sessionId\":\(jsonString(g.sessionId)),"
                     + "\"targetAt\":\(target),\"completedAt\":\(completed),"
-                    + "\"sprint\":\(g.sprint),\"bump\":\(g.bump),\"released\":\(g.released),\"archived\":\(g.archived),\"priority\":\(jsonString(g.priority))}"
+                    + "\"sprint\":\(g.sprint),\"bump\":\(g.bump),\"released\":\(g.released),\"archived\":\(g.archived),\"priority\":\(jsonString(g.priority)),"
+                    + "\"tasks\":[\(tasks)]}"
             }
             .joined(separator: ",")
         // Release log (newest first): when each commit happened + the value it produced.
@@ -2406,6 +2483,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     + "\"matches\":[\(matches)],\"createdAt\":\(item.createdAt.timeIntervalSince1970)}"
             }
             .joined(separator: ",")
+        // 큐 처리 히스토리 (newest first, last 30): what each resolution did — so the 큐 탭 can
+        // show the audit trail, link to the created goal/task, and offer 번복 (undo).
+        let queueHistory = reviewStore.queueHistory.suffix(30).reversed()
+            .map { h -> String in
+                "{\"id\":\(jsonString(h.id)),\"at\":\(h.at.timeIntervalSince1970),"
+                    + "\"action\":\(jsonString(h.action)),\"text\":\(jsonString(h.text)),"
+                    + "\"seq\":\(h.seq),\"parentSeq\":\(h.parentSeq),\"task\":\(jsonString(h.taskFolder)),"
+                    + "\"fallback\":\(h.fallback),\"undone\":\(h.undone)}"
+            }
+            .joined(separator: ",")
         let contribs = r.contributions
             .map { "\(jsonString($0.key)):\($0.value)" }
             .joined(separator: ",")
@@ -2414,7 +2501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .joined(separator: ",")
         func optInt(_ v: Int?) -> String { v.map(String.init) ?? "null" }
         return "{\"goals\":[\(goals)],\"releases\":[\(releases)],\"sprints\":[\(sprints)],"
-            + "\"aiQueue\":[\(aiQueue)],"
+            + "\"aiQueue\":[\(aiQueue)],\"queueHistory\":[\(queueHistory)],"
             + "\"selfScore\":\(optInt(r.selfScore)),\"submittedSelf\":\(r.submittedSelf),"
             + "\"contributions\":{\(contribs)},\"notes\":{\(notes)},"
             + "\"aiScore\":\(optInt(r.aiScore)),\"aiNote\":\(jsonString(r.aiNote)),"
@@ -3082,11 +3169,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // here rather than only flipping the BGM master switch.
         if path == "/api/session/control" {
             let action = (obj["action"] as? String) ?? ""
+            // Optional session mode from the rail's challenge dial (pomodoro /
+            // sprint / unlimited) — selects the per-mode BGM playlist.
+            let mode = obj["mode"] as? String
             DispatchQueue.main.sync {
-                if action == "start" { self.startWorking() }
+                if action == "start" { self.startWorking(mode: mode) }
                 else if action == "stop" { self.stopWorking() }
             }
             return "{\"ok\":true}"
+        }
+        // 포모도로 성공 보상 — the rail posts this when the pomodoro dial hits 25:00
+        // (cmChOnComplete). The last 25 minutes' real usage decides which equipment
+        // category receives the EXP (EquipmentStore.recordPomodoro); returns the
+        // refreshed equipment state so the caller can show the result.
+        if path == "/api/equipment/pomodoro" {
+            let usage = equipmentUsage(within: 25 * 60)
+            equipment.recordPomodoro(usage: usage)
+            return equipmentJSON()
         }
         // Canonical music-mute control — the ONE endpoint every surface (dashboard mute dot, BGM
         // player, menu) posts to. {toggle:true} flips; {muted:bool} sets an explicit state. Source of
@@ -3110,9 +3209,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return "{\"ok\":true}"
         }
+        // 폭우 리셋 manual trigger — normally the director summons it from activity, but
+        // this lets QA and the user preview it on demand. {action:"start"} forces a rain
+        // reset now (bypassing eligibility + daily limit); {action:"stop"} ends it early.
+        if path == "/api/bgm/rain" {
+            let action = (obj["action"] as? String) ?? "start"
+            DispatchQueue.main.sync { self.director?.triggerRain(stop: action == "stop") }
+            return "{\"ok\":true}"
+        }
+        // 전략3 plan-map replace — the 관리자 AI's safe write path (agents never edit
+        // bgm-plan.json directly, mirroring the goals convention). The body is the full
+        // plan JSON; it is validated before committing. Unknown theme folders are
+        // accepted (the library falls back rather than going silent) but reported so
+        // the planner can correct them.
+        if path == "/api/bgm/plan" {
+            guard let data = body.data(using: .utf8), !data.isEmpty else {
+                return "{\"ok\":false,\"error\":\"empty body\"}"
+            }
+            do {
+                let (plan, known): (BGMPlanMap.Plan, Set<String>) = try DispatchQueue.main.sync {
+                    let p = try self.bgmPlan.replace(jsonData: data)
+                    self.director?.planDidChange()
+                    return (p, Set(self.library.tracks.map(\.theme)))
+                }
+                let unknown = Set(plan.slots.flatMap(\.themes)).subtracting(known).sorted()
+                let unkJSON = "[" + unknown.map { jsonString($0) }.joined(separator: ",") + "]"
+                return "{\"ok\":true,\"slots\":\(plan.slots.count),\"unknownThemes\":\(unkJSON)}"
+            } catch {
+                return "{\"ok\":false,\"error\":\(jsonString(error.localizedDescription))}"
+            }
+        }
         // Clear the per-track play-time history (BGM 관리 "재생 시간 순위" 초기화 버튼).
+        // {strategy:N} resets only that strategy's rows (the ranking filter's selection);
+        // {strategy:0} or no body resets every strategy. The strategy catalog survives.
         if path == "/api/bgm/stats/reset" {
-            DispatchQueue.main.sync { self.trackPlayStats.reset() }
+            let n = (obj["strategy"] as? Int) ?? 0
+            DispatchQueue.main.sync { self.trackPlayStats.reset(strategy: n == 0 ? nil : n) }
             return "{\"ok\":true}"
         }
         // Reveal the skills folder (or one skill's folder) in Finder. Pure side effect
@@ -3330,9 +3462,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             case "/api/goal/queue/resolve":
-                // Resolve one queued candidate: add (promote to goal), edit (rewrite text,
-                // keep queued), or skip (drop).
+                // Resolve one queued candidate: add (promote to goal), task (file as a
+                // 부분과제 folder under an existing goal — no new goal number), edit (rewrite
+                // text, keep queued), or skip (drop). Every resolution is recorded in the
+                // queue history (queue-history.json) so the user can audit / 번복 it.
                 if let id = obj["id"] as? String {
+                    if (obj["action"] as? String) == "task" {
+                        // Recurring-round path: attach the candidate to goal #parentSeq as a
+                        // tasks/<taskN> folder instead of minting a new goal (the old behavior
+                        // created e.g. goal325 when the user expected a task — see history).
+                        let pSeq = (obj["parentSeq"] as? NSNumber)?.intValue
+                            ?? Int((obj["parentSeq"] as? String) ?? "") ?? 0
+                        guard pSeq > 0, reviewStore.goals.contains(where: { $0.seq == pSeq }),
+                              let item = reviewStore.aiQueue.first(where: { $0.id == id }) else {
+                            return "{\"ok\":false,\"error\":\"bad-task-target\"}"
+                        }
+                        guard let folder = addSubtaskFolder(seq: pSeq, title: item.text, status: "",
+                                                            coin: "", week: "", outputs: "") else {
+                            return "{\"ok\":false,\"error\":\"create-failed\"}"
+                        }
+                        reviewStore.resolveQueueItemAsTask(id: id, parentSeq: pSeq, taskFolder: folder)
+                        return "{\"ok\":true,\"seq\":\(pSeq),\"task\":\(jsonString(folder)),\"asTask\":true}"
+                    }
                     // parentSeq contract (must distinguish "key absent" from "explicit 0"):
                     //  - key absent            → sentinel -1 = "no override, accept AI suggestion"
                     //  - present, value 0      → explicit TOP-LEVEL override (ignore AI sub suggestion)
@@ -3354,6 +3505,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         return "{\"ok\":true,\"seq\":\(r.seq),\"parentSeq\":\(r.parentSeq),"
                             + "\"parentFallback\":\(r.parentFallback)}"
                     }
+                }
+            case "/api/goal/queue/undo":
+                // 번복: revert one queue-history decision. Removes what the decision created
+                // (add → the goal, task → the tasks/<taskN> folder while still pristine) and
+                // restores the snapshotted candidate to the queue as "ready" for re-review.
+                if let hid = obj["id"] as? String {
+                    guard let entry = reviewStore.queueHistoryEntry(id: hid), !entry.undone else {
+                        return "{\"ok\":false,\"error\":\"not-found\"}"
+                    }
+                    if entry.action == "add", entry.seq > 0,
+                       let g = reviewStore.goals.first(where: { $0.seq == entry.seq }) {
+                        // Refuse when the goal grew children since — removeGoal cascades and
+                        // would delete work the queue decision never created.
+                        if reviewStore.goals.contains(where: { $0.parent == g.id }) {
+                            return "{\"ok\":false,\"error\":\"has-children\"}"
+                        }
+                        var r = reviewStore.review(day)
+                        r.notes.removeValue(forKey: g.id); r.contributions.removeValue(forKey: g.id)
+                        reviewStore.saveReview(r, day: day)
+                        reviewStore.removeGoal(id: g.id)
+                        try? FileManager.default.removeItem(at: Self.evidenceDir(goalId: g.id))
+                        if let adir = IssuePaths.attachmentsDir(seq: g.seq) {
+                            try? FileManager.default.removeItem(at: adir)
+                        }
+                    }
+                    if entry.action == "task", entry.seq > 0, !entry.taskFolder.isEmpty,
+                       let tdir = IssuePaths.taskDir(seq: entry.seq, task: entry.taskFolder) {
+                        // Only delete while the folder still holds nothing but our _task.md
+                        // anchor — never remove files the user added after the decision.
+                        let contents = (try? FileManager.default.contentsOfDirectory(atPath: tdir.path)) ?? []
+                        if contents.allSatisfy({ $0 == "_task.md" || $0 == ".DS_Store" }) {
+                            try? FileManager.default.removeItem(at: tdir)
+                        }
+                    }
+                    if reviewStore.undoQueueDecision(id: hid) != nil { return "{\"ok\":true}" }
+                    return "{\"ok\":false,\"error\":\"not-found\"}"
                 }
             case "/api/queue/retry":
                 // Re-run a failed/finished queue job: clear its error, flip to pending, kick
@@ -5561,11 +5748,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return "{\"tracks\":[\(items.joined(separator: ","))]}"
     }
 
-    // GET /api/bgm/stats — per-track cumulative play time, ranked longest-first, for the
-    // BGM 관리 page's "재생 시간 순위" section. Merges the persisted totals with the
-    // still-open segment (audio.currentSegment) so a long-playing track shows fresh time
-    // without writing on every tick. bpm is looked up from the current library by file name.
-    func bgmStatsJSON() -> String {
+    // GET /api/bgm/stats[?strategy=N] — per-track cumulative play time, ranked
+    // longest-first, for the BGM 관리 page's "재생 시간 순위" section. Merges the persisted
+    // totals with the still-open segment (audio.currentSegment) so a long-playing track
+    // shows fresh time without writing on every tick. bpm is looked up from the current
+    // library by file name.
+    //
+    // Strategy filter: no param → the ACTIVE strategy (the default view watches the
+    // current strategy's data accumulate); strategy=0 → 전체 (merged across strategies);
+    // strategy=N → that strategy only. The response also carries the strategy catalog
+    // (전략 히스토리 section) so the page needs no extra endpoint.
+    func bgmStatsJSON(_ path: String) -> String {
         func esc(_ s: String) -> String {
             var o = ""
             for c in s.unicodeScalars {
@@ -5582,13 +5775,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return o
         }
+        // strategy=0 → 전체 (nil filter); missing → active strategy; N → that strategy.
+        let stratParam = URLComponents(string: "http://x" + path)?.queryItems?
+            .first(where: { $0.name == "strategy" })?.value
         return DispatchQueue.main.sync {
-            var totals = trackPlayStats.stats
+            let active = trackPlayStats.activeStrategy
+            let filter: Int?
+            if let raw = stratParam, let n = Int(raw) { filter = (n == 0) ? nil : n }
+            else { filter = active }
+            var totals = trackPlayStats.totals(strategy: filter)
             // Fold in the in-flight segment so the currently playing track counts live.
+            // The open segment accrues under the ACTIVE strategy, so it only belongs in
+            // views that include it (전체 or the active strategy itself).
             var liveKey: String? = nil
-            if let seg = audio.currentSegment() {
+            if let seg = audio.currentSegment(), filter == nil || filter == active {
                 liveKey = seg.key
-                var s = totals[seg.key] ?? TrackPlayStat(key: seg.key, title: seg.title)
+                var s = totals[seg.key] ?? TrackPlayStat(key: seg.key, title: seg.title, strategy: active)
                 if !seg.title.isEmpty && seg.title != "-" { s.title = seg.title }
                 s.seconds += seg.seconds
                 totals[seg.key] = s
@@ -5606,7 +5808,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     + "\"plays\":\(s.plays),\"bpm\":\(bpmStr),\"current\":\(cur)}"
             }
             let total = Int(totals.values.reduce(0.0) { $0 + $1.seconds }.rounded())
-            return "{\"total\":\(total),\"tracks\":[\(items.joined(separator: ","))]}"
+            // Strategy catalog for the 전략 히스토리 section + the filter buttons.
+            let strategies = trackPlayStats.strategies.map { s -> String in
+                "{\"id\":\(s.id),\"name\":\"\(esc(s.name))\",\"start\":\"\(esc(s.startedAt))\","
+                    + "\"end\":\"\(esc(s.endedAt))\",\"summary\":\"\(esc(s.summary))\","
+                    + "\"retro\":\"\(esc(s.retro))\"}"
+            }
+            return "{\"total\":\(total),\"strategy\":\(filter ?? 0),\"activeStrategy\":\(active),"
+                + "\"strategies\":[\(strategies.joined(separator: ","))],"
+                + "\"tracks\":[\(items.joined(separator: ","))]}"
         }
     }
 
@@ -5614,6 +5824,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // now: the current track's library id (so the BGM view's 액티비티 탭 can load the SAME
     // file via /bgm-audio/<id>), plus condition/phase/target-BPM/profile for the status
     // card. id = -1 when nothing is playing or the track isn't in the library.
+    // GET /api/bgm/plan — the 전략3 plan map plus live planning context: the slot
+    // resolved for "now" and the theme folders that actually exist in the library,
+    // so a planning pass (관리자 AI) can only reference real pools.
+    func bgmPlanJSON() -> String {
+        DispatchQueue.main.sync {
+            var counts: [String: Int] = [:]
+            for t in library.tracks where !t.theme.isEmpty { counts[t.theme, default: 0] += 1 }
+            let themes = counts.keys.sorted()
+            let themesJSON = "[" + themes.map { jsonString($0) }.joined(separator: ",") + "]"
+            let countsJSON = "{" + themes.map { "\(jsonString($0)):\(counts[$0] ?? 0)" }.joined(separator: ",") + "}"
+            let slot = bgmPlan.slot()
+            return "{\"plan\":\(bgmPlan.planJSON()),"
+                + "\"currentSlot\":\(jsonString(slot?.label ?? "")),"
+                + "\"themes\":\(themesJSON),"
+                + "\"themeCounts\":\(countsJSON)}"
+        }
+    }
+
     func bgmNowJSON() -> String {
         func esc(_ s: String) -> String {
             var o = ""
@@ -5643,9 +5871,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let title = audio.currentTitle ?? ""
             let phase = director.isIdleMode ? "IDLE" : (director.isActive ? director.phase.rawValue : "-")
             let profile = on ? director.activeProfileLabel : "-"
+            // 전략3 plan slot: resolve live (not the director's cache) so the label is
+            // right even before the first decision tick. A live 폭우 리셋 overrides the
+            // shown situation (it wins over the plan gate).
+            let plan: String
+            if director.rainActive {
+                let rem = director.rainRemaining.map { " \(Int($0/60))분" } ?? ""
+                plan = "🌧 폭우 리셋\(rem)"
+            } else {
+                plan = self.bgmPlan.slot()?.label ?? "-"
+            }
             let bpm = Int(director.targetBPM.rounded())
             return "{\"on\":\(on),\"playing\":\(playing),\"working\":\(self.isWorking),\"muted\":\(self.session.isMuted),\"id\":\(id),\"title\":\"\(esc(title))\","
-                + "\"bpm\":\(bpm),\"phase\":\"\(esc(phase))\",\"profile\":\"\(esc(profile))\"}"
+                + "\"bpm\":\(bpm),\"phase\":\"\(esc(phase))\",\"profile\":\"\(esc(profile))\",\"plan\":\"\(esc(plan))\"}"
         }
     }
 
@@ -6101,6 +6339,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         md += "---\n"
         try? md.write(to: dir.appendingPathComponent("_task.md"), atomically: true, encoding: .utf8)
         return folder
+    }
+
+    // Compact subtask summary for /data.json: one JSON object per ACTIVE (non-archived)
+    // tasks/<taskN> folder — {folder,id,title,status}. The dashboard 목록 renders these as
+    // task rows when the 유형(type) filter includes 'task'. Goals without a tasks/ folder
+    // return "" after a single failed directory read, so the per-poll cost stays tiny.
+    private func subtaskSummaryJSON(seq: Int) -> String {
+        guard let dir = IssuePaths.tasksDir(seq: seq),
+              let entries = try? FileManager.default.contentsOfDirectory(
+                  at: dir, includingPropertiesForKeys: [.isDirectoryKey],
+                  options: [.skipsHiddenFiles])
+        else { return "" }
+        struct Row { var name, id, title, status: String }
+        var rows: [Row] = []
+        for url in entries {
+            let name = url.lastPathComponent
+            // _session_isolation etc.; archived subtasks stay off the active dashboard list.
+            if name.hasPrefix("_") || name.hasPrefix("archived") { continue }
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            guard isDir else { continue }
+            var id = name, title = "", status = ""
+            let anchor = url.appendingPathComponent("_task.md")
+            if let data = try? Data(contentsOf: anchor) {
+                let md = String(decoding: data, as: UTF8.self)
+                id = taskField(md, "id") ?? name
+                title = taskField(md, "title") ?? ""
+                status = taskField(md, "status") ?? ""
+            } else if let dash = name.firstIndex(of: "-") {
+                // No anchor: split "task1-round1-kwt" into id "task1" + title "round1-kwt".
+                id = String(name[name.startIndex..<dash])
+                title = String(name[name.index(after: dash)...])
+            }
+            if status.uppercased() == "ARCHIVED" { continue }
+            rows.append(Row(name: name, id: id, title: title, status: status))
+        }
+        // Same ordering as the goal-page table: leading task number, then name.
+        func numKey(_ n: String) -> Int {
+            var d = ""
+            for ch in n { if ch.isNumber { d.append(ch) } else if !d.isEmpty { break } }
+            return Int(d) ?? 9999
+        }
+        rows.sort { a, b in
+            let an = numKey(a.name), bn = numKey(b.name)
+            if an != bn { return an < bn }
+            return a.name < b.name
+        }
+        return rows.map {
+            "{\"folder\":\(jsonString($0.name)),\"id\":\(jsonString($0.id)),"
+                + "\"title\":\(jsonString($0.title)),\"status\":\(jsonString($0.status))}"
+        }.joined(separator: ",")
     }
 
     // Render the goal's tasks/ subfolders as a Jira-style 부분과제 table. Each child folder

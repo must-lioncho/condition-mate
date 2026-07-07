@@ -238,7 +238,8 @@ final class DashboardServer {
                                       || path.hasPrefix("/history.json") || path.hasPrefix("/tokens.json")
                                       || path.hasPrefix("/workers.json")
                                       || path.hasPrefix("/api/bgm/list") || path.hasPrefix("/api/bgm/now")
-                                      || path.hasPrefix("/api/bgm/stats") || path.hasPrefix("/api/session/state")) {
+                                      || path.hasPrefix("/api/bgm/stats") || path.hasPrefix("/api/bgm/plan")
+                                      || path.hasPrefix("/api/session/state") || path.hasPrefix("/api/equipment")) {
             // Per-goal chat, the raw core/detail definition text, the goal's linked-session
             // list, the recent-session picker feed (all keyed by ?seq=), and the 히스토리
             // tab's per-day activity feed. Dynamic, so routed via apiGet.
@@ -257,7 +258,7 @@ final class DashboardServer {
         } else if path.hasPrefix("/data.json") {
             send(conn, status: "200 OK", contentType: "application/json; charset=utf-8",
                  body: Data(self.data().utf8), extra: "")
-        } else if method == "GET" && (path.hasPrefix("/transcript") || path.hasPrefix("/breakdown") || path.hasPrefix("/worker") || path.hasPrefix("/cron") || path.hasPrefix("/goal") || path.hasPrefix("/bgm-player") || path.hasPrefix("/bgm-timeline-test")) {
+        } else if method == "GET" && (path.hasPrefix("/transcript") || path.hasPrefix("/breakdown") || path.hasPrefix("/worker") || path.hasPrefix("/cron") || path.hasPrefix("/goal") || path.hasPrefix("/bgm-player") || path.hasPrefix("/bgm-plan") || path.hasPrefix("/bgm-timeline-test") || path.hasPrefix("/session-continue-test") || path.hasPrefix("/lounge-break-test") || path.hasPrefix("/equipment")) {
             if let pageHTML = self.page(path) {
                 send(conn, status: "200 OK", contentType: "text/html; charset=utf-8",
                      body: Data(pageHTML.utf8), extra: "")

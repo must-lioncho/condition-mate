@@ -6,14 +6,27 @@ import AVFoundation
 // BPM resolution order:
 //   1. Filename convention  (e.g. "Track [128].mp3", "128bpm.mp3", "Track - 128.mp3")
 //   2. Embedded metadata    (ID3 TBPM / iTunes beatsPerMinute)
-// Files with no resolvable BPM are skipped (logged count is exposed).
+// Files with no resolvable BPM are kept with a neutral defaultBPM (전략3's themed
+// folders ship untagged, and skipping them would empty every plan-map pool); the
+// unresolved count is still exposed as skippedCount for the debug log.
+//
+// Each track also carries its THEME: the first subfolder under the scan root
+// (bgm/ship/... → "ship", a root-level file → ""). The 전략3 plan map addresses
+// pools by these folder names.
 final class BPMLibrary {
 
     struct Track {
         let url: URL
         let bpm: Double
         let title: String
+        let theme: String          // first subfolder under the scan root ("" = root)
+        let bpmResolved: Bool      // false = defaultBPM assigned (no filename/metadata BPM)
     }
+
+    // Neutral tempo for untagged tracks: mid-band, so they neither hijack the
+    // warmup floor nor the sustain ceiling. Within a plan pool of untagged tracks
+    // the director rotates by recency instead of BPM distance.
+    static let defaultBPM: Double = 110
 
     private(set) var tracks: [Track] = []
     private(set) var skippedCount: Int = 0
@@ -25,6 +38,7 @@ final class BPMLibrary {
         skippedCount = 0
 
         let folder = URL(fileURLWithPath: folderPath, isDirectory: true)
+        let rootDepth = folder.standardizedFileURL.pathComponents.count
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(
             at: folder,
@@ -34,12 +48,13 @@ final class BPMLibrary {
 
         for case let url as URL in enumerator {
             guard audioExtensions.contains(url.pathExtension.lowercased()) else { continue }
-            if let bpm = resolveBPM(for: url) {
-                let title = url.deletingPathExtension().lastPathComponent
-                tracks.append(Track(url: url, bpm: bpm, title: title))
-            } else {
-                skippedCount += 1
-            }
+            let resolved = resolveBPM(for: url)
+            if resolved == nil { skippedCount += 1 }
+            let title = url.deletingPathExtension().lastPathComponent
+            let comps = url.standardizedFileURL.pathComponents
+            let theme = comps.count > rootDepth + 1 ? comps[rootDepth] : ""
+            tracks.append(Track(url: url, bpm: resolved ?? Self.defaultBPM, title: title,
+                                theme: theme, bpmResolved: resolved != nil))
         }
         tracks.sort { $0.bpm < $1.bpm }
     }
@@ -75,6 +90,14 @@ final class BPMLibrary {
     // (opening / settle / release) by name rather than by nearest BPM.
     func track(matchingKeyword keyword: String) -> Track? {
         tracks.first { $0.url.lastPathComponent.localizedCaseInsensitiveContains(keyword) }
+    }
+
+    // Exact-filename lookup. The per-mode playlists pin tracks by their stable
+    // filename (including the [BPM] prefix) rather than a fuzzy keyword, so two
+    // tracks sharing a title at different BPMs (e.g. the two Neural Ops Room
+    // files) can't be confused.
+    func track(named filename: String) -> Track? {
+        tracks.first { $0.url.lastPathComponent == filename }
     }
 
     // MARK: - BPM parsing

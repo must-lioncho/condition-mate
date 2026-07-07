@@ -126,6 +126,16 @@ final class WorkerRegistry {
         return order.compactMap { workers[$0] }.map { (id: $0.id, name: $0.name) }
     }
 
+    // Workers that fired within the last `window` seconds — the 워커(cron) usage
+    // signal for the equipment pomodoro EXP attribution (EquipmentStore).
+    func runsWithin(_ window: TimeInterval, now: Date = Date()) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return workers.values.filter { w in
+            guard let last = w.lastRun else { return false }
+            return now.timeIntervalSince(last) <= window
+        }.count
+    }
+
     // A worker is "active" when it fired recently relative to its schedule. We
     // allow two intervals plus a few seconds of slack before calling it idle, so a
     // single slow tick doesn't flip the badge. Conditional workers (e.g. the BGM

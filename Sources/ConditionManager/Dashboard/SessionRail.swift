@@ -168,6 +168,15 @@ enum SessionRail {
           .cmch.run .cmch-label{ display:none } .cmch.run .cmch-timer{ display:block }
           .cmch-sub{ display:none; align-items:center; gap:7px; font-size:11px; color:#6b7589 }
           .cmch.run .cmch-sub{ display:flex }
+          /* Live APM readout (moved here from the old dashboard header gauge). D-style:
+             a small intensity pulse-dot + a spring-animated number, shown only while a
+             challenge runs. The dot's color/size and the number are driven every frame
+             by cmApmFrame() from /live.json's apm·norm. */
+          .cmch-apm{ display:none; align-items:center; gap:4px }
+          .cmch-apm::before{ content:"·"; margin:0 1px 0 -2px; color:#4b5568 }
+          .cmch-apm .dot{ width:6px; height:6px; border-radius:50%; background:#36c08a; flex:none }
+          .cmch-apm b{ font-variant-numeric:tabular-nums; font-weight:700; color:#c8cfdb }
+          .cmch-apm .u{ font-size:9.5px; color:#5d6678; letter-spacing:.02em }
           /* During the launch auto-start countdown, show the timer + hint but KEEP the mode selector
              visible — the user can switch what will auto-start, or press the dial to cancel. */
           .cmch.counting .cmch-label{ display:none }
@@ -188,7 +197,31 @@ enum SessionRail {
           .cmcond-bar{ display:flex; align-items:center; gap:9px; margin:4px 8px 0; padding:9px 10px;
             border-radius:10px; cursor:pointer; border:1px solid #1c2230; background:#0f141d }
           .cmcond-bar:hover{ background:#141b28 }
-          .cmcond-ico{ font-size:15px; flex:none }
+          /* Headphone icon = mute shortcut (own hit area; the rest of the bar opens the menu).
+             Audible → green animated EQ bars + beat ring (same grammar as .cmch-mute);
+             muted → gray + white diagonal strike, animation frozen. */
+          .cmcond-hp{ position:relative; width:30px; height:30px; flex:none; display:flex; align-items:center;
+            justify-content:center; border-radius:8px; border:0; padding:0; margin-left:-4px;
+            background:transparent; cursor:pointer }
+          .cmcond-hp:hover{ background:#1d2636 }
+          .cmcond-hp svg{ width:19px; height:19px; display:block }
+          .cmcond-hp .cup{ stroke:#c3cddd; fill:none; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round }
+          .cmcond-hp:hover .cup{ stroke:#eef3fb }
+          .cmcond-hp .eq rect{ fill:#39424f; transform-origin:center 13.5px; transform:scaleY(.35) }
+          .cmcond-bar.hp-live .cmcond-hp .eq rect{ fill:#22c55e }
+          .cmcond-bar.hp-live .cmcond-hp .eq rect:nth-child(1){ animation:cmcondEq 1.05s ease-in-out infinite }
+          .cmcond-bar.hp-live .cmcond-hp .eq rect:nth-child(2){ animation:cmcondEq 1.05s ease-in-out -.35s infinite }
+          .cmcond-bar.hp-live .cmcond-hp .eq rect:nth-child(3){ animation:cmcondEq 1.05s ease-in-out -.7s infinite }
+          .cmcond-bar.hp-live .cmcond-hp::before{ content:""; position:absolute; inset:4px; border-radius:50%;
+            box-shadow:0 0 0 0 rgba(34,197,94,.45); animation:cmchBeat 1.6s infinite; pointer-events:none }
+          @keyframes cmcondEq{ 0%,100%{ transform:scaleY(.35) } 50%{ transform:scaleY(1) } }
+          .cmcond-bar.hp-muted .cmcond-hp .cup{ stroke:#5c6577 }
+          .cmcond-bar.hp-muted .cmcond-hp .eq rect{ fill:#5c6577 }
+          .cmcond-bar.hp-muted .cmcond-hp::after{ content:""; position:absolute; left:4px; top:14px;
+            width:22px; height:2px; background:#e7ecf4; border-radius:2px; transform:rotate(-45deg);
+            box-shadow:0 0 0 2.5px #0f141d }
+          .cmcond-bar.hp-muted:hover .cmcond-hp::after{ box-shadow:0 0 0 2.5px #141b28 }
+          .cmcond-bar.hp-muted .cmcond-track{ color:#8a93a5 }
           .cmcond-meta{ min-width:0; flex:1 }
           .cmcond-track{ color:#dbe2ee; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
           .cmcond-sub{ color:#6b7589; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
@@ -205,6 +238,10 @@ enum SessionRail {
           .cmcond-full{ width:100%; margin-top:4px; border:0; background:#20283a; color:#e7ecf4; border-radius:9px;
             padding:9px 10px; font-size:12.5px; font-weight:600; cursor:pointer; text-align:left }
           .cmcond-full:hover{ background:#28324a }
+          /* 장비 row: current overall level chip on the right (fed by /api/equipment) */
+          .cmcond-equip{ display:flex; align-items:center }
+          .cmcond-equip .cmcond-lv{ margin-left:auto; font-size:11px; font-weight:800; letter-spacing:.3px;
+            padding:2px 9px; border-radius:999px; background:#123039; color:#33c9e6; border:1px solid #1d4b57 }
         </style>
         <button class="cmrail-toggle cmrail-sbtoggle" onclick="cmRailToggle()" title="세션 레일 열기">
           <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -272,17 +309,28 @@ enum SessionRail {
             <div class="cmch-sub">
               <button class="cmch-mute" id="cmChMute" onclick="cmChMuteToggle(event)" title="음소거 — 챌린지는 계속, 소리만 끕니다"></button>
               <span id="cmChSubLabel">챌린지 진행 중</span>
+              <span class="cmch-apm" id="cmChApm" title="분당 활동량 (APM) — 지금 얼마나 세게 일하는지"><span class="dot" id="cmChApmDot"></span><b id="cmChApmVal">0</b><span class="u">APM</span></span>
             </div>
           </div>
           <div class="cmcond-menu" id="cmCondMenu" style="display:none">
             <div class="cmcond-row"><span class="lbl">BGM 음악</span>
               <button class="cmcond-tog" id="cmCondBgmTog" onclick="cmCondToggleBgm(event)">—</button></div>
+            <div class="cmcond-row"><span class="lbl">음소거</span>
+              <button class="cmcond-tog" id="cmCondMuteTog" onclick="cmChMuteToggle(event)">—</button></div>
             <div class="cmcond-now" id="cmCondNow">컨디션 상태를 불러오는 중…</div>
             <button class="cmcond-full" onclick="cmCondFull(event)">🎛  컨디션 전체 보기 (맵·비주얼라이저) →</button>
             <button class="cmcond-full" onclick="cmOpenPlugins(event)" style="margin-top:4px">🧩  플러그인 관리</button>
+            <button class="cmcond-full cmcond-equip" onclick="cmOpenEquip(event)" style="margin-top:4px">⚔️  장비<span class="cmcond-lv" id="cmCondEquipLv">—</span></button>
           </div>
           <div class="cmcond-bar" id="cmCondBar" onclick="cmCondToggle(event)">
-            <span class="cmcond-ico">🎧</span>
+            <button class="cmcond-hp" id="cmCondHp" onclick="cmChMuteToggle(event)" title="음소거 — 곡은 계속, 소리만 끕니다">
+              <svg viewBox="0 0 30 30" aria-hidden="true">
+                <path class="cup" d="M6.5 17.5v-3.2a8.5 8.5 0 0 1 17 0v3.2"/>
+                <rect class="cup" x="4.6" y="16.2" width="4.2" height="6.4" rx="2.1"/>
+                <rect class="cup" x="21.2" y="16.2" width="4.2" height="6.4" rx="2.1"/>
+                <g class="eq"><rect x="12.1" y="15.2" width="1.8" height="5.4" rx="0.9"/><rect x="14.6" y="13.6" width="1.8" height="7" rx="0.9"/><rect x="17.1" y="15.2" width="1.8" height="5.4" rx="0.9"/></g>
+              </svg>
+            </button>
             <div class="cmcond-meta"><div class="cmcond-track" id="cmCondTrack">컨디션</div>
               <div class="cmcond-sub" id="cmCondSubL">대기 중</div></div>
             <span class="cmcond-chev">⌄</span>
@@ -380,6 +428,7 @@ enum SessionRail {
             var cd=document.getElementById('cmChCd'); if(cd) cd.textContent=cmChCountdown;
             document.getElementById('cmChTimer').textContent='곧 시작';
             var subEl=document.getElementById('cmChSubLabel'); if(subEl) subEl.textContent='자동 시작 · 누르면 취소';
+            var apmCd=document.getElementById('cmChApm'); if(apmCd) apmCd.style.display='none';
             // Keep the mode selector reflecting the current choice — the user may switch mid-countdown.
             var mb=el.querySelectorAll('#cmChModes button');
             for(var i=0;i<mb.length;i++){ mb[i].classList.toggle('on', mb[i].getAttribute('data-m')===cmChMode); }
@@ -393,6 +442,7 @@ enum SessionRail {
             var btn=document.getElementById('cmChBtn'); if(btn){ btn.classList.remove('on'); btn.title='탭해서 수확'; }
             var lab=el.querySelector('.cmch-label'); if(lab) lab.textContent='수확하기';
             var sub=document.getElementById('cmChSubLabel'); if(sub) sub.textContent='🍅 탭해서 수확 · 오늘 '+cmChDailyGet()+'/'+CMCH_DAILY_GOAL;
+            var apmR=document.getElementById('cmChApm'); if(apmR) apmR.style.display='none';
             document.getElementById('cmChProg').style.strokeDashoffset='0';   // full ring = 완료
           }
           function cmChRender(){
@@ -421,9 +471,13 @@ enum SessionRail {
             if(subEl) subEl.textContent = isDone
               ? ('🍅 오늘 '+cmChDailyN+'/'+CMCH_DAILY_GOAL+(cmChDailyN>=CMCH_DAILY_GOAL?' · 목표 달성 🎉':' · 다음 세션 고르기'))
               : cmChModeLabel();
+            // APM readout: only meaningful while truly running (hidden during the post-harvest chooser).
+            var apmEl=document.getElementById('cmChApm');
+            if(apmEl) apmEl.style.display = (cmChRun && !isDone) ? 'inline-flex' : 'none';
             mute.classList.toggle('muted', cmChMuted);
             mute.title = cmChMuted ? '음소거 해제 — 소리를 다시 켭니다' : '음소거 — 챌린지는 계속, 소리만 끕니다';
             document.getElementById('cmChProg').style.strokeDashoffset = (333*(1-view.frac)).toFixed(1);
+            cmCondRenderHp();   // headphone strip mirrors the same mute state
           }
           // Pre-start mode selection (persisted). Ignored while running — mode is locked once started.
           window.cmChSetMode=function(m,ev){ if(ev) ev.stopPropagation();
@@ -447,8 +501,10 @@ enum SessionRail {
           function cmChFire(){   // actually start the challenge (immediately, or after the auto lead-in)
             cmChClearCd(); cmChReward=false; cmChDone=false; cmChCompleted=false;
             cmChRun=true; cmChSecs=0; cmChRender();
+            // Carry the chosen mode so the server selects that mode's BGM playlist
+            // (each mode opens on its own pinned first track).
             fetch('/api/session/control',{method:'POST',headers:{'Content-Type':'application/json'},
-              body:JSON.stringify({action:'start'})}).catch(function(){});
+              body:JSON.stringify({action:'start', mode:cmChMode})}).catch(function(){});
           }
           // Confetti burst from the dial center (harvest reward).
           function cmChBurst(){
@@ -470,6 +526,11 @@ enum SessionRail {
             cmChRun=false;
             fetch('/api/session/control',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({action:'stop'})}).catch(function(){});
+            // 포모도로 성공 → 장비 EXP: the server counts the last 25 minutes' real
+            // usage (skills/chat/workers) and grants the reward to the most-used
+            // equipment category (EquipmentStore.recordPomodoro).
+            fetch('/api/equipment/pomodoro',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:'{}'}).catch(function(){});
             cmChReward=true; cmChDone=false; cmChRender();
           }
           function cmChCheckComplete(){
@@ -498,14 +559,19 @@ enum SessionRail {
           }
           window.cmChToggle=function(){
             if(cmChReward){ cmChHarvest(); return; }   // tapping the 🍅 orb harvests the reward
-            if(cmChRun){   // running → stop immediately (no lead-in)
-              cmChRun=false; cmChCompleted=false; cmChDone=false; cmChRender();
+            // Counting → cancel the launch auto-start (and stop the auto-started session). This must
+            // be checked BEFORE cmChRun: the app auto-starts the session at launch, so the first state
+            // poll flips cmChRun to true while the 5s countdown is still on screen — the run-branch
+            // would stop the session but leave the countdown timer alive, which then re-fires start at
+            // 0 (dead-feeling click + stop→restart flicker).
+            if(cmChCountdown!=null){
+              cmChClearCd(); cmChRun=false; cmChRender();
               fetch('/api/session/control',{method:'POST',headers:{'Content-Type':'application/json'},
                 body:JSON.stringify({action:'stop'})}).catch(function(){});
               return;
             }
-            if(cmChCountdown!=null){   // counting → cancel the launch auto-start (and stop the auto-started session)
-              cmChClearCd(); cmChRun=false; cmChRender();
+            if(cmChRun){   // running → stop immediately (no lead-in)
+              cmChRun=false; cmChCompleted=false; cmChDone=false; cmChRender();
               fetch('/api/session/control',{method:'POST',headers:{'Content-Type':'application/json'},
                 body:JSON.stringify({action:'stop'})}).catch(function(){});
               return;
@@ -541,15 +607,59 @@ enum SessionRail {
           setTimeout(cmChBoot, 1500);   // fallback: arm the glide even if the first poll never lands
           setInterval(function(){ if(cmChRun){ cmChSecs++; cmChToday++; cmChCheckComplete(); cmChRender(); } }, 1000);
 
+          // ===== Live APM readout (D-style dot + number) in the running dial's sub-line =====
+          // Replaces the old dashboard header 스포츠/타임 gauge. Polls the same tiny /live.json
+          // (apm·norm) and animates the number with the same damped spring (K=500,D=26) so it
+          // keeps the tachometer bounce; the dot's color/size tracks intensity (green→amber→red).
+          // Living in the rail means APM now shows on every page, not just the dashboard.
+          var cmApmT=0, cmApm=0, cmApmV=0, cmNmT=0, cmNm=0, cmNmV=0, cmApmLast=0;
+          var CMAPM_K=500, CMAPM_D=26;
+          function cmApmZone(x){ var h=x<0.6?145-(145-42)*(x/0.6):42-42*Math.min(1,(x-0.6)/0.4);
+            return 'hsl('+Math.max(0,h).toFixed(0)+',72%,55%)'; }
+          function cmApmPoll(){
+            if(!cmChRun){ cmApmT=0; cmNmT=0; return; }   // not running → ease the readout down to 0
+            fetch('/live.json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(l){
+              if(!l) return; cmApmT=Math.max(0,l.apm||0); cmNmT=Math.max(0,Math.min(1,l.norm||0));
+            }).catch(function(){});
+          }
+          setInterval(cmApmPoll, 250);
+          function cmApmFrame(t){
+            var dt=cmApmLast?Math.min(0.05,(t-cmApmLast)/1000):0.016; cmApmLast=t;
+            var rem=dt, H=0.006;
+            while(rem>1e-4){ var h=Math.min(H,rem); rem-=h;
+              cmApmV += ((cmApmT-cmApm)*CMAPM_K - cmApmV*CMAPM_D)*h; cmApm += cmApmV*h;
+              cmNmV  += ((cmNmT-cmNm)*CMAPM_K   - cmNmV*CMAPM_D)*h;   cmNm  += cmNmV*h; }
+            var dot=document.getElementById('cmChApmDot'), val=document.getElementById('cmChApmVal');
+            if(dot){ var nm=Math.min(1,Math.max(0,cmNm)), c=cmApmZone(nm),
+              pulse=0.5+0.5*Math.sin(t/1000*(2+nm*10)), sc=1+nm*0.7*pulse;
+              dot.style.background=c; dot.style.transform='scale('+sc.toFixed(3)+')';
+              dot.style.boxShadow='0 0 '+(3+8*nm*pulse).toFixed(1)+'px '+c; }
+            if(val){ val.textContent=Math.round(cmApm); val.style.color=cmNm>0.85?'#ff5a6e':'#c8cfdb'; }
+            requestAnimationFrame(cmApmFrame);
+          }
+          requestAnimationFrame(cmApmFrame);
+
           // ===== Condition control popup (bottom of rail, always present) =====
-          // Controls only (play/mute are the dial above; here: BGM on/off, current track/condition,
-          // and "전체 보기" which seamlessly switches the app window to the full BGM/condition surface).
+          // The headphone icon is a mute shortcut (same state as the dial's green dot); the menu
+          // duplicates it as a 음소거 row so users who don't discover the shortcut still reach it.
+          // Rest: BGM on/off, current track/condition, and "전체 보기" which switches the app window.
           window.cmCondToggle=function(ev){ if(ev) ev.stopPropagation();
             var bar=document.getElementById('cmCondBar'), m=document.getElementById('cmCondMenu');
             if(!bar||!m) return; var open=(m.style.display==='none');
             m.style.display=open?'block':'none'; bar.classList.toggle('open',open);
             var rail=document.getElementById('cmRail'); if(rail) rail.classList.toggle('cmcond-open',open);
+            if(open) cmEquipLvRefresh();
           };
+          // 장비 row: refresh the overall-level chip whenever the menu opens, so the
+          // settings entry always shows the current 평균 레벨 (same /api/equipment the
+          // equipment page reads — one source of truth).
+          function cmEquipLvRefresh(){
+            fetch('/api/equipment').then(function(r){ return r.json(); }).then(function(j){
+              var el=document.getElementById('cmCondEquipLv');
+              if(el && j && j.overall) el.textContent='Lv.'+j.overall;
+            }).catch(function(){});
+          }
+          window.cmOpenEquip=function(ev){ if(ev) ev.stopPropagation(); location.href='/equipment'; };
           document.addEventListener('click',function(e){
             var m=document.getElementById('cmCondMenu'), bar=document.getElementById('cmCondBar');
             if(m&&m.style.display!=='none'&&bar&&!bar.contains(e.target)&&!m.contains(e.target)){
@@ -572,16 +682,32 @@ enum SessionRail {
             var rail=document.getElementById('cmRail'); if(rail) rail.classList.remove('cmcond-open');
             if(typeof openPlugins==='function'){ openPlugins(); } else { location.href='/?plugins=1'; }
           };
+          // Headphone icon state: "audible" (playing && !muted) animates the EQ bars; muted grays
+          // the icon and draws the strike. The sub-line composes the muted prefix here so a mute
+          // toggle reflects instantly instead of waiting for the next /api/bgm/now poll.
+          var cmCondPlaying=false, cmCondSubBase='대기 중';
+          function cmCondRenderHp(){
+            var bar=document.getElementById('cmCondBar'); if(!bar) return;
+            bar.classList.toggle('hp-muted', cmChMuted);
+            bar.classList.toggle('hp-live', cmCondPlaying && !cmChMuted);
+            var hp=document.getElementById('cmCondHp');
+            if(hp) hp.title = cmChMuted ? '음소거 해제 — 소리를 다시 켭니다' : '음소거 — 곡은 계속, 소리만 끕니다';
+            var s=document.getElementById('cmCondSubL');
+            if(s) s.textContent = (cmChMuted?'음소거됨 · ':'') + (cmCondSubBase||'대기 중');
+            var tog=document.getElementById('cmCondMuteTog');
+            if(tog){ tog.classList.toggle('on', cmChMuted); tog.textContent = cmChMuted?'켜짐':'꺼짐'; }
+          }
           function cmCondRefresh(){
             fetch('/api/bgm/now').then(function(r){return r.json();}).then(function(n){
               if(!n) return;
-              var t=document.getElementById('cmCondTrack'), s=document.getElementById('cmCondSubL'),
-                  now=document.getElementById('cmCondNow');
+              var t=document.getElementById('cmCondTrack'), now=document.getElementById('cmCondNow');
               var playing=!!n.on;
               if(t) t.textContent = (n.id>=0&&n.title)? n.title : '컨디션';
-              if(s) s.textContent = playing ? ((n.phase||'-')+(n.bpm>0?' · '+n.bpm+' BPM':' · 준비 중')) : '대기 중';
+              cmCondPlaying=playing;
+              cmCondSubBase = playing ? ((n.phase||'-')+(n.bpm>0?' · '+n.bpm+' BPM':' · 준비 중')) : '대기 중';
               if(now) now.textContent = playing ? ('전략 '+(n.profile||'-')+' · 컨디션 '+(n.phase||'-'))
                                                 : '활동이 시작되면 곡이 잡힙니다';
+              cmCondRenderHp();
             }).catch(function(){});
           }
           cmCondRefresh(); setInterval(cmCondRefresh, 3000);

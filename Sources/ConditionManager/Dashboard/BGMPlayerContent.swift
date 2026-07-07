@@ -89,6 +89,31 @@ enum BGMPlayerContent {
   .rk .rkmeta{flex:0 0 auto; text-align:right}
   .rk .rktime{font-size:13px; color:var(--txt); font-weight:600; font-variant-numeric:tabular-nums}
   .rk .rkplays{font-size:11px; color:var(--dim); margin-top:2px; font-variant-numeric:tabular-nums}
+  /* strategy filter (전체/전략N) + 전략 히스토리 */
+  .statseg{display:flex; gap:4px; padding:3px; border-radius:999px; background:#12141c; border:1px solid var(--line)}
+  .statseg button{background:none; border:0; color:var(--dim); font-size:12px; font-weight:600;
+                  padding:4px 11px; border-radius:999px; cursor:pointer; white-space:nowrap}
+  .statseg button.on{background:var(--accent); color:#fff}
+  .statseg button:hover:not(.on){color:var(--txt)}
+  .strat{padding:10px 12px; border-radius:11px; background:#12141c; border:1px solid transparent}
+  .strat+.strat{margin-top:6px}
+  .strat.live{border-color:var(--accent)}
+  .strat .sthead{display:flex; align-items:center; gap:9px; flex-wrap:wrap}
+  .strat .stname{font-size:14px; font-weight:700}
+  .strat .stperiod{font-size:11.5px; color:var(--dim); font-variant-numeric:tabular-nums}
+  .strat .stlive{font-size:11px; color:var(--accent); border:1px solid var(--accent); border-radius:999px; padding:2px 8px}
+  .strat .stbtn{font-size:11px; font-weight:600; color:var(--accent2); background:none; border:1px solid var(--accent2); border-radius:999px; padding:2px 10px; cursor:pointer; margin-left:auto}
+  .strat .stbtn:hover{background:rgba(0,212,200,.12)}
+  /* 플랜 맵 modal — embeds the standalone /bgm-plan page in an iframe. In-page modal
+     because window.open inside this WKWebView proved unreliable as an entry point. */
+  .pm-back{position:absolute; inset:0; background:rgba(4,5,9,.72); backdrop-filter:blur(3px)}
+  .pm-panel{position:absolute; inset:4% 5%; background:var(--bg); border:1px solid var(--line); border-radius:18px; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 24px 80px rgba(0,0,0,.6)}
+  .pm-head{display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line); font-size:14px}
+  .pm-x{margin-left:auto; background:none; border:1px solid var(--line); color:var(--dim); border-radius:9px; font-size:13px; padding:3px 11px; cursor:pointer}
+  .pm-x:hover{color:var(--txt); border-color:var(--dim)}
+  .pm-frame{flex:1 1 auto; width:100%; border:0; background:transparent}
+  .strat .stsum{font-size:12.5px; color:var(--txt); margin-top:5px; line-height:1.5}
+  .strat .stretro{font-size:12px; color:var(--dim); margin-top:3px; line-height:1.5}
   /* BGM analytics tables (앱별 BGM · 타임라인 로그) */
   .tblwrap{overflow-x:auto}
   table{width:100%; border-collapse:collapse; font-size:13px}
@@ -330,6 +355,8 @@ enum BGMPlayerContent {
             <span>국면 <b id="nowPhase">-</b></span>
             <span>목표 <b id="nowBpm">-</b> BPM</span>
             <span>전략 <b id="nowProfile">-</b></span>
+            <!-- clickable: opens the plan-map visualization in the in-page modal -->
+            <span style="cursor:pointer" title="플랜 맵 전체 보기" onclick="openPlanModal()">계획 <b id="nowPlan">-</b> <span style="opacity:.55">↗</span></span>
           </div>
         </div>
       </div>
@@ -359,13 +386,22 @@ enum BGMPlayerContent {
   <div class="card" data-bgmcard>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px">
       <p class="lbl" style="margin:0">재생 시간 순위</p>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <div class="statseg" id="statSeg"></div>
         <button class="btn" id="statsReload">↻ 새로고침</button>
         <button class="btn" id="statsReset">초기화</button>
       </div>
     </div>
-    <p class="actnote" style="margin:0 0 12px">디렉터가 고른 곡이 실제로 재생된 누적 시간입니다. 특정 곡만 길게 잡히면 여기서 바로 드러납니다.</p>
+    <p class="actnote" style="margin:0 0 12px">디렉터가 고른 곡이 실제로 재생된 누적 시간입니다. 특정 곡만 길게 잡히면 여기서 바로 드러납니다. 필터는 선곡 전략별 적립분을 나눠 보여주고, 초기화는 선택된 전략의 기록만 지웁니다.</p>
     <div id="statList" class="ranklist"><div class="tkempty">아직 재생 기록이 없습니다.</div></div>
+  </div>
+
+  <!-- 전략 히스토리: BGM 선곡 전략의 변천사(회고). /api/bgm/stats 응답의 strategies로 렌더 —
+       데이터(track-playstats.json)에 전략을 추가하면 여기와 위 필터에 그대로 나타난다. -->
+  <div class="card" data-bgmcard>
+    <p class="lbl" style="margin:0 0 6px">전략 히스토리</p>
+    <p class="actnote" style="margin:0 0 12px">선곡 전략의 변천사입니다. 위 순위 필터로 전략별 적립 데이터를 비교하며 회고합니다.</p>
+    <div id="stratHist"><div class="tkempty">불러오는 중…</div></div>
   </div>
 
   <!-- 앱별 BGM (적절성 디버그): 대시보드에서 이동 — BGM 컨텍스트 통합 -->
@@ -435,6 +471,17 @@ enum BGMPlayerContent {
       "쿵딱" 공사장 소리가 들리면 <b>리버브 더킹</b>과 <b>리버브 저음 차단</b>을 올려보세요.
       모든 처리는 브라우저 안에서 실시간으로 이뤄지고, 원본 파일은 전혀 바뀌지 않습니다. (.wav 저장은 곡만 담기고 환경음은 빠집니다.)
     </div>
+  </div>
+</div>
+
+<!-- 플랜 맵 modal: iframe src is set on open / cleared on close so the plan page's
+     refresh timer never runs while hidden -->
+<div id="planModal" style="display:none; position:fixed; inset:0; z-index:200">
+  <div class="pm-back" onclick="closePlanModal()"></div>
+  <div class="pm-panel">
+    <div class="pm-head"><b>BGM 플랜 맵</b><span style="color:var(--dim);font-size:12px">전략3 · 요일×시간대 계획</span>
+      <button class="pm-x" onclick="closePlanModal()">닫기 ✕</button></div>
+    <iframe id="planFrame" class="pm-frame" title="BGM 플랜 맵"></iframe>
   </div>
 </div>
 
@@ -636,6 +683,7 @@ async function refreshNow(){
   $("nowPhase").textContent   = now.phase||"-";
   $("nowBpm").textContent     = (now.bpm>0)?now.bpm:"-";
   $("nowProfile").textContent = now.profile||"-";
+  $("nowPlan").textContent    = now.plan||"-";
   if(now.id>=0 && now.title){ $("nowTitle").textContent = now.title; }
   else if(now.on){ $("nowTitle").textContent = "BGM 준비 중…"; }
   else { $("nowTitle").textContent = "대기 중 — 활동이 시작되면 곡이 잡힙니다"; }
@@ -1063,12 +1111,74 @@ function fmtDur(s){
   if(m>0) return m+"분 "+ss+"초";
   return ss+"초";
 }
+// Strategy filter state. statStrat is null until the first response reveals the ACTIVE
+// strategy (a query-less fetch defaults to it server-side); afterwards 0=전체, N=전략N.
+// The strategy catalog (statStrategies) drives both the filter buttons and the 전략
+// 히스토리 section, so adding 전략3 to the store shows up here with no UI change.
+let statStrat=null, statActive=2, statStrategies=[];
+function statSegRender(){
+  const seg=$("statSeg"); if(!seg) return;
+  const cur=(statStrat==null)?statActive:statStrat;
+  const items=[{id:0,label:"전체"}].concat(statStrategies.map(s=>({id:s.id,label:"전략"+s.id})));
+  seg.innerHTML="";
+  items.forEach(it=>{
+    const b=document.createElement("button");
+    b.textContent=it.label;
+    b.title=it.id===0?"모든 전략 합산":("전략"+it.id+" 적립분만");
+    if(cur===it.id) b.classList.add("on");
+    b.onclick=()=>{ statStrat=it.id; statSegRender(); loadStats(); };
+    seg.appendChild(b);
+  });
+}
+// 플랜 맵 modal (전략3). iframe src is only alive while open so the embedded
+// /bgm-plan page's 60s refresh never runs in the background.
+function openPlanModal(){
+  $("planFrame").src="/bgm-plan";
+  $("planModal").style.display="block";
+}
+function closePlanModal(){
+  $("planModal").style.display="none";
+  $("planFrame").src="about:blank";
+}
+document.addEventListener("keydown", e=>{
+  if(e.key==="Escape" && $("planModal").style.display!=="none") closePlanModal();
+});
+
+function renderStrategies(){
+  const host=$("stratHist"); if(!host) return;
+  if(!statStrategies.length){ host.innerHTML='<div class="tkempty">전략 정보가 없습니다.</div>'; return; }
+  host.innerHTML="";
+  statStrategies.forEach(s=>{
+    const live=!s.end;
+    const period=(s.start?s.start:"")+" ~ "+(s.end?s.end+" 종료":"");
+    const row=document.createElement("div");
+    row.className="strat"+(live?" live":"");
+    // 전략3(플랜 맵)은 계획 데이터가 계속 바뀌므로, 현재 계획을 시각화하는 /bgm-plan
+    // 페이지로 가는 버튼을 전략 항목 자체에 붙인다 (now 카드의 계획 칩보다 안정적인 진입점).
+    row.innerHTML='<div class="sthead"><span class="stname">전략'+s.id+' · '+esc(s.name)+'</span>'
+      +'<span class="stperiod">'+esc(period)+'</span>'
+      +(live?'<span class="stlive">진행 중</span>':'')
+      +(s.id===3?'<button class="stbtn" onclick="openPlanModal()">플랜 맵 보기</button>':'')
+      +'</div>'
+      +'<div class="stsum">'+esc(s.summary)+'</div>'
+      +(s.retro?'<div class="stretro">회고 · '+esc(s.retro)+'</div>':'');
+    host.appendChild(row);
+  });
+}
 async function loadStats(){
   const host=$("statList"); if(!host) return;
   let j=null;
-  try{ const r=await fetch("/api/bgm/stats"); j=await r.json(); }catch(e){}
-  if(!j || !j.tracks || !j.tracks.length){
-    host.innerHTML='<div class="tkempty">아직 재생 기록이 없습니다.<br>BGM이 재생되면 곡별 누적 재생 시간이 여기에 쌓입니다.</div>';
+  const q=(statStrat==null)?"":("?strategy="+statStrat);
+  try{ const r=await fetch("/api/bgm/stats"+q); j=await r.json(); }catch(e){}
+  if(!j){ host.innerHTML='<div class="tkempty">재생 기록을 불러오지 못했습니다.</div>'; return; }
+  if(typeof j.activeStrategy==="number") statActive=j.activeStrategy;
+  if(statStrat==null) statStrat=(typeof j.strategy==="number")?j.strategy:statActive;
+  statStrategies=j.strategies||[];
+  statSegRender(); renderStrategies();
+  if(!j.tracks || !j.tracks.length){
+    host.innerHTML='<div class="tkempty">'+(statStrat>0
+      ?'전략'+statStrat+' 데이터 적립 중 —<br>이 전략으로 재생되는 곡의 시간이 여기에 쌓입니다.'
+      :'아직 재생 기록이 없습니다.<br>BGM이 재생되면 곡별 누적 재생 시간이 여기에 쌓입니다.')+'</div>';
     return;
   }
   const max=Math.max(1, j.tracks[0].seconds);
@@ -1087,9 +1197,16 @@ async function loadStats(){
   });
 }
 $("statsReload").onclick=loadStats;
+// 초기화 scopes to the SELECTED filter: 전략N view wipes only that strategy's rows,
+// 전체 wipes every strategy. (Previously it always wiped everything.)
 $("statsReset").onclick=()=>{
-  if(!confirm("곡별 재생 시간 기록을 모두 초기화할까요?")) return;
-  fetch("/api/bgm/stats/reset",{method:"POST"}).then(()=>loadStats()).catch(()=>{});
+  const n=(statStrat==null)?statActive:statStrat;
+  const msg=n>0
+    ?("전략"+n+"의 곡별 재생 시간 기록만 초기화할까요?\n(다른 전략의 기록은 유지됩니다)")
+    :"모든 전략의 곡별 재생 시간 기록을 초기화할까요?";
+  if(!confirm(msg)) return;
+  fetch("/api/bgm/stats/reset",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({strategy:n})}).then(()=>loadStats()).catch(()=>{});
 };
 loadStats();
 setInterval(loadStats, 5000);

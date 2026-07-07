@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>장소이동 = 컨디션 관리 — 컨셉 테스트</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#0d0f16; --card:#171a24; --card2:#1d2130; --line:#2a2f42; --line2:#3a3f52;
+    --fg:#e8eaf2; --dim:#8b90a5; --accent:#8b7cff; --accent2:#a78bfa;
+    --wait:#a78bfa; /* 대기=보라 (신호등 금지) */
+    --amber:#fbbf24; --glow:0 0 18px rgba(139,124,255,.25);
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{background:var(--bg); color:var(--fg); font-family:-apple-system,"Apple SD Gothic Neo",sans-serif; padding:28px 24px 80px; max-width:1080px; margin:0 auto}
+  h1{font-size:22px; font-weight:700}
+  h1 .tag{font-size:11px; color:var(--accent2); border:1px solid var(--line2); border-radius:99px; padding:3px 10px; vertical-align:middle; margin-left:10px; font-weight:600}
+  .sub{color:var(--dim); font-size:13px; margin-top:8px; line-height:1.7}
+  h2{font-size:15px; margin:44px 0 4px; color:var(--accent2)}
+  h2 .n{display:inline-block; width:22px; height:22px; line-height:22px; text-align:center; background:var(--accent); color:#fff; border-radius:7px; font-size:12px; margin-right:8px}
+  .h2d{color:var(--dim); font-size:12px; margin-bottom:14px; line-height:1.6}
+
+  /* ---- place cards ---- */
+  .places{display:grid; grid-template-columns:repeat(auto-fit,minmax(158px,1fr)); gap:10px}
+  .place{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; cursor:pointer; transition:all .18s; position:relative}
+  .place:hover{border-color:var(--line2); transform:translateY(-1px)}
+  .place.on{border-color:var(--accent); background:linear-gradient(160deg,#241d46,#171a24); box-shadow:var(--glow)}
+  .place .em{font-size:24px}
+  .place .pn{font-size:14px; font-weight:600; margin-top:6px}
+  .place .pd{font-size:11px; color:var(--dim); margin-top:4px; line-height:1.5; min-height:32px}
+  .place .fx{margin-top:8px; display:flex; gap:4px; flex-wrap:wrap}
+  .badge{font-size:10px; padding:2px 7px; border-radius:99px; border:1px solid var(--line2); color:var(--dim)}
+  .badge.recover{color:#c4b5fd; border-color:#4c3d8f}
+  .badge.focus{color:#93c5fd; border-color:#2d4a7a}
+  .badge.refresh{color:#fcd34d; border-color:#6b5a1f}
+  .badge.drain{color:#9ca3af; border-color:#3a3f52}
+  .place .stay{position:absolute; top:10px; right:12px; font-size:10px; color:var(--accent2); display:none}
+  .place.on .stay{display:block}
+
+  /* ---- move banner ---- */
+  #moveBanner{margin-top:14px; background:var(--card2); border:1px solid var(--line); border-radius:12px; padding:12px 16px; font-size:13px; color:var(--dim); min-height:44px; display:flex; align-items:center; gap:10px; transition:border-color .3s}
+  #moveBanner.moving{border-color:var(--wait); color:var(--fg)}
+  #moveBanner .dot{width:8px; height:8px; border-radius:99px; background:var(--line2); flex:none}
+  #moveBanner.moving .dot{background:var(--wait); animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.3}}
+
+  /* ---- sim panel ---- */
+  .simwrap{display:grid; grid-template-columns:280px 1fr; gap:14px; margin-top:14px}
+  @media(max-width:760px){.simwrap{grid-template-columns:1fr}}
+  .panel{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px}
+  .gauge{font-size:30px; letter-spacing:4px; margin:8px 0 2px}
+  .gauge .off{opacity:.14; filter:grayscale(1)}
+  .gnum{font-size:12px; color:var(--dim)}
+  .gnum b{color:var(--fg); font-size:16px}
+  .clock{font-size:26px; font-variant-numeric:tabular-nums; font-weight:700; margin-top:14px}
+  .clock small{font-size:11px; color:var(--dim); font-weight:400; display:block; margin-top:2px}
+  .btnrow{margin-top:16px; display:flex; gap:8px}
+  button{background:var(--card2); color:var(--fg); border:1px solid var(--line2); border-radius:10px; padding:9px 16px; font-size:13px; cursor:pointer; font-family:inherit}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600}
+  button.primary:hover{background:#9d90ff}
+  #soundBtn.playing{border-color:var(--accent); color:var(--accent2)}
+  .loglist{font-size:11px; color:var(--dim); margin-top:14px; line-height:1.9; max-height:150px; overflow-y:auto}
+  .loglist b{color:var(--accent2); font-weight:600}
+  #liveChart{width:100%; height:auto; display:block}
+
+  /* ---- scenario ---- */
+  .scen{display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap}
+  .scen button.on{border-color:var(--accent); color:var(--accent2); background:linear-gradient(160deg,#241d46,#171a24)}
+  .legend{display:flex; gap:18px; font-size:12px; color:var(--dim); margin-top:10px}
+  .legend i{display:inline-block; width:18px; height:3px; border-radius:2px; vertical-align:middle; margin-right:6px}
+  .verdict{margin-top:14px; background:var(--card2); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:10px; padding:12px 16px; font-size:13px; line-height:1.7}
+  .verdict b{color:var(--accent2)}
+
+  /* ---- decision matrix ---- */
+  .opts{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px}
+  .opt{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; position:relative}
+  .opt.rec{border-color:var(--accent); box-shadow:var(--glow)}
+  .opt .lv{font-size:11px; color:var(--dim)}
+  .opt .tt{font-size:15px; font-weight:700; margin:4px 0 10px}
+  .opt ul{list-style:none; font-size:12px; color:var(--dim); line-height:1.9}
+  .opt ul li::before{content:"·"; color:var(--accent2); margin-right:7px}
+  .opt .cost{margin-top:12px; font-size:11px; color:var(--dim); border-top:1px solid var(--line); padding-top:10px; line-height:1.7}
+  .opt .recmark{position:absolute; top:14px; right:14px; font-size:10px; background:var(--accent); color:#fff; padding:3px 9px; border-radius:99px; font-weight:600}
+  .note{margin-top:24px; font-size:11px; color:var(--dim); line-height:1.8; border:1px dashed var(--line2); border-radius:10px; padding:12px 16px}
+</style>
+</head>
+<body>
+
+<h1>장소이동 = 컨디션 관리 <span class="tag">CONCEPT TEST</span></h1>
+<p class="sub">
+  BGM 전환을 "곡 바꾸기"가 아니라 <b>가상 장소로 이동하기</b>로 프레이밍하면, 소리·분위기 전환이 실제 장소를 옮긴 것 같은
+  컨디션 회복 효과를 낸다는 가설의 테스트 페이지입니다.<br>
+  예: 저녁 야근 전 <b>밥만 먹고 오면 식곤증으로 처지지만, 라운지에 다녀오면 컨디션이 산다</b> — 이 차이를 앱 안에서 재현하는 게 목표.
+</p>
+
+<!-- ================= 1. 장소 카드 ================= -->
+<h2><span class="n">1</span>장소 이동 UX</h2>
+<p class="h2d">카드를 누르면 그 장소로 "이동"합니다. 🔊 소리 켜기를 누르면 장소마다 다른 앰비언스가 실제로 재생됩니다(프로시저럴 생성, 음원 파일 불필요 — 기존 venue 엔진의 crowd/wind/room 방식과 동일 계열).</p>
+<div style="margin-bottom:12px"><button id="soundBtn" onclick="toggleSound()">🔊 소리 켜기</button></div>
+<div class="places" id="places"></div>
+<div id="moveBanner"><span class="dot"></span><span id="moveTxt">지금은 <b>내 자리</b>에 있습니다. 다른 장소를 눌러 이동해 보세요.</span></div>
+
+<!-- ================= 2. 컨디션 시뮬레이션 ================= -->
+<h2><span class="n">2</span>컨디션 게이지 반응 (가속 시뮬레이션)</h2>
+<p class="h2d">▶ 를 누르면 1초 = 시뮬레이션 10분. 자리에서 일하면 컨디션이 서서히 닳고, 장소를 이동하면 그 장소의 회복/소모 프로필이 게이지(메뉴바 5단계 번개와 동일 스케일)에 반영됩니다. 같은 장소에 오래 머물면 회복 효율이 떨어집니다(체감 모델).</p>
+<div class="simwrap">
+  <div class="panel">
+    <div style="font-size:12px;color:var(--dim)">현재 컨디션</div>
+    <div class="gauge" id="gauge">⚡⚡⚡⚡⚡</div>
+    <div class="gnum"><b id="condNum">72</b> / 100 · <span id="condTrend"></span></div>
+    <div class="clock"><span id="simClock">18:00</span><small id="simPlace">내 자리에서 작업 중</small></div>
+    <div class="btnrow">
+      <button class="primary" id="simBtn" onclick="toggleSim()">▶ 시뮬레이션</button>
+      <button onclick="resetSim()">초기화</button>
+    </div>
+    <div class="loglist" id="simLog"></div>
+  </div>
+  <div class="panel">
+    <div style="font-size:12px;color:var(--dim);margin-bottom:8px">컨디션 추이 (라이브)</div>
+    <svg id="liveChart" viewBox="0 0 640 240"></svg>
+  </div>
+</div>
+
+<!-- ================= 3. 야근 시나리오 비교 ================= -->
+<h2><span class="n">3</span>야근 저녁 시나리오 비교</h2>
+<p class="h2d">동일한 18:00→23:30 야근을 세 가지 저녁 루틴으로 보냈을 때의 컨디션 곡선 비교(모형 가정치). 사용자가 실제로 겪는 "밥 먹고 오면 지친다 vs 라운지 가면 산다"를 수치 모델로 옮긴 것.</p>
+<div class="panel">
+  <div class="scen">
+    <button class="on" data-s="all" onclick="pickScen(this)">전체 비교</button>
+    <button data-s="a" onclick="pickScen(this)">A. 밥만 먹고 복귀</button>
+    <button data-s="b" onclick="pickScen(this)">B. 라운지 15분 + 가벼운 식사</button>
+    <button data-s="c" onclick="pickScen(this)">C. 쉼 없이 계속 작업</button>
+  </div>
+  <svg id="scenChart" viewBox="0 0 880 300" style="width:100%;height:auto"></svg>
+  <div class="legend">
+    <span><i style="background:#fbbf24"></i>A. 밥만 먹고 복귀 (식곤증)</span>
+    <span><i style="background:#a78bfa"></i>B. 라운지 + 가벼운 식사</span>
+    <span><i style="background:#64748b"></i>C. 쉼 없음</span>
+  </div>
+  <div class="verdict">
+    모델상 23:30 시점 컨디션: <b>B안이 A안보다 약 2배</b> 높게 유지됩니다.
+    핵심 차이는 ① 식곤증 급락 회피, ② 21시경 <b>짧은 재이동(옥상 5분)</b>으로 하락 기울기를 한 번 더 꺾는 것.
+    → 앱이 줄 수 있는 가치: 야근 감지 시 "라운지로 이동할까요?" 제안 + 가상 장소 앰비언스로 실제 이동 없이 그 효과의 일부를 재현.
+  </div>
+</div>
+
+<!-- ================= 4. 의사결정 매트릭스 ================= -->
+<h2><span class="n">4</span>통합 옵션 — 어디까지 갈 것인가</h2>
+<p class="h2d">테스트 페이지에서 확인한 요소(장소 카드 UX, 앰비언스 전환, 컨디션 반영)를 본 앱에 넣는 3단계 옵션. 각 옵션은 이전 옵션을 포함합니다.</p>
+<div class="opts">
+  <div class="opt">
+    <div class="lv">LEVEL 1 — 리프레이밍</div>
+    <div class="tt">🪑 프리셋을 "업무 장소"로 교체</div>
+    <ul>
+      <li>기존 venue 프리셋(콘서트홀/클럽…)을 라운지·카페·옥상·심야서재 세트로 확장/교체</li>
+      <li>PRESETS 정의 + amb 프로필만 추가 — 엔진 변경 없음</li>
+      <li>UI 문구를 "이동하기"로 변경</li>
+    </ul>
+    <div class="cost">변경 범위: BGMPlayerContent.swift PRESETS 블록만 · 리스크 최소 · 컨디션 게이지와 무관</div>
+  </div>
+  <div class="opt rec">
+    <div class="recmark">추천 시작점</div>
+    <div class="lv">LEVEL 2 — 장소이동 UX</div>
+    <div class="tt">🚶 이동 행위 + 체류 기록</div>
+    <ul>
+      <li>"이동" 트랜지션(앰비언스 크로스페이드 + 배너) 도입</li>
+      <li>체류 시간 추적 → 컨디션맵 24h 띠에 장소 색 오버레이</li>
+      <li>장소 방문 이력을 activity 이벤트로 기록 (기존 스토어 재사용)</li>
+    </ul>
+    <div class="cost">변경 범위: BGMPlayerContent + 컨디션맵 탭 + 이벤트 스키마 1개 · 게이지는 아직 표시만</div>
+  </div>
+  <div class="opt">
+    <div class="lv">LEVEL 3 — 컨디션 루프</div>
+    <div class="tt">⚡ 게이지 반영 + 야근 제안</div>
+    <ul>
+      <li>장소 체류가 메뉴바 5단계 번개 게이지에 실제 반영(회복 모델)</li>
+      <li>야근 감지(기존 6h갭 업무시작 로직 응용) 시 "라운지 다녀오기" 제안</li>
+      <li>회복 모델 파라미터는 이 테스트 페이지 값에서 시작</li>
+    </ul>
+    <div class="cost">변경 범위: 게이지 계산 파이프라인 + 알림 · 모델 검증 필요 → 2를 먼저 쓰면서 데이터 축적 후 진행</div>
+  </div>
+</div>
+
+<p class="note">
+  ※ 이 페이지의 회복/소모 수치는 전부 <b>가정치(모형)</b>입니다. 목적은 정확한 예측이 아니라 ① 장소이동 프레이밍이 체감상 설득력 있는지,
+  ② 앰비언스 전환만으로 "이동한 느낌"이 나는지, ③ 어느 레벨까지 구현할지 결정하는 것.
+  판단 기준 제안: 소리를 켜고 장소를 2~3번 옮겨봤을 때 "곡을 바꿨다"가 아니라 "자리를 옮겼다"로 느껴지면 LEVEL 2 진행.
+</p>
+
+<script>
+/* ================================================================
+   장소 정의 — 회복모델(rate)과 앰비언스 프로필(amb)을 한 곳에.
+   rate: 시간당 컨디션 변화량. fresh: 처음 N분 동안의 부스트 배율.
+   amb: 프로시저럴 앰비언스 믹스 (room/murmur/wind/clatter, 0~1).
+   ================================================================ */
+const PLACES = {
+  desk:   { em:"🪑", name:"내 자리",   desc:"기본 작업 위치. 일할수록 컨디션이 서서히 닳는다.",
+            fx:[["drain","작업 소모 -10/h"]], rate:-10, freshMin:0, freshBoost:1,
+            amb:{room:.5, murmur:.05, wind:0, clatter:.04, tone:120} },
+  lounge: { em:"🛋️", name:"라운지",   desc:"부드러운 웅성거림과 낮은 음악. 회복 효율 최고, 20분 지나면 체감.",
+            fx:[["recover","회복 +26/h"],["refresh","20분 최적"]], rate:26, freshMin:20, freshBoost:1.4,
+            amb:{room:.35, murmur:.5, wind:0, clatter:.1, tone:180} },
+  cafe:   { em:"☕", name:"카페",     desc:"적당한 소음이 집중을 돕는다. 일하면서 버티기 좋은 곳.",
+            fx:[["focus","작업 소모 -4/h로 완화"],["recover","회복 +4/h"]], rate:-4, freshMin:0, freshBoost:1,
+            amb:{room:.3, murmur:.65, wind:.05, clatter:.35, tone:220} },
+  roof:   { em:"🌆", name:"옥상 · 창가", desc:"바람과 먼 도시 소음. 5분 환기로 하락 기울기를 꺾는다.",
+            fx:[["refresh","환기 +30/h"],["refresh","10분 최적"]], rate:30, freshMin:10, freshBoost:1.5,
+            amb:{room:.1, murmur:.08, wind:.75, clatter:0, tone:90} },
+  night:  { em:"🌙", name:"심야 서재", desc:"아주 조용한 룸톤. 심야 작업의 소모를 완화한다.",
+            fx:[["focus","작업 소모 -6/h"],["recover","야간 보정"]], rate:-6, freshMin:0, freshBoost:1,
+            amb:{room:.6, murmur:0, wind:.06, clatter:0, tone:70} },
+  dine:   { em:"🍚", name:"구내식당",  desc:"식사. 배는 차지만 식곤증 — 복귀 직후 컨디션이 급락한다.",
+            fx:[["drain","식곤증 -14 즉시"],["recover","이후 +6/h"]], rate:6, freshMin:0, freshBoost:1, onEnterDelta:-14,
+            amb:{room:.25, murmur:.8, wind:0, clatter:.6, tone:260} },
+};
+
+/* ---------------- place cards ---------------- */
+let curPlace = "desk";
+const placesEl = document.getElementById("places");
+for(const [k,p] of Object.entries(PLACES)){
+  const d = document.createElement("div");
+  d.className = "place" + (k===curPlace?" on":"");
+  d.id = "pl_"+k;
+  d.innerHTML = `<span class="stay" id="stay_${k}"></span><div class="em">${p.em}</div><div class="pn">${p.name}</div><div class="pd">${p.desc}</div>
+    <div class="fx">${p.fx.map(([c,t])=>`<span class="badge ${c}">${t}</span>`).join("")}</div>`;
+  d.onclick = ()=>moveTo(k);
+  placesEl.appendChild(d);
+}
+
+function moveTo(k){
+  if(k===curPlace) return;
+  const from = PLACES[curPlace], to = PLACES[k];
+  curPlace = k; stayMin = 0;
+  document.querySelectorAll(".place").forEach(el=>el.classList.toggle("on", el.id==="pl_"+k));
+  const banner = document.getElementById("moveBanner");
+  banner.classList.add("moving");
+  document.getElementById("moveTxt").innerHTML = `${from.name} → <b>${to.name}</b> 으로 이동 중…`;
+  crossfadeTo(to.amb);
+  if(to.onEnterDelta && simRunning){ cond = clamp(cond + to.onEnterDelta); logSim(`${to.name} 도착 — 식곤증 ${to.onEnterDelta}`); }
+  setTimeout(()=>{
+    banner.classList.remove("moving");
+    document.getElementById("moveTxt").innerHTML = `지금은 <b>${to.name}</b>에 있습니다.`;
+    document.getElementById("simPlace").textContent = to.name + (to.rate>0? "에서 회복 중":"에서 작업 중");
+  }, 1200);
+  if(simRunning) logSim(`<b>${to.name}</b>(으)로 이동`);
+}
+
+/* ================================================================
+   procedural ambience — 파일 없이 노이즈+필터+LFO로 장소 소리 생성.
+   본 앱 venue 엔진(crowd/wind/room tone)과 같은 계열의 축소판.
+   ================================================================ */
+let actx=null, master=null, layers=null, clatterTimer=null, soundOn=false;
+
+function makeNoise(ctx){
+  const len = ctx.sampleRate*2, buf = ctx.createBuffer(1,len,ctx.sampleRate);
+  const d = buf.getChannelData(0); let last=0;
+  for(let i=0;i<len;i++){ const w=Math.random()*2-1; last=(last+.02*w)/1.02; d[i]=last*3.5; } // brown-ish
+  const src = ctx.createBufferSource(); src.buffer=buf; src.loop=true; return src;
+}
+function layer(ctx, type, freq, q){
+  const src = makeNoise(ctx);
+  const f = ctx.createBiquadFilter(); f.type=type; f.frequency.value=freq; f.Q.value=q||0.8;
+  const g = ctx.createGain(); g.gain.value=0;
+  src.connect(f); f.connect(g); g.connect(master); src.start();
+  return g;
+}
+function toggleSound(){
+  const btn = document.getElementById("soundBtn");
+  if(!soundOn){
+    if(!actx){
+      actx = new (window.AudioContext||window.webkitAudioContext)();
+      master = actx.createGain(); master.gain.value=0.55; master.connect(actx.destination);
+      layers = {
+        room:   layer(actx,"lowpass",  260, .6),   // deep room tone
+        murmur: layer(actx,"bandpass", 480, 1.2),  // crowd murmur
+        wind:   layer(actx,"lowpass",  650, .4),   // wind bed
+      };
+      // wind gust LFO
+      const lfo=actx.createOscillator(), lg=actx.createGain();
+      lfo.frequency.value=0.11; lg.gain.value=0; lfo.connect(lg); lg.connect(layers.wind.gain); lfo.start();
+      layers._windLfoGain = lg;
+      // murmur slow swell
+      const m=actx.createOscillator(), mg=actx.createGain();
+      m.frequency.value=0.07; mg.gain.value=0; m.connect(mg); mg.connect(layers.murmur.gain); m.start();
+      layers._murLfoGain = mg;
+      // clatter: short filtered bursts on a random timer (cafe/식당 식기 소리)
+      layers._clatterLevel = 0;
+      const scheduleClatter = ()=>{
+        clatterTimer = setTimeout(()=>{
+          if(layers._clatterLevel>0.01){
+            const src=makeNoise(actx), f=actx.createBiquadFilter(), g=actx.createGain();
+            f.type="highpass"; f.frequency.value=1800+Math.random()*2500;
+            g.gain.value=0;
+            src.connect(f); f.connect(g); g.connect(master); src.start();
+            const t=actx.currentTime, lv=layers._clatterLevel*(0.25+Math.random()*0.5);
+            g.gain.linearRampToValueAtTime(lv, t+0.015);
+            g.gain.exponentialRampToValueAtTime(0.001, t+0.12+Math.random()*0.2);
+            setTimeout(()=>{try{src.stop()}catch(e){}}, 600);
+          }
+          scheduleClatter();
+        }, 350+Math.random()*1800);
+      };
+      scheduleClatter();
+    }
+    actx.resume();
+    soundOn=true; btn.textContent="🔇 소리 끄기"; btn.classList.add("playing");
+    crossfadeTo(PLACES[curPlace].amb);
+  }else{
+    soundOn=false; btn.textContent="🔊 소리 켜기"; btn.classList.remove("playing");
+    const t=actx.currentTime;
+    for(const k of ["room","murmur","wind"]) layers[k].gain.linearRampToValueAtTime(0, t+0.5);
+    layers._clatterLevel=0;
+  }
+}
+function crossfadeTo(amb){
+  if(!soundOn||!layers) return;
+  const t=actx.currentTime, T=1.4;
+  layers.room.gain.cancelScheduledValues(t);   layers.room.gain.linearRampToValueAtTime(amb.room*.22, t+T);
+  layers.murmur.gain.cancelScheduledValues(t); layers.murmur.gain.linearRampToValueAtTime(amb.murmur*.16, t+T);
+  layers.wind.gain.cancelScheduledValues(t);   layers.wind.gain.linearRampToValueAtTime(amb.wind*.20, t+T);
+  layers._windLfoGain.gain.linearRampToValueAtTime(amb.wind*.10, t+T);
+  layers._murLfoGain.gain.linearRampToValueAtTime(amb.murmur*.05, t+T);
+  layers._clatterLevel = amb.clatter;
+}
+
+/* ================================================================
+   accelerated condition simulation — 1 real sec = 10 sim min
+   ================================================================ */
+let cond=72, simMin=0, stayMin=0, simRunning=false, simTimer=null, history=[];
+const SIM_START = 18*60; // 18:00
+const clamp = v=>Math.max(0,Math.min(100,v));
+
+function fmtClock(m){ const t=SIM_START+m; return String(Math.floor(t/60)%24).padStart(2,"0")+":"+String(t%60).padStart(2,"0"); }
+
+function tick(){
+  const p = PLACES[curPlace];
+  const boost = (p.freshMin>0 && stayMin<p.freshMin) ? p.freshBoost : (p.freshMin>0 ? 0.35 : 1);
+  const prev = cond;
+  cond = clamp(cond + (p.rate*boost)/6);  // 10 sim-min worth
+  simMin += 10; stayMin += 10;
+  history.push(cond);
+  // 야간 가중: 22시 이후 자리 작업은 소모 가속
+  if(curPlace==="desk" && (SIM_START+simMin)>=22*60) cond = clamp(cond-0.6);
+  renderSim(cond-prev);
+  if(simMin>=360){ toggleSim(); logSim("시뮬레이션 종료 (6시간 경과)"); }
+}
+function renderSim(delta){
+  const lv = Math.max(0, Math.min(5, Math.ceil(cond/20)));
+  document.getElementById("gauge").innerHTML =
+    "⚡".repeat(lv) + `<span class="off">${"⚡".repeat(5-lv)}</span>`;
+  document.getElementById("condNum").textContent = Math.round(cond);
+  document.getElementById("condTrend").textContent = delta>0.05?"회복 중 ↗":delta<-0.05?"소모 중 ↘":"유지";
+  document.getElementById("simClock").textContent = fmtClock(simMin);
+  const st = document.getElementById("stay_"+curPlace);
+  if(st) st.textContent = "체류 "+stayMin+"분";
+  drawLive();
+}
+function drawLive(){
+  const svg=document.getElementById("liveChart"), W=640,H=240,P=30;
+  const n=Math.max(history.length,36);
+  const pts=history.map((v,i)=>`${P+(W-2*P)*i/(n-1)},${H-P-(H-2*P)*v/100}`).join(" ");
+  let grid="";
+  for(const y of [20,40,60,80,100]){
+    const yy=H-P-(H-2*P)*y/100;
+    grid+=`<line x1="${P}" y1="${yy}" x2="${W-P}" y2="${yy}" stroke="#2a2f42" stroke-width="1"/><text x="6" y="${yy+4}" fill="#8b90a5" font-size="10">${y}</text>`;
+  }
+  svg.innerHTML = grid + (history.length>1?`<polyline points="${pts}" fill="none" stroke="#a78bfa" stroke-width="2.5" stroke-linejoin="round"/>`:"") +
+    (history.length?`<circle cx="${pts.split(" ").pop().split(",")[0]}" cy="${pts.split(" ").pop().split(",")[1]}" r="4" fill="#a78bfa"/>`:"");
+}
+function toggleSim(){
+  simRunning=!simRunning;
+  document.getElementById("simBtn").textContent = simRunning?"⏸ 일시정지":"▶ 시뮬레이션";
+  if(simRunning){ if(!history.length){ history.push(cond); logSim("18:00 야근 시작 — 내 자리"); } simTimer=setInterval(tick,1000); }
+  else clearInterval(simTimer);
+}
+function resetSim(){
+  clearInterval(simTimer); simRunning=false; cond=72; simMin=0; stayMin=0; history=[];
+  document.getElementById("simBtn").textContent="▶ 시뮬레이션";
+  document.getElementById("simLog").innerHTML="";
+  document.querySelectorAll(".stay").forEach(e=>e.textContent="");
+  moveToSilent("desk"); renderSim(0);
+}
+function moveToSilent(k){
+  curPlace=k; stayMin=0;
+  document.querySelectorAll(".place").forEach(el=>el.classList.toggle("on", el.id==="pl_"+k));
+  document.getElementById("moveTxt").innerHTML=`지금은 <b>${PLACES[k].name}</b>에 있습니다.`;
+  document.getElementById("simPlace").textContent=PLACES[k].name+"에서 작업 중";
+  crossfadeTo(PLACES[k].amb);
+}
+function logSim(msg){
+  const el=document.getElementById("simLog");
+  el.innerHTML = `<div>${fmtClock(simMin)} — ${msg}</div>`+el.innerHTML;
+}
+renderSim(0);
+
+/* ================================================================
+   scenario comparison chart — 18:00~23:30, 10min steps (모형)
+   ================================================================ */
+function runScenario(plan){ // plan: array of {until(min), place, enterDelta?}
+  let c=72, out=[c], place=plan[0], pi=0, stay=0;
+  for(let m=10;m<=330;m+=10){
+    if(pi+1<plan.length && m>plan[pi].until){ pi++; stay=0; const en=plan[pi].enterDelta||0; c=clamp(c+en); }
+    const p=PLACES[plan[pi].place];
+    const boost=(p.freshMin>0&&stay<p.freshMin)?p.freshBoost:(p.freshMin>0?0.35:1);
+    c=clamp(c+(p.rate*boost)/6);
+    if(plan[pi].place==="desk" && (SIM_START+m)>=22*60) c=clamp(c-0.6);
+    stay+=10; out.push(c);
+  }
+  return out;
+}
+const SCEN = {
+  a:{ color:"#fbbf24", data: runScenario([
+      {until:30, place:"desk"},
+      {until:70, place:"dine", enterDelta:-14},
+      {until:330, place:"desk"} ]) },
+  b:{ color:"#a78bfa", data: runScenario([
+      {until:30, place:"desk"},
+      {until:50, place:"lounge"},
+      {until:70, place:"dine", enterDelta:-6},   // 가볍게 → 식곤증 절반
+      {until:180, place:"desk"},
+      {until:190, place:"roof"},
+      {until:330, place:"desk"} ]) },
+  c:{ color:"#64748b", data: runScenario([ {until:330, place:"desk"} ]) },
+};
+let scenShow="all";
+function pickScen(btn){
+  document.querySelectorAll(".scen button").forEach(b=>b.classList.toggle("on",b===btn));
+  scenShow=btn.dataset.s; drawScen();
+}
+function drawScen(){
+  const svg=document.getElementById("scenChart"), W=880,H=300,P=40;
+  const n=34;
+  let out="";
+  for(const y of [0,20,40,60,80,100]){
+    const yy=H-P-(H-2*P)*y/100;
+    out+=`<line x1="${P}" y1="${yy}" x2="${W-P}" y2="${yy}" stroke="#2a2f42"/><text x="8" y="${yy+4}" fill="#8b90a5" font-size="11">${y}</text>`;
+  }
+  for(let h=0;h<=5;h++){
+    const xx=P+(W-2*P)*(h*60)/330;
+    out+=`<text x="${xx-14}" y="${H-12}" fill="#8b90a5" font-size="11">${18+h}:00</text>`;
+  }
+  // 이벤트 마커 (B안)
+  const mark=(min,label)=>{const xx=P+(W-2*P)*min/330;
+    return `<line x1="${xx}" y1="${P}" x2="${xx}" y2="${H-P}" stroke="#4c3d8f" stroke-dasharray="3,4"/><text x="${xx+4}" y="${P+12}" fill="#c4b5fd" font-size="10">${label}</text>`;};
+  if(scenShow==="all"||scenShow==="b") out+=mark(30,"라운지")+mark(50,"가벼운 식사")+mark(180,"옥상 5분");
+  if(scenShow==="all"||scenShow==="a") out+=mark(30+(scenShow==="a"?0:0.01),scenShow==="a"?"식당(과식)":"");
+  for(const [k,s] of Object.entries(SCEN)){
+    if(scenShow!=="all"&&scenShow!==k) continue;
+    const pts=s.data.map((v,i)=>`${P+(W-2*P)*i/(n-1)},${H-P-(H-2*P)*v/100}`).join(" ");
+    out+=`<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linejoin="round" opacity="${scenShow==="all"?.9:1}"/>`;
+    const last=s.data[s.data.length-1], lx=W-P, ly=H-P-(H-2*P)*last/100;
+    out+=`<circle cx="${lx}" cy="${ly}" r="4" fill="${s.color}"/><text x="${lx-30}" y="${ly-8}" fill="${s.color}" font-size="12" font-weight="600">${Math.round(last)}</text>`;
+  }
+  svg.innerHTML=out;
+}
+drawScen();
+</script>
+</body>
+</html>

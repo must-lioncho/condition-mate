@@ -52,12 +52,6 @@ enum DashboardContent {
   .card .k{color:var(--mut);font-size:12px}
   .card .v{font-size:22px;font-weight:700;margin-top:4px}
   .card .cap{color:var(--mut);font-size:11px;margin-top:3px}
-  /* 스포츠 모드: APM 게이지만 남기고 카드·티어 바·지금-라인 텍스트 숨김 */
-  .wrap.sports #cards,
-  .wrap.sports .tierpanel,
-  .wrap.sports .nowtext,
-  /* 스포츠 모드: 필터 요약(로그성 텍스트)은 숨기고, 타임 모드에서만 디테일하게 노출 (디버깅용) */
-  .wrap.sports #flt_summary{display:none}
   #tiers{width:100%;display:block}
   .nowline{color:var(--mut);font-size:13px;margin:4px 0 18px}
   .nowline b{color:var(--fg);font-weight:600}
@@ -215,6 +209,18 @@ enum DashboardContent {
   .vtab .vdots{visibility:hidden;color:var(--mut);font-size:14px;line-height:1;padding:0 3px;border-radius:4px}
   .vtab:hover .vdots,.vtab.active .vdots{visibility:visible}
   .vtab .vdots:hover{color:var(--fg);background:#2a3142}
+  /* AI 큐 상태 노티 (탭바 우측): 실행 중=액센트 펄스, 검토 대기=보라(대기=보라 컨벤션).
+     클릭하면 큐 탭으로 이동, 큐 탭을 보는 동안은 숨긴다. 큐 탭 라벨 카운트 배지를 대체(신호 단일화). */
+  .vnoti{display:none;align-items:center;gap:7px;align-self:center;margin-left:auto;margin-bottom:3px;border:1px solid var(--line);background:#151b28;border-radius:20px;padding:5px 12px 5px 10px;font-size:12px;font-weight:600;cursor:pointer;color:var(--fg);font-family:inherit}
+  .vnoti:hover{border-color:var(--accent)}
+  .vnoti .nd{width:7px;height:7px;border-radius:50%;flex:none}
+  .vnoti.run{color:#b9cdff;border-color:#2c3c63}
+  .vnoti.run .nd{background:var(--accent);animation:qpulse 1s infinite}
+  .vnoti.ready{color:#cfc3f7;border-color:#4b3d78;background:rgba(167,139,250,.10)}
+  .vnoti.ready .nd{background:#a78bfa}
+  .vnoti .narr{color:var(--mut);font-size:11px}
+  /* 큐 탭 dedup 카드의 목적지 라벨 — 인라인 배치(스프린트 하단) 대신 여기서 행선지를 알린다 */
+  .qdest{font-size:11px;color:#8fa0bd;border:1px solid var(--line);border-radius:20px;padding:1px 8px;margin-left:8px;white-space:nowrap;font-weight:400;vertical-align:middle}
   /* 스프린트 메뉴: 라벨이 길어 줄바꿈 허용 + 폭 확대 */
   .ckmenu.spmenu{min-width:220px;max-width:340px}
   .popup .spmenu .popitem.chk{white-space:normal;align-items:flex-start}
@@ -324,6 +330,11 @@ enum DashboardContent {
   input[type=range]{vertical-align:middle}
   .goal{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line)}
   .goal .g{flex:1;position:relative}
+  /* 부분과제(task) 행: 유형 필터에 task를 켰을 때 goal 아래 붙는 컴팩트 읽기 전용 행. */
+  .goal.taskrow{padding:3px 0 3px 22px;background:rgba(255,255,255,.015)}
+  .goal.taskrow .gt{font-size:12.5px;cursor:default}
+  .goal.taskrow .gt:hover{background:none}
+  .goal.taskrow .tlead{font-size:12px}
   /* Editable goal title: double-click to rename in place (목록 + 그룹 자식 행). */
   .gt{cursor:text;border-radius:5px;padding:1px 4px;margin:0 -4px}
   .gt:hover{background:rgba(255,255,255,.05)}
@@ -618,7 +629,7 @@ enum DashboardContent {
 </head>
 <body>
 \#(SessionRail.html())
-<div class="wrap sports">
+<div class="wrap">
   <div class="hdr">
     <div>
       <h1>오늘 활동 · BGM 디버그 <span id="devBadge" class="devbadge" style="display:none"></span></h1>
@@ -627,15 +638,13 @@ enum DashboardContent {
     <div style="display:flex;align-items:center;gap:10px">
       <span id="perf" title="이 대시보드 페이지의 자원 사용량 (메모리=JS 힙, CPU=프레임 타이밍 근사치)"
             style="font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap">측정 중…</span>
-      <button class="btn primary gtoggle" id="mode_toggle" onclick="toggleGaugeMode()" title="스포츠=라이브 APM 바운싱 (집중·재미), 타임=토탈 시간 카운트업 (체력 총량). 8시간+엔 타임 자동. 클릭하면 전환">⚡ 스포츠</button>
     </div>
   </div>
 
   <!-- 오늘 활동 요약(KPI 카드·티어 바·지금-라인)·최근 요약/차트·주요 앱 블록은
        컨디션 관리 페이지(/bgm-player)의 컨디션맵 탭으로 이동했다 — 컨디션맵과 함께 분석.
-       #accel 게이지 호스트(스포츠 APM / 타임 카운트업)는 헤더 기능이라 여기 남긴다 —
-       예전엔 이동한 '지금:' 라인 안에 들어 있었다. 게이지 렌더러가 내부 마크업을 채운다. -->
-  <div class="nowline" id="accel" style="margin:4px 0 18px"></div>
+       라이브 APM은 왼쪽 세션 레일의 챌린지 다이얼(SessionRail) 서브라인으로 이동했다 —
+       스포츠/타임 토글 게이지는 제거. -->
 
   <div id="viewTabs" class="viewtabs"></div>
   <div class="panel" id="goalPanel">
@@ -644,6 +653,7 @@ enum DashboardContent {
     <div class="row" style="margin:0 0 8px;gap:6px">
       <button class="btn combo" id="flt_status_combo" onclick="openStatusFilter(event)" title="표시할 상태를 선택 (다중 선택)">보기<span class="cbadge" id="flt_status_cnt" style="display:none">0</span> <span class="cv">▾</span></button>
       <button class="btn combo" id="flt_sprint_combo" onclick="openSprintFilter(event)" title="스프린트로 목록 필터 (다중 선택 · 릴리즈된 목표는 숨김)">스프린트<span class="cbadge" id="flt_sprint_cnt" style="display:none">0</span> <span class="cv">▾</span></button>
+      <button class="btn combo" id="flt_type_combo" onclick="openTypeFilter(event)" title="유형으로 필터 (부모 · 자식 · task 다중 선택 — task를 켜면 부분과제 행이 목록에 나타납니다)">유형<span class="cbadge" id="flt_type_cnt" style="display:none">0</span> <span class="cv">▾</span></button>
       <span class="muted" id="flt_summary" style="font-size:12px">— 모두 표시</span>
     </div>
     <!-- COMPLETION-TIME CUTOFF — hide 완료 goals finished before this instant -->
@@ -892,98 +902,9 @@ function appColor(a){
   const col = PALETTE[h % PALETTE.length]; colorCache[a]=col; return col;
 }
 function fmtMin(m){ if(m>=60) return (m/60).toFixed(1)+'시간'; return m+'분'; }
-// "Accelerator" gauge: live APM (actions/min, StarCraft-style). Backend polled
-// fast (~100ms); the number + bar are driven by a damped SPRING every animation
-// frame so they snap toward the target with a little tachometer kick (overshoot).
-// Juice: zone color (green->amber->red), a redline pulse glow, and a VU-style
-// peak-hold marker that floats down from the recent max.
-let _apmTo=0,_apmAt=0,_apmV=0,_nmTo=0,_nmAt=0,_nmV=0,_peak=0,_gaugeOn=false,_lastT=0;
-const SPRING_K=500, SPRING_D=26;   // stiffness / damping => zeta~0.58, ~250ms snap, ~8% overshoot
-// --- Gauge mode: 스포츠(라이브 APM 바운싱) ↔ 타임(토탈 시간 카운트업) ----------
-// 시작 1시간 이전엔 스포츠로 집중·재미에, 8시간을 넘기면 타임으로 체력 총량의
-// 뿌듯함에 포커스가 가도록 자동 기본값을 정한다. 사용자가 직접 토글하면 자동
-// 전환은 멈춘다(_modeUserSet). 타임 모드는 토탈 시간을 초 단위로 카운트업한다.
-let _gaugeMode='sports', _modeUserSet=false;
-let _totalBaseSec=0, _totalBaseWall=0, _working=false;
-function fmtClock(sec){
-  sec=Math.max(0,Math.floor(sec));
-  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
-  const p=n=>('0'+n).slice(-2);
-  return h+':'+p(m)+':'+p(s);
-}
-function ensureTimeGauge(){
-  const host=$('accel'); if(!host) return false;
-  if(host.dataset.tbuilt!=='1'){
-    host.innerHTML=' &nbsp; <span style="color:var(--mut)">토탈 </span>'
-      +'<span id="apmtime" style="display:inline-block;font-variant-numeric:tabular-nums;font-weight:700">0:00:00</span>'
-      +'<span id="apmtlab" style="color:var(--mut)"></span>';
-    host.dataset.tbuilt='1';
-  }
-  return true;
-}
-function renderTime(){
-  if(!ensureTimeGauge()) return;
-  const live=_working ? (Date.now()-_totalBaseWall)/1000 : 0;
-  const num=$('apmtime'); if(num){ num.textContent=fmtClock(_totalBaseSec+live); num.style.color=_working?'var(--green)':'var(--fg)'; }
-  const lab=$('apmtlab'); if(lab) lab.textContent=_working?' · 진행 중':' · 정지';
-}
-function toggleGaugeMode(){ setGaugeMode(_gaugeMode==='time'?'sports':'time', true); }
-function setGaugeMode(m, byUser){
-  _gaugeMode=m;
-  if(byUser) _modeUserSet=true;
-  const tg=$('mode_toggle');
-  if(tg) tg.textContent=(m==='time')?'⏱ 타임':'⚡ 스포츠';
-  // 스포츠 = APM 게이지만 (스포츠 집중), 타임 = 모든 정보 디테일
-  const wrap=document.querySelector('.wrap');
-  if(wrap) wrap.classList.toggle('sports', m!=='time');
-  const host=$('accel');
-  if(host){ host.innerHTML=''; host.dataset.built=''; host.dataset.tbuilt=''; }
-  if(m==='time') renderTime();   // 스포츠는 다음 라이브 틱에서 재구성
-  // 사용자가 타임으로 직접 전환하면, 스포츠 동안 건너뛴 상세 섹션을 즉시 로딩한다.
-  // byUser 가드로 load() 내부 자동 기본값(setGaugeMode(...,false)) 재귀를 막는다.
-  if(byUser && m==='time') load();
-}
-function ensureGauge(){
-  const host=$('accel'); if(!host) return false;
-  if(host.dataset.built!=='1'){
-    host.innerHTML=' &nbsp; <span id="apmlab" style="color:var(--mut)">APM </span>'
-      +'<span id="apmnum" style="display:inline-block;min-width:4ch;text-align:right;font-variant-numeric:tabular-nums;font-weight:700">0</span>'
-      +' <span id="apmbar" style="position:relative;display:inline-block;width:96px;height:9px;border-radius:5px;background:#1b1f29;vertical-align:middle;overflow:hidden">'
-      +'<span id="apmfill" style="position:absolute;left:0;top:0;height:100%;width:0%;background:#36c08a"></span>'
-      +'<span id="apmpeak" style="position:absolute;top:0;height:100%;width:2px;background:#fff;opacity:.65;left:0%"></span></span>'
-      +'<span id="apmgear" style="color:var(--mut)"></span><span id="apmnext" style="color:var(--mut)"></span>';
-    host.dataset.built='1';
-  }
-  return true;
-}
-function zoneColor(x){   // 0 -> green, 0.6 -> amber, 1 -> red
-  const h = x<0.6 ? 145-(145-42)*(x/0.6) : 42-42*Math.min(1,(x-0.6)/0.4);
-  return 'hsl('+Math.max(0,h).toFixed(0)+',72%,55%)';
-}
-function renderGauge(t){
-  const red=_nmTo>=0.85, nm=Math.min(1,Math.max(0,_nmAt));
-  const num=$('apmnum'),fill=$('apmfill'),bar=$('apmbar'),peak=$('apmpeak'),lab=$('apmlab');
-  if(num){ num.textContent=Math.max(0,Math.round(_apmAt)); num.style.color=red?'#ff5a6e':'var(--fg)'; }
-  if(fill){ fill.style.width=(nm*100).toFixed(1)+'%'; fill.style.background=zoneColor(nm); }
-  if(peak) peak.style.left=(Math.min(1,_peak)*100).toFixed(1)+'%';
-  if(lab) lab.style.color=red?'#ff5a6e':'var(--mut)';
-  if(bar){
-    if(red){ const g=0.5+0.5*Math.sin(t*0.009); bar.style.boxShadow='0 0 '+(5+9*g).toFixed(1)+'px rgba(255,90,110,'+(0.45+0.45*g).toFixed(2)+')'; }
-    else bar.style.boxShadow='none';
-  }
-}
-function setGauge(n){
-  const host=$('accel');
-  if(_gaugeMode==='time'){ renderTime(); return; }   // 타임 모드가 #accel을 소유
-  if(!n||!n.track||n.track==='-'){ if(host){host.innerHTML='';host.dataset.built='';} _gaugeOn=false; _apmTo=_apmAt=_apmV=_nmTo=_nmAt=_nmV=_peak=0; return; }
-  _gaugeOn=true;
-  if(!ensureGauge()) return;
-  _apmTo=Math.max(0,n.apm||0);
-  _nmTo=Math.max(0,Math.min(1,n.norm||0));
-  const g=$('apmgear'),nx=$('apmnext');
-  if(g) g.textContent=(n.gear&&n.gear!=='-')?(' · '+n.gear):'';
-  if(nx) nx.textContent=(n.nextTrack&&n.nextTrack!=='-')?(' → 다음 '+n.nextTrack):'';
-}
+// The live APM "accelerator" gauge (and its 스포츠/타임 toggle) was removed from the
+// dashboard header. Live APM now lives in the left session rail's challenge dial
+// (see SessionRail.swift → #cmChApm), so it shows on every page, not just here.
 // --- Page resource meter (top-right) -------------------------------------
 // Memory: JS heap via performance.memory (Chromium only); DOM node count works
 // everywhere. CPU is not exposed to JS, so we approximate it from frame timing:
@@ -1010,39 +931,14 @@ function perfFrame(t){
     }
   }
 }
-function tweenGauge(t){
-  perfFrame(t);
-  const dt = _lastT ? Math.min(0.05,(t-_lastT)/1000) : 0.016; _lastT=t;
-  if(_gaugeMode==='time'){
-    renderTime();
-  } else if(_gaugeOn){
-    // Integrate the spring in fixed sub-steps. Explicit Euler on a stiff spring
-    // (K=500) goes unstable once dt grows on a dropped frame, which made the
-    // number ring and stutter ("laggy"). Sub-stepping keeps it stable and smooth
-    // at any frame rate while preserving the tachometer-kick feel.
-    let rem=dt; const H=0.006;
-    while(rem>1e-4){
-      const h=Math.min(H,rem); rem-=h;
-      _apmV += ((_apmTo-_apmAt)*SPRING_K - _apmV*SPRING_D)*h; _apmAt += _apmV*h;
-      _nmV  += ((_nmTo-_nmAt)*SPRING_K - _nmV*SPRING_D)*h;     _nmAt  += _nmV*h;
-    }
-    if(_nmAt>_peak) _peak=_nmAt; else _peak=Math.max(_nmAt, _peak-0.18*dt);  // peak-hold drifts down
-    renderGauge(t);
-  }
-  requestAnimationFrame(tweenGauge);
-}
-requestAnimationFrame(tweenGauge);
-async function liveTick(){
-  let l; try { l = await (await fetch('/live.json',{cache:'no-store'})).json(); }
-  catch(e){ return; }
-  setGauge(l);
-}
+// Frame loop: drives only the page resource meter now (the header gauge is gone).
+function perfLoop(t){ perfFrame(t); requestAnimationFrame(perfLoop); }
+requestAnimationFrame(perfLoop);
 
 async function load(){
   let d;
   try { d = await (await fetch('/data.json',{cache:'no-store'})).json(); }
   catch(e){ return; }
-  const w = d.now.working;
   $('date').textContent = d.date + ' · 분당 기록';
   // DEV dataset indicator: badge + top ribbon + tab title prefix when not production.
   const dev=$('devBadge');
@@ -1050,15 +946,8 @@ async function load(){
     document.body.classList.add('devmode');
     if(!document.title.startsWith('[DEV]')) document.title='[DEV] '+document.title; }
   else { dev.style.display='none'; document.body.classList.remove('devmode'); }
-  const ss = withCarryForward(d.samples);   // 10-min continuity applied
-  const b = timeBuckets(ss);                 // still drives the gauge (타임 카운트업 기준)
-  // Gauge mode: 타임 카운트업 기준(토탈 분→초) + 자동 기본값(<8h 스포츠, 8h+ 타임).
-  _totalBaseSec = b.total*60; _totalBaseWall = Date.now(); _working = !!w;
-  if(!_modeUserSet) setGaugeMode(b.total>=480 ? 'time' : 'sports', false);
-  const n=d.now;
-  setGauge(n);
   const _t0=performance.now();
-  renderReview(d);   // 확정 가치/목표 — 스포츠 모드에서도 항상 렌더
+  renderReview(d);   // 확정 가치/목표
   // 오늘 활동 요약·차트·주요 앱 블록은 컨디션 관리 페이지로 이동했다.
   // 워커 상태는 독립 /cron 페이지가 /workers.json 으로 자체 폴링한다(이 대시보드는 관여하지 않음).
   _plugins = d.plugins || [];
@@ -1679,8 +1568,9 @@ function qOverrideHTML(it){
 // --- AI 큐(bump out): 도착 순서 그대로 한 줄로 쌓는다. 위쪽이 먼저 처리되고(분석 중·검토 대기),
 // 방금 비워낸 후보는 맨 하단에 붙는다 — "쏟아내면 아래에 쌓이고, 위에서 익는다"는 컨베이어 감각.
 // 헤더의 펄스 '실행 중' 배지로 워커가 돌고 있는지 한눈에 보인다. data.json은 oldest-first 순.
-// aiQueueBoxHTML: 큐 박스 HTML 문자열을 돌려준다(빈 목록이면 ''). 입력(목록) 뷰는 #aiQueue에
-// 전체 큐를, 스프린트 보드는 각 스프린트·백로그 섹션 하단에 해당 sprint의 큐만 끼워 넣는다. ---
+// aiQueueBoxHTML: 큐 박스 HTML 문자열을 돌려준다(빈 목록이면 ''). 큐 탭(#queueHost)이 유일한
+// 렌더 위치 — 목록/스프린트 인라인 배치는 제거됐고, 진행 상황은 탭바 우측 노티(updateQueueNoti)가,
+// 스프린트 행선지는 각 카드의 목적지 라벨(.qdest)이 알린다. ---
 function aiQueueBoxHTML(items,withConfirm){
   items=items||[];
   // 확인 카드는 목록 뷰(전역 큐)에서만 그린다 — 스프린트 뷰는 섹션마다 이 함수를 부르므로 중복 방지.
@@ -1700,14 +1590,16 @@ function aiQueueBoxHTML(items,withConfirm){
   // 추가 직후 확인 카드(초록): '열기' 링크 + 남은 초. 서버엔 이미 없으므로 클라이언트 상태로만 그린다.
   function confirmRow(id){
     const c=_qConfirm[id]; if(!c) return '';
-    const where=c.parentSeq?('#'+c.parentSeq+' 아래 '):'';
+    // task로 추가된 경우: 목적지가 '기존 #seq의 tasks/<folder>' — 새 goal이 아님을 명확히 보여준다.
+    const head=c.task?'✓ task 추가됨':'✓ 추가됨';
+    const where=c.task?('#'+c.seq+' · '+esc(c.task)+' '):(c.parentSeq?('#'+c.parentSeq+' 아래 #'+c.seq):('#'+c.seq));
     const ttl=c.text?esc(c.text):'항목';
     // parentFallback: 서브 부착이 거부되어 최상위로 들어간 경우 안내 한 줄.
     const fb=c.fallback?'<div class="qhint" style="color:#e0a458">상위 목표 아래 넣을 수 없어 최상위로 추가됨</div>':'';
     return '<div class="qrow qconfirm">'
       +'<div style="flex:1;min-width:0">'
-      +'<div style="font-size:13px"><span style="color:var(--green);font-weight:600">✓ 추가됨</span> '
-      +'<span class="muted">'+where+'#'+c.seq+'</span> · '+ttl+'</div>'
+      +'<div style="font-size:13px"><span style="color:var(--green);font-weight:600">'+head+'</span> '
+      +'<span class="muted">'+where+'</span> · '+ttl+'</div>'
       +fb
       +'<div class="qhint">'+c.sec+'초 후 큐에서 사라집니다 · 지금 열어보세요</div></div>'
       +'<div style="display:flex;gap:6px;flex-shrink:0;align-items:center">'
@@ -1812,9 +1704,12 @@ function aiQueueBoxHTML(items,withConfirm){
       const kind=it.kind||(it.duplicate?'duplicate':'new');
       let opts;
       if(kind==='recurring' && pN>0){
-        // 반복 작업: 기존 목표의 또 다른 회차 → 그 아래에 태스크로 붙이는 것을 추천.
-        const why=(note?note+' ':'')+'#'+pN+' '+pTitle+'의 반복 작업이라, 그 아래 이번 회차로 추가하는 것을 추천합니다.';
-        opts=[{a:'under',arg:pN,label:'#'+pN+' 아래에 이번 회차 추가',rec:true,desc:why},
+        // 반복 작업: 기존 목표의 또 다른 회차 → 그 목표의 task(부분과제 폴더)로 붙이는 것을 추천.
+        // 예전 1번(아래에 추가)은 새 goal 번호를 채번해 서브 목표를 만들었는데(예: goal325),
+        // "task로 추가"라는 기대와 달랐다 — 이제 진짜 tasks/taskN 폴더로 들어간다.
+        const why=(note?note+' ':'')+'#'+pN+' '+pTitle+'의 반복 작업이라, 새 목표 번호 없이 그 목표의 task로 추가하는 것을 추천합니다.';
+        opts=[{a:'task',arg:pN,label:'#'+pN+'의 task로 이번 회차 추가',rec:true,desc:why},
+              {a:'under',arg:pN,label:'#'+pN+' 아래 서브 목표로 추가',desc:'새 번호를 받는 별도 목표를 만들어 #'+pN+' 아래에 둡니다.'},
               {a:'add',label:'별도 새 목표로 추가',desc:'#'+pN+'와 무관하게 최상위 목표로 추가합니다.'},
               {a:'skip',label:'스킵',desc:'이번 회차는 추적하지 않고 버립니다.'}];
       } else if(kind==='duplicate'){
@@ -1864,8 +1759,12 @@ function aiQueueBoxHTML(items,withConfirm){
     }
     const newBadge=(_qJustRefined===it.id)
       ? '<span style="font-size:11px;padding:1px 7px;border-radius:20px;background:#0f2a1e;color:var(--green);border:1px solid #1e4a35;margin-right:6px">새 결과</span>' : '';
+    // 목적지 라벨: 스프린트로 담긴 항목은 확정 시 어디로 들어가는지 표시 (인라인 배치 제거의 정보 보존).
+    const dest=(it.sprint||0)>0?(function(){
+      const s=((_review&&_review.sprints)||[]).find(x=>x.number===it.sprint);
+      return '<span class="qdest">→ '+esc((s&&s.code)||('#'+it.sprint))+'</span>'; })():'';
     return '<div class="'+cls+'">'
-      +'<div style="flex:1;min-width:0">'+newBadge+'<span id="qt_'+it.id+'">'+esc(it.text)+'</span>'+meta+panel+choice+'</div>'
+      +'<div style="flex:1;min-width:0">'+newBadge+'<span id="qt_'+it.id+'">'+esc(it.text)+'</span>'+dest+meta+panel+choice+'</div>'
       +'<div style="display:flex;gap:4px;flex-shrink:0;align-items:flex-start">'+btns+'</div></div>';
   }
   const confirmHTML=confirmIds.map(confirmRow).join('');
@@ -1901,21 +1800,82 @@ function renderAiQueue(items){ _lastAiQueue=items||[]; const host=$('queueHost')
   const confirmActive=Object.keys(_qConfirm||{}).length>0;
   const dedupHTML=aiQueueBoxHTML(dedup,true);   // true: 확인 카드는 이 전역 큐 박스에만 그린다
   const jobsHTML=jobs.map(queueJobCardHTML).join('');
-  // 빈 상태: dedup·잡·확인 카드가 모두 없을 때만.
+  const histHTML=queueHistoryHTML();
+  // 빈 상태: dedup·잡·확인 카드가 모두 없을 때 — 히스토리는 있으면 그 아래 계속 보여준다.
   if(!dedupHTML && !jobsHTML && !confirmActive){
     host.innerHTML='<div class="muted" style="padding:18px 4px;text-align:center;line-height:1.6">'
-      +'큐가 비어 있습니다 — <b>AI추가</b>로 후보를 던지거나 내보내기를 실행하면 여기에 쌓입니다.</div>';
+      +'큐가 비어 있습니다 — <b>AI추가</b>로 후보를 던지거나 내보내기를 실행하면 여기에 쌓입니다.</div>'+histHTML;
     return;
   }
   let html='';
   if(dedupHTML || confirmActive) html+='<div class="queue-section">'+dedupHTML+'</div>';
   if(jobsHTML) html+='<div class="queue-section" style="margin-top:12px"><div class="muted" style="font-size:12px;margin:2px 0 6px">작업 결과</div>'+jobsHTML+'</div>';
+  html+=histHTML;
   host.innerHTML=html;
   // 프롬프트 입력 중이면 재렌더 후 텍스트박스에 포커스를 되돌린다(캐럿 끝으로).
   if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } }
   if(qo&&qo.id){ const t=$('qother_'+qo.id); if(t){ t.focus(); try{ const p=(qo.pos==null?t.value.length:qo.pos); t.setSelectionRange(p,p); }catch(e){} } } }
-// 큐 탭 진입점: 최신 review의 aiQueue로 큐 탭을 그린다. fillActiveView에서 호출.
-function renderQueueTab(r){ renderAiQueue((r&&r.aiQueue)||_lastAiQueue||[]); }
+// 큐 탭 진입점: 최신 review의 aiQueue + 처리 히스토리로 큐 탭을 그린다. fillActiveView에서 호출.
+function renderQueueTab(r){ _qHist=(r&&r.queueHistory)||_qHist||[]; renderAiQueue((r&&r.aiQueue)||_lastAiQueue||[]); }
+// === 큐 처리 히스토리 (감사 + 번복) ===
+// _qHist: /data.json review.queueHistory (newest first, 최근 30건). 각 항목은 하나의 확정된
+// 결정 — 무엇을 골랐고 무엇이 생겼는지(#seq/task 폴더) 남아, 5초 확인 카드가 사라진 뒤에도
+// "제대로 됐는지" 확인하고, 클릭해 이동하고, 번복(undo)할 수 있다.
+let _qHist=[];
+// _qHistMsg: 마지막 번복 실패 사유(항목 id → 문구) — 행 안에 인라인으로 보여준다.
+let _qHistMsg={};
+function queueHistoryHTML(){
+  const hist=_qHist||[]; if(!hist.length) return '';
+  function when(ts){ const d=new Date((ts||0)*1000), now=new Date();
+    const hm=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+    return (d.toDateString()===now.toDateString())?hm:((d.getMonth()+1)+'/'+d.getDate()+' '+hm); }
+  const rows=hist.map(function(h){
+    // 결정 요약: 액션별로 "무엇이 생겼는지"를 링크로. #seq 클릭 → 그 목표 페이지.
+    let what;
+    if(h.action==='add'){
+      const link='<a href="/goal?n='+h.seq+'" style="color:var(--accent);text-decoration:none">#'+h.seq+'</a>';
+      const parent=(h.parentSeq>0)?(' <span class="muted">(#'+h.parentSeq+' 아래)</span>'):'';
+      const fb=h.fallback?' <span style="color:#e0a458">· 서브 부착 불가 → 최상위</span>':'';
+      what='<span style="color:var(--green)">추가</span> → '+link+parent+fb;
+    } else if(h.action==='task'){
+      const link='<a href="/goal?n='+h.seq+'" style="color:var(--accent);text-decoration:none">#'+h.seq+'</a>';
+      what='<span style="color:var(--green)">task 추가</span> → '+link+' <span class="muted">· '+esc(h.task||'')+'</span>';
+    } else if(h.action==='edit'){
+      what='<span class="muted">수정 (계속 대기)</span>';
+    } else {
+      what='<span class="muted">스킵</span>';
+    }
+    // 번복: add/task/skip만. 이미 번복됐으면 흐리게 + '번복됨' 배지.
+    const undoable=!h.undone && (h.action==='add'||h.action==='task'||h.action==='skip');
+    const btn=undoable
+      ? '<button class="btn" onclick="queueUndo(\''+h.id+'\')" title="이 결정을 되돌리고 항목을 큐로 복원">번복</button>'
+      : (h.undone?'<span class="muted" style="font-size:12px">번복됨</span>':'');
+    const msg=_qHistMsg[h.id]?('<div class="qhint" style="color:#e0a458">'+esc(_qHistMsg[h.id])+'</div>'):'';
+    return '<div class="qrow" style="align-items:flex-start'+(h.undone?';opacity:.5':'')+'">'
+      +'<div style="flex:1;min-width:0">'
+      +'<div style="font-size:13px"><span class="muted" style="font-variant-numeric:tabular-nums;margin-right:8px">'+when(h.at)+'</span>'
+      +what+' · '+esc(h.text||'')+'</div>'+msg+'</div>'
+      +'<div style="flex-shrink:0">'+btn+'</div></div>';
+  }).join('');
+  return '<div class="queue-section" style="margin-top:14px">'
+    +'<div class="muted" style="font-size:12px;margin:2px 0 6px">처리 히스토리 <span style="font-weight:400">— 최근 '+hist.length+'건 · 번복하면 항목이 큐로 복원됩니다</span></div>'
+    +rows+'</div>';
+}
+// 번복 실행: 성공하면 결과물(goal/task 폴더)이 제거되고 항목이 큐로 복원된다. 실패 사유는
+// 행 안에 인라인으로 보여준다 (예: 만든 목표에 하위 목표가 생겨 되돌릴 수 없음).
+function queueUndo(hid){
+  delete _qHistMsg[hid];
+  fetch('/api/goal/queue/undo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:hid})})
+    .then(r=>r.json()).then(res=>{
+      if(!(res&&res.ok)){
+        _qHistMsg[hid]=(res&&res.error==='has-children')
+          ?'만든 목표 아래에 하위 목표가 생겨 번복할 수 없습니다. 목표를 직접 정리해주세요.'
+          :'번복하지 못했습니다 (이미 처리됐거나 항목을 찾을 수 없음).';
+        rerenderAiQueue();
+      }
+      load();
+    }).catch(()=>load());
+}
 // 비-dedup 잡(linkmap/report…) 카드 하나. 상태 배지 + 결과(resultHTML) 보기/다운로드, 또는 오류+재시도/닫기.
 function queueJobCardHTML(it){
   const title=esc(it.title||it.text||'(작업)');
@@ -1968,12 +1928,10 @@ function exportLinkmap(id){
   post('/api/queue/enqueue-linkmap',{root:id});
   setView('queue');
 }
-// 큐 박스는 입력 뷰(#aiQueue)뿐 아니라 스프린트 뷰(보드 하단)에도 렌더된다. 프롬프트 열기/취소
-// 같은 즉시 상태 변화는 '지금 보고 있는 뷰'를 바로 다시 그려야 한다 — 안 그러면 5초 폴링을
-// 기다리게 되어 반응이 느리게 느껴진다. 재렌더 후 입력 중이면 텍스트박스 포커스를 복원한다.
+// 큐 박스는 큐 탭에만 렌더된다(인라인 배치 제거). 프롬프트 열기/취소 같은 즉시 상태 변화는
+// 5초 폴링을 기다리지 않고 바로 다시 그린다. 재렌더 후 입력 중이면 텍스트박스 포커스를 복원한다.
 function rerenderAiQueue(){
-  if(_view==='sprint' && _review) renderSprintView(_review);
-  else renderAiQueue(_lastAiQueue);
+  renderAiQueue(_lastAiQueue);
   if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } }
 }
 // 추가(1번/바로추가/이 결과로 진행): fire-and-forget이 아니라 응답의 새 #seq를 받아 확인 카드로
@@ -1999,6 +1957,19 @@ function queueAdd(id,parentSeq,priority){
     })
     .catch(()=>load());
 }
+// task로 추가: 새 goal을 채번하지 않고 기존 goal #seq의 부분과제(tasks/taskN 폴더)로 붙인다.
+// 응답의 task 폴더명을 확인 카드에 실어 "무엇이 어디에 생겼는지" 바로 검증할 수 있게 한다.
+function queueAddTask(id,seq){
+  _qJustRefined='';
+  const it=((_review&&_review.aiQueue)||_lastAiQueue||[]).find(x=>x.id===id);
+  const label=it?it.text:'';
+  fetch('/api/goal/queue/resolve',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:id,action:'task',parentSeq:seq})})
+    .then(r=>r.json()).then(res=>{
+      if(res&&res.ok&&res.seq) startQueueConfirm(id,res.seq,0,label,false,res.task||'');
+      load();
+    }).catch(()=>load());
+}
 function queueSkip(id){ _qJustRefined=''; post('/api/goal/queue/resolve',{id:id,action:'skip'}); }
 // --- 오버라이드 패널: 배치/우선순위를 직접 지정해 승격 ---
 // 패널 열고 닫기(폴링 재렌더가 innerHTML을 갈아끼워도 다시 열려면 링크를 다시 눌러야 하므로, 열림 상태는 굳이 보존하지 않음 — 가벼움 유지).
@@ -2022,8 +1993,9 @@ function queueOverrideApply(id){
   queueAdd(id,parentSeq,priority);
 }
 // 추가 직후 확인 카드: '열기' 링크 + 5초 카운트다운. 5초간 아무것도 안 하면 카드를 지워 큐를 없앤다.
-function startQueueConfirm(id,seq,parentSeq,label,fallback){
-  _qConfirm[id]={seq:seq,parentSeq:parentSeq||0,text:label||'',sec:5,fallback:!!fallback};
+// task: task로 추가된 경우 생성된 tasks/<folder> 이름 — 카드 문구가 '#seq에 task 추가됨'으로 바뀐다.
+function startQueueConfirm(id,seq,parentSeq,label,fallback,task){
+  _qConfirm[id]={seq:seq,parentSeq:parentSeq||0,text:label||'',sec:5,fallback:!!fallback,task:task||''};
   if(_qConfirmTimers[id]) clearInterval(_qConfirmTimers[id]);
   _qConfirmTimers[id]=setInterval(function(){
     const c=_qConfirm[id];
@@ -2041,7 +2013,8 @@ function dismissQueueConfirm(id){
 // 번호 선택 UI 액션 라우팅: 추가/스킵/프롬프트 열기(이미지 지원 챗)/부모 아래 추가. 'other'는 인라인 입력이 처리.
 function queueChoose(id,action,arg){
   if(action==='add') return queueAdd(id);
-  if(action==='under') return queueAdd(id,arg);   // 반복 회차: 부모 #arg 아래로 추가 + 확인 카드
+  if(action==='task') return queueAddTask(id,arg); // 반복 회차: #arg의 task(부분과제)로 — 새 goal 없음
+  if(action==='under') return queueAdd(id,arg);   // 부모 #arg 아래 서브 목표로 추가 + 확인 카드
   if(action==='skip') return queueSkip(id);
   if(action==='prompt') return queuePromptChat(id);
   if(action==='override') return qOverrideToggle(id);   // 배치/우선순위 직접 지정 패널 토글
@@ -2143,6 +2116,11 @@ let _statusFilter={backlog:true,in_progress:true,waiting:true,stopped:true,cance
 let _showParents=false;
 // 스프린트 콤보박스 선택값(다중 선택). 비어 있으면 '모두'(전체), 아니면 선택된 스프린트 번호 집합.
 let _sprintSel=new Set();
+// 유형 콤보박스 선택값(다중 선택): 'parent'(최상위 goal)·'child'(하위 goal)·'task'(부분과제).
+// 비어 있으면 '모두' — 기존 그대로 부모+자식 goal을 보이고 task 행은 숨긴다. 'task'를 켜면
+// 각 goal 아래에 tasks/<taskN> 행이 나타난다 (task가 추가돼도 목록에서 바로 보이도록).
+let _typeSel=new Set();
+const TYPE_KEYS=['parent','child','task'];
 // 완료 컷오프: 이 시각(Unix 초) 이전에 완료된 목표는 숨긴다. 0이면 컷오프 해제(모든 완료 표시).
 // 기본값은 필터 바 datetime-local 입력의 초기값과 동일하게 맞춘다(2026-06-24 17:00).
 // 완료 외 상태(대기·진행 등)는 이 컷오프의 영향을 받지 않는다 — 현재 진행 중인 일은 항상 보인다.
@@ -2269,10 +2247,20 @@ function boardSprint(g,goals){
 }
 // 스프린트 콤보박스 통과 여부: '모두'면 전부, 숫자면 그 스프린트만.
 function passesSprintFilter(g,goals){ return _sprintSel.size===0 ? true : _sprintSel.has(effSprint(g,goals)); }
+// 유형 콤보박스 통과 여부: 비어 있으면 모두. '부모'=최상위(parent 없음), '자식'=하위(parent 있음).
+// 'task'만 골라도 부분과제를 가진 goal은 남긴다 — task 행이 붙을 컨텍스트가 필요하므로.
+function passesTypeFilter(g){
+  if(_typeSel.size===0) return true;
+  if(_typeSel.has('parent') && !g.parent) return true;
+  if(_typeSel.has('child') && !!g.parent) return true;
+  if(_typeSel.has('task') && (g.tasks||[]).length>0) return true;
+  return false;
+}
 function goalPasses(g,goals){
   if(g.archived) return false;                    // 보관된 목표는 활성 목록에서 숨김(아카이브 뷰에만 노출)
   if(g.released) return false;                    // 릴리즈(커밋)된 목표는 활성 목록에서 숨김
   if(!passesSprintFilter(g,goals)) return false;  // 스프린트 콤보박스 (하드 게이트)
+  if(!passesTypeFilter(g)) return false;          // 유형 콤보박스 (하드 게이트)
   if(!passesDoneCutoff(g,goals)) return false;    // 완료 컷오프는 상위 항상 표시보다 우선하는 하드 게이트
   if(_showParents && hasKids(goals,g)) return true;
   return !!_statusFilter[effStatus(g,goals)];
@@ -2283,6 +2271,7 @@ function getFilteredGoals(goals){ return goals.filter(g=>goalPasses(g,goals)); }
 function goalPassesBoard(g,goals){
   if(g.archived) return false;
   if(g.released) return false;
+  if(!passesTypeFilter(g)) return false;          // 유형 콤보박스는 보드에도 동일 적용
   if(!passesDoneCutoff(g,goals)) return false;
   if(_showParents && hasKids(goals,g)) return true;
   return !!_statusFilter[effStatus(g,goals)];
@@ -2382,6 +2371,33 @@ function openSprintFilter(e){
 // 토글 후 팝업은 열어 둔 채 내용만 갱신 — 연속 선택을 위해. '모두'는 선택을 비운다.
 function spPick(n){ if(_sprintSel.has(n)) _sprintSel.delete(n); else _sprintSel.add(n); reapplyFilter(); syncURL(); setPopupHTML(sprintMenuHTML()); }
 function spAll(){ _sprintSel.clear(); reapplyFilter(); syncURL(); setPopupHTML(sprintMenuHTML()); }
+// 유형 콤보박스(다중 선택): 상태·스프린트 콤보와 같은 체크박스 드롭다운 패턴. 비어 있으면 '모두'.
+// 'task'를 켜면 목록의 각 goal 아래에 부분과제(tasks/<taskN>) 행이 나타난다.
+const TYPE_LABELS={parent:'부모 (최상위)',child:'자식 (하위)',task:'task (부분과제)'};
+function typeMenuHTML(){
+  let h='<div class="ckmenu"><div class="pophdr">유형 (다중 선택)</div>';
+  h+='<button class="popitem chk'+(_typeSel.size===0?' on':'')+'" onclick="tyAll()"><span class="cbx"></span>모두</button>';
+  h+='<div class="popdiv"></div>';
+  TYPE_KEYS.forEach(function(k){
+    h+='<button class="popitem chk'+(_typeSel.has(k)?' on':'')+'" onclick="tyPick(\''+k+'\')"><span class="cbx"></span>'+TYPE_LABELS[k]+'</button>';
+  });
+  return h+'</div>';
+}
+function openTypeFilter(e){
+  e.stopPropagation();
+  const r=e.currentTarget.getBoundingClientRect();
+  showPopup(r.left, r.bottom+4, typeMenuHTML());
+}
+// 토글 후 팝업은 열어 둔 채 내용만 갱신 — 연속 선택을 위해. '모두'는 선택을 비운다.
+function tyPick(k){ if(_typeSel.has(k)) _typeSel.delete(k); else _typeSel.add(k); reapplyFilter(); syncURL(); setPopupHTML(typeMenuHTML()); }
+function tyAll(){ _typeSel.clear(); reapplyFilter(); syncURL(); setPopupHTML(typeMenuHTML()); }
+// 콤보 버튼 카운트 배지 갱신 (Jira식): 라벨은 '유형' 고정, 선택 개수만 배지 숫자로.
+function updateTypeCombo(){
+  const cnt=$('flt_type_cnt'), combo=$('flt_type_combo');
+  const n=_typeSel.size;
+  if(cnt){ if(n>0){ cnt.textContent=n; cnt.style.display=''; } else cnt.style.display='none'; }
+  if(combo) combo.classList.toggle('active', n>0);
+}
 // 콤보 버튼 카운트 배지 갱신 (Jira식): 라벨은 '스프린트' 고정, 선택 개수만 배지 숫자로.
 function updateSprintCombo(){
   const cnt=$('flt_sprint_cnt'), combo=$('flt_sprint_combo');
@@ -2411,10 +2427,13 @@ function updateFilterButtons(){
   const combo=$('flt_status_combo'); if(combo) combo.classList.toggle('active',ssel>0);
   const cb=$('flt_donesince_clear'); if(cb) cb.classList.toggle('primary',!!_doneSince);
   updateSprintCombo();
+  updateTypeCombo();
   const spArr=[..._sprintSel].sort((a,b)=>a-b);
   const sp=spArr.length?(' · 스프린트 '+spArr.map(sprintCode).join(', ')+' 만'):'';
+  const tyNames={parent:'부모',child:'자식',task:'task'};
+  const ty=_typeSel.size?(' · 유형 '+TYPE_KEYS.filter(k=>_typeSel.has(k)).map(k=>tyNames[k]).join(', ')+' 만'):'';
   const cut=_doneSince?' · '+fmtDate(_doneSince)+' 이전 완료 숨김':'';
-  const s=$('flt_summary'); if(s) s.textContent='— '+filterSummary()+sp+(_showParents?' · 상위 항상 표시':'')+cut;
+  const s=$('flt_summary'); if(s) s.textContent='— '+filterSummary()+sp+ty+(_showParents?' · 상위 항상 표시':'')+cut;
 }
 // ===== URL 상태 영속화 — 뷰·필터 설정을 location.hash에 보관 =====
 // 목적: 스프린트 작업 중 새로고침해도 뷰/필터가 초기화되지 않게 한다(완료 토글 해제 등도 보존).
@@ -2430,6 +2449,7 @@ function syncURL(){
   if(st!==_ST_DEFAULT) q.set('st',st);
   if(_showParents) q.set('par','1');
   if(_sprintSel.size) q.set('sp',[..._sprintSel].sort((a,b)=>a-b).join(','));
+  if(_typeSel.size) q.set('ty',TYPE_KEYS.filter(k=>_typeSel.has(k)).join(','));
   if(_doneSince!==DC_DEFAULT) q.set('dc',String(_doneSince));   // 0 = 컷오프 해제
   // 보드 접기 상태도 보존 — 그룹(스프린트 번호·'bg' Backlog)과 자식 접은 부모 id.
   // 새로고침/5초 폴 재렌더 후에도 접어둔 섹션이 다시 펼쳐지지 않게 한다.
@@ -2452,6 +2472,7 @@ function savePrefs(){
     st:['backlog','in_progress','done','cancelled'].filter(k=>_statusFilter[k]),
     par:_showParents?1:0,
     sp:[..._sprintSel],
+    ty:[..._typeSel],
     spc:[..._spCollapsed],
     bgc:[..._bgCollapsed],
     bgseen:[..._bgSeen],
@@ -2471,6 +2492,7 @@ function applyPrefs(p){
     ['backlog','in_progress','done','cancelled'].forEach(k=>{ _statusFilter[k]=on.has(k); }); }
   if('par' in p) _showParents=!!p.par;
   if(Array.isArray(p.sp)) p.sp.forEach(n=>{ const v=parseInt(n,10); if(v>0) _sprintSel.add(v); });
+  if(Array.isArray(p.ty)) p.ty.forEach(k=>{ if(TYPE_KEYS.includes(k)) _typeSel.add(k); });
   // 스프린트 그룹 키는 숫자(스프린트 번호)면 Number로 되돌려 _spCollapsed.has(s.number)와 일치시킨다.
   if(Array.isArray(p.spc)) p.spc.forEach(k=>_spCollapsed.add(/^\d+$/.test(String(k))?parseInt(k,10):k));
   if(Array.isArray(p.bgc)) p.bgc.forEach(k=>_bgCollapsed.add(k));
@@ -2494,6 +2516,7 @@ function restoreFromURL(){
       ['backlog','in_progress','done','cancelled'].forEach(k=>{ _statusFilter[k]=on.has(k); }); }
     _showParents=q.get('par')==='1';
     if(q.has('sp')) q.get('sp').split(',').filter(Boolean).forEach(function(x){ const v=parseInt(x,10); if(v>0) _sprintSel.add(v); });
+    if(q.has('ty')){ _typeSel.clear(); q.get('ty').split(',').filter(Boolean).forEach(k=>{ if(TYPE_KEYS.includes(k)) _typeSel.add(k); }); }
     if(q.has('dc')) _doneSince=parseInt(q.get('dc'),10)||0;
     // 접기 상태 복원: 그룹 키는 숫자(스프린트 번호)면 Number로 되돌려 _spCollapsed.has(s.number)와 일치시킨다.
     if(q.has('spc')) q.get('spc').split(',').filter(Boolean).forEach(k=>_spCollapsed.add(/^\d+$/.test(k)?parseInt(k,10):k));
@@ -2630,15 +2653,19 @@ function goalKids(goals,g){ return (goals||[]).filter(c=>c.parent===g.id); }
 // Purpose: managers see which parent goal is active (on track) while workers freely
 // manage the leaf tasks underneath. Derived every render, so a child going 진행
 // flips the parent to on track automatically (no stored/duplicated state).
-// Parent rollup. A parent is a long-lived history container: it is NEVER auto-completed from
-// its children. Even when every child is done it stays On Track — the user closes it MANUALLY
-// (sets the parent's own status to done) only when the work branches. Manual done wins; else
-// any activity (a child in progress, or some child done) reads as On Track; otherwise 대기.
+// Parent rollup. Manual done wins. A parent with NO remaining tasks — every child terminal
+// (완료/취소) and at least one actually 완료 — rolls up to done automatically, so the finished
+// branch drops out of the board with its children (완료 필터/컷오프가 함께 숨긴다). Derived
+// every render: adding a new task under a done parent revives it. Otherwise any activity
+// (a child in progress, or some child done) reads as On Track; otherwise 대기.
 function derivedStatus(goals,g){
   const kids=goalKids(goals,g); if(!kids.length) return null;
-  if((g.status||'')==='done') return 'done';                              // 수동 완료(분기 마감)만 완료
+  if((g.status||'')==='done') return 'done';
   if(kids.some(c=>(c.status||'backlog')==='in_progress')) return 'on_track';
-  if(kids.some(c=>(c.status||'backlog')==='done')) return 'on_track';     // 자동 완료 금지 — On Track 유지
+  const dn=kids.filter(c=>(c.status||'backlog')==='done').length;
+  const term=kids.filter(c=>{ const s=c.status||'backlog'; return s==='done'||s==='cancelled'; }).length;
+  if(dn>0 && term===kids.length) return 'done';   // 남은 task 없음 → 자동 완료
+  if(dn>0) return 'on_track';
   return 'backlog';
 }
 function statLabel(s){ return s==='on_track'?'On Track':(s==='done'?'완료':'대기'); }
@@ -2758,31 +2785,36 @@ function renderTabs(){
       +'<span>'+VIEW_LABEL[k]+'</span>'+def
       +'<span class="vdots" title="탭 설정" onclick="openTabMenu(event,\''+k+'\')">⋯</span>'
       +'</button>';
-  }).join('');
+  }).join('')
+  // 탭바 우측 AI 큐 상태 노티 — innerHTML 재생성으로 사라지므로 매번 스켈레톤을 함께 그리고 채운다.
+  +'<button class="vnoti" id="qNoti" onclick="setView(\'queue\')" title="AI 큐로 이동">'
+  +'<span class="nd"></span><span class="nt"></span><span class="narr">→</span></button>';
+  updateQueueNoti(_lastAiQueue);
 }
 // 폴링 재렌더(5초)마다 탭바를 통째로 다시 그리지 않고 활성 표시만 갱신 — 열린 ⋯ 메뉴 보존.
 function markActiveTab(){
   const host=$('viewTabs'); if(!host) return;
   [...host.querySelectorAll('.vtab')].forEach(b=>b.classList.toggle('active', b.dataset.k===_view));
 }
-// 큐 탭 라벨에 미확인 힌트(작은 카운트) — enqueue 후 사용자가 큐 탭을 찾도록. 큐 탭을 보고
-// 있을 땐 숨긴다. 대상: 리뷰 대기 dedup + 완료/오류 잡(사용자 액션이 필요한 항목).
-function updateQueueHint(items){
-  const host=$('viewTabs'); if(!host) return;
-  const btn=host.querySelector('.vtab[data-k="queue"]'); if(!btn) return;
-  const lbl=btn.querySelector('span'); if(!lbl) return;
-  const n=(items||[]).filter(function(it){
+// 탭바 우측 AI 큐 상태 노티 — enqueue 직후엔 '큐 실행 중 N건'(액센트 펄스), 분석이 끝나면
+// '검토 대기 N건'(보라)으로 바뀐다. 클릭하면 큐 탭으로 이동, 큐 탭을 보는 동안은 숨긴다.
+// 예전의 큐 탭 라벨 카운트 배지를 대체한다(신호 단일화). 리스트/보드에 큐 박스를 끼워 넣지
+// 않아도 "지금 큐가 돌고 있다"는 걸 어느 뷰에서든 알 수 있게 하는 것이 목적.
+function updateQueueNoti(items){
+  const n=$('qNoti'); if(!n) return;
+  const list=items||[];
+  const running=list.filter(it=>it.status==='analyzing'||it.status==='pending'||it.status==='running').length;
+  const ready=list.filter(function(it){
     const kind=it.jobKind||'dedup';
     if(kind==='dedup') return !it.status||it.status==='ready';   // 리뷰 대기
     return it.status==='ready';                                   // 잡: 완료/오류
   }).length;
-  const show=(n>0 && _view!=='queue');
-  let b=lbl.querySelector('.qhint-badge');
-  if(!show){ if(b) b.remove(); return; }
-  if(!b){ b=document.createElement('span'); b.className='qhint-badge';
-    b.style.cssText='display:inline-block;margin-left:5px;min-width:15px;padding:0 4px;border-radius:8px;background:var(--accent);color:#0a0e17;font-size:10px;font-weight:700;text-align:center;line-height:15px;vertical-align:middle';
-    lbl.appendChild(b); }
-  b.textContent=String(n);
+  n.classList.remove('run','ready');
+  if(_view==='queue' || (running+ready)===0){ n.style.display='none'; return; }
+  n.style.display='inline-flex';
+  const t=n.querySelector('.nt'); if(!t) return;
+  if(ready>0){ n.classList.add('ready'); t.textContent='🤖 검토 대기 '+ready+'건'+(running?' · 실행 중 '+running:''); }
+  else{ n.classList.add('run'); t.textContent='🤖 큐 실행 중 '+running+'건'; }
 }
 function openTabMenu(e,k){
   e.stopPropagation();   // 탭 자체의 setView가 같이 발동하지 않게
@@ -2810,6 +2842,7 @@ function tabSetDefault(k){
 // Persist the chosen view server-side (Settings file store) so the next launch reopens here.
 // A URL hash (bookmark/refresh) still wins over this on load — see restoreFromURL.
 function setView(v){ _view=v; if(_review) fillActiveView(_review); applyView(); syncURL(); post('/api/prefs/view',{view:v});
+  updateQueueNoti(_lastAiQueue);   // 큐 탭 진입/이탈에 맞춰 노티를 즉시 숨김/복원
 }
 function applyView(){
   const inp=$('inputView'), pv=$('previewView'), gv=$('groupView'), sv=$('scheduleView'), tv=$('tableView'), tkv=$('tokenView'), spv=$('sprintView'), av=$('archivedView');
@@ -3132,10 +3165,10 @@ function renderReview(d){
   const key=JSON.stringify(r);
   if(key!==_lastReviewKey){
     _lastReviewKey=key;
-    // 큐 아이템 수를 기억해 큐 탭 라벨의 미확인 힌트를 갱신한다(리뷰 대기 dedup + 대기/완료 잡).
+    // 큐 아이템 수를 기억해 탭바 우측 큐 상태 노티(실행 중/검토 대기)를 갱신한다.
     _lastAiQueue=r.aiQueue||[];
     fillActiveView(r);   // renders 목록 OR 그룹 OR 큐 (only the active one — see note above)
-    updateQueueHint(r.aiQueue||[]);
+    updateQueueNoti(r.aiQueue||[]);
   }
   applyView();
 }
@@ -3153,8 +3186,32 @@ function renderGoalsInput(r){
   if(onlyDone) list.forEach(g=>_evOpen.add(g.id));
   if(!list.length){ gv.innerHTML='<div class="muted" style="padding:4px 0">'+(anyStatusActive()?'해당 상태의 목표가 없습니다.':'표시할 상태를 선택하세요 (대기 · 진행 · 완료).')+'</div>'; return; }
   const idToNum={}; all.forEach(g=>{ idToNum[g.id]=g.seq; });   // stable seq, not position
-  gv.innerHTML=energyGauge(all)+list.map(g=>goalRow(g,all.indexOf(g),r,idToNum)).join('');
+  gv.innerHTML=energyGauge(all)+list.map(g=>goalRow(g,all.indexOf(g),r,idToNum)+taskRows(g)).join('');
   applyEvOpen(); applyNoteOpen();
+}
+// 부분과제(task) 행: 유형 필터에 'task'가 켜졌을 때만 goal 행 바로 아래에 붙는 읽기 전용 행.
+// 데이터는 /data.json goal.tasks(서버가 goal-NN/tasks/*의 _task.md를 요약). 클릭하면 해당
+// task 페이지(/goal?n=NN&t=<folder>)로 이동. 보기(상태) 필터도 task 상태에 맞춰 적용한다
+// (TODO→대기, DOING→진행, DONE→완료 — BLOCKED(막힘)는 중지처럼 항상 표시).
+const TASK_ST={TODO:{f:'backlog',cls:'',lab:'대기'},DOING:{f:'in_progress',cls:'in_progress',lab:'진행'},
+               DONE:{f:'done',cls:'done',lab:'완료'},BLOCKED:{f:'',cls:'waiting',lab:'막힘'}};
+function taskRows(g){
+  if(!_typeSel.has('task')) return '';
+  const ts=g.tasks||[]; if(!ts.length) return '';
+  return ts.filter(t=>{
+    const m=TASK_ST[(t.status||'TODO').toUpperCase()];
+    return !(m&&m.f)||!!_statusFilter[m.f];
+  }).map(t=>{
+    const st=(t.status||'TODO').toUpperCase();
+    const m=TASK_ST[st]||{cls:'',lab:st};
+    const href='/goal?n='+g.seq+'&t='+encodeURIComponent(t.folder);
+    return '<div class="goal taskrow">'
+      +'<span class="tlead muted">└</span>'
+      +'<a class="pill gp" href="'+href+'" title="task 페이지 열기">'+esc(t.id)+'</a>'
+      +'<span class="g"><span class="gt">'+esc(t.title||t.folder)+'</span></span>'
+      +'<span class="ot '+m.cls+'" style="font-size:11px">'+m.lab+'</span>'
+      +'</div>';
+  }).join('');
 }
 // Energy gauge: only meaningful once 2+ goals run at once (AI concurrency). Shows the
 // summed allocation against the user's 100% cap; turns red and warns when over-committed.
@@ -3635,9 +3692,8 @@ function renderSprintBoard(r){
   const sprints=((r&&r.sprints)||[]).filter(s=>!s.closed).sort((a,b)=>a.number-b.number);
   const shown=all.filter(g=>goalPassesBoard(g,all));   // 상태 필터·완료 컷오프 적용 (행)
   const allLive=all.filter(g=>!g.released);            // 카운트는 전체 멤버십 기준
-  const aq=(r&&r.aiQueue)||[];                          // AI 큐: 섹션(sprint/backlog)별로 하단에 배치
-  let h=sprints.map(s=>sprintGroupHTML(s,shown,allLive,aq)).join('');
-  h+=backlogHTML(shown,allLive,aq);
+  let h=sprints.map(s=>sprintGroupHTML(s,shown,allLive)).join('');
+  h+=backlogHTML(shown,allLive);
   h+=bumpHTML(shown,allLive);          // Backlog 아래: 정리 전 아이디어 인박스
   h+=completedLogHTML(r);
   $('sprintHost').innerHTML=h;
@@ -3776,13 +3832,13 @@ function groupBodyHTML(rows){
     return bgoalRow(g,true,col,pref)+(col?'':ch.map(c=>bgoalRow(c,false,false,0)).join(''));
   }).join('');
 }
-// 스프린트 그룹 (드롭 타깃)
-function sprintGroupHTML(s,shown,allLive,aq){
+// 스프린트 그룹 (드롭 타깃). AI 큐 박스는 더 이상 여기 끼워 넣지 않는다 — 큐는 큐 탭이
+// 유일한 홈이고, 진행 상황은 탭바 우측 노티가, 행선지는 큐 카드의 목적지 라벨이 알린다.
+function sprintGroupHTML(s,shown,allLive){
   const rows=shown.filter(g=>!g.bump&&boardSprint(g,_goals)===s.number);
   const members=allLive.filter(g=>!g.bump&&boardSprint(g,_goals)===s.number);   // 카운트는 전체 멤버 (Bump out 제외)
-  const q=aiQueueBoxHTML((aq||[]).filter(it=>(it.jobKind||'dedup')==='dedup'&&(it.sprint||0)===s.number));   // 이 스프린트로 담긴 dedup 큐 → 하단
-  const body=(rows.length?groupBodyHTML(rows)
-    :(q?'':'<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'여기로 목표를 끌어다 놓기')+'</div>'))+q;
+  const body=rows.length?groupBodyHTML(rows)
+    :'<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'여기로 목표를 끌어다 놓기')+'</div>';
   const col=_spCollapsed.has(s.number);
   return '<div class="spgrp'+(col?' collapsed':'')+'" ondragover="spOver(event)" ondragleave="spLeave(event)" ondrop="spDrop(event,'+s.number+')">'
     +'<div class="spgrp-hd">'
@@ -3798,12 +3854,11 @@ function sprintGroupHTML(s,shown,allLive,aq){
   +'</div>';
 }
 // Backlog (미배정) — Create sprint 버튼 포함. Bump out 인박스 아이템은 여기서 제외.
-function backlogHTML(shown,allLive,aq){
+function backlogHTML(shown,allLive){
   const rows=shown.filter(g=>!g.bump&&boardSprint(g,_goals)===0);
   const members=allLive.filter(g=>!g.bump&&boardSprint(g,_goals)===0);
-  const q=aiQueueBoxHTML((aq||[]).filter(it=>(it.jobKind||'dedup')==='dedup'&&(it.sprint||0)===0));   // 백로그로 담긴 dedup 큐 → 하단
-  const body=(rows.length?groupBodyHTML(rows)
-    :(q?'':'<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'미배정 목표가 없습니다')+'</div>'))+q;
+  const body=rows.length?groupBodyHTML(rows)
+    :'<div class="empty">'+(members.length?'필터에 맞는 목표가 없습니다 (상태 필터 확인)':'미배정 목표가 없습니다')+'</div>';
   const col=_spCollapsed.has('bg');
   return '<div class="spgrp bg'+(col?' collapsed':'')+'" ondragover="spOver(event)" ondragleave="spLeave(event)" ondrop="spDrop(event,0)">'
     +'<div class="spgrp-hd"><span class="spchev" onclick="toggleSpCollapse(\'bg\')" title="펼치기/접기">▾</span>'
@@ -4409,7 +4464,6 @@ try{ if(new URLSearchParams(location.search).get('plugins')==='1' && typeof open
 load();
 // 새로고침 후에도 localStorage 에 남은 초안이 있으면 이어쓰기 칩을 되살린다.
 try{ if(typeof updateGaDraftChip==='function') updateGaDraftChip(); }catch(e){}
-setInterval(liveTick,100);
 window.addEventListener('resize', load);
 // 부모 채우기 무장: Cmd(또는 Ctrl)를 누르는 동안 부모#칸이 채우기 소스로 강조된다.
 document.addEventListener('keydown',function(e){ if(e.key==='Meta'||e.key==='Control') document.body.classList.add('armparent'); });

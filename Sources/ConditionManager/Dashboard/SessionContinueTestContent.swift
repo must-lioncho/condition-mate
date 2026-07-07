@@ -1,0 +1,449 @@
+import Foundation
+
+// Standalone judging page served at GET /session-continue-test.
+//
+// v2 — A안(메신저형) CONFIRMED. This page is now a detail-level prototype of the messenger
+// session page, fully simulated in JS (nothing touches the running app). User feedback baked in:
+//   - AI replies are PLAIN TEXT (no chat bubble) like Claude Desktop; only user messages get a bubble
+//   - collapsible tool-use summaries ("실행됨 명령 N개, 사용함 도구 N개 ›") with per-item drill-down
+//     (core visible by default, full detail available for debugging)
+//   - generated file links open a context menu (브라우저에서 열기 / 링크 복사 / 마크다운으로 복사 /
+//     컨텍스트로 첨부 / 챕터로 고정) so files can be handled without a code editor
+//   - animated working indicator (working vs idle at a glance)
+//   - background agent lines ("백그라운드 작업 완료 Agent … finished · 2m 28s")
+//   - Claude Code-style detailed input bar (attach, model, context %, permission preset)
+// Real backend when wired: /api/goal/chat2 SSE + `claude -p --resume <linked session>`.
+enum SessionContinueTestContent {
+    static func html() -> String {
+        return #"""
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>세션 이어가기 — A안 디테일 테스트</title>
+<style>
+  :root{
+    --bg:#0b0c10; --panel:#15171f; --panel2:#1c1f2a; --line:#2a2e3c;
+    --txt:#e8eaf0; --dim:#9aa0b4; --dim2:#6b7188; --accent:#7c5cff; --accent2:#00d4c8;
+    --blue:#5b8cff; --ok:#33c98a; --warn:#ffb020; --work:#ff6b4a;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+    background:radial-gradient(1200px 700px at 70% -10%, #1a1a33 0%, var(--bg) 55%) fixed;
+    color:var(--txt); min-height:100vh; padding:18px 16px 40px;
+  }
+  .wrap{max-width:880px; margin:0 auto}
+  h1{font-size:19px; margin:0; letter-spacing:.2px}
+  .sub{color:var(--dim); font-size:12.5px; line-height:1.7; margin:6px 0 14px}
+  .sub b{color:var(--txt); font-weight:600}
+
+  /* compact session header */
+  .sesshead{display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 14px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:10px; font-size:12px}
+  .sesshead .badge{font-size:10.5px; padding:1px 7px; border-radius:9px; background:rgba(51,201,138,.14); color:var(--ok); border:1px solid rgba(51,201,138,.35)}
+  .sesshead .stitle{flex:1; min-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .sesshead .kv{color:var(--dim)}
+  .sesshead .kv b{color:var(--txt); font-weight:600}
+
+  /* case chips */
+  .cases{display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px}
+  .cases .lbl{font-size:11.5px; color:var(--dim2); align-self:center}
+  .casebtn{padding:6px 13px; border-radius:18px; border:1px solid var(--line); background:var(--panel); color:var(--txt); font-size:12px; cursor:pointer}
+  .casebtn:hover{border-color:var(--accent)}
+  .casebtn:disabled{opacity:.4; cursor:default}
+
+  /* conversation stream */
+  .stream{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px 22px 16px;
+    min-height:320px; max-height:520px; overflow-y:auto}
+  .umsg{max-width:78%; margin:14px 0 14px auto; padding:10px 14px; border-radius:13px; font-size:13.5px; line-height:1.65;
+    background:rgba(91,140,255,.14); border:1px solid rgba(91,140,255,.28); white-space:pre-wrap}
+  .aimsg{font-size:13.5px; line-height:1.8; margin:14px 0; white-space:pre-wrap}
+  .aimsg b{font-weight:700}
+  .aimsg code{background:var(--panel2); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:12px; font-family:"SF Mono",Menlo,monospace}
+
+  /* file link + context menu */
+  a.flink{color:var(--blue); text-decoration:none; border-bottom:1px dashed rgba(91,140,255,.5); cursor:pointer}
+  a.flink:hover{border-bottom-style:solid}
+  .ctxmenu{position:fixed; z-index:50; background:#20232e; border:1px solid var(--line); border-radius:12px;
+    padding:6px; min-width:210px; box-shadow:0 12px 34px rgba(0,0,0,.5); display:none}
+  .ctxmenu div{padding:9px 13px; font-size:13px; border-radius:8px; cursor:pointer}
+  .ctxmenu div:hover{background:var(--panel2)}
+
+  /* tool-use summary + drill-down */
+  .toolsum{font-size:12px; color:var(--dim2); margin:10px 0 4px; cursor:pointer; user-select:none}
+  .toolsum:hover{color:var(--dim)}
+  .toolsum .arr{display:inline-block; transition:transform .15s; margin-left:3px}
+  .toolsum.open .arr{transform:rotate(90deg)}
+  .toolbox{display:none; border:1px solid var(--line); border-radius:11px; padding:6px 8px; margin:4px 0 10px; background:rgba(0,0,0,.18)}
+  .toolbox.open{display:block}
+  .titem{font-size:12.5px; color:var(--dim); padding:7px 8px; border-radius:7px; cursor:pointer; user-select:none}
+  .titem:hover{background:var(--panel2); color:var(--txt)}
+  .titem .arr{float:right; color:var(--dim2)}
+  .tdetail{display:none; margin:2px 8px 8px; padding:9px 11px; border-left:2px solid var(--line);
+    font-family:"SF Mono",Menlo,monospace; font-size:11px; line-height:1.6; color:var(--dim); white-space:pre-wrap}
+  .tdetail.open{display:block}
+
+  /* background task + system lines */
+  .bgline{font-size:12px; color:var(--dim2); margin:12px 0; display:flex; align-items:center; gap:7px}
+  .bgline .sp{width:10px; height:10px; border:2px solid var(--dim2); border-top-color:var(--accent2); border-radius:50%;
+    animation:spin 1s linear infinite; flex:none}
+  .bgline.done .sp{display:none}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* working indicator */
+  .statusrow{display:flex; align-items:center; gap:9px; font-size:12px; color:var(--dim); padding:9px 4px 7px}
+  .star{width:16px; height:16px; flex:none; position:relative}
+  .star svg{width:16px; height:16px; display:block}
+  .star.working svg{animation:starspin 1.6s linear infinite; fill:var(--work)}
+  .star.working{filter:drop-shadow(0 0 6px rgba(255,107,74,.6))}
+  .star.idle svg{fill:var(--dim2)}
+  @keyframes starspin{0%{transform:rotate(0) scale(1)}50%{transform:rotate(180deg) scale(.82)}100%{transform:rotate(360deg) scale(1)}}
+  .stxt.working{color:var(--work)}
+
+  /* input bar (Claude Code style) */
+  .inputwrap{border:1px solid var(--line); border-radius:14px; background:var(--panel); margin-top:10px; padding:10px 12px 8px}
+  .inputwrap:focus-within{border-color:var(--accent)}
+  .attachrow{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:7px}
+  .attachrow:empty{display:none}
+  .attachchip{font-size:11.5px; padding:3px 10px; border-radius:14px; background:var(--panel2); border:1px solid var(--line); color:var(--accent2)}
+  .attachchip span{cursor:pointer; color:var(--dim2); margin-left:6px}
+  .inputwrap textarea{width:100%; resize:none; height:52px; border:none; background:transparent; color:var(--txt);
+    font-size:13.5px; font-family:inherit; outline:none; line-height:1.55}
+  .inbar{display:flex; align-items:center; gap:7px; margin-top:6px}
+  .inchip{font-size:11px; padding:3px 10px; border-radius:14px; background:var(--panel2); border:1px solid var(--line); color:var(--dim); cursor:pointer}
+  .inchip:hover{color:var(--txt)}
+  .inbar .grow{flex:1}
+  .sendbtn{width:34px; height:34px; border-radius:10px; border:none; background:var(--accent); color:#fff; font-size:15px; cursor:pointer}
+  .sendbtn:disabled{opacity:.4; cursor:default}
+  .inhint{font-size:10.5px; color:var(--dim2); margin-top:6px}
+
+  /* toast */
+  #toast{position:fixed; bottom:26px; left:50%; transform:translateX(-50%); background:#20232e; border:1px solid var(--line);
+    border-radius:11px; padding:10px 18px; font-size:12.5px; display:none; z-index:60; box-shadow:0 10px 28px rgba(0,0,0,.45)}
+
+  /* judge checklist */
+  .judge{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 16px; margin-top:16px}
+  .judge h2{font-size:13px; margin:0 0 9px; color:var(--dim); font-weight:600; letter-spacing:.3px}
+  .judge ul{margin:0; padding-left:18px; font-size:12.5px; line-height:1.9; color:var(--dim)}
+  .judge li b{color:var(--txt); font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>세션 이어가기 — A안 메신저형 · 디테일 테스트 v2</h1>
+  <p class="sub">
+    <b>AI 응답은 말풍선 없이 일반 텍스트</b>(사용자 메시지만 버블), 도구 실행은 <b>핵심 요약 + 펼쳐보기</b>,
+    생성된 파일은 <b>클릭 → 컨텍스트 메뉴</b>, 작동 상태는 <b>애니메이션 아이콘</b>으로. 아래 케이스 버튼을 눌러
+    각 디테일을 체험해 보세요. 직접 입력해도 됩니다. 전부 시뮬레이션 — 실제 세션은 건드리지 않아요.
+  </p>
+
+  <div class="sesshead">
+    <span class="badge">세션</span>
+    <span class="stitle">브금관리를 장소이동으로 본다면 컨디션 관리라 좀더 나을듯 싶은데…</span>
+    <span class="kv">상태 <b>진행</b></span>
+    <span class="kv">작업 <b>2시간 14분</b></span>
+    <span class="kv">가치·토큰 <b id="hTok">38 · 12.4K</b></span>
+  </div>
+
+  <div class="cases">
+    <span class="lbl">케이스:</span>
+    <button class="casebtn" onclick="runCase('file')">① 파일 생성 + 컨텍스트 메뉴</button>
+    <button class="casebtn" onclick="runCase('debug')">② 도구 디테일 드릴다운</button>
+    <button class="casebtn" onclick="runCase('bg')">③ 백그라운드 위임</button>
+    <button class="casebtn" onclick="runCase('qa')">④ 짧은 질답</button>
+  </div>
+
+  <div class="stream" id="stream">
+    <div class="umsg">브금관리를 장소이동으로 본다면 컨디션 관리라 좀더 나을듯 싶은데, 저녁에 야근한다고 밥먹고 오면 지치는데 반대로 라운지 간다면 컨디션 관리가 좋을듯. 이런 효과를 얻고싶어</div>
+    <div class="aimsg">컨셉 이해했어요 — BGM 전환을 "가상 장소 이동"으로 프레이밍해서(야근 때 라운지 가듯이) 컨디션 회복 효과를 노리는 방향이죠. 의사결정용 테스트 페이지를 먼저 만들기 위해 기존 BGM/컨디션 구조부터 빠르게 확인할게요.</div>
+  </div>
+
+  <div class="statusrow">
+    <span class="star idle" id="star"><svg viewBox="0 0 24 24"><path d="M12 0l2.1 7.5L21 5.2l-4.9 5.9L23 12l-6.9.9L21 18.8l-6.9-2.3L12 24l-2.1-7.5L3 18.8l4.9-5.9L1 12l6.9-.9L3 5.2l6.9 2.3z"/></svg></span>
+    <span class="stxt" id="stxt">대기 중 — 지시를 입력하면 이 세션(claude -p --resume 47517d67…)으로 이어집니다</span>
+  </div>
+
+  <div class="inputwrap">
+    <div class="attachrow" id="attachRow"></div>
+    <textarea id="input" placeholder="이어서 지시하기… (@로 파일 언급, ⇧Enter 줄바꿈)"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendFree()}"></textarea>
+    <div class="inbar">
+      <span class="inchip" onclick="toast('첨부: 이미지/파일을 붙여넣거나 드래그 (목업)')">＋ 첨부</span>
+      <span class="inchip">Fable 5</span>
+      <span class="inchip">컨텍스트 12%</span>
+      <span class="inchip" onclick="toast('권한 프리셋: 읽기/검색 자동승인, 쓰기/실행은 확인 (목업)')">권한 · 안전한 도구만</span>
+      <span class="grow"></span>
+      <button class="sendbtn" id="sendBtn" onclick="sendFree()">↵</button>
+    </div>
+    <div class="inhint">Enter 전송 · ⇧Enter 줄바꿈 · 응답 중에도 입력해 두면 다음 턴으로 큐잉 (목업)</div>
+  </div>
+
+  <div class="judge">
+    <h2>판단 포인트 (이 페이지에서 확인할 것)</h2>
+    <ul>
+      <li><b>말풍선 없는 AI 텍스트</b> — 읽는 흐름이 문서처럼 자연스러운가</li>
+      <li><b>도구 요약 › 펼치기 › 항목별 상세</b> — 평소엔 핵심만, 디버깅 땐 명령/출력까지 (케이스 ②)</li>
+      <li><b>파일 링크 컨텍스트 메뉴</b> — 브라우저 열기/복사/컨텍스트 첨부/챕터 고정, 에디터 없이 다음 지시 가능 (케이스 ①)</li>
+      <li><b>작동 애니메이션</b> — 주황 별이 돌면 작업 중, 회색이면 대기 — 한눈에 상태 구분</li>
+      <li><b>백그라운드 작업 라인</b> — 위임한 에이전트의 시작/완료가 대화 흐름에 남음 (케이스 ③)</li>
+      <li><b>입력창 디테일</b> — 첨부/모델/컨텍스트%/권한 프리셋 + 컨텍스트 첨부 칩</li>
+    </ul>
+  </div>
+</div>
+
+<div class="ctxmenu" id="ctxmenu"></div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+var stream = document.getElementById('stream');
+var busy = false;
+
+/* ---------- status indicator ---------- */
+function setWorking(on, label){
+  var star = document.getElementById('star'), stxt = document.getElementById('stxt');
+  star.className = 'star ' + (on ? 'working' : 'idle');
+  stxt.className = 'stxt' + (on ? ' working' : '');
+  stxt.textContent = on ? (label || '작업 중…')
+    : '대기 중 — 지시를 입력하면 이 세션(claude -p --resume 47517d67…)으로 이어집니다';
+  document.getElementById('sendBtn').disabled = on;
+  busy = on;
+}
+
+/* ---------- stream primitives ---------- */
+function scrollBottom(){ stream.scrollTop = stream.scrollHeight; }
+function addUser(text){
+  var d = document.createElement('div');
+  d.className = 'umsg';
+  d.textContent = text;
+  stream.appendChild(d); scrollBottom();
+}
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+
+// Plain-text AI message, streamed word by word. Supports {file:...} placeholders.
+function addAI(text, done){
+  var d = document.createElement('div');
+  d.className = 'aimsg';
+  stream.appendChild(d);
+  var words = text.split(' ');
+  var i = 0, buf = '';
+  var timer = setInterval(function(){
+    if(i >= words.length){
+      clearInterval(timer);
+      d.innerHTML = renderInline(buf);
+      scrollBottom();
+      if(done) done();
+      return;
+    }
+    buf += (i ? ' ' : '') + words[i]; i++;
+    d.innerHTML = renderInline(buf);
+    scrollBottom();
+  }, 42);
+}
+// [[file:name.html]] → context-menu link, `code` → code span
+function renderInline(s){
+  return esc(s)
+    .replace(/\[\[file:([^\]]+)\]\]/g, '<a class="flink" onclick="openCtx(event,\'$1\')">$1</a>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+/* ---------- tool-use summary + drill-down ---------- */
+var tid = 0;
+function addTools(cmdCount, items){
+  tid++;
+  var id = 'tb' + tid;
+  var sum = document.createElement('div');
+  sum.className = 'toolsum';
+  sum.innerHTML = '실행됨 명령 ' + cmdCount + '개, 사용함 도구 ' + items.length + '개 <span class="arr">›</span>';
+  sum.onclick = function(){
+    sum.classList.toggle('open');
+    document.getElementById(id).classList.toggle('open');
+  };
+  var box = document.createElement('div');
+  box.className = 'toolbox'; box.id = id;
+  items.forEach(function(it, i){
+    var row = document.createElement('div');
+    row.className = 'titem';
+    row.innerHTML = esc(it.label) + ' <span class="arr">›</span>';
+    var det = document.createElement('div');
+    det.className = 'tdetail';
+    det.textContent = it.detail;
+    row.onclick = function(){ det.classList.toggle('open'); };
+    box.appendChild(row); box.appendChild(det);
+  });
+  stream.appendChild(sum); stream.appendChild(box); scrollBottom();
+}
+
+/* ---------- background task line ---------- */
+function addBG(startLabel, doneLabel, ms, after){
+  var d = document.createElement('div');
+  d.className = 'bgline';
+  d.innerHTML = '<span class="sp"></span><span>백그라운드 작업 시작 — ' + esc(startLabel) + '</span>';
+  stream.appendChild(d); scrollBottom();
+  setTimeout(function(){
+    d.classList.add('done');
+    d.innerHTML = '<span>✓ 백그라운드 작업 완료 — ' + esc(doneLabel) + '</span>';
+    scrollBottom();
+    if(after) after();
+  }, ms);
+}
+
+/* ---------- token counter ---------- */
+var tok = 12.4, val = 38;
+function bumpTok(dt, dv){
+  tok += dt; val += dv;
+  document.getElementById('hTok').textContent = val + ' · ' + tok.toFixed(1) + 'K';
+}
+
+/* ---------- context menu ---------- */
+var ctxFile = '';
+var ctxItems = [
+  ['브라우저에서 열기', function(){ toast(ctxFile + ' — 새 탭에서 열기 (목업)'); }],
+  ['링크 복사', function(){ toast('링크 복사됨'); }],
+  ['메시지 복사', function(){ toast('메시지 복사됨'); }],
+  ['마크다운으로 복사', function(){ toast('마크다운으로 복사됨'); }],
+  ['메시지를 컨텍스트로 첨부', function(){ attachCtx(ctxFile); }],
+  ['챕터로 고정', function(){ toast('챕터로 고정됨 — 목차에서 바로 이동 (목업)'); }]
+];
+function openCtx(ev, file){
+  ev.stopPropagation();
+  ctxFile = file;
+  var m = document.getElementById('ctxmenu');
+  m.innerHTML = '';
+  ctxItems.forEach(function(it){
+    var d = document.createElement('div');
+    d.textContent = it[0];
+    d.onclick = function(){ m.style.display = 'none'; it[1](); };
+    m.appendChild(d);
+  });
+  m.style.display = 'block';
+  var x = Math.min(ev.clientX, window.innerWidth - 240);
+  var y = Math.min(ev.clientY, window.innerHeight - 300);
+  m.style.left = x + 'px'; m.style.top = y + 'px';
+}
+document.addEventListener('click', function(){ document.getElementById('ctxmenu').style.display = 'none'; });
+
+function attachCtx(name){
+  var row = document.getElementById('attachRow');
+  var chip = document.createElement('span');
+  chip.className = 'attachchip';
+  chip.innerHTML = '📎 ' + esc(name) + '<span onclick="this.parentNode.remove()">✕</span>';
+  row.appendChild(chip);
+  toast('컨텍스트로 첨부됨 — 다음 지시에 함께 전달');
+  document.getElementById('input').focus();
+}
+
+/* ---------- toast ---------- */
+var toastTimer;
+function toast(msg){
+  var t = document.getElementById('toast');
+  t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.style.display = 'none'; }, 2200);
+}
+
+/* ---------- scenarios ---------- */
+function runCase(k){
+  if(busy) return;
+  var input = {
+    file:  '라운지 프리셋 3종 만들고 테스트 페이지로 보여줘',
+    debug: '왜 새벽 3시에 하이 BPM 트랙이 나왔는지 조사해줘',
+    bg:    'BGM 라이브러리 전체를 무드별로 분류해줘. 오래 걸리면 백그라운드로 돌려',
+    qa:    '지금 라운지 프리셋에 몇 곡 들어있지?'
+  }[k];
+  addUser(input);
+  if(k === 'file') caseFile();
+  if(k === 'debug') caseDebug();
+  if(k === 'bg') caseBG();
+  if(k === 'qa') caseQA();
+}
+
+function caseFile(){
+  setWorking(true, '작업 중 — 세션 재개, 파일 생성');
+  setTimeout(function(){
+    addTools(2, [
+      {label:'Read Sources/ConditionManager/BGM/BGMLibrary.swift', detail:'214 lines — 트랙 메타(BPM/톤 태그) 구조 확인'},
+      {label:'Read Sources/ConditionManager/Core/ConditionDirector.swift', detail:'현재 선곡: 활동량 → 목표 BPM → 최근접 트랙'},
+      {label:'Write place-shift-test.html', detail:'+182 lines — 라운지/서재/새벽카페 3종 프리셋, 크로스페이드 2초'},
+      {label:'Bash swift build', detail:'$ swift build\nBuild complete! (4.2s)'},
+      {label:'Bash open check', detail:'$ curl -s localhost:59674/place-shift-test | head -1\n<!doctype html>'}
+    ]);
+    setTimeout(function(){
+      addAI('라운지 프리셋 3종(라운지 / 서재 / 새벽 카페)을 만들어 테스트 페이지로 묶었어요. 각 장소는 BPM 밴드 + 톤 태그 조합이고 전환은 크로스페이드 2초입니다. 결과물: [[file:place-shift-test.html]] — 링크를 클릭하면 열기/복사/컨텍스트 첨부 등 바로 다음 지시로 이을 수 있어요. 에디터를 열 필요 없이 이 페이지에서 확인하고 지시하면 됩니다.', function(){
+        setWorking(false); bumpTok(2.1, 1);
+      });
+    }, 900);
+  }, 1100);
+}
+
+function caseDebug(){
+  setWorking(true, '작업 중 — 로그 조사');
+  setTimeout(function(){
+    addTools(3, [
+      {label:'Grep "phase" activity/activity-2026-07-07.jsonl', detail:'03:00~03:40 구간 42건 매치 — phase:PEAK 유지'},
+      {label:'Read ~/.condition-manager/activity/activity-2026-07-07.jsonl (tail)', detail:'{"t":…,"rate":41,"active":60,"phase":"PEAK","bpm":150,…}\n새벽인데 active 60초 연속 → 야간 작업으로 판정됨'},
+      {label:'Read Sources/ConditionManager/Core/ConditionDirector.swift:88', detail:'phase 판정에 시간대 가중치 없음 — 활동량만 반영'},
+      {label:'Bash grep -n "night" Sources/**/*.swift', detail:'0 matches — 야간 감쇠 로직 미구현'},
+      {label:'Read track-playstats.json', detail:'[147] Neon Sprint — 03:12 재생, bpm 150'},
+      {label:'Bash tail -5 app.log', detail:'03:12:04 director pick bpm=150 (rate 41 → target 148)'}
+    ]);
+    setTimeout(function(){
+      addAI('원인 찾았어요. 새벽 3시에도 활동량(rate 41)이 높아서 `ConditionDirector`가 PEAK로 판정 → 목표 BPM 148 → [147] Neon Sprint(150)가 선곡됐습니다. 지금 로직에는 시간대 가중치가 없어서 밤샘 작업이 낮 피크와 똑같이 취급돼요. 도구 목록을 펼치면 판정 근거 로그를 그대로 볼 수 있습니다 — 평소엔 접혀 있으니 대화는 깔끔하게 유지되고요. 야간(00~06시) 감쇠 규칙을 추가할까요?', function(){
+        setWorking(false); bumpTok(1.6, 1);
+      });
+    }, 1000);
+  }, 1200);
+}
+
+function caseBG(){
+  setWorking(true, '작업 중 — 위임 준비');
+  setTimeout(function(){
+    addAI('라이브러리 210곡 전체 분류는 시간이 걸리니 백그라운드 에이전트로 위임할게요. 진행 상황은 이 흐름에 표시되고, 완료되면 결과가 이어서 붙습니다. 그동안 다른 지시를 계속 주셔도 돼요.', function(){
+      setWorking(false);
+      addBG('Agent "BGM mood classification" 실행 중 (claude -p, CM_SUPPRESS_SESSION_GOAL=1)',
+            'Agent "BGM mood classification" finished · 1m 42s', 5000, function(){
+        addTools(1, [
+          {label:'Agent 결과 수신 — 분류 리포트', detail:'라운지 58곡 · 집중 74곡 · 하이 46곡 · 무드미상 32곡\n무드미상은 BPM만 있고 톤 태그 없음'}
+        ]);
+        addAI('분류 끝났습니다. 라운지 58곡, 집중 74곡, 하이 46곡, 태그가 없어 분류 못 한 곡이 32곡이에요. 미분류 32곡은 파형 분석으로 태그를 추정할 수 있는데, 이것도 백그라운드로 돌릴까요?', function(){
+          bumpTok(4.8, 2);
+        });
+      });
+    });
+  }, 900);
+}
+
+function caseQA(){
+  setWorking(true, '응답 중');
+  setTimeout(function(){
+    addAI('라운지 프리셋에는 현재 6곡이 들어 있어요 — BPM 70~95 밴드에서 잔향 태그가 있는 트랙들입니다. 도구 실행 없이 답할 수 있는 질문은 이렇게 바로, 말풍선 없는 플레인 텍스트로 이어집니다.', function(){
+      setWorking(false); bumpTok(0.4, 0);
+    });
+  }, 800);
+}
+
+/* free input → generic reply (cycles) */
+var freeIdx = 0;
+function sendFree(){
+  if(busy) return;
+  var input = document.getElementById('input');
+  var msg = input.value.trim();
+  if(!msg) return;
+  input.value = '';
+  // consume attached context chips
+  var row = document.getElementById('attachRow');
+  var ctx = Array.prototype.map.call(row.querySelectorAll('.attachchip'), function(c){ return c.textContent.replace('✕','').trim(); });
+  row.innerHTML = '';
+  addUser(msg + (ctx.length ? '\n(컨텍스트: ' + ctx.join(', ') + ')' : ''));
+  var flows = [caseFile, caseDebug, caseQA];
+  flows[freeIdx % flows.length]();
+  freeIdx++;
+}
+</script>
+</body>
+</html>
+"""#
+    }
+}

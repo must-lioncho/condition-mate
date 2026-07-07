@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>리포트 하루 기준 안내 (확정)</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #1a1d24; --card2: #22262f; --line: #2e333d;
+    --txt: #e8eaed; --sub: #9aa0aa; --green: #34d399; --amber: #fbbf24; --blue: #60a5fa;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--txt); font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; padding: 32px; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 6px; }
+  h2 { font-size: 16px; margin: 28px 0 10px; color: var(--blue); }
+  p.lead { color: var(--sub); font-size: 13.5px; margin-bottom: 20px; line-height: 1.7; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; margin-left: 6px;
+           background: rgba(52,211,153,.15); color: var(--green); border: 1px solid rgba(52,211,153,.4); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .big-line { font-size: 20px; font-weight: 800; text-align: center; padding: 22px 10px; }
+  .big-line small { display: block; font-size: 13px; color: var(--sub); font-weight: 400; margin-top: 8px; }
+  .timeline { margin: 14px 0; }
+  .tl-row { display: flex; align-items: center; margin: 10px 0; }
+  .tl-label { width: 150px; font-size: 13px; color: var(--sub); flex-shrink: 0; }
+  .tl-bar { position: relative; height: 36px; flex: 1; background: var(--card2); border-radius: 6px; overflow: hidden; }
+  .tl-seg { position: absolute; top: 0; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+  .tick-row { display: flex; margin-left: 150px; font-size: 11px; color: var(--sub); }
+  .tick { flex: 1; }
+  .note { background: rgba(52,211,153,.08); border: 1px solid rgba(52,211,153,.3); border-radius: 10px; padding: 14px 16px; font-size: 13.5px; line-height: 1.8; margin: 14px 0; }
+  .mock { background: #fff; color: #1e293b; border-radius: 10px; padding: 16px 18px; font-size: 13px; margin-top: 10px; }
+  .mock .title { font-size: 15px; font-weight: 800; }
+  .mock .mbadge { display: inline-block; background: #fef3c7; color: #92400e; border: 1px solid #f59e0b55; padding: 2px 10px; border-radius: 12px; font-size: 11.5px; font-weight: 700; margin-left: 6px; }
+</style>
+</head>
+<body>
+  <h1>리포트 하루 기준 안내 <span class="badge">C안 확정 · 2026-07-08</span></h1>
+  <p class="lead">이 리포트의 모든 일별 숫자(온체인 입출금, NSS 가입)는 같은 하루 기준을 씁니다.<br>
+  두 데이터 모두 실제로 확인했고, 기준이 동일합니다.</p>
+
+  <div class="card big-line">
+    하루 = 오전 9시 ~ 다음날 오전 9시 (한국시간)
+    <small>예: 표에 "7/7"로 적힌 숫자는 7월 7일 오전 9시부터 7월 8일 오전 9시까지의 합계입니다.</small>
+  </div>
+
+  <h2>그림으로 보면</h2>
+  <div class="card timeline">
+    <div class="tl-row">
+      <div class="tl-label">표기일 "7/7"</div>
+      <div class="tl-bar">
+        <div class="tl-seg" style="left:0;width:37.5%;background:rgba(148,163,184,.25);color:var(--sub)">7/7 자정~오전9시는 "7/6"에 포함</div>
+        <div class="tl-seg" style="left:37.5%;width:62.5%;background:rgba(251,191,36,.3);color:var(--amber)">7/7 오전9시 ~ 7/8 오전9시 = "7/7"</div>
+      </div>
+    </div>
+    <div class="tick-row"><span class="tick">7/7 00:00</span><span class="tick" style="text-align:center">7/7 09:00</span><span class="tick" style="text-align:right">7/8 09:00</span></div>
+  </div>
+
+  <h2>리포트에는 이렇게 표시됩니다 (확정안)</h2>
+  <div class="mock">
+    <span class="title">온체인 · NSS 일일 보고</span>
+    <div style="margin-top:8px; line-height:1.9">
+      온체인 기준: <b>오전 9시 ~ 다음날 오전 9시 (KST)</b><br>
+      오프체인 기준시각: <b>2026-07-08 01:56 KST</b>
+    </div>
+    <div style="color:#64748b; font-size:12px; margin-top:8px">
+      온체인 숫자는 위 시간 범위로 하루를 계산하고, 오프체인(NSS) 숫자는 적힌 시각에 조회한 값입니다.<br>
+      리포트 맨 위에는 이 두 줄만 붙습니다.</div>
+  </div>
+
+  <div class="note">
+    <b>기억할 것 한 가지:</b> "오늘" 숫자는 오전 9시에 하루가 시작되므로,
+    아침에 뽑은 리포트의 마지막 날짜는 아직 채워지는 중일 수 있습니다.
+    그래서 리포트는 기본적으로 <b>어제까지</b>의 완성된 숫자만 담습니다.
+  </div>
+</body>
+</html>

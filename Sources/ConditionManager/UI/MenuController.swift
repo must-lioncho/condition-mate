@@ -54,7 +54,8 @@ final class MenuController: NSObject, NSMenuDelegate {
         // --- Condition / BGM status ---
         if d.director.isActive {
             let app = d.activeAppLabel.isEmpty ? "" : " · \(d.activeAppLabel)"
-            addDisabled("전략: \(d.director.activeProfileLabel)\(app)")
+            let plan = d.bgmPlan.slot().map { " · 플랜 \($0.label)" } ?? ""
+            addDisabled("전략: \(d.director.activeProfileLabel)\(plan)\(app)")
             addDisabled("컨디션: \(d.director.phase.rawValue) · 목표 \(Int(d.director.targetBPM)) BPM")
             if let remain = d.director.releaseRemaining {
                 addDisabled("  릴리즈 \(Int(remain / 60))분 \(Int(remain.truncatingRemainder(dividingBy: 60)))초 남음")
