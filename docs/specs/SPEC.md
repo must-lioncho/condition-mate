@@ -1013,6 +1013,34 @@ PASS로 재검증함(라이브 근거는 위 DASH-6/DASH-7의 RESOLVED 메모 �
   fallback keeps music playing (no silence). `/bgm-plan` page verified 2026-07-08 via node DOM-stub
   render (13/13 assertions: band strips, wrap split, now cursor, counts, opener/note) plus a
   static-server screenshot pass.
+- **EP-11 — `POST /api/bgm/rain {action}` + 폭우 리셋 mechanic (added 2026-07-08, 전략3).**
+  EN: An activity-triggered "rain reset". `ConditionDirector` builds *focus credit* while the
+  smoothed activity `norm` ≥ 0.7; once ≥30 ticks (~10 min) of credit accrue AND `norm` then drops
+  below 0.5, it rolls a 25%/tick die and — on a hit, at most ONCE per calendar day
+  (`rain-reset.txt` holds the day-string) — summons a 1-hour reset from the `heavy_rain` pool. While
+  raining, `inActivePool` gates selection to `heavy_rain` only (winning over the plan slot — which
+  no longer schedules rain: the old 심야 slot is now `snow`/`peace` "고요한 밤"); when the hour
+  elapses (`rainUntil`), `endRain()` warms back up and returns to plan selection. `director.gearLabel`
+  → "폭우"; `/api/bgm/now` and `/data.json` `now.plan` → "🌧 폭우 리셋 N분". The lifecycle logs to
+  `worker-logs/director.jsonl` (WorkerRegistry), not `app.log`. `POST /api/bgm/rain {"action":"start"}`
+  force-starts (bypassing eligibility + daily limit) and `{"action":"stop"}` ends early — a
+  debug/preview hook; any missing/invalid action is a `{"ok":false}` no-op (a malformed body can NOT
+  summon rain).
+  KO: 활동 기반 "폭우 리셋". `ConditionDirector`가 평활 활동 `norm` ≥ 0.7이면 *몰입 크레딧*을
+  쌓고, ~10분(30틱) 이상 쌓인 상태에서 `norm`이 0.5 아래로 떨어지면 25%/틱 확률로 주사위를 굴려
+  — 적중 시 하루 1회(`rain-reset.txt`에 날짜 기록) — `heavy_rain` 풀에서 1시간 리셋을 소환한다.
+  폭우 중엔 `inActivePool`이 `heavy_rain`만 허용(플랜 슬롯을 이김 — 이제 폭우는 스케줄에 없음: 옛
+  심야 슬롯은 `snow`/`peace` "고요한 밤"으로 교체). 1시간 경과 시 `endRain()`이 워밍업 후 플랜 선곡
+  복귀. `gearLabel`→"폭우", `now.plan`→"🌧 폭우 리셋 N분". 로그는 `app.log`가 아니라
+  `worker-logs/director.jsonl`. `POST /api/bgm/rain {"action":"start"|"stop"}`는 디버그/프리뷰 훅으로
+  강제 시작/조기 종료하며, action이 없거나 잘못되면 `{"ok":false}` no-op(잘못된 바디가 폭우를 부를 수 없음).
+  Verify: isolated instance 2026-07-08 (manager-qa) — heavy_rain 9곡 로드(id 70-78, bpm 110); 강제
+  start → 다음 tick에 `now.plan:"🌧 폭우 리셋 59분"` + id 70(heavy_rain), `director.jsonl`에 "폭우
+  리셋 발동" 라인; `rain-reset.txt`=오늘 날짜; stop → 즉시 플랜 슬롯("수 아침 · 대항해")·비-heavy_rain
+  트랙 복귀 + "복귀" 라인; 심야 슬롯=snow/peace, heavy_rain 스케줄 슬롯 0개; 신규 세션 60초 관찰 시
+  자발 폭우 없음(크레딧 미달로 구조적 불가). 자격 판정 로직은 standalone Swift 스크립트 9/9 통과
+  (repo에 XCTest 타겟은 없음 — 라이브 상태머신 4회 실행으로 동등 검증). malformed body 4종 무크래시
+  (수정 후 `{"ok":false}` no-op).
 
 ### Intent audit — P6
 EN: Code matches intent — PASS on EP-1..EP-6 and EP-7..EP-9 (added 2026-07-06), live-verified this

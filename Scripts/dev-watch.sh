@@ -11,6 +11,15 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# Dev mode: tell the app not to grab the foreground / auto-pop its window on every rebuild-
+# relaunch (AppPaths.isDev). Without this, the watch loop keeps covering the editor. The window
+# still opens from the menu bar. Passed via `open --env` below (NOT a plain shell export — `open`
+# hands the app to launchd, which does not inherit this shell's environment).
+# Set CM_DEV_AUTO_OPEN=1 before running this to auto-open the window after each rebuild
+# (for dashboard-UI sessions); it is forwarded through when present.
+DEV_ENV=(--env CM_DEV=1)
+[ -n "${CM_DEV_AUTO_OPEN:-}" ] && DEV_ENV+=(--env "CM_DEV_AUTO_OPEN=$CM_DEV_AUTO_OPEN")
+
 APP="$PWD/.dev/ConditionManager.app"
 BIN="$PWD/.build/debug/ConditionManager"
 # Watch only our own Swift sources + the plist (skip the vendored node_modules under Plugins).
@@ -33,8 +42,8 @@ build_and_run() {
     codesign --force --sign - "$APP" >/dev/null 2>&1 || true
     pkill -f "$APP/Contents/MacOS/ConditionManager" 2>/dev/null || true
     sleep 0.4
-    open "$APP"
-    echo "==> relaunched $(date +%H:%M:%S)"
+    open "${DEV_ENV[@]}" "$APP"
+    echo "==> relaunched $(date +%H:%M:%S) — CM_DEV on (window stays in the menu bar; click to open)"
 }
 
 build_and_run

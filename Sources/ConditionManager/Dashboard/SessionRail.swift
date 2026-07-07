@@ -527,8 +527,8 @@ enum SessionRail {
             fetch('/api/session/control',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({action:'stop'})}).catch(function(){});
             // 포모도로 성공 → 장비 EXP: the server counts the last 25 minutes' real
-            // usage (skills/chat/workers) and grants the reward to the most-used
-            // equipment category (EquipmentStore.recordPomodoro).
+            // USER actions (skill executions, chat messages) and grants the reward
+            // to the most-used equipment category (EquipmentStore.recordPomodoro).
             fetch('/api/equipment/pomodoro',{method:'POST',headers:{'Content-Type':'application/json'},
               body:'{}'}).catch(function(){});
             cmChReward=true; cmChDone=false; cmChRender();

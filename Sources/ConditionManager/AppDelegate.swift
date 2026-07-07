@@ -377,7 +377,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if Settings.shared.bgmWindowEnabled {
             setBGMEnabled(true)
             dashboard.start { [weak self] port in
-                DispatchQueue.main.async { self?.appWindow.autoOpen(port: port, mode: .dashboard) }
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    // Dev (CM_DEV): a dev-watch rebuild relaunches the process on every save, so
+                    // auto-popping the window in front here would keep covering the editor. Start
+                    // the server (done above) but leave the window closed — open it from the menu
+                    // bar when wanted. Opt back in for dashboard-UI sessions with CM_DEV_AUTO_OPEN=1.
+                    if AppPaths.isDev && !AppPaths.devAutoOpen {
+                        AppLog.log("dev mode (CM_DEV): skip launch auto-open — open the window from the menu bar")
+                        return
+                    }
+                    self.appWindow.autoOpen(port: port, mode: .dashboard)
+                }
             }
         }
         AppLog.log("bgm auto-open on launch: bgmWindowEnabled=\(Settings.shared.bgmWindowEnabled)")
@@ -2243,11 +2254,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return s
     }
 
-    // Real usage-event counts per equipment category over the last `window` seconds —
-    // the pomodoro EXP attribution input. v1 sources (all real logs, no estimates):
-    // skills = skill executions (skillUsageEvents), chat = dashboard chat user
-    // messages, cron = workers that fired. 위임/팀/플러그인 have no per-event log yet
-    // → absent (the store falls back to 대화/기본기 when nothing at all was counted).
+    // USER-driven usage-event counts per equipment category over the last `window`
+    // seconds — the pomodoro EXP attribution input. Only deliberate user actions
+    // count: skills = skill executions (skillUsageEvents), chat = dashboard chat
+    // user messages. Autonomous activity is deliberately EXCLUDED — background
+    // workers fire 24/7 regardless of what the user does, so counting them would
+    // hand every pomodoro's EXP to 워커 (confirmed in testing). 위임/워커/팀/
+    // 플러그인 join once they have a user-action signal; with no usage at all the
+    // store falls back to 대화 (기본기).
     private func equipmentUsage(within window: TimeInterval) -> [String: Int] {
         let cutoff = Date().timeIntervalSince1970 - window
         var usage: [String: Int] = [:]
@@ -2258,7 +2272,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         usage["chat"] = chatStore.messages.filter {
             $0.role == "user" && $0.createdAt.timeIntervalSince1970 >= cutoff
         }.count
-        usage["cron"] = WorkerRegistry.shared.runsWithin(window)
         return usage
     }
 
@@ -3212,8 +3225,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 폭우 리셋 manual trigger — normally the director summons it from activity, but
         // this lets QA and the user preview it on demand. {action:"start"} forces a rain
         // reset now (bypassing eligibility + daily limit); {action:"stop"} ends it early.
+        // Require an EXPLICIT valid action so a malformed/empty body can't accidentally
+        // summon rain (it would otherwise fall through to the default and start).
         if path == "/api/bgm/rain" {
-            let action = (obj["action"] as? String) ?? "start"
+            guard let action = obj["action"] as? String, action == "start" || action == "stop" else {
+                return "{\"ok\":false,\"error\":\"action must be start|stop\"}"
+            }
             DispatchQueue.main.sync { self.director?.triggerRain(stop: action == "stop") }
             return "{\"ok\":true}"
         }

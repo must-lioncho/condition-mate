@@ -62,4 +62,20 @@ enum AppPaths {
     }
     // Short label for the active data dir (its folder name), shown next to the badge.
     static var label: String { base.lastPathComponent }
+
+    // Dev-mode flag, set by Scripts/dev-watch.sh (CM_DEV=1). When on, the app must not grab
+    // the foreground or pop its window in front on a rebuild-relaunch — a watch loop restarts
+    // the process on every save, so an intrusive relaunch keeps covering the editor. The switch
+    // is EXPLICIT (env only), never inferred, so packaged/installed and dev-run behavior are
+    // unchanged unless the watch loop opts in.
+    static var isDev: Bool {
+        !(ProcessInfo.processInfo.environment["CM_DEV"] ?? "").isEmpty
+    }
+
+    // Opt back into launch auto-open while in dev, for sessions where you ARE iterating on the
+    // dashboard UI and want to see it after each rebuild (CM_DEV_AUTO_OPEN=1). Off by default so
+    // the common case (working in the editor) is never interrupted.
+    static var devAutoOpen: Bool {
+        !(ProcessInfo.processInfo.environment["CM_DEV_AUTO_OPEN"] ?? "").isEmpty
+    }
 }
