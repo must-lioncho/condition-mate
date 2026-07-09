@@ -18,8 +18,12 @@ import Foundation
 //   전략2 · 모드 플레이리스트 — per-session-mode playlists with pinned openers.
 //   전략3 · 플랜 맵          — pre-planned (평일/주말 × 시간대) theme pools (BGMPlanMap);
 //                              adaptive selection runs inside the planned pool.
+//   전략4 · 상태 인지형      — keeps the plan map as the executing hypothesis and scores
+//                              each slot's hit/miss from actions.jsonl feedback (dislike/
+//                              mute/completion). Phase 1 observes and displays only —
+//                              selection and the plan file are untouched.
 // All data accumulated before v2 is migrated as strategy 1; new time accrues under the
-// stored `activeStrategy` (NOT hardcoded — adding a future 전략4 is a data append: a new
+// stored `activeStrategy` (NOT hardcoded — adding a future 전략5 is a data append: a new
 // BGMStrategy entry + bumping activeStrategy; see migrateCatalog()).
 struct TrackPlayStat: Codable {
     var key: String
@@ -67,14 +71,21 @@ final class TrackPlayStatsStore {
     private(set) var stats: [String: TrackPlayStat] = [:]
     // The strategy new playback time accrues under. Stored in the JSON (seeded, never
     // hardcoded at the accrual sites) so a future strategy switch is a data change.
-    private(set) var activeStrategy = 3
+    private(set) var activeStrategy = 4
     private(set) var strategies: [BGMStrategy] = []
 
     private let fileURL: URL
 
+    // 전략3's retrospective, seeded when the 3→4 migration closes it (and on fresh
+    // installs). One constant so the migration and the seed catalog cannot drift.
+    private static let strategy3RetroSeed =
+        "요일×시간대 사전 계획은 실제로 잘 맞았지만(2026-07-10 00:00 '금 심야·애프터 라운지' 슬롯이 '딱 적절한 타이밍'으로 첫 적중), 계획이 맞는지/틀리는지 검증할 피드백 루프가 없었다 — actions.jsonl 기반 슬롯별 hit/miss 관측·교정 레이어(전략4)로 확장. 플랜 맵은 대체되지 않고 전략4의 실행 가설로 유지."
+
     // The known strategies, seeded on migration and on fresh installs. 전략2 began
     // 2026-07-08 (the per-mode playlist change); 전략1 is everything before it. 전략3
     // (플랜 맵) superseded 전략2 the same day — the mode lists remain as its fallback.
+    // 전략4 (상태 인지형) opened 2026-07-10: the plan map keeps executing while the app
+    // scores each slot's hit/miss from actions.jsonl (Phase 1: observe/display only).
     private static let seedStrategies: [BGMStrategy] = [
         BGMStrategy(id: 1, name: "액티비티 적응형", startedAt: "", endedAt: "2026-07-08",
                     summary: "활동 강도만 반영한 적응형 선곡",
@@ -82,8 +93,11 @@ final class TrackPlayStatsStore {
         BGMStrategy(id: 2, name: "모드 플레이리스트", startedAt: "2026-07-08", endedAt: "2026-07-08",
                     summary: "포모도로/스프린트/트래커 모드별 플레이리스트 + 고정 첫 곡, BPM 적응은 리스트 내부로 제한",
                     retro: "곡 편중은 줄였지만 요일·시간대 상황을 반영하지 못해 전략3(플랜 맵)으로 확장 — 모드 리스트는 플랜 공백 시 폴백으로 유지"),
-        BGMStrategy(id: 3, name: "플랜 맵", startedAt: "2026-07-08", endedAt: "",
+        BGMStrategy(id: 3, name: "플랜 맵", startedAt: "2026-07-08", endedAt: "2026-07-10",
                     summary: "요일(평일/주말)×시간대 사전 계획 맵(bgm-plan.json)이 테마 폴더 풀을 지정, 액티비티 적응 선곡은 풀 내부로 제한. 계획은 고급 모델이 미리, 실행은 앱이 즉시",
+                    retro: strategy3RetroSeed),
+        BGMStrategy(id: 4, name: "상태 인지형", startedAt: "2026-07-10", endedAt: "",
+                    summary: "전략3 플랜 맵을 가설로 유지하고, 컨디션맵 업무시작(8h 갭)·세션 진행/유휴·심야 활동과 actions.jsonl 피드백(싫어요·뮤트·완주)을 슬롯별 hit/miss로 채점하는 폐루프. 계획을 실행하며 동시에 검증·교정. Phase1은 관측·표시만(선곡·플랜 무변경).",
                     retro: ""),
     ]
 
@@ -184,7 +198,7 @@ final class TrackPlayStatsStore {
             s.strategy = 1
             return (Self.statKey(strategy: 1, key: s.key), s)
         }, uniquingKeysWith: { a, _ in a })
-        activeStrategy = 3
+        activeStrategy = 4
         strategies = Self.seedStrategies
         save()
     }
@@ -198,21 +212,41 @@ final class TrackPlayStatsStore {
         save()
     }
 
-    // One-time 전략2 → 전략3 catalog migration for files saved before 전략3 existed:
-    // close 전략2 (if still open), append the 전략3 entry, and point new accrual at it.
-    // Idempotent — once the catalog contains id 3 this is a no-op, so user-edited
-    // retro memos are never overwritten.
+    // One-time catalog migrations for files saved before a newer strategy existed:
+    // close the previous strategy (if still open), seed its retro (if untouched),
+    // append the new entry, and point new accrual at it. Each step is idempotent —
+    // once the catalog contains the new id it is a no-op, so user-edited retro memos
+    // are never overwritten.
     private func migrateCatalog() {
-        guard !strategies.contains(where: { $0.id == 3 }) else { return }
-        if let i = strategies.firstIndex(where: { $0.id == 2 }) {
-            if strategies[i].endedAt.isEmpty { strategies[i].endedAt = "2026-07-08" }
-            if strategies[i].retro.isEmpty {
-                strategies[i].retro = Self.seedStrategies[1].retro
+        var changed = false
+        // 2 → 3 (2026-07-08, 플랜 맵).
+        if !strategies.contains(where: { $0.id == 3 }) {
+            if let i = strategies.firstIndex(where: { $0.id == 2 }) {
+                if strategies[i].endedAt.isEmpty { strategies[i].endedAt = "2026-07-08" }
+                if strategies[i].retro.isEmpty {
+                    strategies[i].retro = Self.seedStrategies[1].retro
+                }
             }
+            if let entry = Self.seedStrategies.first(where: { $0.id == 3 }) {
+                strategies.append(entry)
+            }
+            activeStrategy = 3
+            changed = true
         }
-        strategies.append(Self.seedStrategies[2])
-        activeStrategy = 3
-        save()
+        // 3 → 4 (2026-07-10, 상태 인지형): close 전략3, seed its 3→4 transition retro,
+        // append 전략4, and accrue new playback time under the observation regime.
+        if !strategies.contains(where: { $0.id == 4 }) {
+            if let i = strategies.firstIndex(where: { $0.id == 3 }) {
+                if strategies[i].endedAt.isEmpty { strategies[i].endedAt = "2026-07-10" }
+                if strategies[i].retro.isEmpty { strategies[i].retro = Self.strategy3RetroSeed }
+            }
+            if let entry = Self.seedStrategies.first(where: { $0.id == 4 }) {
+                strategies.append(entry)
+            }
+            activeStrategy = 4
+            changed = true
+        }
+        if changed { save() }
     }
 
     private func save() {

@@ -11,7 +11,8 @@ import Foundation
 enum DashboardContent {
     static func html(lastView: String = "input", doneCutoff: Double? = nil, uiPrefs: String? = nil) -> String {
         // Clamp to a known view key so the injected JS literal can never be malformed.
-        let valid: Set<String> = ["input", "group", "table", "token", "queue", "schedule", "preview", "sprint", "archived", "history", "actions"]
+        // "actions"(액션로그)는 컨디션 관리 페이지(/bgm-player)로 이동 — 저장돼 있던 옛 값은 input으로 클램프된다.
+        let valid: Set<String> = ["input", "group", "table", "token", "queue", "schedule", "preview", "sprint", "archived", "history"]
         let view = valid.contains(lastView) ? lastView : "input"
         // Server-persisted 완료 컷오프 as a JS literal: an integer epoch (0 = 해제) when the
         // user has set one, else "DC_DEFAULT" so the client keeps its built-in default.
@@ -779,23 +780,8 @@ enum DashboardContent {
       <div id="archivedList"></div>
     </div>
 
-    <!-- ACTIONS VIEW (액션로그 — 유저 액션 + 그때 나온 BGM 반응 타임라인) -->
-    <div id="actionsView" style="display:none">
-      <div class="row" style="margin:0 0 8px;gap:6px;align-items:center;flex-wrap:wrap">
-        <span class="muted" style="font-size:12px">종류</span>
-        <button class="btn" id="ak_all" onclick="setActKind('')" title="모든 이벤트">전체</button>
-        <button class="btn" id="ak_user" onclick="setActKind('user')" title="세션 시작·중지, 모드 변경, 음소거, 폭우 소환, 싫어요">유저 액션</button>
-        <button class="btn" id="ak_bgm" onclick="setActKind('bgm')" title="곡 전환·오프너 — 어떤 규칙(풀)이 그 곡을 골랐는지">BGM 반응</button>
-        <button class="btn" id="ak_system" onclick="setActKind('system')" title="앱 전환에 따른 프로필 이동 등 자동 동작">자동 전환</button>
-        <span class="muted" id="actSummary" style="font-size:12px;margin-left:auto">불러오는 중…</span>
-        <button class="btn" onclick="loadActions(true)" title="액션로그 새로고침">새로고침</button>
-      </div>
-      <div class="muted" style="font-size:12px;margin:0 0 10px;padding:8px 10px;border:1px solid var(--border);border-radius:6px">
-        곡 전환 줄의 <b>풀 칩</b>이 그 곡을 고른 규칙입니다 — <b>폭우 리셋</b> &gt; <b>플랜 · 슬롯</b>(요일·시간대) &gt; <b>모드 · 세션모드</b> 순으로 우선합니다.
-        포모도로·스프린트·트래커가 같은 곡을 낸다면 풀 칩이 전부 <b>플랜 · …</b>으로 찍혀 있을 것입니다(플랜 슬롯이 모드보다 우선이라 모드가 선곡에 반영되지 않는 상태).
-      </div>
-      <div id="actList"></div>
-    </div>
+    <!-- 액션로그 뷰는 컨디션 관리 페이지(/bgm-player)의 액션로그 탭으로 이동했다 —
+         컨디션맵 띠 클릭 드릴다운과 함께 분석 (BGMPlayerContent 참고). 대시보드에선 제거. -->
 
     <!-- HISTORY VIEW (히스토리 — 날짜별 집중도 + 초집중 세션 + 시간대 분석) -->
     <div id="historyView" style="display:none">
@@ -1167,91 +1153,8 @@ function onHistDate(){
 function tzLabel(){ return CMTimeFilter.tzLabel(); }
 function setDeepMin(m){ _dfMin=m; reflectDeepBtn(); if(_histData) renderHistory(); }
 function reflectDeepBtn(){ [15,25,45].forEach(k=>{ const b=$('df'+k); if(b) b.classList.toggle('primary', k===_dfMin); }); }
-// ===== 액션로그 뷰 (유저 액션 + BGM 반응 — /api/actions, events/actions.jsonl) =====
-let _actEvents=null, _actKind='', _actFetchedAt=0, _actLoading=false, _actRenderedSig='';
-const ACT_LABEL={ sessionStart:'세션 시작', sessionStop:'세션 중지', modeChange:'모드 변경',
-  mute:'음소거 켬', unmute:'음소거 해제', bgmOn:'BGM 켬', bgmOff:'BGM 끔',
-  profileShift:'프로필 전환', rainSummon:'폭우 소환', rainStart:'폭우 시작',
-  rainEnd:'폭우 종료', dislike:'싫어요', trackChange:'곡 전환', opener:'오프너 재생' };
-const ACT_MODE={ pomodoro:'25분', sprint:'스프린트', unlimited:'트래커' };
-function setActKind(k){ _actKind=k; reflectActKind(); renderActions(); }
-function reflectActKind(){ [['ak_all',''],['ak_user','user'],['ak_bgm','bgm'],['ak_system','system']]
-  .forEach(p=>{ const b=$(p[0]); if(b) b.classList.toggle('primary', _actKind===p[1]); }); }
-function loadActions(force){
-  reflectActKind(); ensureActStream();
-  if(_actLoading) return;
-  // SSE가 즉시 반영을 담당 — 재진입(뷰 전환·필터)은 신선하면 렌더만 한다.
-  if(_actEvents && !force && (Date.now()-_actFetchedAt)<4500){ renderActions(); return; }
-  _actLoading=true;
-  fetch('/api/actions?limit=500').then(x=>x.json()).then(j=>{
-    _actEvents=(j&&j.events)||[]; _actFetchedAt=Date.now(); _actLoading=false; renderActions();
-  }).catch(()=>{ _actLoading=false; const e=$('actList'); if(e&&!_actEvents) e.innerHTML='<div class="empty">불러오지 못했습니다</div>'; });
-}
-// 실시간 피드: 서버가 액션 발생 즉시 SSE(/api/actions/stream)로 밀어준다 — 폴링 지연 0.
-// 액션로그 탭에 처음 들어올 때 한 번 열고 계속 유지(EventSource가 끊기면 자동 재접속).
-let _actES=null;
-function ensureActStream(){
-  if(_actES || typeof EventSource==='undefined') return;
-  try{ _actES=new EventSource('/api/actions/stream'); }catch(e){ return; }
-  _actES.onmessage=function(m){
-    let e; try{ e=JSON.parse(m.data); }catch(_){ return; }
-    if(!_actEvents) _actEvents=[];
-    _actEvents.push(e); if(_actEvents.length>600) _actEvents=_actEvents.slice(-500);
-    if(_view==='actions') renderActions();
-  };
-}
-// 보정 폴링(15초): SSE 재접속 사이에 놓친 이벤트를 있으면 메꾼다. 탭이 보일 때만.
-setInterval(function(){
-  if(_view==='actions' && document.visibilityState==='visible') loadActions(true);
-}, 15000);
-function actPad(n){ return (n<10?'0':'')+n; }
-function renderActions(){
-  const host=$('actList'); if(!host) return;
-  const all=_actEvents||[];
-  // 폴링 재렌더 가드: 이벤트·필터가 그대로면 innerHTML 재구성을 건너뛴다
-  // (3초 폴링이 스크롤 위치를 흔들거나 DOM을 계속 갈아끼우지 않게).
-  const last=all.length?all[all.length-1]:null;
-  const sig=all.length+':'+(last?last.t+'/'+last.action:'')+'|'+_actKind;
-  if(sig===_actRenderedSig && host.firstChild) return;
-  _actRenderedSig=sig;
-  const evs=all.filter(e=>!_actKind||e.kind===_actKind);
-  const s=$('actSummary');
-  if(s){ const c={user:0,bgm:0,system:0}; all.forEach(e=>{ if(c[e.kind]!=null)c[e.kind]++; });
-    s.textContent=all.length?('유저 '+c.user+' · BGM '+c.bgm+' · 자동 '+c.system):'기록 없음'; }
-  if(!evs.length){ host.innerHTML='<div class="empty">기록된 액션이 없습니다 — 세션을 시작·중지하거나 모드를 바꾸면 여기에 쌓입니다.</div>'; return; }
-  // 종류 배지 색: 유저=액센트, BGM=시안, 자동=보라 (상태 신호등 빨강/녹색은 쓰지 않는다).
-  const KC={ user:['유저','var(--accent)'], bgm:['BGM','#33c9e6'], system:['자동','#a97bff'] };
-  let h='', lastDay='';
-  for(let i=evs.length-1;i>=0;i--){   // 최신이 위로 (시각·일 경계 모두 표시 타임존 기준)
-    const e=evs[i], d=CMTimeFilter.parts(e.t*1000);
-    const day=d.y+'-'+actPad(d.mo)+'-'+actPad(d.d);
-    if(day!==lastDay){ if(lastDay) h+='</div>';
-      h+='<div class="muted" style="font-size:11.5px;font-weight:700;margin:14px 0 6px">'+day+'</div>'
-        +'<div class="panel" style="padding:2px 12px">'; lastDay=day; }
-    const kc=KC[e.kind]||[e.kind,'var(--muted)'];
-    let l2='';
-    if(e.track) l2+='<span class="pill" title="'+esc(e.trackKey||'')+'">♪ '+esc(e.track)+'</span>';
-    if(e.pool) l2+='<span class="pill" style="color:#8fd9ea;border-color:#1e5563" title="이 곡을 고른 규칙 (폭우 &gt; 플랜 슬롯 &gt; 모드)">'+esc(e.pool)+'</span>';
-    if(e.bpm) l2+='<span class="pill">'+e.bpm+' BPM</span>';
-    if(e.mode&&e.mode!=='-') l2+='<span class="pill">모드 '+esc(ACT_MODE[e.mode]||e.mode)+'</span>';
-    if(e.phase&&e.phase!=='-') l2+='<span class="pill">'+esc(e.phase)+'</span>';
-    if(e.app) l2+='<span class="pill">'+esc(e.app)+'</span>';
-    h+='<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);align-items:flex-start">'
-      +'<span class="muted" style="flex:none;width:60px;font-variant-numeric:tabular-nums;font-size:12px;padding-top:1px">'
-        +actPad(d.h)+':'+actPad(d.mi)+':'+actPad(d.s)+'</span>'
-      +'<div style="flex:1;min-width:0">'
-        +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
-        +'<span style="flex:none;font-size:10px;font-weight:800;letter-spacing:.4px;color:'+kc[1]+';border:1px solid;border-radius:999px;padding:1px 7px">'+kc[0]+'</span>'
-        +'<b style="font-size:13px">'+esc(ACT_LABEL[e.action]||e.action)+'</b>'
-        +(e.detail?'<span class="muted" style="font-size:12px">'+esc(e.detail)+'</span>':'')
-        +'</div>'
-        +(l2?'<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px">'+l2+'</div>':'')
-      +'</div></div>';
-  }
-  if(lastDay) h+='</div>';
-  host.innerHTML=h;
-}
-
+// 액션로그 뷰(ACT_LABEL/loadActions/renderActions/SSE)는 컨디션 관리 페이지로 이동 —
+// BGMPlayerContent.swift 의 액션로그 섹션 참고 (.e2e/actioncat.test.js 도 그 파일에서 추출).
 function loadHistory(force){
   if(!_histStart){ _histPreset='3m'; _histEnd=histDayStr(new Date()); _histStart=histPresetStart('3m'); syncHistInputs(); }  // 최초 진입 기본값: 3달
   reflectDeepBtn(); reflectRangeBtn();
@@ -2738,8 +2641,9 @@ function restoreFromURL(){
   // 명시적 URL 해시 뷰가 없으면, 사용자가 지정한 기본 보기(Set as default)로 연다.
   // 기본 보기가 없으면 서버가 주입한 마지막 보기(lastView)를 그대로 쓴다.
   if(!hashHasView && _defaultView) _view=_defaultView;
-  // 'skills'·'agents'는 더 이상 대시보드 탭이 아니다(레일 독립 오버레이). 오래된 해시/저장값이 오면 기본 작업뷰로 보정.
-  if(_view==='skills'||_view==='agents') _view='input';
+  // 'skills'·'agents'(레일 독립 오버레이)·'actions'(컨디션 관리 페이지로 이동)는 더 이상
+  // 대시보드 탭이 아니다. 오래된 해시/저장값이 오면 기본 작업뷰로 보정.
+  if(_view==='skills'||_view==='agents'||_view==='actions') _view='input';
   renderTabs();
   const ds=$('flt_donesince'); if(ds) ds.value=_doneSince?localInput(_doneSince):'';
   _urlReady=true;
@@ -2975,8 +2879,9 @@ function pad2(n){ return (n<10?'0':'')+n; }
 const VIEW_DEFS=[
   {k:'input',t:'목록'},{k:'group',t:'그룹'},{k:'table',t:'테이블'},
   {k:'token',t:'토큰'},{k:'queue',t:'큐'},{k:'schedule',t:'일정'},{k:'preview',t:'리포트'},
-  {k:'sprint',t:'스프린트'},{k:'archived',t:'아카이브'},{k:'history',t:'히스토리'},
-  {k:'actions',t:'액션로그'}   // 유저 액션 + BGM 반응 타임라인 (/api/actions)
+  {k:'sprint',t:'스프린트'},{k:'archived',t:'아카이브'},{k:'history',t:'히스토리'}
+  // 액션로그는 더 이상 대시보드 탭이 아니다 — 컨디션 관리 페이지(/bgm-player)의 액션로그 탭으로 이동
+  // (컨디션맵 띠 클릭 드릴다운과 함께 분석). normTabOrder가 저장된 옛 'actions' 키를 걸러낸다.
   // 에이전트는 더 이상 대시보드 탭이 아니다 — 레일의 '위임' 메뉴가 소유하는 독립 오버레이(SessionRail cmNav('delegate')).
   // 워커(백그라운드/주기 작업)도 대시보드에서 분리됐다 — 레일의 '크론' 메뉴가 독립 페이지 /cron 을 연다.
 ];
@@ -3071,10 +2976,9 @@ function applyView(){
   pv.style.display =(_view==='preview')?'':'none';
   if(_view==='preview') initReportFilter();   // 리포트 기간 필터를 최초 진입 시 마운트
   const hv=$('historyView'); if(hv) hv.style.display=(_view==='history')?'':'none';
-  const acv=$('actionsView'); if(acv) acv.style.display=(_view==='actions')?'':'none';
-  // 히스토리·액션로그 탭에선 목표와 무관하므로 목표 필터 바를 숨겨 화면을 비운다.
+  // 히스토리 탭에선 목표와 무관하므로 목표 필터 바를 숨겨 화면을 비운다.
   // 벗어나면 인라인 display를 지워 CSS(스포츠 모드 등)가 다시 관장하게 둔다.
-  const hideFilters=(_view==='history'||_view==='actions');
+  const hideFilters=(_view==='history');
   const gf=$('goalFilters'); if(gf) gf.style.display=hideFilters?'none':'';
   // Page view (컨디션): in-flow panel below the tab bar instead of the goal panel.
   // 스킬·에이전트는 더 이상 대시보드 탭이 아니라 레일이 소유하는 독립 오버레이다
@@ -3099,7 +3003,6 @@ function fillActiveView(r){
   else if(_view==='sprint'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderSprintView(r); }
   else if(_view==='archived'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderArchivedView(r); }
   else if(_view==='history'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; loadHistory(); }   // 자체 엔드포인트(/history.json)에서 로드 — 캐시되어 재호출은 무비용
-  else if(_view==='actions'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; loadActions(); }   // 자체 엔드포인트(/api/actions) — 4.5초 스로틀로 폴링 재진입 무비용
   else { $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; }   // preview: report only
 }
 // ===== Group-mode input: sticky add bar (active parent) + collapsible parent sections =====

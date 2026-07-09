@@ -1041,6 +1041,56 @@ PASS로 재검증함(라이브 근거는 위 DASH-6/DASH-7의 RESOLVED 메모 �
   자발 폭우 없음(크레딧 미달로 구조적 불가). 자격 판정 로직은 standalone Swift 스크립트 9/9 통과
   (repo에 XCTest 타겟은 없음 — 라이브 상태머신 4회 실행으로 동등 검증). malformed body 4종 무크래시
   (수정 후 `{"ok":false}` no-op).
+- **EP-12 — `GET /api/bgm/slot-scores` (added 2026-07-10, 전략4 · 상태 인지형 관측).**
+  EN: Strategy 4 keeps the 전략3 plan map executing and replays `actions.jsonl` to score each plan
+  slot's hit/miss. hit = a session the slot was involved in ends with no negative signal (pomodoro
+  must reach its target seconds — a completed run); miss = a dislike inside the slot's window or a
+  mute during a session. trackChange's `강제 전환` detail bundles slot-boundary/idle flips and is
+  NEVER counted as a miss. Scores are derived on read via `GET /api/bgm/slot-scores`
+  (`BGMSlotScores.swift`; no storage, no writes) and rendered under the strategy history as the
+  dashboard's `슬롯 성적표` section. Selection and the plan file are never changed automatically.
+  `sessions>=3 && hitRate<0.5` -> 재계획 후보 badge. The strategy catalog gains id 4 (상태 인지형)
+  and `activeStrategy` migrates to 4 idempotently (`TrackPlayStats.swift`).
+  KO: 전략4 · 상태 인지형(관측): 전략3 플랜 맵을 유지한 채, actions.jsonl을 재생해 슬롯별 hit/miss를
+  채점한다. hit=슬롯 관여 세션이 부정 신호 없이 종료(포모도로는 목표초 이상 완주), miss=슬롯 윈도우
+  내 dislike 또는 세션 중 mute. trackChange의 '강제 전환'은 슬롯 경계/유휴가 섞인 신호이므로 miss로
+  세지 않는다. 점수는 GET /api/bgm/slot-scores로 파생(저장/쓰기 없음), 대시보드 전략 히스토리 아래
+  '슬롯 성적표'로 표시. 선곡·플랜 파일은 자동 변경하지 않는다. sessions>=3 && hitRate<0.5 → 재계획
+  후보 배지. 전략 카탈로그에 id=4(상태 인지형) 추가, activeStrategy=4로 이관.
+  Verify: derivation exercised standalone 2026-07-10 (swiftc harness over the real
+  `~/.condition-manager/events/actions.jsonl` + live plan slots — no XCTest target in the repo):
+  golden sample (spec §2) `금 심야 · 애프터 라운지` scored hits>=1, misses=0, score>=1, and the
+  00:00 목→금 `강제 전환` flip produced no miss.
+- **EP-13 — Wall-clock pomodoro completion, server-owned (added 2026-07-10).**
+  EN: A pomodoro completes at 25 WALL-CLOCK minutes after session start (`AppDelegate.
+  pomodoroWallSeconds`, `CM_POMODORO_SECS` override for e2e), judged by the 1 Hz heartbeat —
+  NOT by the rail webview and NOT by the activity-gated `sessionSeconds` (idle/app-filter can
+  freeze that count below target on a genuinely completed run; observed stops at 1499s). On
+  completion the server logs `pomodoro.complete` (+`chime`), grants equipment EXP
+  (`EquipmentStore.recordPomodoro`), appends to the durable history `<data>/pomodoro-stats.json`
+  (`Core/PomodoroStats.swift`), stops the session, plays `pomodoro-success.mp3`, and raises a
+  server-owned reward flag. `GET /api/session/state` carries `wall` (wall seconds since start),
+  `mode`, `reward`, `pomoToday` (today's completions, display-timezone day bucket); the rail dial
+  counts down `wall`, mirrors `reward` as the 🍅 orb (reload-safe), and shows `오늘 N/2` on the
+  pomodoro label at all times. `POST /api/session/control {"action":"harvest"}` claims the orb
+  (logs `pomodoro.harvest`, plays the harvest chime); starting the next session auto-claims an
+  untapped orb — the count is never lost. `POST /api/equipment/pomodoro` is demoted to the
+  /equipment dev 시뮬 button (logs `equipment.devAward`, no history write). 전략4 slot scoring
+  treats a `pomodoro.complete` inside the session window as the completed signal (legacy logs
+  fall back to elapsed>=target).
+  KO: 포모도로 완주=세션 시작 후 벽시계 25분. 판정은 서버 하트비트가 소유 — 레일 웹뷰나 활동초
+  (`sessionSeconds`)가 아니다(유휴/앱필터로 활동초가 목표 미달로 얼어붙는 1499초 중지 사례가 원인).
+  완주 시 서버가 `pomodoro.complete` 기록, 장비 EXP 지급, 영속 히스토리(`pomodoro-stats.json`) 적재,
+  세션 정지, 성공음 재생, 수확 대기 플래그를 올린다. `/api/session/state`에 `wall`/`mode`/`reward`/
+  `pomoToday`(표시 타임존 기준 오늘 완주 수)가 실리고, 레일 다이얼은 `wall`로 카운트다운, `reward`를
+  🍅 오브로 미러링(리로드 안전), 포모도로 라벨에 `오늘 N/2` 상시 표시. 수확 탭=`{"action":"harvest"}`
+  (`pomodoro.harvest` 기록+수확음), 미수확 상태로 다음 세션 시작 시 자동 클레임(카운트 유실 없음).
+  `POST /api/equipment/pomodoro`는 /equipment 시뮬 버튼 전용으로 강등(`equipment.devAward`, 히스토리
+  미기록). 전략4 채점은 세션 윈도우 내 `pomodoro.complete`를 완주 신호로 사용(구 로그는 경과초 폴백).
+  Verify: isolated instance (`CM_DATA_DIR`+`CM_POMODORO_SECS=6`) 2026-07-10 — two completions
+  reached `pomoToday:2` with `pomodoro.complete`/`sessionStop`/`pomodoro.harvest` in order,
+  `pomodoro-stats.json` persisted both, harvest cleared `reward`, and a start with an untapped orb
+  auto-claimed it; rail contract locked by `.e2e/pomodoro.test.js` (8/8).
 
 ### Intent audit — P6
 EN: Code matches intent — PASS on EP-1..EP-6 and EP-7..EP-9 (added 2026-07-06), live-verified this

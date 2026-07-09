@@ -1,16 +1,19 @@
 import Foundation
 
-// Append-only log of USER ACTIONS (session start/stop, mode change, mute, BGM
-// on/off, rain summon, dislike) and the BGM REACTIONS they produce (every actual
-// track switch, with the pool that selected it — rain / plan slot / mode
+// Append-only log of ALL USER ACTIONS — session start/stop, mute, BGM controls,
+// AND every dashboard operation (goal add/queue/status, sprint edits, settings,
+// pomodoro completion/harvest) — plus the BGM REACTIONS they produce (every
+// actual track switch, with the pool that selected it — rain / plan slot / mode
 // playlist). One JSONL line per event under events/actions.jsonl.
 //
-// Purpose: make "I pressed X and heard Y" auditable. Today pomodoro/sprint/
-// tracker often sound identical because the 전략3 plan slot outranks the 전략2
-// mode playlist — the `pool` field on trackChange events shows exactly which
-// gate picked each track, so the /actions page can prove (or disprove) that the
-// music actually followed the user's action. See TrackEventLog for the older
-// dislike-only signal log; this one is the unified action timeline.
+// Purpose: a single filterable behavior stream. `category` is the domain axis
+// (pomodoro | goal | bgm | equipment | settings | other) so downstream consumers
+// can slice it: grant EXP for pomodoro behavior, correlate "pressed pomodoro →
+// focus went up", or let agents read the timeline for better decisions. The
+// `pool` field on trackChange events shows exactly which gate picked each track,
+// so the /actions page can prove (or disprove) that the music actually followed
+// the user's action. See TrackEventLog for the older dislike-only signal log;
+// this one is the unified action timeline.
 final class ActionLog {
 
     static let shared = ActionLog()
@@ -20,6 +23,11 @@ final class ActionLog {
         var action = "-"        // sessionStart | sessionStop | modeChange | mute | unmute
                                 // | bgmOn | bgmOff | profileShift | rainStart | rainEnd
                                 // | dislike | trackChange | opener | chime
+                                // | path-derived names for dashboard POSTs ("goal.add",
+                                //   "goal.queue.resolve", "pomodoro.complete", …)
+        var category = ""       // domain axis (필터 축): pomodoro | goal | bgm
+                                // | equipment | settings | other — empty lets
+                                // append() derive it from the action name
         var detail = ""         // human-readable Korean summary
         var mode = "-"          // pomodoro | sprint | unlimited (rail session mode)
         var track = ""          // track title involved (playing or newly selected)
@@ -52,9 +60,24 @@ final class ActionLog {
         }
     }
 
+    // Domain fallback for call sites that predate the category axis: session
+    // start/stop are 포모도로 행동, updateRun is settings, everything else in the
+    // legacy set (mute / bgm on-off / rain / dislike / track events / chimes)
+    // is BGM-domain. New call sites should pass category explicitly.
+    static func defaultCategory(for action: String) -> String {
+        switch action {
+        case "sessionStart", "sessionStop", "modeChange": return "pomodoro"
+        case "updateRun": return "settings"
+        default: return "bgm"
+        }
+    }
+
     func append(_ e: Event) {
+        var e = e
+        if e.category.isEmpty { e.category = Self.defaultCategory(for: e.action) }
         let t = Int(Date().timeIntervalSince1970)
         let line = "{\"t\":\(t),\"kind\":\(js(e.kind)),\"action\":\(js(e.action)),"
+            + "\"cat\":\(js(e.category)),"
             + "\"detail\":\(js(e.detail)),\"mode\":\(js(e.mode)),"
             + "\"track\":\(js(e.track)),\"trackKey\":\(js(e.trackKey)),\"bpm\":\(e.bpm),"
             + "\"pool\":\(js(e.pool)),\"phase\":\(js(e.phase)),"

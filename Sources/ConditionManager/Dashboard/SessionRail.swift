@@ -413,6 +413,7 @@ enum SessionRail {
           // Optimistic on click (instant feel), then confirmed by the /api/session/state poll so
           // this dial stays in sync with ⌘S/⌘M, the menu, and the BGM player.
           var cmChRun=false, cmChMuted=false, cmChSecs=0;
+          var cmChWall=0;                               // wall-clock secs since start (포모도로 기준시계)
           var cmChToday=0;                              // today's TOTAL active seconds (무제한 mode readout)
           var cmChCountdown=null, cmChCdTimer=null;     // 5→1 pre-start countdown (null = not counting)
           var cmChBooted=false;                         // becomes true after the first state settles
@@ -426,15 +427,15 @@ enum SessionRail {
           var cmChMode=(function(){ try{ return localStorage.getItem('cmChMode')||'pomodoro'; }catch(e){ return 'pomodoro'; } })();
           var cmChSprintStart=0, cmChSprintTarget=0;   // current sprint window (epoch secs), from state poll
           var CMCH_POMODORO=25*60, CMCH_LEADIN=5, CMCH_DAILY_GOAL=2;
-          // Pomodoro completion reward state (B tap-to-harvest + C daily N/2 tracker):
-          var cmChReward=false;      // 완료 → 수확 오브 표시(탭 대기)
-          var cmChDone=false;        // 수확 후 "한 판 더?" 재선택 히어로
-          var cmChCompleted=false;   // this session already hit 25:00 (avoid re-firing)
-          var cmChDailyN=0;          // today's harvested count, for the N/2 display
-          // Daily harvested-pomodoro count, persisted per 표시-타임존 date so it resets each day.
-          function cmChDayKey(){ var p=window.CMTimeFilter.parts(new Date()); return 'cmPomoDone:'+p.y+'-'+p.mo+'-'+p.d; }
-          function cmChDailyGet(){ try{ return parseInt(localStorage.getItem(cmChDayKey())||'0',10)||0; }catch(e){ return 0; } }
-          function cmChDailyBump(){ var n=cmChDailyGet()+1; try{ localStorage.setItem(cmChDayKey(),String(n)); }catch(e){} return n; }
+          // Pomodoro completion reward state (B tap-to-harvest + C daily N/2 tracker).
+          // The SERVER owns completion now: the app's wall-clock heartbeat judges 25:00
+          // (webview-independent), the daily count is the durable PomodoroStats history
+          // (d.pomoToday), and the reward orb mirrors d.reward — a rail reload can no
+          // longer lose a completion. Only the post-harvest "한 판 더?" chooser stays
+          // local: it's a pure UI moment with no state worth persisting.
+          var cmChReward=false;      // mirror of server d.reward: 완료 → 수확 오브(탭 대기)
+          var cmChDone=false;        // 수확 후 "한 판 더?" 재선택 히어로 (local-only)
+          var cmChDailyN=0;          // today's completion count (server d.pomoToday)
           function cmChFmt(s){ s=Math.max(0,s|0); var h=(s/3600)|0, m=((s%3600)/60)|0, ss=s%60;
             return (h>0?h+':':'')+((m<10&&h>0)?'0'+m:m)+':'+(ss<10?'0'+ss:ss); }
           // Coarser duration for the 스프린트 mode, which can span days: "3d 4h" / "5h 12m" / "12:34".
@@ -443,7 +444,9 @@ enum SessionRail {
           function cmChModeLabel(){
             if(cmChMode==='sprint') return cmChSprintTarget>0?'스프린트':'스프린트(설정 없음)';
             if(cmChMode==='unlimited') return '트래커 · 오늘 총';
-            return '포모도로 25분';
+            // 오늘 N/2 rides on the idle/running label too, so the daily tracker is
+            // always visible — not only during the fleeting reward/done moments.
+            return '포모도로 25분 · 오늘 '+cmChDailyN+'/'+CMCH_DAILY_GOAL;
           }
           // The dial's live readout while running: {text, frac} where frac∈[0,1] is how full the ring is.
           //  - pomodoro: count DOWN from 25:00; ring fills as the 25분이 소진됨.
@@ -461,8 +464,10 @@ enum SessionRail {
               }
               return { text: cmChDur(cmChToday), frac: (cmChToday%60)/60 };   // no sprint → behave like 무제한
             }
-            var pr=Math.max(0, CMCH_POMODORO-cmChSecs);                     // pomodoro (default)
-            return { text: cmChFmt(pr), frac: Math.min(1, cmChSecs/CMCH_POMODORO) };
+            // pomodoro (default): WALL-CLOCK countdown — 포모도로는 벽시계 25분이라 유휴/앱
+            // 필터로 멈추는 활동초(cmChSecs)가 아니라 d.wall을 기준으로 그린다.
+            var pr=Math.max(0, CMCH_POMODORO-cmChWall);
+            return { text: cmChFmt(pr), frac: Math.min(1, cmChWall/CMCH_POMODORO) };
           }
           function cmChClearCd(){ if(cmChCdTimer){ clearInterval(cmChCdTimer); cmChCdTimer=null; } cmChCountdown=null; }
           // Full-takeover render for the 5→1 pre-start countdown (amber center digit, ring filling).
@@ -489,7 +494,7 @@ enum SessionRail {
             var rail=document.getElementById('cmRail'); if(rail) rail.classList.remove('chrun');
             var btn=document.getElementById('cmChBtn'); if(btn){ btn.classList.remove('on'); btn.title='탭해서 수확'; }
             var lab=el.querySelector('.cmch-label'); if(lab) lab.textContent='수확하기';
-            var sub=document.getElementById('cmChSubLabel'); if(sub) sub.textContent='🍅 탭해서 수확 · 오늘 '+cmChDailyGet()+'/'+CMCH_DAILY_GOAL;
+            var sub=document.getElementById('cmChSubLabel'); if(sub) sub.textContent='🍅 탭해서 수확 · 오늘 '+cmChDailyN+'/'+CMCH_DAILY_GOAL;
             var apmR=document.getElementById('cmChApm'); if(apmR) apmR.style.display='none';
             document.getElementById('cmChProg').style.strokeDashoffset='0';   // full ring = 완료
           }
@@ -548,8 +553,8 @@ enum SessionRail {
             },1000);
           }
           function cmChFire(){   // actually start the challenge (immediately, or after the auto lead-in)
-            cmChClearCd(); cmChReward=false; cmChDone=false; cmChCompleted=false;
-            cmChRun=true; cmChSecs=0; cmChRender();
+            cmChClearCd(); cmChReward=false; cmChDone=false;
+            cmChRun=true; cmChSecs=0; cmChWall=0; cmChRender();
             // Carry the chosen mode so the server selects that mode's BGM playlist
             // (each mode opens on its own pinned first track).
             fetch('/api/session/control',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -569,28 +574,17 @@ enum SessionRail {
               setTimeout(function(){ s.remove(); }, 900);
             })(i); }
           }
-          // Pomodoro hit 25:00 → conclude the interval and present the harvest orb (stop so the next
-          // start is a fresh 25:00 and music/tracking pause during the reward+choose moment).
-          function cmChOnComplete(){
-            cmChRun=false;
-            fetch('/api/session/control',{method:'POST',headers:{'Content-Type':'application/json'},
-              body:JSON.stringify({action:'stop'})}).catch(function(){});
-            // 포모도로 성공 → 장비 EXP: the server counts the last 25 minutes' real
-            // USER actions (skill executions, chat messages) and grants the reward
-            // to the most-used equipment category (EquipmentStore.recordPomodoro).
-            fetch('/api/equipment/pomodoro',{method:'POST',headers:{'Content-Type':'application/json'},
-              body:'{}'}).catch(function(){});
-            cmChReward=true; cmChDone=false; cmChRender();
-          }
-          function cmChCheckComplete(){
-            if(cmChReward||cmChDone) return;
-            if(cmChRun && cmChMode==='pomodoro' && !cmChCompleted && cmChSecs>=CMCH_POMODORO){
-              cmChCompleted=true; cmChOnComplete();
-            }
-          }
-          // Tap the orb → claim the reward: burst + bump today's N/2 tracker, then the re-selection hero.
+          // 25:00 completion is judged SERVER-SIDE (heartbeat wall clock): the server stops
+          // the session, records history + EXP, plays the chime, and raises d.reward — this
+          // page only renders that state, so nothing is missed when the rail isn't open.
+          // Tap the orb → claim the reward: burst + ack the server (count already recorded
+          // at completion), then the re-selection hero.
           window.cmChHarvest=function(){
-            cmChDailyN=cmChDailyBump(); cmChBurst();
+            cmChBurst();
+            // 수확 ack: clears the server's pending orb and plays the sparkle chime
+            // natively — distinct from the calmer completion chime at 25:00.
+            fetch('/api/session/control',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({action:'harvest'})}).catch(function(){});
             cmChReward=false; cmChDone=true; cmChRender();
           };
           // App-launch auto-start: once per webview session, if nothing is running, arm the 5s countdown
@@ -614,7 +608,7 @@ enum SessionRail {
             // run-branch would treat the click as a stop instead of the intended "start now".
             if(cmChCountdown!=null){ cmChFire(); return; }
             if(cmChRun){   // running → stop immediately (no lead-in)
-              cmChRun=false; cmChCompleted=false; cmChDone=false; cmChRender();
+              cmChRun=false; cmChDone=false; cmChRender();
               fetch('/api/session/control',{method:'POST',headers:{'Content-Type':'application/json'},
                 body:JSON.stringify({action:'stop'})}).catch(function(){});
               return;
@@ -638,12 +632,21 @@ enum SessionRail {
               if(!d) return;
               cmChRun=!!d.working; cmChMuted=!!d.muted;
               if(typeof d.seconds==='number') cmChSecs=d.seconds;
+              if(typeof d.wall==='number') cmChWall=d.wall;
               if(typeof d.today==='number') cmChToday=d.today;
+              if(typeof d.pomoToday==='number') cmChDailyN=d.pomoToday;
               if(typeof d.sprintStart==='number') cmChSprintStart=d.sprintStart;
               if(typeof d.sprintTarget==='number') cmChSprintTarget=d.sprintTarget;
+              // While truly running, the dial mirrors the SERVER's session mode — a rail
+              // loaded mid-session must not render the localStorage mode of a past choice.
+              if(cmChRun && cmChCountdown==null && typeof d.mode==='string' && d.mode) cmChMode=d.mode;
+              // Server-owned reward orb (survives rail reloads). cmChDone is the local
+              // post-harvest chooser: while it's up, a lagging poll (harvest ack still
+              // propagating) must not re-raise the orb.
+              if(!cmChDone) cmChReward=!!d.reward;
               // The reward/choose phase owns the UI locally — don't let a lagging poll flip it back to
               // the running/docked layout while the stop is still propagating.
-              if(cmChReward||cmChDone) cmChRun=false; else cmChCheckComplete();
+              if(cmChReward||cmChDone) cmChRun=false;
               cmChRender();
               cmChBoot();             // first real state applied → arm the glide for subsequent clicks
               // BGM master switch state for the condition popup toggle.
@@ -655,7 +658,9 @@ enum SessionRail {
           cmChMaybeAutoStart();    // fresh app launch → show the 5s countdown immediately (no network wait)
           cmChSync(); setInterval(cmChSync, 2000);
           setTimeout(cmChBoot, 1500);   // fallback: arm the glide even if the first poll never lands
-          setInterval(function(){ if(cmChRun){ cmChSecs++; cmChToday++; cmChCheckComplete(); cmChRender(); } }, 1000);
+          // Local 1s tick keeps the countdown smooth between polls; the 2s poll re-anchors
+          // cmChWall to the server's authoritative value (and delivers the completion flip).
+          setInterval(function(){ if(cmChRun){ cmChSecs++; cmChWall++; cmChToday++; cmChRender(); } }, 1000);
 
           // ===== Live APM readout (D-style dot + number) in the running dial's sub-line =====
           // Replaces the old dashboard header 스포츠/타임 gauge. Polls the same tiny /live.json
@@ -716,22 +721,27 @@ enum SessionRail {
           window.cmCondUpdate=function(ev){ if(ev) ev.stopPropagation();
             var b=document.getElementById('cmCondUpdate'); if(!b||b.disabled) return;
             b.disabled=true; b.textContent='⏳  업데이트 중… 빌드 후 자동 재시작됩니다';
-            // 실패 사유는 버튼 자체에 잠시 표시 — 버튼이 설정 메뉴 밖에 있어 cmCondNow는 안 보인다.
-            function reset(msg){ b.disabled=false;
-              b.textContent = msg ? ('⚠️  '+msg) : '⬆️  업데이트 — 새 빌드 적용';
-              if(msg) setTimeout(function(){ if(!b.disabled) b.textContent='⬆️  업데이트 — 새 빌드 적용'; }, 6000); }
+            // 실패는 유저에게 에러로 보여주지 않는다: 현재 버전이 그대로 살아있으므로 잃은 것이
+            // 없고, 상세는 update.log·액션로그에 남는다. 중립 문구를 잠깐 보여준 뒤 버튼을
+            // 숨긴다 — 서버가 소스 변경을 감지하면 버튼이 다시 나타난다.
+            function standDown(){
+              b.textContent='현재 버전 유지 — 새 빌드가 준비되면 다시 알려드려요';
+              setTimeout(function(){
+                b.disabled=false; b.textContent='⬆️  업데이트 — 새 빌드 적용'; b.style.display='none';
+                var rail=document.getElementById('cmRail'); if(rail) rail.classList.remove('cmupd');
+              }, 5000); }
             fetch('/api/update/run',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
               .then(function(r){ return r.json(); }).then(function(j){
-                if(!(j&&j.ok)){ reset('업데이트 실패: '+((j&&j.error)||'실행 오류')); return; }
+                if(!(j&&j.ok)){ standDown(); return; }
                 // Success ends with THIS app being replaced (page dies with it), so the only
-                // outcome to detect here is failure: the server reports lastError when the
-                // build script exits non-zero while the app is still alive.
+                // outcome to detect here is failure: the server reports deferred (unavailable
+                // for this tree state) when the build exits non-zero while the app lives on.
                 var t=setInterval(function(){
                   fetch('/api/update/check',{cache:'no-store'}).then(function(r){ return r.json(); })
-                    .then(function(u){ if(u&&u.lastError){ clearInterval(t); reset('업데이트 실패: '+u.lastError); } })
+                    .then(function(u){ if(u&&u.deferred){ clearInterval(t); standDown(); } })
                     .catch(function(){});   // unreachable = quitting/relaunching — let the page die
                 },5000);
-              }).catch(function(){ reset('업데이트 실패: 요청 오류'); });
+              }).catch(function(){ standDown(); });
           };
           // 장비 row: refresh the overall-level chip whenever the menu opens, so the
           // settings entry always shows the current 평균 레벨 (same /api/equipment the

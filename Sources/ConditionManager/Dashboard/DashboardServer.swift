@@ -240,6 +240,7 @@ final class DashboardServer {
                                       || path.hasPrefix("/workers.json")
                                       || path.hasPrefix("/api/bgm/list") || path.hasPrefix("/api/bgm/now")
                                       || path.hasPrefix("/api/bgm/stats") || path.hasPrefix("/api/bgm/plan")
+                                      || path.hasPrefix("/api/bgm/slot-scores")
                                       || path.hasPrefix("/api/session/state") || path.hasPrefix("/api/equipment")
                                       || path.hasPrefix("/api/settings/paths")
                                       || path.hasPrefix("/api/settings/timezone")

@@ -31,6 +31,19 @@ final class SoundEffects {
         players.append(player)
     }
 
+    // Play the first candidate that exists on disk and report which one — lets a
+    // user-dropped asset (e.g. pomodoro-start.mp3) override the generated default
+    // without a settings UI; the sound folder is the interface.
+    @discardableResult
+    func playFirst(_ names: [String], volume: Float = 0.9) -> String? {
+        let dir = AppPaths.sub("sound")
+        for n in names where FileManager.default.fileExists(atPath: dir.appendingPathComponent(n).path) {
+            play(n, volume: volume)
+            return n
+        }
+        return nil
+    }
+
     // Same CoreAudio warm-up as AudioEngine: the very first AVAudioPlayer in the
     // process can report isPlaying yet route nothing to the output device. BGM
     // usually primes first (launch auto-start), but the chime must also be audible

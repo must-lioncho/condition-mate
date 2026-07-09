@@ -131,6 +131,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if path.hasPrefix("/api/bgm/stats") {
                 return self?.bgmStatsJSON(path)
             }
+            // 전략4 · 상태 인지형 (observe-only): per-plan-slot hit/miss scores derived
+            // from actions.jsonl on every read — nothing is stored or written.
+            if path.hasPrefix("/api/bgm/slot-scores") {
+                return self?.bgmSlotScoresJSON()
+            }
             if path.hasPrefix("/api/bgm/list") {
                 return self?.bgmListJSON()
             }
@@ -219,6 +224,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // lives in `session`; this keeps those sites unchanged while there is one owner of the state.
     var isWorking: Bool { session.isRunning }
     private(set) var sessionSeconds: Double = 0   // active seconds this session
+    // Pomodoro completion is a WALL-CLOCK judgement (25 real minutes), independent of the
+    // activity-gated sessionSeconds above — 포모도로는 벽시계다. The server owns the check
+    // (heartbeat), so it holds regardless of whether any webview is alive to observe it.
+    private(set) var sessionStartedAt: Date?
+    // 완주 후 수확 오브 대기 — server-owned so a rail reload can't lose the reward moment.
+    private(set) var pomodoroRewardPending = false
+    let pomodoroStats = PomodoroStats()
+    // 25 wall-clock minutes; CM_POMODORO_SECS shrinks it for e2e (same pattern as CM_DWELL).
+    static let pomodoroWallSeconds =
+        Int(ProcessInfo.processInfo.environment["CM_POMODORO_SECS"] ?? "") ?? 25 * 60
     private(set) var liveStatus = "정지"
 
     // Per-app BGM strategy: an app's profile takes over once it has been the
@@ -688,6 +703,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if inSession, let bundle = frontBundle {
             store.add(seconds: 1, app: bundle)
             sessionSeconds += 1
+        }
+        // 포모도로 완주(벽시계): 25 real minutes after start, regardless of the idle/app-filter
+        // gates above — a pomodoro is a wall-clock interval, and the judgement lives HERE so it
+        // holds even when no webview is open (the old rail-JS check silently missed these).
+        if isWorking, director.sessionMode == "pomodoro", let startedAt = sessionStartedAt,
+           Date().timeIntervalSince(startedAt) >= Double(Self.pomodoroWallSeconds) {
+            completePomodoro()
         }
         // Presence input: any input second while in a working session (regardless
         // of the tracked-app filter) — basis for total/desk/focus time.
@@ -1168,10 +1190,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // countdown must still switch the auto-started session's BGM playlist.
         if let mode = mode { director.setSessionMode(mode) }
         guard !isWorking else { return }
+        // 시작 큐: a short rising cue marks the focus onset. Every start path (rail
+        // dial, menu, ⌘S, launch auto-start) funnels here, so they all get the same
+        // cue. Quieter than the completion chime — the BGM opener lands right after,
+        // and the cue must read as a lead-in, not compete with the music. A user-
+        // dropped pomodoro-start.mp3 overrides the generated default.
+        if let cue = SoundEffects.shared.playFirst(
+            ["pomodoro-start.mp3", "session-start.m4a"], volume: 0.7) {
+            ActionLog.shared.append(actionEvent("chime", kind: "system",
+                detail: "세션 시작음 (sound/\(cue))"))
+        }
         // Each session opens on its mode's pinned first track (per-mode playlist).
         director.armModeOpener()
         session.setRunning(true)
         sessionSeconds = 0
+        sessionStartedAt = Date()
+        // Starting the next session auto-claims any unharvested 🍅 — the completion was
+        // already counted in PomodoroStats, so an untapped orb never loses the pomodoro.
+        pomodoroRewardPending = false
         committedProfileKey = ""
         frontStableSeconds = 0
         activeAppLabel = ""
@@ -1187,6 +1223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ActionLog.shared.append(actionEvent("sessionStop",
             detail: "세션 중지 · \(Int(sessionSeconds))초 경과"))
         session.setRunning(false)
+        sessionStartedAt = nil
         committedProfileKey = ""
         activeAppLabel = ""
         director.pauseSession()
@@ -1195,13 +1232,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatusTitle()
     }
 
+    // 포모도로 25:00(벽시계) 도달 — the server concludes the interval: durable history,
+    // equipment EXP, success chime, session stop, then the reward orb waits server-side.
+    // Webviews only render this state from /api/session/state; none of it depends on a
+    // page being open at the moment the clock hits zero.
+    private func completePomodoro() {
+        let active = Int(sessionSeconds)
+        ActionLog.shared.append(actionEvent("pomodoro.complete",
+            detail: "포모도로 25분 완주(벽시계) · 활동 \(active)초 — 장비 EXP 반영",
+            category: "pomodoro"))
+        equipment.recordPomodoro(usage: equipmentUsage(within: TimeInterval(Self.pomodoroWallSeconds)))
+        pomodoroStats.recordCompletion(mode: director.sessionMode, activeSecs: active)
+        stopWorking()
+        pomodoroRewardPending = true
+        // 완주 성공음 plays into the silence right after the stop — a deliberate "완주"
+        // signal, distinct from a mere stop. Asset is user-swappable at <data>/sound/.
+        SoundEffects.shared.play("pomodoro-success.mp3")
+        ActionLog.shared.append(actionEvent("chime", kind: "system",
+            detail: "포모도로 완주 성공음 (sound/pomodoro-success.mp3)"))
+    }
+
+    // 🍅 수확 탭 — the count was already recorded at completion; the tap only claims the
+    // orb (confetti + chime) and clears the pending state.
+    func harvestPomodoro() {
+        guard pomodoroRewardPending else { return }
+        pomodoroRewardPending = false
+        ActionLog.shared.append(actionEvent("pomodoro.harvest",
+            detail: "🍅 수확 탭", category: "pomodoro"))
+        if let played = SoundEffects.shared.playFirst(["pomodoro-harvest.mp3", "harvest.m4a"]) {
+            ActionLog.shared.append(actionEvent("chime", kind: "system",
+                detail: "이펙트음 harvest (sound/\(played))"))
+        }
+    }
+
     // A user-action event pre-filled with the moment's BGM context (mode, playing
     // track, phase, profile, frontmost app) so /actions rows can show "what was
     // sounding when the user did this" without a join.
-    private func actionEvent(_ action: String, kind: String = "user", detail: String = "") -> ActionLog.Event {
+    private func actionEvent(_ action: String, kind: String = "user", detail: String = "",
+                             category: String = "") -> ActionLog.Event {
         var e = ActionLog.Event()
         e.kind = kind
         e.action = action
+        e.category = category
         e.detail = detail
         e.mode = director?.sessionMode ?? "-"
         e.track = audio.currentTitle ?? ""
@@ -2287,8 +2359,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let sp = self.reviewStore.currentSprint
             let spStart = sp?.startAt.map { Int($0.timeIntervalSince1970) } ?? 0
             let spTarget = sp?.targetAt.map { Int($0.timeIntervalSince1970) } ?? 0
+            // wall = wall-clock seconds since session start (the pomodoro dial's basis);
+            // seconds stays the activity-gated count for the surfaces that mean "active time".
+            let wall = self.sessionStartedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
             return "{\"working\":\(self.session.isRunning),\"muted\":\(self.session.isMuted),"
-                + "\"seconds\":\(Int(self.sessionSeconds)),\"today\":\(Int(self.store.todaySeconds)),"
+                + "\"seconds\":\(Int(self.sessionSeconds)),\"wall\":\(wall),"
+                + "\"mode\":\(jsonString(self.director?.sessionMode ?? "")),"
+                + "\"reward\":\(self.pomodoroRewardPending),"
+                + "\"pomoToday\":\(self.pomodoroStats.todayCount()),"
+                + "\"today\":\(Int(self.store.todaySeconds)),"
                 + "\"bgm\":\(Settings.shared.musicEnabled),"
                 + "\"sprintStart\":\(spStart),\"sprintTarget\":\(spTarget)}"
         }
@@ -2351,11 +2430,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             + "\"label\":\(jsonString(label))}"
     }
 
-    // Last in-app update failure (build script exited non-zero while this instance kept
-    // running). Cleared on the next /api/update/run. Surfaced via /api/update/check so the
-    // rail can stop showing "업데이트 중…" — on SUCCESS this process is replaced, so a
-    // still-running app + non-zero exit is the only failure signal there is.
-    private var updateLastError: String?
+    // Source mtime snapshot taken when an in-app update build failed (script exited
+    // non-zero while this instance kept running). While the tree hasn't changed since,
+    // the same sources would fail the same way — so /api/update/check reports the
+    // update as unavailable instead of surfacing an error: the user keeps the current
+    // version and the button simply reappears once the sources change. Failure details
+    // go to update.log and the action log only, never to the rail UI.
+    private var updateFailedSrcAt: TimeInterval?
 
     // GET /api/update/check — "is a newer build available?" for the rail's 업데이트 button.
     // Local-source model, no update server: an update exists when any source file in the
@@ -2363,17 +2444,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // newer than this executable. Dev builds and raw runs have no stamp -> always false
     // (dev-watch owns their rebuild loop).
     func updateCheckJSON() -> String {
-        let err = updateLastError.map { ",\"lastError\":\(jsonString($0))" } ?? ""
         guard let root = Bundle.main.object(forInfoDictionaryKey: "CMSourceRoot") as? String,
               !root.isEmpty,
               let exe = Bundle.main.executableURL,
               let built = (try? FileManager.default.attributesOfItem(atPath: exe.path))?[.modificationDate] as? Date
-        else { return "{\"available\":false\(err)}" }
+        else { return "{\"available\":false}" }
         let src = Self.latestSourceMTime(root: root)
+        // A build already failed for this exact tree state: report unavailable (plus a
+        // deferred flag so an in-flight "업데이트 중…" button can quietly stand down).
+        // The moment any source changes the failure snapshot is stale — clear it and
+        // let the button come back.
+        if let failedAt = updateFailedSrcAt {
+            if src <= failedAt + 0.5 {
+                return "{\"available\":false,\"deferred\":true}"
+            }
+            updateFailedSrcAt = nil
+        }
         // +2s slack: assembly copies the binary moments after compiling the same sources.
         let available = src > built.timeIntervalSince1970 + 2
         return "{\"available\":\(available),\"builtAt\":\(Int(built.timeIntervalSince1970)),"
-            + "\"srcAt\":\(Int(src))\(err)}"
+            + "\"srcAt\":\(Int(src))}"
     }
 
     // Newest modification time across the app's own sources: Sources/**/*.swift (skipping
@@ -3286,10 +3376,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return "\(yy). \(c.month ?? 1). \(c.day ?? 1)."
     }
 
+    // One tap for EVERY dashboard POST: each API call becomes an action-log event,
+    // so 목표설정·설정 변경도 BGM 조작과 같은 타임라인에 남는다 — the filterable
+    // behavior stream that EXP rules and agent decisions read from. The action name
+    // is derived from the path ("goal.add", "goal.queue.resolve"), so new endpoints
+    // are logged automatically with no per-endpoint table to keep in sync. Paths
+    // that already log a richer event inside their handler (session/BGM controls)
+    // and pure plumbing (webview audio sync, CLI keystrokes, debug hooks, worker
+    // session hooks) are skipped so the log stays 1 user action = 1 line.
+    // Known gap: headless agents that POST the same endpoints (e.g. goal-title-sync
+    // hitting /api/goal/title) are indistinguishable from the user here and land as
+    // kind:user — acceptable for v1; an origin marker can split them later.
+    private func logDashboardAction(_ path: String, _ obj: [String: Any]) {
+        let skip: Set<String> = [
+            "/api/bgm/native",                        // webview audio-ownership sync
+            "/api/bgm/control",                       // handler logs bgmOn/bgmOff
+            "/api/session/control",                   // handler logs sessionStart/Stop
+            "/api/session/mute",                      // handler logs mute/unmute
+            "/api/equipment/pomodoro",                // handler logs equipment.devAward
+            "/api/sfx",                               // handler logs harvest/chime
+            "/api/bgm/rain", "/api/equipment/rain",   // handlers log rainSummon
+            "/api/update/run",                        // handler logs updateRun
+            "/api/goal/aiAdd",                        // dup pre-check inside the add flow
+            "/api/session/event",                     // Claude session hooks, not the user
+            "/api/goal/cli/io", "/api/goal/cli/resize", // terminal keystrokes (noise)
+        ]
+        guard path.hasPrefix("/api/"), !skip.contains(path),
+              !path.hasPrefix("/api/debug/") else { return }
+
+        // Category = domain of the action (the 액션로그 필터 축).
+        let category: String
+        if path.hasPrefix("/api/goal/") || path.hasPrefix("/api/queue/")
+            || path.hasPrefix("/api/sprint/") || path.hasPrefix("/api/team/")
+            || path.hasPrefix("/api/chat/") { category = "goal" }
+        else if path.hasPrefix("/api/session/") { category = "pomodoro" }
+        else if path.hasPrefix("/api/bgm/") { category = "bgm" }
+        else if path.hasPrefix("/api/equipment/") { category = "equipment" }
+        else if path.hasPrefix("/api/settings/") || path.hasPrefix("/api/window/")
+            || path.hasPrefix("/api/update/") || path.hasPrefix("/api/skills/")
+            || path.hasPrefix("/api/agents/") || path.hasPrefix("/api/plugin/") { category = "settings" }
+        else { category = "other" }
+
+        var action = path.dropFirst("/api/".count).split(separator: "/").joined(separator: ".")
+        // AI검색 rides the same enqueue endpoint (search:true = findOnly) — split the
+        // action name so 검색 and 목표 추가 are distinguishable in the log.
+        if path == "/api/goal/queue/enqueue", (obj["search"] as? Bool) == true {
+            action = "goal.queue.search"
+        }
+
+        // Short human trail: goal number plus the single most telling body field,
+        // truncated so one long paste can't bloat the log line.
+        var bits: [String] = []
+        if let n = obj["seq"] as? NSNumber { bits.append("#\(n.intValue)") }
+        else if let s = obj["seq"] as? String, !s.isEmpty { bits.append("#" + s) }
+        for key in ["action", "status", "text", "title", "name", "tz", "mode"] {
+            if let v = obj[key] as? String, !v.isEmpty {
+                bits.append(v.count > 60 ? String(v.prefix(60)) + "…" : v)
+                break
+            }
+        }
+        let detail = bits.joined(separator: " · ")
+        // actionEvent reads main-thread state (director/audio); handlePost runs on
+        // the server thread, so hop to main for the snapshot + append.
+        DispatchQueue.main.async {
+            ActionLog.shared.append(self.actionEvent(action, detail: detail, category: category))
+        }
+    }
+
     func handlePost(_ path: String, _ body: String) -> String {
         let obj = (body.data(using: .utf8)).flatMap {
             try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
         } ?? [:]
+        logDashboardAction(path, obj)
         // AI dedup pass runs an external `claude -p` (seconds, blocking). Handle it HERE
         // on the server thread — never inside the main.sync block below, or the whole UI
         // would freeze while the model thinks. It only reads a goals snapshot, so it is
@@ -3350,26 +3508,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.sync {
                 if action == "start" { self.startWorking(mode: mode) }
                 else if action == "stop" { self.stopWorking() }
+                // 🍅 수확 탭: claim the server-owned reward orb (count already recorded
+                // at completion — this only clears the pending state + plays the chime).
+                else if action == "harvest" { self.harvestPomodoro() }
             }
             return "{\"ok\":true}"
         }
-        // 포모도로 성공 보상 — the rail posts this when the pomodoro dial hits 25:00
-        // (cmChOnComplete). The last 25 minutes' real usage decides which equipment
-        // category receives the EXP (EquipmentStore.recordPomodoro); returns the
-        // refreshed equipment state so the caller can show the result.
+        // 장비 EXP 지급 시뮬 — the /equipment page's dev-only 시뮬 button. Real pomodoro
+        // completions are judged server-side (heartbeat wall-clock → completePomodoro),
+        // which grants EXP itself and logs pomodoro.complete; this endpoint only exercises
+        // the award pipeline and must NOT log a complete or touch the durable N/2 history.
         if path == "/api/equipment/pomodoro" {
-            let usage = equipmentUsage(within: 25 * 60)
+            let usage = equipmentUsage(within: TimeInterval(Self.pomodoroWallSeconds))
             equipment.recordPomodoro(usage: usage)
-            // 완주 성공음: the rail stops the session right before this call, so the
-            // chime plays into silence — a deliberate "완주" signal, distinct from a
-            // mere stop. Native playback (not rail WebAudio) so it is independent of
-            // webview state; asset is user-swappable at <data>/sound/.
             DispatchQueue.main.async {
-                SoundEffects.shared.play("pomodoro-success.mp3")
-                ActionLog.shared.append(self.actionEvent("chime", kind: "system",
-                    detail: "포모도로 완주 성공음 (sound/pomodoro-success.mp3)"))
+                ActionLog.shared.append(self.actionEvent("equipment.devAward", kind: "system",
+                    detail: "장비 EXP 지급 시뮬 (/equipment 시뮬 버튼)", category: "pomodoro"))
             }
             return equipmentJSON()
+        }
+        // 원샷 이펙트음 재생 — the rail's 🍅 harvest tap is purely client-side (confetti +
+        // daily counter, no server state change), so it requests the native chime here.
+        // Names map through a fixed whitelist, NEVER a caller-supplied filename, so the
+        // loopback page cannot probe or play arbitrary files.
+        if path == "/api/sfx" {
+            // First existing candidate wins: a user-dropped mp3 overrides the
+            // generated m4a default (the sound folder is the interface).
+            let sfx: [String: [String]] = [
+                "harvest": ["pomodoro-harvest.mp3", "harvest.m4a"],
+                "session-start": ["pomodoro-start.mp3", "session-start.m4a"],
+            ]
+            guard let name = obj["name"] as? String, let files = sfx[name] else {
+                return "{\"ok\":false,\"error\":\"unknown sfx\"}"
+            }
+            DispatchQueue.main.async {
+                // 수확 탭은 서버 상태를 안 바꾸는 순수 클라이언트 제스처라 이 sfx 요청이
+                // 유일한 서버 접점 — 유저 행동 이벤트는 여기서 남긴다.
+                if name == "harvest" {
+                    ActionLog.shared.append(self.actionEvent("pomodoro.harvest",
+                        detail: "🍅 수확 탭", category: "pomodoro"))
+                }
+                if let played = SoundEffects.shared.playFirst(files) {
+                    ActionLog.shared.append(self.actionEvent("chime", kind: "system",
+                        detail: "이펙트음 \(name) (sound/\(played))"))
+                }
+            }
+            return "{\"ok\":true}"
         }
         // 설정 menu 표시 타임존 — accepts "system" (machine local) or a valid IANA identifier
         // only; anything else is rejected so settings.json can never hold a broken zone.
@@ -3440,14 +3624,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 p.standardOutput = h
                 p.standardError = h
             }
-            // On success this process is replaced, so the handler only ever reports failure
-            // (script exited non-zero, app still alive). The rail polls check for lastError.
-            updateLastError = nil
+            // On success this process is replaced, so the handler only ever fires for
+            // failure (script exited non-zero, app still alive). No user-facing error:
+            // snapshot the source state so check reports the update as unavailable until
+            // the tree changes, and keep the post-mortem in update.log + action log.
+            updateFailedSrcAt = nil
             p.terminationHandler = { [weak self] proc in
                 guard proc.terminationStatus != 0 else { return }
                 DispatchQueue.main.async {
-                    self?.updateLastError =
-                        "빌드 실패 (exit \(proc.terminationStatus)) — update.log 확인"
+                    guard let self else { return }
+                    self.updateFailedSrcAt = Self.latestSourceMTime(root: root)
+                    ActionLog.shared.append(self.actionEvent("updateFail", kind: "system",
+                        detail: "업데이트 빌드 실패 (exit \(proc.terminationStatus)) — 현재 버전 유지, 상세는 update.log"))
                 }
             }
             do { try p.run() } catch {
@@ -6188,6 +6376,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "{\"total\":\(total),\"strategy\":\(filter ?? 0),\"activeStrategy\":\(active),"
                 + "\"strategies\":[\(strategies.joined(separator: ","))],"
                 + "\"tracks\":[\(items.joined(separator: ","))]}"
+        }
+    }
+
+    // GET /api/bgm/slot-scores — 전략4 · 상태 인지형 (Phase 1, observe-only): per-plan-slot
+    // hit/miss scores derived by replaying the same actions.jsonl window ActionLog serves
+    // (rules in BGMSlotScores.swift / docs/specs/strategy4-state-aware-bgm.md §5). Slot
+    // metadata (days/from/to/themes) is joined from the live plan by label. Pure
+    // read/derive — no file is written, selection and the plan are untouched.
+    func bgmSlotScoresJSON() -> String {
+        // ActionLog reads on its own serial queue; only the plan/catalog need main.
+        let eventsJSON = ActionLog.shared.recentJSON(limit: 2000)
+        return DispatchQueue.main.sync {
+            let meta = bgmPlan.plan.slots.map {
+                BGMSlotScores.SlotMeta(label: $0.label, days: $0.days, from: $0.from,
+                                       to: $0.to, themes: $0.themes)
+            }
+            return BGMSlotScores.deriveJSON(eventsJSON: eventsJSON, slots: meta,
+                                            activeStrategy: trackPlayStats.activeStrategy)
         }
     }
 
