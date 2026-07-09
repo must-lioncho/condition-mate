@@ -9,7 +9,7 @@ import Foundation
 // All numbers come from GET /api/equipment (EquipmentStore + plugin list); EXP is
 // granted server-side when a pomodoro completes (rail cmChOnComplete → POST
 // /api/equipment/pomodoro). This page is a pure view + a dev-only 시뮬 button.
-// Prototype/기획: equipment-test.html (repo root).
+// Prototype/기획: tests/prototypes/equipment-test.html.
 enum EquipmentContent {
 
     static func html() -> String {
@@ -95,6 +95,19 @@ enum EquipmentContent {
           .mini.max{ border-color:#3d3560 } .mini.max .lv{ color:var(--lv-purple) }
           .mini.future{ border-style:dashed; opacity:.45 }
           @keyframes breath{ 0%,100%{ opacity:.78 } 50%{ opacity:1 } }
+
+          /* 폭우 소환 — storm overlay raining on the avatar while a 폭우 리셋 is active */
+          .fig .rainfx{ position:absolute; inset:0; overflow:hidden; pointer-events:none;
+            z-index:1; opacity:0; transition:opacity .8s; border-radius:18px }
+          .fig.raining .rainfx{ opacity:1 }
+          .fig .storm-cloud{ position:absolute; font-size:30px;
+            filter:drop-shadow(0 5px 12px rgba(96,150,235,.55));
+            animation:cloud-drift 3.6s ease-in-out infinite }
+          @keyframes cloud-drift{ 0%,100%{ transform:translateX(-4px) } 50%{ transform:translateX(4px) } }
+          .fig .drop{ position:absolute; top:-24px; width:2px; height:15px; border-radius:2px;
+            background:linear-gradient(180deg, rgba(130,185,255,0), rgba(130,185,255,.85));
+            animation:rain-fall linear infinite }
+          @keyframes rain-fall{ to{ transform:translateY(400px) } }
           .char .who{ margin-top:10px; font-size:12.5px; color:var(--mut) }
           .char .who b{ color:var(--fg) }
           .char .auto-badge{ display:none; margin:10px auto 0; width:fit-content; font-size:11px;
@@ -124,6 +137,16 @@ enum EquipmentContent {
           .devbtn{ background:#1d2230; border:1px solid var(--line); color:var(--mut);
             border-radius:8px; padding:5px 10px; font-size:11px; cursor:pointer }
           .devbtn:hover{ background:#242b3b; color:var(--fg) }
+
+          .rain-summon{ margin-top:12px; padding:12px; background:#0f1620; border:1px solid var(--line);
+            border-radius:11px; text-align:center }
+          .rain-summon button{ width:100%; padding:9px 12px; border-radius:9px; cursor:pointer;
+            font-size:12.5px; font-weight:700; color:#dbeafe; border:1px solid #2f5fa8;
+            background:linear-gradient(180deg,#1b3358,#152744); transition:filter .15s, opacity .15s }
+          .rain-summon button:hover:not(:disabled){ filter:brightness(1.18) }
+          .rain-summon button:disabled{ opacity:.45; cursor:not-allowed }
+          .rain-summon .rain-note{ font-size:10px; color:var(--mut); margin-top:6px; line-height:1.4 }
+          .rain-summon .rain-msg{ font-size:10.5px; margin-top:5px; min-height:13px; font-weight:700 }
           .foot{ color:var(--mut); font-size:11px; text-align:center; margin-top:18px }
         </style></head>
         <body>
@@ -202,6 +225,7 @@ enum EquipmentContent {
                       <rect class="body" x="63" y="46" width="14" height="14" rx="4"/>
                       <circle class="body" cx="70" cy="29" r="19"/>
                     </svg>
+                    <div class="rainfx" id="rainFx"></div>
                     <div class="mini" id="mini-chat" style="left:142px; top:14px">
                       <span class="ic">💬</span><span class="part">머리</span><span class="lv" id="mlv-chat">—</span></div>
                     <div class="mini future" style="left:14px; top:36px" title="미래 아이템 슬롯">
@@ -232,6 +256,13 @@ enum EquipmentContent {
                     <div class="xp"><i id="xp-plugin"></i></div><div class="xptxt" id="xt-plugin"></div>
                   </div>
                   <div class="plug-grid" id="plugGrid"></div>
+
+                  <div class="rain-summon">
+                    <button id="rainBtn" onclick="summonRain()">🌧 경험치로 폭우소환하기</button>
+                    <div class="rain-note">200 XP 소모 · 30~60분 자연 빗소리로 전환<br>
+                      음악이 물릴 때 빗소리로 바꿔 컨디션 회복을 실험</div>
+                    <div class="rain-msg" id="rainMsg"></div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -263,8 +294,43 @@ enum EquipmentContent {
             return {c:'var(--lv-cyan)', glow:'51,201,230'};
           };
 
+          var RAIN_COST = 200;
+          var wasRaining = false;
           function render(j){
             if (!j || !j.categories) return;
+            var raining = !!(j.rain && j.rain.active);
+            // Rain-summon affordability: pooled XP gauges across all categories.
+            var pool = 0;
+            CATS.forEach(function(k){ var c = j.categories[k]; if (c) pool += (c.xp || 0); });
+            var rb = document.getElementById('rainBtn');
+            if (rb){
+              if (raining){
+                rb.disabled = true;
+                rb.title = '이미 폭우가 내리는 중입니다';
+              } else {
+                rb.disabled = pool < RAIN_COST;
+                rb.title = pool < RAIN_COST
+                  ? ('경험치 부족 — 보유 ' + pool + ' / 필요 ' + RAIN_COST + ' XP')
+                  : ('보유 경험치 ' + pool + ' XP · ' + RAIN_COST + ' 소모');
+              }
+            }
+            // Storm on the avatar while rain is falling (summon response + 15s poll both land here).
+            var fig = document.getElementById('fig');
+            if (fig){
+              if (raining) ensureRainFx();
+              fig.classList.toggle('raining', raining);
+            }
+            var rmsg = document.getElementById('rainMsg');
+            if (rmsg){
+              if (raining){
+                var mins = Math.max(1, Math.round((j.rain.remaining || 0) / 60));
+                rmsg.textContent = '🌧 폭우 내리는 중 · 약 ' + mins + '분 남음';
+                rmsg.style.color = 'var(--lv-cyan)';
+              } else if (wasRaining){
+                rmsg.textContent = '';
+              }
+            }
+            wasRaining = raining;
             CATS.forEach(function(k){
               var c = j.categories[k]; if (!c) return;
               var el = document.getElementById('lv-'+k); if (el) el.textContent = 'Lv.' + c.lv;
@@ -291,10 +357,11 @@ enum EquipmentContent {
             var fill = document.getElementById('lvFill');
             fill.style.width = (j.average / 7 * 100).toFixed(1) + '%';
             fill.style.background = d.c;
+            var glow = raining ? '96,150,235' : d.glow;   // stormy blue ambience while raining
             document.getElementById('fig').style.background =
-              'radial-gradient(ellipse 60% 45% at 50% 46%, rgba(' + d.glow + ',.12), transparent 70%)';
+              'radial-gradient(ellipse 60% 45% at 50% 46%, rgba(' + glow + ',' + (raining ? '.16' : '.12') + '), transparent 70%)';
             document.getElementById('avatar').style.filter =
-              'drop-shadow(0 0 ' + (8 + j.overall * 2.5) + 'px rgba(' + d.glow + ',.55))';
+              'drop-shadow(0 0 ' + (8 + j.overall * 2.5) + 'px rgba(' + glow + ',.55))';
             document.getElementById('char').classList.toggle('lv7', j.overall === 7);
             // market strip
             document.getElementById('mkLv').textContent  = '시장 Lv.' + j.market.lv;
@@ -318,9 +385,9 @@ enum EquipmentContent {
             var lg = document.getElementById('ledger');
             if (lg){
               var rows = (j.awards || []).map(function(a){
-                var t = new Date(a.at * 1000);
-                var hh = String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0');
-                var mm = (t.getMonth()+1) + '/' + t.getDate();
+                var t = CMTimeFilter.parts(a.at * 1000);   // 표시 타임존 기준
+                var hh = String(t.h).padStart(2,'0') + ':' + String(t.mi).padStart(2,'0');
+                var mm = t.mo + '/' + t.d;
                 var use = [];
                 CATS.forEach(function(k){ if (a.usage && a.usage[k] > 0) use.push((NAME[k]||k) + ' ' + a.usage[k]); });
                 return '<div class="row">' + mm + ' ' + hh + ' · 🍅 <span class="win">' + (NAME[a.category]||a.category) +
@@ -333,6 +400,48 @@ enum EquipmentContent {
             }
           }
           function esc(t){ var d = document.createElement('div'); d.textContent = (t == null ? '' : t); return d.innerHTML; }
+
+          // Build the storm layer once (clouds over the head + randomized rain streaks);
+          // visibility is driven purely by the fig's .raining class so it fades in/out.
+          function ensureRainFx(){
+            var fx = document.getElementById('rainFx');
+            if (!fx || fx.childNodes.length) return;
+            var h = '<span class="storm-cloud" style="left:24%; top:-8px">⛈️</span>' +
+                    '<span class="storm-cloud" style="left:46%; top:0px; font-size:24px; animation-delay:-1.8s">🌧️</span>';
+            for (var i = 0; i < 26; i++){
+              var dur = 0.7 + Math.random() * 0.6;
+              h += '<i class="drop" style="left:' + (3 + Math.random() * 94).toFixed(1) + '%;' +
+                   ' animation-duration:' + dur.toFixed(2) + 's;' +
+                   ' animation-delay:-' + (Math.random() * dur).toFixed(2) + 's;' +
+                   ' opacity:' + (0.45 + Math.random() * 0.55).toFixed(2) + '"></i>';
+            }
+            fx.innerHTML = h;
+          }
+
+          function summonRain(){
+            var btn = document.getElementById('rainBtn');
+            var msg = document.getElementById('rainMsg');
+            if (btn) btn.disabled = true;
+            if (msg){ msg.textContent = '소환 중…'; msg.style.color = 'var(--mut)'; }
+            fetch('/api/equipment/rain', {method:'POST',
+              headers:{'Content-Type':'application/json'}, body:'{}'})
+              .then(function(r){ return r.json(); })
+              .then(function(j){
+                if (j && j.ok){
+                  if (msg){ msg.textContent = '🌧 폭우 소환! −' + (j.spent || RAIN_COST) + ' XP · 30~60분';
+                    msg.style.color = 'var(--lv-cyan)'; }
+                  render(j);   // gauges drop in place; render re-evaluates affordability
+                } else {
+                  if (msg){ msg.textContent = (j && j.error) ? j.error : '소환 실패';
+                    msg.style.color = 'var(--lv-red)'; }
+                  if (btn) btn.disabled = false;
+                }
+              })
+              .catch(function(){
+                if (msg){ msg.textContent = '요청 실패'; msg.style.color = 'var(--lv-red)'; }
+                if (btn) btn.disabled = false;
+              });
+          }
 
           function load(){
             fetch('/api/equipment').then(function(r){ return r.json(); }).then(render).catch(function(){});

@@ -15,6 +15,7 @@ import Foundation
 enum SessionRail {
     static func html() -> String {
         return #"""
+        \#(CMTimeFilter.bootHTML())
         <style>
           :root{ --cmrail-w:240px }
           body{ padding-left:var(--cmrail-w) }
@@ -34,8 +35,8 @@ enum SessionRail {
           /* Top-of-rail mode navigation (chat/스킬/크론/위임/팀위임/작업) — a horizontal segmented
              switcher like the Claude-Code shell's Chat/Cowork/Code control. Six items won't fit in
              one row at 240px, so they wrap into a 3-column × 2-row grid of vertical mini-tabs (icon
-             over label). chat/스킬/크론/작업 route to real surfaces (크론 → 워커 뷰); 위임/팀위임 open a
-             "준비 중" placeholder page (see #cmPhOverlay). */
+             over label). chat/스킬/크론/작업 route to real surfaces (크론 → 워커 뷰); 위임 opens the
+             rail-owned agents overlay; 팀위임 opens the team-discussion composer (see #cmTeamOverlay). */
           .cmrail-nav{ display:grid; grid-template-columns:repeat(3,1fr); gap:4px; padding:6px;
             margin:0 8px 6px; background:#0f141d; border:1px solid #1c2230; border-radius:12px }
           .cmrail-item{ position:relative; display:flex; flex-direction:column; align-items:center;
@@ -110,6 +111,11 @@ enum SessionRail {
             top:24%; transform:scale(1.22); transform-origin:center top;
             transition:top .85s cubic-bezier(.32,.03,.2,1), transform .85s cubic-bezier(.32,.03,.2,1) }
           .cmrail.chrun .cmch{ top:calc(100% - 234px); transform:scale(1) }
+          /* The rail-level update button sits in normal flow above the settings bar, but the
+             docked dial is an absolute overlay — it won't be pushed up by flow. Shift the dock
+             anchor up by the button's height (≈42px incl. margin) while the button is visible,
+             or the button covers the dial's timer/APM sub-line. */
+          .cmrail.chrun.cmupd .cmch{ top:calc(100% - 276px) }
           /* The docked (running) dial shares the bottom area with the condition-menu popup. While that
              popup is open, fade the dial out so its red stop button / timer don't overlap the menu. */
           .cmrail.cmcond-open .cmch{ opacity:0; pointer-events:none; transition:opacity .18s }
@@ -178,9 +184,12 @@ enum SessionRail {
           .cmch-apm b{ font-variant-numeric:tabular-nums; font-weight:700; color:#c8cfdb }
           .cmch-apm .u{ font-size:9.5px; color:#5d6678; letter-spacing:.02em }
           /* During the launch auto-start countdown, show the timer + hint but KEEP the mode selector
-             visible — the user can switch what will auto-start, or press the dial to cancel. */
+             visible — the user can switch what will auto-start, press the dial to start right away,
+             or hit the 취소 link in the sub line to cancel. */
           .cmch.counting .cmch-label{ display:none }
           .cmch.counting .cmch-timer{ display:block } .cmch.counting .cmch-sub{ display:flex }
+          .cmch-cdcancel{ color:#8792a5; text-decoration:underline; cursor:pointer }
+          .cmch-cdcancel:hover{ color:#c8cfdb }
           .cmch-mute{ position:relative; width:11px; height:11px; border-radius:50%; border:0; padding:0;
             cursor:pointer; background:#22c55e; flex:none;
             box-shadow:0 0 0 0 rgba(34,197,94,.6); animation:cmchBeat 1.6s infinite }
@@ -238,10 +247,40 @@ enum SessionRail {
           .cmcond-full{ width:100%; margin-top:4px; border:0; background:#20283a; color:#e7ecf4; border-radius:9px;
             padding:9px 10px; font-size:12.5px; font-weight:600; cursor:pointer; text-align:left }
           .cmcond-full:hover{ background:#28324a }
+          /* 업데이트 row: accent-tinted so a pending new build is noticeable but not alarming
+             (no red/green status colors by convention). Hidden unless /api/update/check says so. */
+          .cmcond-update{ background:#16263f; color:#8fc0ff; border:1px solid #24457a }
+          .cmcond-update:hover{ background:#1b2f4f }
+          .cmcond-update:disabled{ opacity:.7; cursor:default }
+          /* 레일 직접 노출형 업데이트 버튼 — 설정 메뉴 밖, 포모도로 다이얼 바로 아래.
+             다이얼은 absolute 오버레이라 flow로 밀리지 않음 — .cmrail.cmupd가 도킹 위치를 올린다. */
+          .cmrail-update{ width:calc(100% - 16px); margin:6px 8px 0; padding:9px 10px;
+            border-radius:9px; font-size:12.5px; font-weight:600; cursor:pointer; text-align:left }
           /* 장비 row: current overall level chip on the right (fed by /api/equipment) */
           .cmcond-equip{ display:flex; align-items:center }
           .cmcond-equip .cmcond-lv{ margin-left:auto; font-size:11px; font-weight:800; letter-spacing:.3px;
             padding:2px 9px; border-radius:999px; background:#123039; color:#33c9e6; border:1px solid #1d4b57 }
+          /* 설정 section: storage folder paths (data / BGM / Claude sessions). Paths render
+             right-aligned tail-first (rtl ellipsis) so the meaningful last segments show. */
+          .cmcond-paths{ margin-top:4px; padding:4px 2px 2px; border-top:1px solid #202838 }
+          .cmcond-paths .hd{ display:flex; align-items:center; gap:6px; padding:4px 8px 6px;
+            color:#8792a5; font-size:11px; font-weight:700; letter-spacing:.2px }
+          .cmcond-paths .hd .store{ margin-left:auto; font-weight:600; font-size:10.5px; color:#5fae7d }
+          .cmcond-paths .hd .store.warn{ color:#e8a33d }
+          .cmcond-path{ display:flex; align-items:center; gap:7px; padding:5px 8px; border-radius:8px;
+            cursor:pointer }
+          .cmcond-path:hover{ background:#1d2636 }
+          .cmcond-path .k{ flex:none; width:74px; color:#8a93a5; font-size:11px }
+          .cmcond-path .v{ flex:1; min-width:0; color:#c8cfdb; font-size:10.5px;
+            font-family:ui-monospace,SFMono-Regular,Menlo,monospace; white-space:nowrap; overflow:hidden;
+            text-overflow:ellipsis; direction:rtl; text-align:left }
+          .cmcond-path .v.unset{ color:#6b7589; direction:ltr; font-family:inherit; font-size:11px }
+          .cmcond-tzsel{ flex:1; min-width:0; background:#141a26; color:#c8cfdb; border:1px solid #232c3e;
+            border-radius:7px; font:inherit; font-size:11px; padding:3px 6px; cursor:pointer }
+          .cmcond-path .go{ flex:none; border:0; background:transparent; color:#5d6678; cursor:pointer;
+            font-size:12px; padding:2px 4px; border-radius:6px }
+          .cmcond-path .go:hover{ color:#c8cfdb; background:#28324a }
+          .cmcond-paths .tip{ padding:4px 8px 2px; color:#5d6678; font-size:10px }
         </style>
         <button class="cmrail-toggle cmrail-sbtoggle" onclick="cmRailToggle()" title="세션 레일 열기">
           <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -278,7 +317,7 @@ enum SessionRail {
               <a class="cmrail-item" data-nav="delegate" onclick="cmNav('delegate')" title="목적을 달성하는 책임 에이전트를 봅니다">
                 <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.6" cy="5.4" r="2.1"/><path d="M2.4 12.8c0-1.9 1.5-3.2 3.2-3.2 1.1 0 2 .5 2.6 1.2"/><path d="M9.4 8.4h4M11.7 6.5l1.9 1.9-1.9 1.9"/></svg></span><span class="cmr-lbl">위임</span></a>
               <a class="cmrail-item" data-nav="team" onclick="cmNav('team')" title="teamlead와 더 깊게 대화하고 위임합니다">
-                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5.8" r="2"/><path d="M2.6 12.4c0-1.9 1.5-3.1 3.4-3.1s3.4 1.2 3.4 3.1"/><circle cx="11" cy="6.3" r="1.6"/><path d="M10.4 9.4c1.7 0 3 1 3 2.8"/></svg></span><span class="cmr-lbl">팀위임</span><span class="cmr-cap">준비 중</span></a>
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5.8" r="2"/><path d="M2.6 12.4c0-1.9 1.5-3.1 3.4-3.1s3.4 1.2 3.4 3.1"/><circle cx="11" cy="6.3" r="1.6"/><path d="M10.4 9.4c1.7 0 3 1 3 2.8"/></svg></span><span class="cmr-lbl">팀위임</span></a>
               <a class="cmrail-item" data-nav="work" onclick="cmNav('work')" title="현재 대시보드(작업 목록)를 봅니다">
                 <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 5.2c0-.6.5-1.1 1.1-1.1h2.1l1.1 1.3h4.4c.6 0 1.1.5 1.1 1.1v4.9c0 .6-.5 1.1-1.1 1.1H3.7c-.6 0-1.1-.5-1.1-1.1V5.2Z"/></svg></span><span class="cmr-lbl">작업</span></a>
             </nav>
@@ -312,6 +351,11 @@ enum SessionRail {
               <span class="cmch-apm" id="cmChApm" title="분당 활동량 (APM) — 지금 얼마나 세게 일하는지"><span class="dot" id="cmChApmDot"></span><b id="cmChApmVal">0</b><span class="u">APM</span></span>
             </div>
           </div>
+          <!-- 업데이트: 소스가 이 빌드보다 새로울 때만 나타남 (/api/update/check, 주기 조회).
+               설정 메뉴 밖 — 포모도로 다이얼 바로 아래 레일에 직접 노출. 다이얼은 absolute 도킹이라
+               rail의 .cmupd 클래스가 도킹 위치를 버튼 높이만큼 올려 겹침을 피한다.
+               누르면 build-app.sh가 재빌드→종료→교체→재실행까지 수행 (/api/update/run). -->
+          <button class="cmcond-update cmrail-update" id="cmCondUpdate" onclick="cmCondUpdate(event)" style="display:none">⬆️  업데이트 — 새 빌드 적용</button>
           <div class="cmcond-menu" id="cmCondMenu" style="display:none">
             <div class="cmcond-row"><span class="lbl">BGM 음악</span>
               <button class="cmcond-tog" id="cmCondBgmTog" onclick="cmCondToggleBgm(event)">—</button></div>
@@ -321,6 +365,8 @@ enum SessionRail {
             <button class="cmcond-full" onclick="cmCondFull(event)">🎛  컨디션 전체 보기 (맵·비주얼라이저) →</button>
             <button class="cmcond-full" onclick="cmOpenPlugins(event)" style="margin-top:4px">🧩  플러그인 관리</button>
             <button class="cmcond-full cmcond-equip" onclick="cmOpenEquip(event)" style="margin-top:4px">⚔️  장비<span class="cmcond-lv" id="cmCondEquipLv">—</span></button>
+            <button class="cmcond-full" onclick="cmCondSettings(event)" style="margin-top:4px">⚙️  설정</button>
+            <div class="cmcond-paths" id="cmCondPaths" style="display:none"></div>
           </div>
           <div class="cmcond-bar" id="cmCondBar" onclick="cmCondToggle(event)">
             <button class="cmcond-hp" id="cmCondHp" onclick="cmChMuteToggle(event)" title="음소거 — 곡은 계속, 소리만 끕니다">
@@ -385,8 +431,8 @@ enum SessionRail {
           var cmChDone=false;        // 수확 후 "한 판 더?" 재선택 히어로
           var cmChCompleted=false;   // this session already hit 25:00 (avoid re-firing)
           var cmChDailyN=0;          // today's harvested count, for the N/2 display
-          // Daily harvested-pomodoro count, persisted per local date so it resets each day.
-          function cmChDayKey(){ var d=new Date(); return 'cmPomoDone:'+d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
+          // Daily harvested-pomodoro count, persisted per 표시-타임존 date so it resets each day.
+          function cmChDayKey(){ var p=window.CMTimeFilter.parts(new Date()); return 'cmPomoDone:'+p.y+'-'+p.mo+'-'+p.d; }
           function cmChDailyGet(){ try{ return parseInt(localStorage.getItem(cmChDayKey())||'0',10)||0; }catch(e){ return 0; } }
           function cmChDailyBump(){ var n=cmChDailyGet()+1; try{ localStorage.setItem(cmChDayKey(),String(n)); }catch(e){} return n; }
           function cmChFmt(s){ s=Math.max(0,s|0); var h=(s/3600)|0, m=((s%3600)/60)|0, ss=s%60;
@@ -424,10 +470,12 @@ enum SessionRail {
             el.classList.add('counting'); el.classList.remove('run');
             // Countdown plays in the HERO position, so keep the rail out of its running (docked) layout.
             var rail=document.getElementById('cmRail'); if(rail) rail.classList.remove('chrun');
-            var btn=document.getElementById('cmChBtn'); if(btn){ btn.classList.remove('on'); btn.title='시작 취소'; }
+            var btn=document.getElementById('cmChBtn'); if(btn){ btn.classList.remove('on'); btn.title='즉시 시작 — 카운트다운 건너뛰기'; }
             var cd=document.getElementById('cmChCd'); if(cd) cd.textContent=cmChCountdown;
             document.getElementById('cmChTimer').textContent='곧 시작';
-            var subEl=document.getElementById('cmChSubLabel'); if(subEl) subEl.textContent='자동 시작 · 누르면 취소';
+            // 누르면 즉시 시작(카운트다운 스킵); 취소는 서브 라벨의 링크로 분리.
+            var subEl=document.getElementById('cmChSubLabel');
+            if(subEl) subEl.innerHTML='누르면 즉시 시작 · <span class="cmch-cdcancel" onclick="cmChCancelCd(event)">취소</span>';
             var apmCd=document.getElementById('cmChApm'); if(apmCd) apmCd.style.display='none';
             // Keep the mode selector reflecting the current choice — the user may switch mid-countdown.
             var mb=el.querySelectorAll('#cmChModes button');
@@ -488,9 +536,10 @@ enum SessionRail {
             if(cmChCountdown!=null){ cmChFire(); return; }   // during launch countdown → start now
             if(cmChDone){ cmChFire(); return; }              // "한 판 더?" 재선택 → 그 모드로 바로 시작
             cmChRender(); };
-          // 앱 시작 시 자동 시작(포모도로 기본)을 알리는 5초 리드인. 그동안 유저는 모드를 바꾸거나
-          // 다이얼을 눌러 취소할 수 있다. 수동 시작(다이얼 클릭)은 이 리드인을 쓰지 않고 즉시 시작 —
-          // 카운트다운은 오직 자동 시작에서만 나온다. (수동은 시원시원하게.)
+          // 앱 시작 시 자동 시작(포모도로 기본)을 알리는 5초 리드인. 그동안 유저는 모드를 바꾸거나,
+          // 다이얼을 눌러 기다림 없이 즉시 시작하거나, 서브 라벨의 '취소'로 자동 시작을 걷어낼 수 있다.
+          // 수동 시작(다이얼 클릭)은 이 리드인을 쓰지 않고 즉시 시작 — 카운트다운은 오직 자동 시작에서만
+          // 나온다. (수동은 시원시원하게.)
           function cmChBeginCountdown(){
             cmChCountdown=CMCH_LEADIN; cmChRender();
             cmChCdTimer=setInterval(function(){
@@ -559,17 +608,11 @@ enum SessionRail {
           }
           window.cmChToggle=function(){
             if(cmChReward){ cmChHarvest(); return; }   // tapping the 🍅 orb harvests the reward
-            // Counting → cancel the launch auto-start (and stop the auto-started session). This must
-            // be checked BEFORE cmChRun: the app auto-starts the session at launch, so the first state
-            // poll flips cmChRun to true while the 5s countdown is still on screen — the run-branch
-            // would stop the session but leave the countdown timer alive, which then re-fires start at
-            // 0 (dead-feeling click + stop→restart flicker).
-            if(cmChCountdown!=null){
-              cmChClearCd(); cmChRun=false; cmChRender();
-              fetch('/api/session/control',{method:'POST',headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({action:'stop'})}).catch(function(){});
-              return;
-            }
+            // Counting → 즉시 시작(카운트다운 스킵). 취소는 서브 라벨의 '취소' 링크(cmChCancelCd)로 분리.
+            // This must be checked BEFORE cmChRun: the app auto-starts the session at launch, so the
+            // first state poll flips cmChRun to true while the 5s countdown is still on screen — the
+            // run-branch would treat the click as a stop instead of the intended "start now".
+            if(cmChCountdown!=null){ cmChFire(); return; }
             if(cmChRun){   // running → stop immediately (no lead-in)
               cmChRun=false; cmChCompleted=false; cmChDone=false; cmChRender();
               fetch('/api/session/control',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -577,6 +620,13 @@ enum SessionRail {
               return;
             }
             cmChFire();   // 수동 시작은 항상 즉시 (카운트다운 없음) — 어느 모드든 시원시원하게
+          };
+          // 카운트다운 취소: 자동 시작을 걷어내고, 서버가 이미 auto-start한 세션도 함께 멈춘다.
+          window.cmChCancelCd=function(ev){ if(ev){ ev.stopPropagation(); ev.preventDefault(); }
+            if(cmChCountdown==null) return;
+            cmChClearCd(); cmChRun=false; cmChRender();
+            fetch('/api/session/control',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({action:'stop'})}).catch(function(){});
           };
           window.cmChMuteToggle=function(ev){ if(ev) ev.stopPropagation();
             cmChMuted=!cmChMuted; cmChRender();
@@ -648,7 +698,40 @@ enum SessionRail {
             if(!bar||!m) return; var open=(m.style.display==='none');
             m.style.display=open?'block':'none'; bar.classList.toggle('open',open);
             var rail=document.getElementById('cmRail'); if(rail) rail.classList.toggle('cmcond-open',open);
-            if(open) cmEquipLvRefresh();
+            if(open){ cmEquipLvRefresh(); }
+          };
+          // ⬆️ 업데이트 버튼: 설치된 빌드보다 소스가 새로우면 포모도로 다이얼 아래(설정 메뉴
+          // 밖)에 나타난다. 업데이트 서버 없음 — 같은 머신의 소스 트리 mtime과 실행 파일
+          // mtime을 서버가 비교한다. 메뉴를 열지 않아도 보이도록 주기 폴링한다.
+          function cmUpdateCheck(){
+            fetch('/api/update/check',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(u){
+              var b=document.getElementById('cmCondUpdate'); if(!b) return;
+              if(!b.disabled) b.style.display=(u&&u.available)?'block':'none';
+              // Docked dial is an absolute overlay: flag the rail so CSS lifts it above the button.
+              var rail=document.getElementById('cmRail');
+              if(rail) rail.classList.toggle('cmupd', b.style.display!=='none');
+            }).catch(function(){});
+          }
+          cmUpdateCheck(); setInterval(cmUpdateCheck, 60000);
+          window.cmCondUpdate=function(ev){ if(ev) ev.stopPropagation();
+            var b=document.getElementById('cmCondUpdate'); if(!b||b.disabled) return;
+            b.disabled=true; b.textContent='⏳  업데이트 중… 빌드 후 자동 재시작됩니다';
+            // 실패 사유는 버튼 자체에 잠시 표시 — 버튼이 설정 메뉴 밖에 있어 cmCondNow는 안 보인다.
+            function reset(msg){ b.disabled=false;
+              b.textContent = msg ? ('⚠️  '+msg) : '⬆️  업데이트 — 새 빌드 적용';
+              if(msg) setTimeout(function(){ if(!b.disabled) b.textContent='⬆️  업데이트 — 새 빌드 적용'; }, 6000); }
+            fetch('/api/update/run',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+              .then(function(r){ return r.json(); }).then(function(j){
+                if(!(j&&j.ok)){ reset('업데이트 실패: '+((j&&j.error)||'실행 오류')); return; }
+                // Success ends with THIS app being replaced (page dies with it), so the only
+                // outcome to detect here is failure: the server reports lastError when the
+                // build script exits non-zero while the app is still alive.
+                var t=setInterval(function(){
+                  fetch('/api/update/check',{cache:'no-store'}).then(function(r){ return r.json(); })
+                    .then(function(u){ if(u&&u.lastError){ clearInterval(t); reset('업데이트 실패: '+u.lastError); } })
+                    .catch(function(){});   // unreachable = quitting/relaunching — let the page die
+                },5000);
+              }).catch(function(){ reset('업데이트 실패: 요청 오류'); });
           };
           // 장비 row: refresh the overall-level chip whenever the menu opens, so the
           // settings entry always shows the current 평균 레벨 (same /api/equipment the
@@ -660,6 +743,70 @@ enum SessionRail {
             }).catch(function(){});
           }
           window.cmOpenEquip=function(ev){ if(ev) ev.stopPropagation(); location.href='/equipment'; };
+          // ⚙️ 설정: expandable storage-paths section. Shows WHERE the app reads/writes —
+          // data dir, BGM 음원 folder, Claude 세션 store — so a dev/prod path mix-up is
+          // visible at a glance instead of looking like "data disappeared". Row click
+          // copies the path; ↗ reveals the folder in Finder (fixed-target POST).
+          window.cmCondSettings=function(ev){ if(ev) ev.stopPropagation();
+            var box=document.getElementById('cmCondPaths'); if(!box) return;
+            if(box.style.display!=='none'){ box.style.display='none'; return; }
+            box.style.display='block';
+            box.innerHTML='<div class="tip">경로 불러오는 중…</div>';
+            Promise.all([
+              fetch('/api/settings/paths',{cache:'no-store'}).then(function(r){ return r.json(); }),
+              fetch('/api/settings/timezone',{cache:'no-store'}).then(function(r){ return r.json(); }).catch(function(){ return null; })
+            ]).then(function(rs){
+              var p=rs[0], tz=rs[1];
+              if(!p){ box.innerHTML='<div class="tip">경로를 불러오지 못했습니다</div>'; return; }
+              var store = p.shared ? '단일 저장소 (dev·prod 공용)' : '격리 저장소 (CM_DATA_DIR)';
+              function row(key,label,path){
+                var has = !!(path&&path.length);
+                return '<div class="cmcond-path" onclick="cmCondCopyPath(event,this)" data-p="'+esc(path||'')+'" title="'+(has?('클릭하여 복사: '+esc(path)):'미설정')+'">'
+                  + '<span class="k">'+label+'</span>'
+                  + (has ? '<span class="v">&lrm;'+esc(path)+'</span>' : '<span class="v unset">미설정</span>')
+                  + (has ? '<button class="go" onclick="cmCondReveal(event,\''+key+'\')" title="Finder에서 열기">↗</button>' : '')
+                  + '</div>';
+              }
+              // 표시 타임존 선택 — 저장·기준은 항상 UTC(epoch), 화면 표기만 이 tz를 따른다.
+              // 선택 즉시 서버에 저장하고 새로고침해 페이지 전체(레일·본문)가 새 tz로 그려진다.
+              function tzRow(){
+                if(!tz) return '';
+                var cur=tz.tz||'system';
+                var opts=[['system','시스템 (맥 설정)'],['Asia/Seoul','KST (UTC+9)'],['UTC','UTC (+0)']];
+                var seen=false;
+                var o=opts.map(function(x){ if(x[0]===cur) seen=true;
+                  return '<option value="'+x[0]+'"'+(x[0]===cur?' selected':'')+'>'+x[1]+'</option>'; }).join('');
+                if(!seen) o+='<option value="'+esc(cur)+'" selected>'+esc(cur)+'</option>';
+                return '<div class="cmcond-path" style="cursor:default" onclick="event.stopPropagation()" title="시간 표기 기준 (저장은 항상 UTC) — 현재 '+esc(tz.label||'')+'">'
+                  + '<span class="k">타임존</span>'
+                  + '<select class="cmcond-tzsel" onchange="cmCondSetTz(event,this.value)">'+o+'</select>'
+                  + '</div>';
+              }
+              box.innerHTML =
+                '<div class="hd">저장 폴더<span class="store'+(p.shared?'':' warn')+'">'+store+(p.dev?' · DEV 빌드':'')+'</span></div>'
+                + row('data','데이터',p.data)
+                + row('bgm','BGM 음원',p.bgm)
+                + row('claude','Claude 세션',p.claude)
+                + tzRow()
+                + '<div class="tip">행 클릭=경로 복사 · ↗=Finder에서 열기 · 타임존=시간 표기 기준</div>';
+            }).catch(function(){ box.innerHTML='<div class="tip">경로를 불러오지 못했습니다</div>'; });
+          };
+          window.cmCondSetTz=function(ev,tzv){ if(ev) ev.stopPropagation();
+            fetch('/api/settings/timezone',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({tz:tzv})})
+            .then(function(){ location.reload(); })   // 페이지 전체를 새 표시 tz로 다시 그린다
+            .catch(function(){});
+          };
+          window.cmCondCopyPath=function(ev,el){ if(ev) ev.stopPropagation();
+            var p=el&&el.getAttribute('data-p'); if(!p) return;
+            try{ navigator.clipboard.writeText(p); }catch(e){}
+            var v=el.querySelector('.v'); if(v){ var t=v.innerHTML; v.innerHTML='복사됨 ✓'; v.style.direction='ltr';
+              setTimeout(function(){ v.innerHTML=t; v.style.direction='rtl'; },900); }
+          };
+          window.cmCondReveal=function(ev,target){ if(ev) ev.stopPropagation();
+            fetch('/api/settings/reveal',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({target:target})}).catch(function(){});
+          };
           document.addEventListener('click',function(e){
             var m=document.getElementById('cmCondMenu'), bar=document.getElementById('cmCondBar');
             if(m&&m.style.display!=='none'&&bar&&!bar.contains(e.target)&&!m.contains(e.target)){
@@ -948,7 +1095,8 @@ enum SessionRail {
             if(diff<3600) return Math.floor(diff/60)+'분 전';
             if(diff<86400) return Math.floor(diff/3600)+'시간 전';
             if(diff<604800) return Math.floor(diff/86400)+'일 전';
-            return (d.getFullYear()%100)+'. '+(d.getMonth()+1)+'. '+d.getDate()+'.';
+            var p=window.CMTimeFilter.parts(d);
+            return (p.y%100)+'. '+p.mo+'. '+p.d+'.';
           }
           function baseName(p){ if(!p) return ''; var a=(''+p).split('/').filter(Boolean); return a.length?a[a.length-1]:p; }
           function renderHist(d){ var box=document.getElementById('cmSkHistList'); if(!box) return;
@@ -1150,7 +1298,8 @@ enum SessionRail {
             if(o){ o.style.display='flex'; load(); } };
           window.cmAgClose=function(){ var o=document.getElementById('cmAgOverlay'); if(o) o.style.display='none'; };
           function fmtTs(ts){ if(!ts) return '없음'; try{ var d=new Date(ts); if(isNaN(d.getTime())) return ts;
-            return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }catch(e){ return ts; } }
+            var p=window.CMTimeFilter.parts(d);
+            return p.mo+'/'+p.d+' '+String(p.h).padStart(2,'0')+':'+String(p.mi).padStart(2,'0'); }catch(e){ return ts; } }
           function fmtRel(ts){ if(!ts) return ''; try{ var d=new Date(ts).getTime(); if(isNaN(d)) return '';
             var s=Math.max(0,(Date.now()-d)/1000);
             if(s<60) return '방금'; if(s<3600) return Math.floor(s/60)+'분전';
@@ -1288,8 +1437,8 @@ enum SessionRail {
           window.cmNavReflect=function(){
             // 독립 크론 페이지(/cron)에선 '크론'을 항상 켠다 — 대시보드 뷰 상태와 무관.
             if(window.CM_PAGE==='cron'){ setActive('cron'); return; }
-            var ph=document.getElementById('cmPhOverlay');
-            if(ph && ph.style.display!=='none') return;   // placeholder open → keep its item lit
+            var tm=document.getElementById('cmTeamOverlay');
+            if(tm && tm.style.display!=='none'){ setActive('team'); return; }   // 팀위임 오버레이가 떠 있으면 '팀위임'
             var sk=document.getElementById('cmSkOverlay');
             if(sk && sk.style.display!=='none'){ setActive('skills'); return; }   // 스킬 오버레이가 떠 있으면 '스킬'
             var ag=document.getElementById('cmAgOverlay');
@@ -1298,11 +1447,11 @@ enum SessionRail {
             setActive('');
           };
           window.cmNav=function(kind){
-            // 팀위임: 아직 화면이 없어 "준비 중" 플레이스홀더를 연다.
+            // 팀위임: 레일이 소유하는 독립 오버레이(내용 입력 → 팀 토론 세션 생성)를 연다.
             if(kind==='team'){ setActive(kind);
-              if(typeof cmPhOpen==='function') cmPhOpen(kind); return; }
-            // 실제 목적지: 열려 있던 플레이스홀더는 먼저 닫는다.
-            var o=document.getElementById('cmPhOverlay'); if(o) o.style.display='none';
+              if(typeof cmTeamOpen==='function') cmTeamOpen(); return; }
+            // 다른 목적지로 이동하면 열려 있던 팀위임 오버레이는 닫는다(cmTeamHide는 순수 함수).
+            if(typeof window.cmTeamHide==='function') window.cmTeamHide();
             setActive(kind);
             // 위임: 대시보드 탭이 아니라 레일이 소유하는 독립 에이전트 오버레이를 직접 연다(의존성 분리).
             if(kind==='delegate'){ if(typeof cmAgentsOpen==='function') cmAgentsOpen(); return; }
@@ -1322,51 +1471,80 @@ enum SessionRail {
         })();
         </script>
 
-        <!-- ===== 위임·팀위임 플레이스홀더(준비 중) 오버레이 — 레일 오른쪽에 채워짐 ===== -->
+        <!-- ===== 팀위임 오버레이 — 내용을 입력하면 팀 토론 세션(goal)을 만들어 이동 ===== -->
         <style>
-          .cmph-overlay{ position:fixed; top:0; right:0; bottom:0; left:var(--cmrail-w); z-index:82;
+          .cmteam-overlay{ position:fixed; top:0; right:0; bottom:0; left:var(--cmrail-w); z-index:82;
             background:#0a0d12; display:flex; flex-direction:column; color:#c8cfdb;
             font:14px/1.5 -apple-system,BlinkMacSystemFont,system-ui,sans-serif }
-          body.cmrail-collapsed .cmph-overlay{ left:0 }
-          .cmph-head{ display:flex; align-items:center; gap:12px; padding:40px 20px 16px; border-bottom:1px solid #1c2432 }
-          .cmph-title{ font-size:16px; font-weight:600; color:#e6e9ef }
-          .cmph-x{ margin-left:auto; background:transparent; border:0; color:#8b93a3; font-size:16px; cursor:pointer }
-          .cmph-body{ flex:1; display:flex; align-items:center; justify-content:center; padding:24px }
-          .cmph-card{ max-width:440px; text-align:center }
-          .cmph-ico{ font-size:52px; line-height:1; margin-bottom:16px }
-          .cmph-h{ font-size:20px; font-weight:700; color:#eef2f8; margin-bottom:10px }
-          .cmph-desc{ color:#9aa4b6; font-size:14px; margin-bottom:18px }
-          .cmph-badge{ display:inline-block; font-size:12px; color:#d29922; background:#2a1d12;
-            border:1px solid #4a3410; border-radius:999px; padding:4px 12px; font-weight:600 }
+          body.cmrail-collapsed .cmteam-overlay{ left:0 }
+          .cmteam-head{ display:flex; align-items:center; gap:12px; padding:40px 20px 16px; border-bottom:1px solid #1c2432 }
+          .cmteam-title{ font-size:16px; font-weight:600; color:#e6e9ef }
+          .cmteam-x{ margin-left:auto; background:transparent; border:0; color:#8b93a3; font-size:16px; cursor:pointer }
+          .cmteam-body{ flex:1; display:flex; align-items:center; justify-content:center; padding:24px }
+          .cmteam-card{ width:100%; max-width:640px }
+          .cmteam-greet{ font-size:20px; font-weight:700; color:#eef2f8; margin-bottom:8px }
+          .cmteam-sub{ color:#9aa4b6; font-size:13px; margin-bottom:16px }
+          .cmteam-in{ width:100%; box-sizing:border-box; min-height:180px; resize:vertical;
+            background:#0f141c; border:1px solid #263143; border-radius:10px; color:#e6e9ef;
+            font-family:inherit; font-size:14px; line-height:1.6; padding:12px 14px; outline:none }
+          .cmteam-in:focus{ border-color:#3b82f6 }
+          .cmteam-foot{ display:flex; align-items:center; gap:12px; margin-top:12px }
+          .cmteam-hint{ color:#5f6b7f; font-size:12px }
+          .cmteam-go{ margin-left:auto; background:#2563eb; border:0; color:#fff; font-size:13px;
+            font-weight:600; border-radius:8px; padding:9px 18px; cursor:pointer }
+          .cmteam-go:disabled{ opacity:.5; cursor:default }
+          .cmteam-status{ margin-top:12px; color:#9aa4b6; font-size:13px }
         </style>
-        <div class="cmph-overlay" id="cmPhOverlay" style="display:none">
-          <div class="cmph-head"><div class="cmph-title" id="cmPhHeadTitle">준비 중</div>
-            <button class="cmph-x" title="닫기 (Esc)" onclick="cmPhClose()">✕</button></div>
-          <div class="cmph-body"><div class="cmph-card">
-            <div class="cmph-ico" id="cmPhIco">🚧</div>
-            <div class="cmph-h" id="cmPhTitle"></div>
-            <div class="cmph-desc" id="cmPhDesc"></div>
-            <div class="cmph-badge">준비 중 — 곧 제공됩니다</div>
+        <div class="cmteam-overlay" id="cmTeamOverlay" style="display:none">
+          <div class="cmteam-head"><div class="cmteam-title">팀위임</div>
+            <button class="cmteam-x" title="닫기 (Esc)" onclick="cmTeamClose()">✕</button></div>
+          <div class="cmteam-body"><div class="cmteam-card">
+            <div class="cmteam-greet">깊게 논의할 내용이 있으시군요! 아래에 내용을 입력해주세요.</div>
+            <div class="cmteam-sub">주제·문서·질문을 그대로 붙여넣으면 팀리드가 서로 다른 관점의 에이전트들을 병렬로 실행해 토론하고, 결론과 개선안을 정리합니다.</div>
+            <textarea class="cmteam-in" id="cmTeamInput" placeholder="예) 현재 문서는 OKR인데, 문제정의 없이 목표부터 세우는 것이 맞나?&#10;3개월 지나서 실패를 결정하면 너무 오래 걸리지 않나? 빨리 시그널을 1주일 안에 잡을 수 없나?"></textarea>
+            <div class="cmteam-foot">
+              <span class="cmteam-hint">⌘⏎ 로 시작</span>
+              <button class="cmteam-go" id="cmTeamGo" onclick="cmTeamSubmit()">팀 토론 시작</button>
+            </div>
+            <div class="cmteam-status" id="cmTeamStatus" style="display:none">팀 토론 세션을 준비하는 중…</div>
           </div></div>
         </div>
         <script>
         (function(){
-          var PH={
-            delegate:{ico:'🤝',title:'위임',desc:'subagent에게 작업을 위임해 더 많은 일을 동시에 처리하는 화면입니다.'},
-            team:{ico:'👥',title:'팀위임',desc:'teamlead와 더 깊게 대화하고 팀 단위로 위임하는 화면입니다.'}
-          };
-          window.cmPhOpen=function(kind){ var p=PH[kind]; if(!p) return;
+          // 순수 hide (하이라이트 불변) — cmNav가 다른 목적지로 갈 때 호출한다.
+          window.cmTeamHide=function(){ var o=document.getElementById('cmTeamOverlay'); if(o) o.style.display='none'; };
+          window.cmTeamOpen=function(){
             if(typeof window.cmSkClose==='function') window.cmSkClose();
             if(typeof window.cmAgClose==='function') window.cmAgClose();
-            document.getElementById('cmPhHeadTitle').textContent=p.title;
-            document.getElementById('cmPhIco').textContent=p.ico;
-            document.getElementById('cmPhTitle').textContent=p.title;
-            document.getElementById('cmPhDesc').textContent=p.desc;
-            var o=document.getElementById('cmPhOverlay'); if(o) o.style.display='flex'; };
-          window.cmPhClose=function(){ var o=document.getElementById('cmPhOverlay'); if(o) o.style.display='none';
+            var o=document.getElementById('cmTeamOverlay'); if(o) o.style.display='flex';
+            var t=document.getElementById('cmTeamInput'); if(t) setTimeout(function(){ t.focus(); },50);
+          };
+          window.cmTeamClose=function(){ window.cmTeamHide();
             if(typeof cmNavReflect==='function') cmNavReflect(); };
-          document.addEventListener('keydown',function(e){ if(e.key==='Escape'){ var o=document.getElementById('cmPhOverlay');
-            if(o&&o.style.display!=='none') cmPhClose(); } });
+          // 제출: 토론 goal을 만들고, 입력 전문은 sessionStorage로 goal 페이지에 넘겨 첫 턴
+          // (preset:'team')이 자동 전송되게 한다. 프롬프트 래핑은 서버의 team preamble이 담당하므로
+          // 사용자 말풍선에는 입력한 원문만 남는다.
+          window.cmTeamSubmit=function(){
+            var t=document.getElementById('cmTeamInput'); var v=t?t.value.trim():''; if(!v) return;
+            var btn=document.getElementById('cmTeamGo'), st=document.getElementById('cmTeamStatus');
+            if(btn&&btn.disabled) return;
+            if(btn) btn.disabled=true;
+            if(st){ st.style.display='block'; st.textContent='팀 토론 세션을 준비하는 중…'; }
+            function fail(){ if(btn) btn.disabled=false;
+              if(st){ st.style.display='block'; st.textContent='세션 생성에 실패했습니다. 다시 시도해주세요.'; } }
+            fetch('/api/team/delegate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:v})})
+              .then(function(r){return r.json();})
+              .then(function(d){ if(d&&d.ok&&d.seq){
+                  try{ sessionStorage.setItem('cmTeamKick:'+d.seq, v); }catch(e){}
+                  location.href='/goal?n='+d.seq;
+                } else fail(); })
+              .catch(fail);
+          };
+          var ta=document.getElementById('cmTeamInput');
+          if(ta) ta.addEventListener('keydown',function(e){
+            if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); cmTeamSubmit(); } });
+          document.addEventListener('keydown',function(e){ if(e.key==='Escape'){ var o=document.getElementById('cmTeamOverlay');
+            if(o&&o.style.display!=='none') cmTeamClose(); } });
         })();
         </script>
         """#

@@ -37,6 +37,13 @@ if [ ! -f "Assets/AppIcon.icns" ] || [ "Scripts/gen-icon.swift" -nt "Assets/AppI
 fi
 cp "Assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
+# Stamp the source-tree location into the bundle (before signing — the signature covers
+# Info.plist) so the running app can offer in-app updates: the rail 설정 menu shows an
+# 업데이트 button when sources are newer than this build (GET /api/update/check), and
+# pressing it re-runs this script from CMSourceRoot (POST /api/update/run).
+/usr/libexec/PlistBuddy -c "Delete :CMSourceRoot" "$APP/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :CMSourceRoot string $PWD" "$APP/Contents/Info.plist"
+
 IDENTITY="ConditionManager Dev"
 if security find-identity -p codesigning | grep -q "$IDENTITY"; then
     echo "==> Code signing with '$IDENTITY' (stable Accessibility grant across rebuilds)"
@@ -49,8 +56,34 @@ else
 fi
 
 echo "==> Done: $(pwd)/$APP"
-echo
-echo "다음 단계:"
-echo "  1) open $APP            # 실행 (Dock에 번개 아이콘 + 메뉴바 아이콘)"
-echo "  2) /Applications 로 이동 권장 (로그인 항목 안정화)"
-echo "  3) 메뉴 → '로그인 시 자동 시작' 체크"
+
+# In-place update, desktop-auto-updater style: once the app lives in /Applications
+# (recommended — stable path for the SMAppService login item), every build quits the
+# running instance cleanly, swaps the installed bundle, and relaunches. No manual
+# Finder copy. First-time install never happens implicitly — pass --install once.
+BUNDLE_ID="com.lioncho.conditionmanager"
+INSTALLED="/Applications/$APP"
+if [ -d "$INSTALLED" ] || [ "${1:-}" = "--install" ]; then
+    echo "==> Updating $INSTALLED"
+    # Quit via the normal shutdown path (applicationShouldTerminate), not SIGKILL,
+    # so stores flush. Targets prod only — the dev app has the .dev bundle id.
+    osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+    for _ in $(seq 1 20); do
+        # Prod paths only — the dev app (.dev/ConditionManager.app) must not hold the wait.
+        pgrep -fq "(/Applications|$PWD)/ConditionManager.app/Contents/MacOS/ConditionManager" || break
+        sleep 0.3
+    done
+    rm -rf "$INSTALLED"
+    ditto "$APP" "$INSTALLED"   # ditto preserves the code signature
+    # Strip CM_* overrides before launching: `open` forwards the caller's env, and a
+    # Claude session shell carries CM_DATA_DIR (settings.local.json), which would flip
+    # the prod app into isCustom mode (DEV badge, title stamper disabled).
+    env -u CM_DATA_DIR -u CM_DEV -u CM_DEV_AUTO_OPEN open "$INSTALLED"
+    echo "==> Relaunched $INSTALLED"
+else
+    echo
+    echo "다음 단계:"
+    echo "  1) ./Scripts/build-app.sh --install   # /Applications 에 설치 + 실행 (이후 빌드마다 자동 갱신·재실행)"
+    echo "     또는 open $APP                     # 리포에서 바로 실행"
+    echo "  2) 메뉴 → '로그인 시 자동 시작' 체크"
+fi

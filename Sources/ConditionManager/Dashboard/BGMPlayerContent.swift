@@ -486,6 +486,7 @@ enum BGMPlayerContent {
 </div>
 
 <script>
+\#(CMTimeFilter.tzAssignJS())
 \#(CMTimeFilter.js)
 </script>
 <script>
@@ -1222,7 +1223,7 @@ function appColor(a){ if(colorCache[a]) return colorCache[a];
 const BANDS={'칠 (느긋)':[75,100],'스테디 (안정)':[100,125],'집중 (몰입)':[120,150],'하이프 (고조)':[140,175]};
 function trackBpm(t){ const m=/\[(\d{2,3})\]/.exec(t||''); return m?parseInt(m[1],10):null; }
 function fmtMin(m){ if(m>=60) return (m/60).toFixed(1)+'시간'; return m+'분'; }
-function hhmm(t){ const d=new Date(t*1000); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
+function hhmm(t){ return CMTimeFilter.hhmm(t); }   // 표시 타임존 기준 HH:MM
 function categoryBadge(seg){ let label,color;
   if(seg.meeting){label='미팅';color='#9aa4b2';}
   else if(seg.tier==='적극'){label='집중';color='#36c08a';}
@@ -1350,7 +1351,7 @@ function renderBgmTable(samples){
 // ===== 오늘 활동 블록 (대시보드에서 이동) =====
 // appColor / appStats / withCarryForward / fmtMin / esc / $ 는 이미 이 페이지에 있으므로
 // 중복 정의하지 않는다. 아래는 대시보드에만 있던 렌더러와 그 헬퍼를 그대로 옮긴 것.
-function minOfDay(s){ const dt=new Date(s.t*1000); return dt.getHours()*60+dt.getMinutes(); }
+function minOfDay(s){ const p=CMTimeFilter.parts(s.t*1000); return p.h*60+p.mi; }
 function fmtH(min){ const h=Math.floor(min/60), m=min%60; return h>0? h+'시간 '+m+'분' : m+'분'; }
 // Provisional value hours (weighted active time) — same formula as the dashboard.
 function provisionalHours(samples){ return samples.reduce((a,s)=>a+(s.active||0)*(s.mult||1),0)/3600; }
@@ -1697,7 +1698,7 @@ function initMap(){
   $("mapTz").textContent='시각 '+CMTimeFilter.tzLabel()+' 기준';
   reflectBase();
   _mapCtl = CMTimeFilter.mount($("mapFilter"), {
-    presets:['today','yesterday','7d','1m','30d'], auto:true, custom:true, initial:'auto',
+    presets:['today','yesterday','7d','30d','90d'], auto:true, custom:true, initial:'auto',
     onChange:(r)=>{ _mapRange=r; loadMap(); }
   });
 }
@@ -1739,7 +1740,7 @@ function mapStartCandidates(active){
 }
 function localDayStr(t){ return CMTimeFilter.dayStr(new Date(t*1000)); }
 function condLevel(s){ const a=s.active||0; if(a<=0) return 0; if(s.meeting) return 3; if(s.tier==='적극') return a>=40?5:4; if(s.tier==='중간') return a>=40?3:2; return 1; }
-function clock(t){ const d=new Date(t*1000); return (d.getHours()<10?'0':'')+d.getHours()+':'+(d.getMinutes()<10?'0':'')+d.getMinutes(); }
+function clock(t){ return CMTimeFilter.hhmm(t); }   // 표시 타임존 기준 HH:MM
 
 // 하나의 업무일 띠 데이터: 96개(15분) 셀 레벨 + 통계.
 function buildBand(startT, allSamples, nowT){
@@ -1811,29 +1812,30 @@ function renderMap(){
     if(startT==null){ $("mapSummary").innerHTML=''; $("mapBody").innerHTML='<div class="tkempty">해당 날짜에 활동 기록이 없습니다.</div>'; return; }
     return renderSingle(startT, all, nowT, day===todayStr, (day===todayStr?'오늘':day===CMTimeFilter.presetRange('yesterday').start?'어제':day));
   } else {
-    // 다일 범위: 시작~끝 각 날짜를 한 행씩 (최신순, 최대 31행)
+    // 다일 범위: 시작~끝 각 날짜를 한 행씩 (최신순, 띠 표시는 최대 31행)
     const list=[]; let d=_mapRange.end;
-    while(d>=_mapRange.start && list.length<400){ list.push(d); const dt=CMTimeFilter.parseDay(d); dt.setDate(dt.getDate()-1); d=CMTimeFilter.dayStr(dt); }
+    while(d>=_mapRange.start && list.length<400){ list.push(d); d=CMTimeFilter.dayStr(new Date(CMTimeFilter.parseDay(d).getTime()-43200000)); }   // 자정-12h=전날 정오 → 하루 뒤로 (DST 안전)
     days=list;
   }
-  // 다일 렌더
-  const capped=days.slice(0,31);
+  // 다일 렌더 — 요약(누적·평균)은 기간 전체로 계산하고, 띠는 최근 31일만 그린다.
   const bands=[];
-  capped.forEach(day=>{ const st=startForDay(day, cands, active); if(st!=null) bands.push({day, band:buildBand(st, all, nowT)}); });
+  days.forEach(day=>{ const st=startForDay(day, cands, active); if(st!=null) bands.push({day, band:buildBand(st, all, nowT)}); });
   if(!bands.length){ $("mapSummary").innerHTML=''; $("mapBody").innerHTML='<div class="tkempty">기간 내 활동 기록이 없습니다.</div>'; return; }
-  const avgWork=bands.reduce((a,b)=>a+b.band.elapsedHours,0)/bands.length;
+  const totalWork=bands.reduce((a,b)=>a+b.band.elapsedHours,0);
+  const avgWork=totalWork/bands.length;
   const avgLv=bands.reduce((a,b)=>a+b.band.avgLevel,0)/bands.length;
   $("mapSummary").innerHTML = card('업무일', bands.length+'일')
+    + card('누적 업무시간', totalWork.toFixed(1)+'h', '기준 합 '+(bands.length*_mapBase)+'h')
     + card('평균 업무시간', avgWork.toFixed(1)+'h', '기준 '+_mapBase+'h')
     + card('평균 컨디션', 'Lv '+avgLv.toFixed(1), levelName(avgLv));
-  const rows=bands.map(x=>{
-    const b=x.band, wd=new Date(b.startT*1000);
-    const wk=['일','월','화','수','목','금','토'][wd.getDay()];
+  const rows=bands.slice(0,31).map(x=>{
+    const b=x.band;
+    const wk=CMTimeFilter.weekdayKo(b.startT*1000);
     return '<div class="maprow"><div class="rl"><b>'+x.day+' ('+wk+')</b>'
       +'<span class="rr">시작 '+clock(b.startT)+' · '+b.elapsedHours.toFixed(1)+'h · Lv '+b.avgLevel.toFixed(1)+'</span></div>'
       + bandHTML(b, nowT, x.day===todayStr) + '</div>';
   }).join('');
-  const note=days.length>31?'<div class="tkempty" style="text-align:left">최근 31일만 표시합니다 (범위 '+days.length+'일).</div>':'';
+  const note=bands.length>31?'<div class="tkempty" style="text-align:left">띠는 최근 31일만 표시합니다 (요약은 업무일 '+bands.length+'일 전체 기준).</div>':'';
   $("mapBody").innerHTML=rows+note;
 }
 

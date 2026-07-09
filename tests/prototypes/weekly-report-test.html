@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>주간 리포트 · 카카오톡 텍스트 + 링크 구상</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#131824; --panel2:#1a2030; --line:#232b3d;
+    --tx:#e7ecf5; --mut:#8b96ad; --dim:#5f6b83;
+    --cyan:#37d6ff; --purple:#b57bff; --gold:#ffd166; --green:#4be3a0;
+    --grad:linear-gradient(90deg,#37d6ff,#b57bff);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 700px at 80% -10%,#141b2b,#0b0e14 60%);color:var(--tx);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo",sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 120px}
+  h1{font-size:22px;margin:0;font-weight:800;letter-spacing:-.02em}
+  .sub{color:var(--mut);font-size:12.5px;margin-top:4px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;margin-top:18px}
+  .tag{display:inline-block;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px;font-weight:700}
+  header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:4px}
+  .split{display:grid;grid-template-columns:minmax(0,430px) 1fr;gap:20px}
+  @media(max-width:940px){.split{grid-template-columns:1fr}}
+  code{background:var(--panel2);padding:1px 5px;border-radius:4px;color:var(--gold);font-size:11.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .foot{color:var(--dim);font-size:11.5px;line-height:1.7;margin-top:10px}
+
+  /* flow strip */
+  .flow{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap}
+  .flow .step{flex:1;min-width:170px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:13px 14px}
+  .flow .step .n{font-size:10px;font-weight:800;color:var(--cyan);letter-spacing:.06em}
+  .flow .step .t{font-weight:800;font-size:13.5px;margin-top:4px}
+  .flow .step .d{font-size:11.5px;color:var(--mut);margin-top:5px;line-height:1.5}
+  .flow .arrow{align-self:center;color:var(--dim);font-size:18px}
+  @media(max-width:940px){.flow .arrow{transform:rotate(90deg)}}
+
+  /* kakaotalk chat mock */
+  .katalk{background:#9bbbd4;border-radius:12px;padding:14px 12px;font-family:-apple-system,"Apple SD Gothic Neo",sans-serif}
+  .katop{display:flex;align-items:center;gap:8px;margin-bottom:12px;color:#1c2b3a}
+  .katop .kt{font-weight:800;font-size:13px}
+  .katop .kn{font-size:11px;opacity:.7}
+  .karow{display:flex;gap:8px;align-items:flex-start}
+  .kaav{width:34px;height:34px;border-radius:11px;background:var(--grad);flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:16px}
+  .kacol{min-width:0}
+  .kaname{font-size:11px;color:#33475b;margin:0 0 3px 3px;font-weight:600}
+  .kabubble{background:#fff;border-radius:3px 14px 14px 14px;padding:11px 13px;max-width:330px;color:#111;
+    font-size:12.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+  .katime{font-size:10px;color:#33475b;align-self:flex-end;margin-left:6px;opacity:.7}
+  .kabubble .kl{color:#1b6fd6;text-decoration:underline}
+
+  /* raw text block (copy source of truth) */
+  .rawwrap{margin-top:14px}
+  .rawhd{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px}
+  .rawhd .rl{font-size:11px;font-weight:800;color:var(--mut);letter-spacing:.04em}
+  .copy{background:var(--panel2);border:1px solid var(--line);color:var(--tx);border-radius:7px;padding:5px 11px;font-size:11.5px;font-weight:700;cursor:pointer}
+  .copy:hover{border-color:var(--cyan)}
+  .copy.done{border-color:var(--green);color:var(--green)}
+  .raw{background:#0e1220;border:1px solid var(--line);border-radius:10px;padding:13px 14px;white-space:pre-wrap;
+    font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cdd6e6}
+
+  /* detail page preview */
+  .detail{background:#0e1220;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .dtop{padding:13px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  .dtop .dt{font-weight:800;font-size:14px}
+  .dtop .dw{font-size:11.5px;color:var(--mut);margin-top:2px}
+  .wsel{display:flex;gap:6px}
+  .wsel .w{font-size:11px;font-weight:700;padding:4px 9px;border-radius:7px;background:var(--panel2);border:1px solid var(--line);color:var(--mut);cursor:pointer}
+  .wsel .w.on{color:var(--tx);border-color:var(--cyan)}
+
+  .filters{display:flex;gap:6px;flex-wrap:wrap;padding:11px 16px;border-bottom:1px solid var(--line)}
+  .chip{font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:var(--panel2);border:1px solid var(--line);color:var(--mut);cursor:pointer}
+  .chip.on{color:var(--tx);border-color:var(--cyan)}
+
+  .acc{border-bottom:1px solid var(--line)}
+  .acc .ah{display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;user-select:none}
+  .acc .ah:hover{background:rgba(255,255,255,.02)}
+  .acc .ah .car{color:var(--dim);font-size:11px;transition:.15s;width:12px}
+  .acc.open .ah .car{transform:rotate(90deg)}
+  .acc .ah .nm{font-weight:800;font-size:13.5px}
+  .acc .ah .st{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .cnt{font-size:11px;color:var(--mut)}
+  .cnt b{color:var(--tx)}
+  .cnt .warn{color:var(--gold)}
+  .abody{display:none;padding:2px 16px 14px 38px}
+  .acc.open .abody{display:block}
+
+  .parent{margin-top:10px}
+  .parent .pn{font-size:12px;font-weight:800;color:var(--mut);margin:8px 0 4px;letter-spacing:.02em}
+  .item{display:flex;gap:9px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;align-items:flex-start}
+  .item:first-child{border-top:0}
+  /* Diff badges — no red/green traffic light (team rule). 대기/블록=purple. */
+  .bd{display:inline-block;font-size:9.5px;font-weight:900;padding:2px 7px;border-radius:5px;flex:0 0 auto;letter-spacing:.02em;margin-top:1px;min-width:34px;text-align:center}
+  .bd.new{background:rgba(55,214,255,.16);color:var(--cyan)}
+  .bd.chg{background:rgba(255,209,102,.16);color:var(--gold)}
+  .bd.done{background:rgba(55,214,255,.10);color:#8fd8ee}
+  .bd.late{background:rgba(255,209,102,.22);color:#ffb84d;box-shadow:inset 0 0 0 1px rgba(255,184,77,.4)}
+  .bd.same{background:#20263a;color:var(--dim)}
+  .bd.wait{background:rgba(181,123,255,.16);color:var(--purple)}
+  .item .tx2{flex:1;min-width:0}
+  .item .tx2 .d2{color:var(--mut);font-size:11.5px;margin-top:2px}
+  .item .tx2 .diff{color:var(--gold)}
+  .item .tx2 .stale{color:var(--dim);font-style:italic}
+  .item .due{font-size:10.5px;color:var(--mut);flex:0 0 auto;margin-top:2px;white-space:nowrap}
+  .item .due.over{color:#ffb84d;font-weight:800}
+
+  .legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:9px}
+  .legend .l{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .legend .l .lt{font-weight:800;font-size:12px;display:flex;align-items:center;gap:7px}
+  .legend .l .ld{color:var(--mut);font-size:11px;margin-top:4px;line-height:1.5}
+  .note{font-size:12.5px;line-height:1.7;color:var(--mut)}
+  .note b{color:var(--tx)}
+  .note .k{color:var(--cyan);font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div>
+    <h1>주간 리포트 · 카카오톡 텍스트 + 링크</h1>
+    <div class="sub">카톡에는 임팩트만(순수 텍스트) · 상세는 링크로 · 부서/부모별 + Diff·정체 감지 · 순수 기획 프로토타입 (앱 코드 변경 없음)</div>
+  </div>
+</header>
+
+<!-- FLOW -->
+<div class="card">
+  <span class="tag">전체 흐름</span>
+  <div class="flow">
+    <div class="step">
+      <div class="n">01 · 입력</div>
+      <div class="t">부서장이 자기 부서만 입력</div>
+      <div class="d">항목마다 상태(신규/진행/완료/지연)와 마감일 필수. 자유서술 최소화.</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step">
+      <div class="n">02 · 자동 취합</div>
+      <div class="t">지난주와 Diff → 임팩트 추림</div>
+      <div class="d">변화·리스크·결정필요만 상단으로 승격. 정체 항목 자동 태그.</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step">
+      <div class="n">03 · 카카오톡</div>
+      <div class="t">순수 텍스트 · 임팩트만 + 링크</div>
+      <div class="d">색·서식 불가. 우선순위 그룹(결정/주목/정체)으로 부서 무관 정렬. 30초컷.</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step">
+      <div class="n">04 · 상세 페이지</div>
+      <div class="t">"베스트" 포맷 그대로 + Diff</div>
+      <div class="d">주신 깔끔 포맷 유지. 부서 접이식, 변경분 강조, "N주째 동일" 태그.</div>
+    </div>
+  </div>
+</div>
+
+<!-- TWO PANEL -->
+<div class="split">
+
+  <!-- LEFT: kakaotalk plain text -->
+  <div class="card">
+    <span class="tag">① 카카오톡에 올라가는 것 (텍스트만)</span>
+    <div class="katalk">
+      <div class="katop"><span class="kt">MNC 주간보고</span><span class="kn">· 12명</span></div>
+      <div class="karow">
+        <div class="kaav">📋</div>
+        <div class="kacol">
+          <div class="kaname">주간리포트봇</div>
+          <div style="display:flex;align-items:flex-end">
+            <div class="kabubble">[MNC 주간보고] 7월 2주차 · 이번 주 임팩트
+
+■ 결정 필요
+· [커머스] 베트남 공급가 저항 지속
+  → SANUE 10%할인 전환에도 원가 저항, 원가 재검토 판단 요청
+· [모드] 랜딩페이지 리뉴얼 신규 착수(대표님 요청)
+  → 담당·일정 확정 필요
+
+■ 주목
+· [모드] 일동제약 랩핑 138대로 확대(~7/13), 1주차 77대 완료
+· [본부] 3분기 운영계획서 7월 3주차까지 작성·보고
+
+■ 3주째 진척 없음(2건)
+· 3D프린터 박람회 참여 / 크러스티 외주 미팅 조율
+
+▶ 부서별 상세: <span class="kl">cm.local/weekly?w=W28</span></div>
+            <span class="katime">9:00</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rawwrap">
+      <div class="rawhd">
+        <span class="rl">실제 전송 텍스트 (복사용 · 서식 0)</span>
+        <button class="copy" id="copyBtn">복사</button>
+      </div>
+      <div class="raw" id="rawText">[MNC 주간보고] 7월 2주차 · 이번 주 임팩트
+
+■ 결정 필요
+· [커머스] 베트남 공급가 저항 지속
+  → SANUE 10%할인 전환에도 원가 저항, 원가 재검토 판단 요청
+· [모드] 랜딩페이지 리뉴얼 신규 착수(대표님 요청)
+  → 담당·일정 확정 필요
+
+■ 주목
+· [모드] 일동제약 랩핑 138대로 확대(~7/13), 1주차 77대 완료
+· [본부] 3분기 운영계획서 7월 3주차까지 작성·보고
+
+■ 3주째 진척 없음(2건)
+· 3D프린터 박람회 참여 / 크러스티 외주 미팅 조율
+
+▶ 부서별 상세: cm.local/weekly?w=W28</div>
+    </div>
+
+    <div class="foot">
+      색·볼드·표 전부 불가 → <b>기호(■ · →)와 그룹 제목</b>만으로 위계. 부서 무관 <b>우선순위 그룹</b>이라 대표가 위에서부터 읽으면 끝.<br>
+      "3주째 진척 없음(2건)"을 <b>텍스트 한 줄</b>로 노출 → 복붙 어뷰징이 카톡에서부터 드러남.
+    </div>
+  </div>
+
+  <!-- RIGHT: detail page -->
+  <div class="card">
+    <span class="tag">② 링크가 여는 상세 페이지 ("베스트" 포맷 + Diff)</span>
+    <div class="detail">
+      <div class="dtop">
+        <div>
+          <div class="dt">MNC 주간 상세 리포트</div>
+          <div class="dw">7월 2주차 · 지난주(1주차) 대비 Diff</div>
+        </div>
+        <div class="wsel">
+          <div class="w">1주차</div>
+          <div class="w on">2주차</div>
+          <div class="w">비교</div>
+        </div>
+      </div>
+
+      <div class="filters">
+        <div class="chip on">전체</div>
+        <div class="chip">신규</div>
+        <div class="chip">변경</div>
+        <div class="chip">지연</div>
+        <div class="chip">정체(3주+)</div>
+      </div>
+
+      <!-- 요약(공통) -->
+      <div class="acc open">
+        <div class="ah">
+          <span class="car">▶</span>
+          <span class="nm">요약 · 본부 공통</span>
+          <span class="st"><span class="cnt"><b>2</b> 신규 이슈</span></span>
+        </div>
+        <div class="abody">
+          <div class="parent">
+            <div class="item">
+              <span class="bd chg">변경</span>
+              <div class="tx2">사업부 간 일정·리소스 조율 툴 필요<div class="d2">AX팀과 협의 중</div></div>
+              <span class="due">진행</span>
+            </div>
+            <div class="item">
+              <span class="bd new">신규</span>
+              <div class="tx2">사업부별 3분기 운영계획서<div class="d2">7월 3주차까지 작성·보고</div></div>
+              <span class="due">~7월3주</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1. 플랫폼콘텐츠 (open, matches user's pasted best) -->
+      <div class="acc open">
+        <div class="ah">
+          <span class="car">▶</span>
+          <span class="nm">1. 플랫폼콘텐츠 사업부</span>
+          <span class="st"><span class="cnt"><b>3</b> 변경 · <span class="warn">1 정체</span></span></span>
+        </div>
+        <div class="abody">
+          <div class="parent">
+            <div class="pn">└ 머스트 크루</div>
+            <div class="item">
+              <span class="bd done">완료</span>
+              <div class="tx2">대표님 뮤직비디오 촬영 · 기획안 공유 · 태국 V-log 업로드<div class="d2">7/3 · 차주 MV 업로드 예정</div></div>
+              <span class="due">7/3</span>
+            </div>
+            <div class="item">
+              <span class="bd new">신규</span>
+              <div class="tx2">Play list 제작 시작<div class="d2">월요일(7/6) 업로드 예정</div></div>
+              <span class="due">7/6</span>
+            </div>
+            <div class="item">
+              <span class="bd new">신규</span>
+              <div class="tx2">'대표님 초대손님' 콘텐츠<div class="d2">출연진 섭외 중</div></div>
+              <span class="due">차주</span>
+            </div>
+          </div>
+          <div class="parent">
+            <div class="pn">└ 포틀리에</div>
+            <div class="item">
+              <span class="bd chg">변경</span>
+              <div class="tx2">7월부터 콘텐츠 제작 이임받음, 기획안 전달 완료<div class="d2">차주 기획안 회의·촬영 컨셉 정리</div></div>
+              <span class="due">차주</span>
+            </div>
+          </div>
+          <div class="parent">
+            <div class="pn">└ 크러스티</div>
+            <div class="item">
+              <span class="bd same">3주째</span>
+              <div class="tx2">외주제작사 미팅 일정 조율 <span class="stale">— 3주째 "조율 중" 동일</span><div class="d2">8월까지 계약 유지 · 차주 구성회의 예정</div></div>
+              <span class="due">차주</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. 모드 (collapsed) -->
+      <div class="acc">
+        <div class="ah">
+          <span class="car">▶</span>
+          <span class="nm">2. 모드 (MOAD) 사업부</span>
+          <span class="st"><span class="cnt"><b>5</b> 변경 · <span class="warn">1 지연</span></span></span>
+        </div>
+        <div class="abody">
+          <div class="parent">
+            <div class="pn">└ 일동제약</div>
+            <div class="item">
+              <span class="bd chg">변경</span>
+              <div class="tx2">랩핑 <span class="diff">77대 → 138대 목표</span><div class="d2">지방권 출장 랩핑 7/6~7/9</div></div>
+              <span class="due">~7/13</span>
+            </div>
+            <div class="item">
+              <span class="bd wait">대기</span>
+              <div class="tx2">용역계약서 등기 재수령<div class="d2">인터넷 서명 불가 → 등기 왕복</div></div>
+              <span class="due">차주</span>
+            </div>
+          </div>
+          <div class="parent">
+            <div class="pn">└ 운영 / 영업</div>
+            <div class="item">
+              <span class="bd new">신규</span>
+              <div class="tx2">랜딩페이지 리뉴얼 착수 <span class="diff">(대표님 요청)</span><div class="d2">담당·일정 미확정</div></div>
+              <span class="due over">미정</span>
+            </div>
+            <div class="item">
+              <span class="bd same">3주째</span>
+              <div class="tx2">3D프린터 박람회 참여 <span class="stale">— 문구 3주 동일, 진척 불명</span></div>
+              <span class="due">—</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. 커머스 (collapsed) -->
+      <div class="acc">
+        <div class="ah">
+          <span class="car">▶</span>
+          <span class="nm">3. 커머스 사업부</span>
+          <span class="st"><span class="cnt"><span class="warn">1 결정 필요</span></span></span>
+        </div>
+        <div class="abody">
+          <div class="parent">
+            <div class="pn">└ SANUE</div>
+            <div class="item">
+              <span class="bd late">결정</span>
+              <div class="tx2">베트남 공급가 저항 지속 <span class="diff">→ 원가 재검토 필요</span><div class="d2">상시 10% 할인 전환에도 지속</div></div>
+              <span class="due over">판단</span>
+            </div>
+          </div>
+          <div class="parent">
+            <div class="pn">└ MUST U</div>
+            <div class="item">
+              <span class="bd chg">변경</span>
+              <div class="tx2">수익모델 다각화<div class="d2">플랫폼 광고 + 태국 컨설팅 상품화 진행</div></div>
+              <span class="due">진행</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <div class="foot">
+      상세는 주신 <b>"베스트" 포맷 그대로</b> — 부서 = 접이식, 부모(브랜드) = 하위 그룹. 기본은 헤더+카운트만, 클릭해야 펼쳐짐.<br>
+      각 항목 앞 <b>Diff 뱃지</b> + 뒤 <b>마감일</b>. 팀 규칙대로 <b>빨강/녹색 신호등 배제</b> — 대기=보라, 강조는 앰버로.
+    </div>
+  </div>
+
+</div>
+
+<!-- ANTI ABUSE -->
+<div class="card">
+  <span class="tag">③ 어뷰징 방지 (복붙을 "막는" 게 아니라 "드러냄")</span>
+  <div class="legend">
+    <div class="l"><div class="lt"><span class="bd new">신규</span> 주간 Diff</div><div class="ld">지난주 스냅샷과 비교해 새 항목·변경분만 표시. 복붙하면 강조가 하나도 없어 즉시 티남.</div></div>
+    <div class="l"><div class="lt"><span class="bd same">3주째</span> 정체 태그</div><div class="ld">문구가 지난주와 같으면 "N주째 동일" 자동 부착 + 카톡 요약에도 노출. 반복이 스스로 고발됨.</div></div>
+    <div class="l"><div class="lt"><span class="bd late">지연</span> 마감일 채색</div><div class="ld">항목마다 목표일. 지났는데 미완이면 앰버 강조. "곧 완료" 무한반복 차단.</div></div>
+    <div class="l"><div class="lt"><span class="bd wait">대기</span> 상태 뱃지 강제</div><div class="ld">신규/진행/완료/지연/대기 중 필수 선택. 뭉개는 서술 불가. 대기=보라(팀 규칙).</div></div>
+  </div>
+  <div class="foot">핵심 두 개는 <b>주간 Diff</b> + <b>정체 태그</b>. 이 둘만으로 "이번 주 움직인 것"과 "말만 반복"이 자동 분리됨. 정체 건수는 카톡 텍스트에도 한 줄로 올라감.</div>
+</div>
+
+<!-- IMPLEMENTATION NOTE -->
+<div class="card">
+  <span class="tag">④ 앱 연동 메모 (구현 시)</span>
+  <div class="note">
+    상세 페이지는 새 문서가 아니라 <b>지금 대시보드가 곧 리포트</b>가 되게 함:<br>
+    · 부서 = <span class="k">goal 트리</span>, 부모(브랜드) = 트리 1단계 하위 (<code>goal-link-context-model</code> 그대로)<br>
+    · 항목 = goal/task, 상태·마감일은 기존 필드 재사용 · 새 필드는 <code>reviewJSON()</code> 수기 직렬화 + lastView 허용목록 등록 필요<br>
+    · Diff = 매주 월요일 <b>주간 스냅샷</b> 한 장 떠두고 다음 주 텍스트 비교 → 신규/변경/동일 판정<br>
+    · 카톡 발송 = 임팩트 텍스트를 <b>서버가 생성</b> → 복사 or 카톡 API. 색/서식 없이 기호만<br>
+    · 링크 = 로컬 대시보드 라우트 <code>/weekly-report?w=2026-W28</code> (주차 파라미터)<br>
+    · 색 규칙 = <code>status-color-semantics</code> 준수 — 상태에 빨강/녹색 신호등 금지, 대기=보라
+  </div>
+  <div class="foot">이 파일은 <code>tests/prototypes/weekly-report-test.html</code> · 브라우저로 직접 열어 확인 · 런타임 코드는 로드하지 않음</div>
+</div>
+
+</div>
+
+<script>
+  document.querySelectorAll('.acc .ah').forEach(h=>{
+    h.addEventListener('click',()=>h.parentElement.classList.toggle('open'));
+  });
+  document.querySelectorAll('.wsel .w').forEach(w=>{
+    w.addEventListener('click',()=>{
+      document.querySelectorAll('.wsel .w').forEach(x=>x.classList.remove('on'));
+      w.classList.add('on');
+    });
+  });
+  document.querySelectorAll('.filters .chip').forEach(c=>{
+    c.addEventListener('click',()=>{
+      document.querySelectorAll('.filters .chip').forEach(x=>x.classList.remove('on'));
+      c.classList.add('on');
+    });
+  });
+  const btn=document.getElementById('copyBtn');
+  btn && btn.addEventListener('click',()=>{
+    const t=document.getElementById('rawText').innerText;
+    navigator.clipboard.writeText(t).then(()=>{
+      btn.textContent='복사됨';btn.classList.add('done');
+      setTimeout(()=>{btn.textContent='복사';btn.classList.remove('done')},1500);
+    });
+  });
+</script>
+</body>
+</html>

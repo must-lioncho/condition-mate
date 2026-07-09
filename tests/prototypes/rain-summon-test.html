@@ -1,0 +1,325 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>폭우 소환 애니메이션 테스트 — 장비 페이지</title>
+<style>
+  /* ── app tokens (EquipmentContent.swift와 동일) ─────────────────────────── */
+  :root{
+    --bg:#0e1116; --panel:#141821; --line:#222a36; --fg:#e6e9ef; --mut:#8a93a3;
+    --accent:#5b8cff; --card:#0f141d;
+    --lv-cyan:#33c9e6; --lv-red:#f05045; --lv-purple:#a97bff;
+  }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--fg);
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif }
+  header{ padding:16px 22px; border-bottom:1px solid var(--line) }
+  header h1{ margin:0; font-size:16px }
+  header .sub{ color:var(--mut); font-size:12px; margin-top:3px }
+  main{ max-width:960px; margin:0 auto; padding:18px 20px 80px;
+    display:grid; grid-template-columns:300px 1fr; gap:18px; align-items:start }
+  @media (max-width:760px){ main{ grid-template-columns:1fr } }
+  .panel{ background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px }
+  .panel h3{ margin:0 0 10px; font-size:13px }
+  .panel h4{ margin:14px 0 6px; font-size:11.5px; color:var(--mut); letter-spacing:.4px }
+
+  /* ── character figure (EquipmentContent.swift 복제) ─────────────────────── */
+  .char{ text-align:center; padding:6px 8px 8px }
+  .char .fig{ position:relative; width:230px; height:352px; margin:0 auto;
+    background:radial-gradient(ellipse 60% 45% at 50% 46%, rgba(51,201,230,.10), transparent 70%);
+    transition:background .4s }
+  .char .fig svg{ position:absolute; left:50%; top:6px; transform:translateX(-50%);
+    filter:drop-shadow(0 0 12px rgba(51,201,230,.45)); transition:filter .4s;
+    animation:breath 2.6s ease-in-out infinite }
+  .char .fig svg .body{ fill:#141b28; stroke:#3a465f; stroke-width:2 }
+  .char .fig svg .limb{ fill:none; stroke:#141b28; stroke-width:13; stroke-linecap:round }
+  .char .fig svg .limb-edge{ fill:none; stroke:#3a465f; stroke-width:15; stroke-linecap:round }
+  .mini{ position:absolute; display:flex; align-items:center; gap:4px; padding:3px 7px;
+    background:var(--card); border:1px solid var(--line); border-radius:8px;
+    font-size:10px; user-select:none; z-index:2; white-space:nowrap }
+  .mini .ic{ font-size:12px }
+  .mini .lv{ font-weight:800; color:var(--mut) }
+  .mini .part{ color:var(--mut); font-size:8.5px; letter-spacing:.3px }
+  .mini.lit{ border-color:#2f6bff } .mini.lit .lv{ color:#9ec1ff }
+  .mini.future{ border-style:dashed; opacity:.45 }
+  @keyframes breath{ 0%,100%{ opacity:.78 } 50%{ opacity:1 } }
+  .char .who{ margin-top:10px; font-size:12.5px; color:var(--mut) }
+  .char .who b{ color:var(--fg) }
+
+  /* 폭우 소환 — storm overlay raining on the avatar while a 폭우 리셋 is active */
+  .fig .rainfx{ position:absolute; inset:0; overflow:hidden; pointer-events:none;
+    z-index:1; opacity:0; transition:opacity .8s; border-radius:18px }
+  .fig.raining .rainfx{ opacity:1 }
+  .fig .storm-cloud{ position:absolute; font-size:30px;
+    filter:drop-shadow(0 5px 12px rgba(96,150,235,.55));
+    animation:cloud-drift 3.6s ease-in-out infinite }
+  @keyframes cloud-drift{ 0%,100%{ transform:translateX(-4px) } 50%{ transform:translateX(4px) } }
+  .fig .drop{ position:absolute; top:-24px; width:2px; height:15px; border-radius:2px;
+    background:linear-gradient(180deg, rgba(130,185,255,0), rgba(130,185,255,.85));
+    animation:rain-fall linear infinite }
+  @keyframes rain-fall{ to{ transform:translateY(400px) } }
+
+  /* ── rain summon box (EquipmentContent.swift 복제) ─────────────────────── */
+  .rain-summon{ margin-top:12px; padding:12px; background:#0f1620; border:1px solid var(--line);
+    border-radius:11px; text-align:center }
+  .rain-summon button{ width:100%; padding:9px 12px; border-radius:9px; cursor:pointer;
+    font-size:12.5px; font-weight:700; color:#dbeafe; border:1px solid #2f5fa8;
+    background:linear-gradient(180deg,#1b3358,#152744); transition:filter .15s, opacity .15s }
+  .rain-summon button:hover:not(:disabled){ filter:brightness(1.18) }
+  .rain-summon button:disabled{ opacity:.45; cursor:not-allowed }
+  .rain-summon .rain-note{ font-size:10px; color:var(--mut); margin-top:6px; line-height:1.4 }
+  .rain-summon .rain-msg{ font-size:10.5px; margin-top:5px; min-height:13px; font-weight:700 }
+
+  /* ── test controls ──────────────────────────────────────────────────────── */
+  .ctl{ display:flex; flex-wrap:wrap; gap:8px }
+  .ctl button{ padding:7px 12px; border-radius:9px; cursor:pointer; font-size:12px;
+    background:#1d2230; border:1px solid var(--line); color:var(--fg) }
+  .ctl button:hover{ background:#242b3b }
+  .stat{ display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--mut);
+    padding:9px 12px; background:#10151f; border:1px solid var(--line); border-radius:9px;
+    margin-top:10px }
+  .stat b{ color:var(--fg) }
+  .stat .on{ color:var(--lv-cyan); font-weight:700 }
+  .speed{ font-size:11.5px; color:var(--mut); margin-top:10px; display:flex; align-items:center; gap:8px }
+  .log{ margin-top:12px; font-size:11px; color:var(--mut); max-height:220px; overflow:auto }
+  .log div{ padding:5px 10px; border:1px solid var(--line); border-radius:8px;
+    background:#10151f; margin-bottom:5px }
+  .log b{ color:var(--fg) }
+  .note{ font-size:11.5px; color:var(--mut); line-height:1.7; margin-top:14px }
+  .note b{ color:var(--fg) }
+</style></head>
+<body>
+  <header>
+    <h1>🌧 폭우 소환 애니메이션 테스트</h1>
+    <div class="sub">장비 페이지(/equipment) 캐릭터 폭우 오버레이 프로토타입 — 목 API로 소환·폴링·종료 시나리오 재현
+      · 참조: Dashboard/EquipmentContent.swift (rainfx), AppDelegate.swift equipmentJSON()의 rain 필드</div>
+  </header>
+  <main>
+    <!-- ── left: the avatar exactly as the equipment page renders it ── -->
+    <div class="panel">
+      <div class="char" id="char">
+        <div class="fig" id="fig">
+          <svg id="avatar" width="140" height="340" viewBox="0 0 140 340">
+            <polyline class="limb-edge" points="46,68 34,120 30,160"/>
+            <polyline class="limb-edge" points="94,68 106,120 110,160"/>
+            <polyline class="limb" points="46,68 34,120 30,160"/>
+            <polyline class="limb" points="94,68 106,120 110,160"/>
+            <polyline class="limb-edge" points="58,178 56,245 55,306"/>
+            <polyline class="limb-edge" points="82,178 84,245 85,306"/>
+            <polyline class="limb" points="58,178 56,245 55,306"/>
+            <polyline class="limb" points="82,178 84,245 85,306"/>
+            <ellipse class="body" cx="50" cy="314" rx="13" ry="6"/>
+            <ellipse class="body" cx="90" cy="314" rx="13" ry="6"/>
+            <path class="body" d="M40 62 Q70 54 100 62 L92 140 Q94 150 96 166 Q70 176 44 166 Q46 150 48 140 Z"/>
+            <rect class="body" x="63" y="46" width="14" height="14" rx="4"/>
+            <circle class="body" cx="70" cy="29" r="19"/>
+          </svg>
+          <div class="rainfx" id="rainFx"></div>
+          <div class="mini lit" style="left:142px; top:14px">
+            <span class="ic">💬</span><span class="part">머리</span><span class="lv" style="color:#9ec1ff">Lv.6</span></div>
+          <div class="mini future" style="left:14px; top:36px"><span class="ic">📿</span><span class="part">목걸이</span></div>
+          <div class="mini" style="left:6px; top:76px">
+            <span class="ic">👥</span><span class="part">어깨</span><span class="lv">Lv.0</span></div>
+          <div class="mini" style="left:144px; top:104px">
+            <span class="ic">🧩</span><span class="part">갑옷</span><span class="lv">Lv.0</span></div>
+          <div class="mini lit" style="left:0px; top:158px">
+            <span class="ic">🎯</span><span class="part">무기</span><span class="lv" style="color:#9ec1ff">Lv.4</span></div>
+          <div class="mini" style="left:152px; top:158px">
+            <span class="ic">🤝</span><span class="part">방패</span><span class="lv">Lv.0</span></div>
+          <div class="mini future" style="left:150px; top:210px"><span class="ic">💍</span><span class="part">반지</span></div>
+          <div class="mini" style="left:12px; top:298px">
+            <span class="ic">⏰</span><span class="part">신발</span><span class="lv">Lv.0</span></div>
+        </div>
+        <div class="who"><b>나</b> · 컨디션 매니저</div>
+      </div>
+      <div class="rain-summon">
+        <button id="rainBtn" onclick="summonRain()">🌧 경험치로 폭우소환하기</button>
+        <div class="rain-note">200 XP 소모 · 30~60분 자연 빗소리로 전환<br>
+          음악이 물릴 때 빗소리로 바꿔 컨디션 회복을 실험</div>
+        <div class="rain-msg" id="rainMsg"></div>
+      </div>
+    </div>
+
+    <!-- ── right: mock server controls ── -->
+    <div class="panel">
+      <h3>테스트 시나리오</h3>
+      <div class="ctl">
+        <button onclick="scnRich()">① XP 충전 (500)</button>
+        <button onclick="scnPoor()">② XP 부족 상태 (40)</button>
+        <button onclick="scnStop()">③ 폭우 강제 종료</button>
+        <button onclick="scnExternal()">④ 외부 폭우 시작 (디렉터 자동발동 → 폴링으로 감지)</button>
+      </div>
+      <div class="speed">
+        시간 배속:
+        <label><input type="radio" name="spd" value="1" onchange="setSpeed(this.value)"> 실시간</label>
+        <label><input type="radio" name="spd" value="60" checked onchange="setSpeed(this.value)"> ×60 (1분=1초)</label>
+        <label><input type="radio" name="spd" value="600" onchange="setSpeed(this.value)"> ×600</label>
+        · 폴링 3초 (실제 앱 15초)
+      </div>
+      <div class="stat">
+        <span>보유 XP <b id="stPool">—</b></span>
+        <span>폭우 <b id="stRain">—</b></span>
+        <span>남은 시간 <b id="stRemain">—</b></span>
+        <span>버튼 <b id="stBtn">—</b></span>
+      </div>
+
+      <h4>체크리스트</h4>
+      <div class="note" style="margin-top:0">
+        · 소환 성공 → 응답 즉시 캐릭터에 먹구름+빗줄기 페이드인, 발광이 폭풍우 블루로 전환<br>
+        · 폭우 중 → 버튼 잠금 + "폭우 내리는 중 · 약 N분 남음" (폴링마다 갱신)<br>
+        · XP 부족 → 소환 거부, 애니메이션 없음<br>
+        · 종료(만료·강제) → 다음 폴링에서 페이드아웃, 메시지 클리어, 발광 원복<br>
+        · ④ 외부 시작 → 소환 버튼 없이도 폴링만으로 애니메이션 켜짐 (앱 재시작·페이지 재진입 대응)
+      </div>
+
+      <h4>이벤트 로그</h4>
+      <div class="log" id="log"></div>
+
+      <div class="note">
+        <b>실제 연결</b> — 앱에서는 POST /api/equipment/rain 응답과 GET /api/equipment 15초 폴링에
+        실리는 <b>rain:{active, remaining}</b> 필드가 이 목 서버 역할을 합니다.
+        디렉터가 비활성이면 소환이 다음 틱으로 이월되므로(forcedRainPending) 애니메이션은
+        실제 빗소리가 시작되는 폴링 시점에 켜집니다.
+      </div>
+    </div>
+  </main>
+
+  <script>
+  'use strict';
+  /* ── mock server: /api/equipment + /api/equipment/rain 의 rain 계약 재현 ── */
+  var RAIN_COST = 200;
+  var speed = 60;                      // simulated seconds per real second
+  var srv = { pool: 500, rainUntil: 0 };   // rainUntil = epoch ms (0 = not raining)
+
+  function srvRemaining(){ return Math.max(0, Math.round((srv.rainUntil - Date.now()) / 1000 * speed)); }
+  function srvState(){
+    var rem = srvRemaining();
+    return { pool: srv.pool, rain: { active: rem > 0, remaining: rem } };
+  }
+  function srvSummon(){
+    if (srvRemaining() > 0) return { ok:false, error:'이미 폭우가 내리는 중입니다' };
+    if (srv.pool < RAIN_COST) return { ok:false, error:'경험치가 부족합니다 (필요 ' + RAIN_COST + ' XP)' };
+    srv.pool -= RAIN_COST;
+    var mins = 30 + Math.random() * 30;                      // director: 30~60분
+    srv.rainUntil = Date.now() + mins * 60 * 1000 / speed;   // scaled by 배속
+    logLine('서버', '폭우 시작 · ' + Math.round(mins) + '분 · −' + RAIN_COST + ' XP (잔여 ' + srv.pool + ')');
+    var j = srvState(); j.ok = true; j.spent = RAIN_COST;
+    return j;
+  }
+
+  /* ── page logic: EquipmentContent.swift 스크립트에서 그대로 가져온 부분 ── */
+  var wasRaining = false;
+  function render(j){
+    var raining = !!(j.rain && j.rain.active);
+    var rb = document.getElementById('rainBtn');
+    if (rb){
+      if (raining){
+        rb.disabled = true;
+        rb.title = '이미 폭우가 내리는 중입니다';
+      } else {
+        rb.disabled = j.pool < RAIN_COST;
+        rb.title = j.pool < RAIN_COST
+          ? ('경험치 부족 — 보유 ' + j.pool + ' / 필요 ' + RAIN_COST + ' XP')
+          : ('보유 경험치 ' + j.pool + ' XP · ' + RAIN_COST + ' 소모');
+      }
+    }
+    var fig = document.getElementById('fig');
+    if (fig){
+      if (raining) ensureRainFx();
+      fig.classList.toggle('raining', raining);
+    }
+    var rmsg = document.getElementById('rainMsg');
+    if (rmsg){
+      if (raining){
+        var mins = Math.max(1, Math.round((j.rain.remaining || 0) / 60));
+        rmsg.textContent = '🌧 폭우 내리는 중 · 약 ' + mins + '분 남음';
+        rmsg.style.color = 'var(--lv-cyan)';
+      } else if (wasRaining){
+        rmsg.textContent = '';
+        logLine('페이지', '폭우 종료 감지 — 오버레이 페이드아웃, 발광 원복');
+      }
+    }
+    var glow = raining ? '96,150,235' : '51,201,230';
+    fig.style.background =
+      'radial-gradient(ellipse 60% 45% at 50% 46%, rgba(' + glow + ',' + (raining ? '.16' : '.12') + '), transparent 70%)';
+    document.getElementById('avatar').style.filter =
+      'drop-shadow(0 0 13px rgba(' + glow + ',.55))';
+    wasRaining = raining;
+    // test-page status strip
+    document.getElementById('stPool').textContent = j.pool + ' XP';
+    var sr = document.getElementById('stRain');
+    sr.textContent = raining ? '내리는 중' : '없음';
+    sr.className = raining ? 'on' : '';
+    document.getElementById('stRemain').textContent =
+      raining ? Math.round(j.rain.remaining / 60) + '분' : '—';
+    document.getElementById('stBtn').textContent = rb.disabled ? '잠금' : '활성';
+  }
+
+  // Build the storm layer once (clouds over the head + randomized rain streaks);
+  // visibility is driven purely by the fig's .raining class so it fades in/out.
+  function ensureRainFx(){
+    var fx = document.getElementById('rainFx');
+    if (!fx || fx.childNodes.length) return;
+    var h = '<span class="storm-cloud" style="left:24%; top:-8px">⛈️</span>' +
+            '<span class="storm-cloud" style="left:46%; top:0px; font-size:24px; animation-delay:-1.8s">🌧️</span>';
+    for (var i = 0; i < 26; i++){
+      var dur = 0.7 + Math.random() * 0.6;
+      h += '<i class="drop" style="left:' + (3 + Math.random() * 94).toFixed(1) + '%;' +
+           ' animation-duration:' + dur.toFixed(2) + 's;' +
+           ' animation-delay:-' + (Math.random() * dur).toFixed(2) + 's;' +
+           ' opacity:' + (0.45 + Math.random() * 0.55).toFixed(2) + '"></i>';
+    }
+    fx.innerHTML = h;
+  }
+
+  function summonRain(){
+    var btn = document.getElementById('rainBtn');
+    var msg = document.getElementById('rainMsg');
+    if (btn) btn.disabled = true;
+    if (msg){ msg.textContent = '소환 중…'; msg.style.color = 'var(--mut)'; }
+    logLine('클릭', '🌧 경험치로 폭우소환하기');
+    var j = srvSummon();      // 실제 앱: fetch POST /api/equipment/rain
+    setTimeout(function(){    // 네트워크 왕복 흉내
+      if (j && j.ok){
+        if (msg){ msg.textContent = '🌧 폭우 소환! −' + (j.spent || RAIN_COST) + ' XP · 30~60분';
+          msg.style.color = 'var(--lv-cyan)'; }
+        render(j);
+      } else {
+        // 실제 페이지와 동일: 실패 시 렌더하지 않고 메시지+버튼만 복구,
+        // 다음 폴링 렌더가 상태(폭우 중이면 재잠금)를 재동기화한다.
+        if (msg){ msg.textContent = (j && j.error) ? j.error : '소환 실패';
+          msg.style.color = 'var(--lv-red)'; }
+        if (btn) btn.disabled = false;
+        logLine('서버', '거부 — ' + j.error);
+      }
+    }, 180);
+  }
+
+  /* ── test scenario buttons ── */
+  function scnRich(){ srv.pool = 500; logLine('시나리오', 'XP 500 충전'); render(srvState()); }
+  function scnPoor(){ srv.pool = 40; logLine('시나리오', 'XP 40 (부족 상태)'); render(srvState()); }
+  function scnStop(){ srv.rainUntil = 0; logLine('시나리오', '폭우 강제 종료 (/api/bgm/rain stop 상당)'); render(srvState()); }
+  function scnExternal(){
+    if (srvRemaining() > 0){ logLine('시나리오', '이미 폭우 중 — 무시'); return; }
+    srv.rainUntil = Date.now() + 45 * 60 * 1000 / speed;
+    logLine('시나리오', '디렉터 자동 폭우 시작 (45분) — 소환 버튼 경유 없음, 폴링이 감지해야 함');
+  }
+  function setSpeed(v){
+    var rem = srvRemaining();                                  // keep remaining constant across 배속 변경
+    speed = +v;
+    if (rem > 0) srv.rainUntil = Date.now() + rem * 1000 / speed;
+    logLine('설정', '배속 ×' + v);
+  }
+
+  function logLine(tag, text){
+    var lg = document.getElementById('log');
+    var t = new Date();
+    var hh = String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0')
+           + ':' + String(t.getSeconds()).padStart(2,'0');
+    lg.insertAdjacentHTML('afterbegin',
+      '<div>' + hh + ' · <b>' + tag + '</b> — ' + text + '</div>');
+  }
+
+  render(srvState());
+  setInterval(function(){ render(srvState()); }, 3000);   // 실제 앱의 15초 폴링 상당
+  logLine('준비', 'XP 500 · 배속 ×60 — ①~④ 버튼 또는 소환 버튼으로 테스트');
+  </script>
+</body></html>

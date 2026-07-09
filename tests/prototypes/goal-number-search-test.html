@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>목표 검색(번호 조회) 테스트 — 상태 무관 찾기 · 다시 열기</title>
+<style>
+  :root{
+    --bg:#0b0f17; --panel:#111827; --panel2:#0d1420; --line:#1f2937;
+    --txt:#e5e7eb; --dim:#8b96a5; --faint:#5b6472;
+    --accent:#34d399; --accent2:#60a5fa; --wait:#a78bfa; --warn:#fbbf24;
+    --pill:#1a2333;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.55 -apple-system,"Apple SD Gothic Neo",sans-serif;padding:24px;max-width:1200px}
+  h1{font-size:19px;margin:0 0 4px}
+  h2{font-size:14px;margin:26px 0 8px;color:var(--dim);letter-spacing:.02em}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:18px}
+  code{background:#16202f;border-radius:5px;padding:0 5px;font-size:11.5px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  @media(max-width:1100px){.cols{grid-template-columns:1fr}}
+  .board{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+  .board h3{margin:0 0 10px;font-size:13px;display:flex;align-items:center;gap:8px}
+  .modebadge{font-size:11px;padding:2px 9px;border-radius:99px;border:1px solid var(--line)}
+  .asis .modebadge{color:var(--warn);border-color:#4a3a12}
+  .tobe .modebadge{color:var(--accent);border-color:#144d38}
+  .flow{margin:0;padding:0 0 0 2px;list-style:none;color:var(--dim);font-size:12.5px}
+  .flow li{padding:4px 0;display:flex;gap:8px;align-items:baseline}
+  .flow li b{color:var(--txt)}
+  .flow .n{color:var(--faint);font-size:11px;min-width:16px}
+  button{background:#16202f;border:1px solid #2a3648;color:var(--txt);border-radius:9px;padding:5px 11px;font-size:12px;cursor:pointer}
+  button:hover{background:#1b2839}
+  button.primary{border-color:#1d6b4e;color:var(--accent);font-weight:600}
+  button.blue{border-color:#1d4b6b;color:var(--accent2)}
+  button.small{padding:2px 8px;font-size:11px;border-radius:7px}
+  /* ── 검색 모달 레플리카 ── */
+  .modal{background:var(--panel);border:1px solid #2a3648;border-radius:14px;padding:18px 20px;margin-top:10px}
+  .modal .hdr{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .modal .hdr h4{margin:0;font-size:14.5px}
+  .srow{display:flex;gap:8px;align-items:center}
+  .srow input{flex:1;background:var(--panel2);border:1px solid #2c5b8f;border-radius:9px;color:var(--txt);padding:8px 11px;font-size:13.5px}
+  .hint{color:var(--dim);font-size:12px;margin-top:8px}
+  .hint b{color:var(--txt)}
+  /* 결과 카드 */
+  .rescard{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:12px}
+  .rescard .top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .gn{font-weight:700;color:var(--accent2);font-variant-numeric:tabular-nums}
+  .badge{font-size:11px;border-radius:99px;padding:1px 10px;border:1px solid var(--line);white-space:nowrap}
+  .badge.done{color:var(--accent);border-color:#144d38}
+  .badge.doing{color:var(--accent2);border-color:#1d4b6b}
+  .badge.waiting{color:var(--wait);border-color:#3d3560}
+  .badge.backlog{color:var(--dim)}
+  .badge.archived{color:var(--faint);border-color:#2a3040}
+  .badge.released{color:#5eead4;border-color:#134e4a}
+  .badge.cancelled{color:var(--faint);text-decoration:line-through}
+  .badge.queue{color:var(--warn);border-color:#4a3a12}
+  .rescard .ttl{font-size:14px;font-weight:600;margin:8px 0 2px}
+  .rescard .meta{color:var(--dim);font-size:12px;display:flex;gap:14px;flex-wrap:wrap;margin-top:4px}
+  .rescard .kids{margin:8px 0 0;padding:0 0 0 12px;list-style:none;color:var(--dim);font-size:12px;border-left:2px solid var(--line)}
+  .rescard .kids li{padding:2px 0;display:flex;gap:8px;align-items:center}
+  .rescard .acts{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+  .rescard.miss{border-color:#4a3a12}
+  .cand{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .cand button{border-radius:99px}
+  .qbanner{background:#181c10;border:1px solid #4a3a12;border-radius:12px;padding:10px 14px;margin-top:12px;color:var(--warn);font-size:12.5px}
+  .log{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-top:12px;
+       font:11.5px/1.6 ui-monospace,Menlo,monospace;color:var(--dim);max-height:200px;overflow:auto;white-space:pre-wrap}
+  .scen{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 4px}
+  /* 데이터 미니보드 */
+  .ds{margin-top:10px;font-size:12px}
+  .ds .row{display:flex;gap:8px;align-items:center;padding:3px 0;color:var(--dim)}
+  .ds .row.hl{background:#14213a;border-radius:7px;outline:1px solid #2c5b8f}
+  .ds .loc{margin-left:auto;color:var(--faint);font-size:11px}
+  /* 정책/결정 */
+  .policy{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-top:26px}
+  .policy h3{font-size:14px;margin:0 0 10px}
+  .policy dl{margin:0}
+  .policy dt{font-weight:700;font-size:13px;margin-top:12px;color:var(--accent)}
+  .policy dd{margin:3px 0 0 0;color:var(--dim);font-size:12.5px}
+  .policy.open dt{color:var(--warn)}
+  table.map{border-collapse:collapse;width:100%;margin-top:8px;font-size:12.5px}
+  table.map th,table.map td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}
+  table.map th{color:var(--dim);font-weight:600;background:var(--panel2)}
+  table.map td .badge{margin-right:4px}
+  table.map td.act{color:var(--dim)}
+  table.map td.act b{color:var(--txt)}
+</style>
+</head>
+<body>
+
+<h1>목표 검색 — 번호 조회 기획 프로토타입</h1>
+<div class="sub">
+  검색 모달의 <b>검색</b> 버튼을 "AI 유사도 검색(큐)"에서 <b>goal 번호 즉시 조회</b>로 재정의한다.
+  번호가 어디에 있든 — 활성 보드·스프린트·완료·릴리즈됨(스프린트 커밋)·보관(아카이브)·취소 — 상태와 무관하게 찾아서 보여주고,
+  상태에 맞는 <b>다시 열기</b> 액션을 제공한다. AI 유사도 검색은 별도 버튼(<b>AI검색</b>)으로 분리해 그대로 유지한다.
+</div>
+
+<div class="cols">
+  <div class="board asis">
+    <h3>AS-IS <span class="modebadge">현재 동작</span></h3>
+    <ul class="flow">
+      <li><span class="n">1</span><span><b>검색</b> 버튼 = <code>goalSearchFind()</code> → <code>/api/goal/queue/enqueue {search:true}</code> — AI추가와 같은 큐 파이프라인, <code>findOnly</code>로 생성만 스킵.</span></li>
+      <li><span class="n">2</span><span>결과는 <b>비동기</b> — 큐 탭에 '검색 결과' 카드가 뜰 때까지 기다려야 한다.</span></li>
+      <li><span class="n">3</span><span>텍스트 유사도 기반이라 <b>"346" 같은 번호 입력</b>은 의미가 없다 — 번호를 아는데도 못 찾는다.</span></li>
+      <li><span class="n">4</span><span>릴리즈됨·보관된 목표는 활성 목록에서 숨어 있어 <b>보드 어디서도 다시 볼 수 없다</b>.</span></li>
+    </ul>
+  </div>
+  <div class="board tobe">
+    <h3>TO-BE <span class="modebadge">제안</span></h3>
+    <ul class="flow">
+      <li><span class="n">1</span><span><b>검색</b> 버튼 = <b>로컬 즉시 조회</b>. 숫자 입력 → <code>seq</code> 정확 일치. 텍스트 입력 → 제목 부분일치 목록. 서버 왕복 없이 <code>/data.json</code>의 전체 goal(릴리즈·보관 포함)에서 찾는다.</span></li>
+      <li><span class="n">2</span><span><b>AI검색</b> 버튼(기존 검색 버튼의 역할) = 큐 파이프라인 그대로 — "비슷한 걸 AI가 찾아줘".</span></li>
+      <li><span class="n">3</span><span>결과 카드에 <b>상태 배지 + 현재 위치</b>(스프린트/릴리즈 코드/보관함/큐)를 보여준다. 상세는 기존 <code>/goal?n=346</code> 링크 재사용.</span></li>
+      <li><span class="n">4</span><span>상태별 <b>다시 열기</b> 액션 — 완료 해제, 보관 해제, 릴리즈에서 꺼내기, 취소 복원 (아래 매핑 표).</span></li>
+      <li><span class="n">5</span><span>검색 모드에서 <b>Enter = 검색</b>(즉시 조회). AI검색은 명시적으로 버튼을 눌러야 한다.</span></li>
+    </ul>
+  </div>
+</div>
+
+<h2>인터랙티브 데모 — 검색 모달 (TO-BE)</h2>
+<div class="scen">
+  <button class="small" onclick="scen('346')">#346 (릴리즈됨)</button>
+  <button class="small" onclick="scen('348')">#348 (완료·미릴리즈)</button>
+  <button class="small" onclick="scen('331')">#331 (보관·자식 2)</button>
+  <button class="small" onclick="scen('352')">#352 (진행중)</button>
+  <button class="small" onclick="scen('351')">#351 (대기)</button>
+  <button class="small" onclick="scen('340')">#340 (취소)</button>
+  <button class="small" onclick="scen('999')">#999 (없음)</button>
+  <button class="small" onclick="scen('보고')">"보고" (텍스트)</button>
+</div>
+
+<div class="modal">
+  <div class="hdr"><h4>목표 검색</h4><span style="margin-left:auto"><button class="small" onclick="reset()">데모 초기화</button></span></div>
+  <div class="srow">
+    <input id="q" placeholder="goal 번호 또는 제목 일부 — Enter로 즉시 조회">
+    <button onclick="aiSearch()" title="큐에 담아 AI가 비슷한 목표를 찾습니다 (기존 파이프라인)">AI검색</button>
+    <button class="primary" onclick="doSearch()" title="번호/제목으로 즉시 찾기 — 상태 무관">검색</button>
+  </div>
+  <div class="hint">
+    <b>검색</b>: 숫자를 넣으면 그 번호의 목표를 <b>상태와 무관하게</b>(완료·릴리즈·보관·취소 포함) 즉시 찾습니다.
+    텍스트면 제목 부분일치 목록을 보여줍니다. <b>AI검색</b>: 큐로 보내 AI가 비슷한 목표를 찾습니다(비동기, 큐 탭에서 확인).
+  </div>
+  <div id="out"></div>
+</div>
+
+<div class="cols" style="margin-top:16px">
+  <div class="board">
+    <h3>데모 데이터셋 <span class="modebadge">전체 상태 스펙트럼</span></h3>
+    <div class="ds" id="ds"></div>
+  </div>
+  <div class="board">
+    <h3>액션 로그 <span class="modebadge">호출될 API</span></h3>
+    <div class="log" id="log">—</div>
+  </div>
+</div>
+
+<h2>상태 → 표시·액션 매핑 (기획 핵심)</h2>
+<div class="policy">
+  <table class="map">
+    <tr><th style="width:170px">발견 위치·상태</th><th style="width:220px">결과 카드 표시</th><th>제공 액션</th></tr>
+    <tr>
+      <td><span class="badge backlog">백로그</span> <span class="badge doing">진행중</span> <span class="badge waiting">대기</span></td>
+      <td>상태 배지 + 스프린트/백로그 위치</td>
+      <td class="act"><b>보드에서 보기</b> — 해당 탭으로 이동 + 하이라이트. 재오픈 개념 없음(이미 열려 있음).</td>
+    </tr>
+    <tr>
+      <td><span class="badge done">완료</span> (미릴리즈)</td>
+      <td>완료 배지 + 완료 시각</td>
+      <td class="act"><b>다시 열기</b> — <code>/api/goal/status {backlog}</code>. seq 유지(재채번 없음).</td>
+    </tr>
+    <tr>
+      <td><span class="badge released">릴리즈됨</span> (스프린트 커밋)</td>
+      <td>릴리즈 코드(예: 26-3) + 릴리즈 시각</td>
+      <td class="act"><b>이 목표만 다시 열기</b> — 신규 API <code>/api/goal/reopen</code> (released=false, status→backlog; Release 기록은 불변 유지 + carried 마크). 보조: <b>릴리즈 전체 복원</b>(기존 restoreRelease).</td>
+    </tr>
+    <tr>
+      <td><span class="badge archived">보관</span></td>
+      <td>보관 배지 + 자식 수</td>
+      <td class="act"><b>보관 해제</b> — <code>/api/goal/archive {false}</code>. 자식도 함께 해제(보관 시 함께 내려갔으므로 대칭).</td>
+    </tr>
+    <tr>
+      <td><span class="badge cancelled">취소</span></td>
+      <td>취소 배지</td>
+      <td class="act"><b>다시 열기</b> — <code>/api/goal/status {backlog}</code>. 루프가 자동으로 집어가지 않도록 backlog로만 복원.</td>
+    </tr>
+    <tr>
+      <td><span class="badge queue">큐 후보</span> (seq 없음)</td>
+      <td>번호 검색에는 안 잡힘 — 텍스트 검색에만 노출</td>
+      <td class="act"><b>큐 탭에서 확정</b>으로 이동. 번호는 승급 시점에 채번되므로 번호 조회 대상이 아니다.</td>
+    </tr>
+  </table>
+</div>
+
+<h2>결정사항 — 2026-07-09 구현 반영됨</h2>
+<div class="policy open">
+  <dl>
+    <dt>1. 릴리즈된 목표의 개별 재오픈과 Release 기록 — 결정: 기록 불변 + 재오픈 주석</dt>
+    <dd>신규 <code>POST /api/goal/reopen</code> + <code>ReviewStore.reopenGoal(id:)</code> 구현. Release 기록(goalIds·titles·value)은 불변으로 남고, 릴리즈 로그가 "released가 풀린 goal"을 역산해 헤더에 <b>n건 재오픈</b>, 행에 <b>↩ 재오픈됨</b>을 표시한다. 목표가 속한 스프린트가 이미 닫혔으면 백로그(sprint 0)로 내려 보드에서 보이게 한다.</dd>
+    <dt>2. 완료 해제 시 completedAt — 결정: 기존 규칙 유지(지움)</dt>
+    <dd>코드에 이미 확립된 정책이 있었다: done을 떠나는 순간 completedAt을 지워 "재오픈된 목표가 낡은 완료 시각을 달고 다니지 않게" 한다(<code>stampCompletion</code>). 프로토타입의 '보존' 제안 대신 기존 정책을 따른다. 릴리즈 기록의 releasedAt은 불변이므로 이력은 릴리즈 로그에 남는다.</dd>
+    <dt>3. 근접 후보 — 채택</dt>
+    <dd>없는 번호를 검색하면 가장 가까운 번호 3개를 칩으로 제안, 클릭 시 그 번호로 재검색.</dd>
+    <dt>4. 텍스트 로컬 검색과 AI검색의 경계 — 힌트 문구로 안내</dt>
+    <dd>검색 모드 힌트: 번호=즉시 정확 일치, 텍스트=제목 부분일치, 표현이 다르면 AI검색. 텍스트 미스 시에도 AI검색을 제안한다.</dd>
+    <dt>5. /goal?n= 상세 페이지의 커버리지 — 확인 완료(전 상태 렌더)</dt>
+    <dd>서버의 <code>goalPage()</code>는 <code>reviewStore.goals</code> 전체에서 seq로 찾으므로 릴리즈·보관·취소 목표도 상세가 열린다. 검색 결과 카드의 '상세 보기'가 그대로 링크한다.</dd>
+    <dt>6. 검색 모드 버튼 라벨 — [AI검색] 리라벨 + [추가] 숨김</dt>
+    <dd>검색 모드에서 AI추가→AI검색(findOnly 큐 파이프라인 동일), 혼란을 주는 '추가' 버튼은 숨긴다. Enter=검색(즉시 조회).</dd>
+    <dt>+ 덤으로 고친 버그</dt>
+    <dd><code>reviewJSON()</code>이 <code>releaseId</code>를 직렬화하지 않아 아카이브 뷰의 릴리즈 날짜·복원 버튼이 항상 죽어 있었다(클라이언트가 <code>relById[g.releaseId]</code>를 참조하는데 필드가 없음). 직렬화에 추가해 함께 수리.</dd>
+  </dl>
+</div>
+
+<h2>구현 참조 (AS-IS 코드)</h2>
+<div class="policy">
+  <dl>
+    <dt>검색 모달</dt>
+    <dd><code>DashboardContent.swift</code> — <code>openGoalAdd({search:true})</code>, <code>gaSearch()</code> → <code>goalSearchFind()</code> → <code>/api/goal/queue/enqueue {search:true}</code>(findOnly). TO-BE는 <code>gaSearch()</code>를 로컬 조회로 교체하고 <code>gaAi()</code>가 search 모드에서 findOnly 큐 흐름을 담당.</dd>
+    <dt>상태 모델</dt>
+    <dd><code>ReviewStore.swift</code> — <code>status</code>(backlog/in_progress/waiting/done/cancelled), <code>released</code>+<code>releaseId</code>(스프린트 커밋, 활성 목록에서 숨김), <code>archived</code>(수동 보관, 자식 동반). 복원 경로: <code>setStatus</code>, <code>setArchived</code>, <code>restoreRelease</code>. 개별 unrelease는 신규.</dd>
+    <dt>번호 규칙</dt>
+    <dd>seq는 큐 승급 시점에만 채번, 재오픈은 재채번하지 않는다(번호 수명주기 정책과 일관). 큐 후보는 seq가 없어 번호 조회 대상 아님.</dd>
+  </dl>
+</div>
+
+<script>
+// ── 데모 데이터: 실제 필드(seq/status/sprint/released/archived)와 동일한 형태 ──
+let goals, queue;
+function seed(){
+  goals=[
+    {seq:346, text:'주간 보고 자동 수집 파이프라인', status:'done', sprint:26, released:true, releaseCode:'26-3', releasedAt:'07/02 14:10', completedAt:'07/01 18:32', tracked:'4h 10m', children:[]},
+    {seq:348, text:'BGM 플랜 맵 검증', status:'done', sprint:26, released:false, completedAt:'07/08 11:05', tracked:'1h 05m', children:[]},
+    {seq:331, text:'장비 시스템 v1', status:'backlog', sprint:0, archived:true, tracked:'6h 22m', children:[
+      {seq:333, text:'장비 스토어 스키마', status:'done', archived:true},
+      {seq:335, text:'숙련도 EXP 집계', status:'backlog', archived:true}]},
+    {seq:352, text:'대시보드 값 파이프라인', status:'in_progress', sprint:26, tracked:'2h 40m', children:[]},
+    {seq:351, text:'세션 레일 대기 표시', status:'waiting', sprint:26, tracked:'0h 35m', children:[]},
+    {seq:340, text:'Jira 연동 검토', status:'cancelled', sprint:0, tracked:'0h 20m', children:[]},
+    {seq:12,  text:'문서 허브 정리', status:'backlog', sprint:0, tracked:'—', children:[]},
+  ];
+  queue=[{text:'알림 소리 단계 조절', status:'ready'}];
+}
+const $=id=>document.getElementById(id);
+function logln(s){ const l=$('log'); l.textContent=(l.textContent==='—'?'':l.textContent+'\n')+s; l.scrollTop=l.scrollHeight; }
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// 상태 → 배지 (신호등 금지: 대기=보라, 진행=파랑, 완료/릴리즈=민트 계열, 보관·취소=흐림)
+function badge(g){
+  if(g.archived) return '<span class="badge archived">보관</span>';
+  if(g.released) return '<span class="badge released">릴리즈됨 '+g.releaseCode+'</span>';
+  const m={backlog:['backlog','백로그'],in_progress:['doing','진행중'],waiting:['waiting','대기'],done:['done','완료'],cancelled:['cancelled','취소']};
+  const b=m[g.status]||['backlog',g.status];
+  return '<span class="badge '+b[0]+'">'+b[1]+'</span>';
+}
+function locOf(g){
+  if(g.archived) return '보관함';
+  if(g.released) return '릴리즈 '+g.releaseCode+' ('+g.releasedAt+')';
+  if(g.status==='cancelled') return '취소됨';
+  return g.sprint?('스프린트 '+g.sprint):'백로그';
+}
+function renderDs(hl){
+  $('ds').innerHTML=goals.map(g=>
+    '<div class="row'+(g.seq===hl?' hl':'')+'"><span class="gn">goal-'+g.seq+'</span> '+badge(g)+' '+esc(g.text)
+    +'<span class="loc">'+locOf(g)+'</span></div>').join('')
+   +queue.map(q=>'<div class="row"><span class="gn" style="color:var(--warn)">큐</span> <span class="badge queue">후보</span> '+esc(q.text)+'<span class="loc">번호 없음</span></div>').join('');
+}
+
+// 상태별 액션 버튼 구성 — 기획의 핵심 매핑
+function actions(g){
+  const a=[];
+  const view='<button class="blue" onclick="detail('+g.seq+')">상세 보기 (/goal?n='+g.seq+')</button>';
+  if(g.archived){
+    a.push(view,'<button class="primary" onclick="unarchive('+g.seq+')">보관 해제'+(g.children.length?' (자식 '+g.children.length+'개 포함)':'')+'</button>');
+  } else if(g.released){
+    a.push(view,
+      '<button class="primary" onclick="reopenOne('+g.seq+')">이 목표만 다시 열기</button>',
+      '<button onclick="restoreRel('+g.seq+')">릴리즈 '+g.releaseCode+' 전체 복원</button>');
+  } else if(g.status==='done'){
+    a.push(view,'<button class="primary" onclick="reopen('+g.seq+')">다시 열기 (완료 해제)</button>');
+  } else if(g.status==='cancelled'){
+    a.push(view,'<button class="primary" onclick="reopen('+g.seq+')">다시 열기</button>');
+  } else {
+    a.push('<button class="primary" onclick="goBoard('+g.seq+')">보드에서 보기 (이동+하이라이트)</button>',view);
+  }
+  return a.join('');
+}
+function card(g){
+  const kids=g.children&&g.children.length
+    ?'<ul class="kids">'+g.children.map(k=>'<li><span class="gn">goal-'+k.seq+'</span> '+badge(k)+' '+esc(k.text)+'</li>').join('')+'</ul>':'';
+  const meta=[];
+  meta.push('위치: '+locOf(g));
+  if(g.completedAt) meta.push('완료: '+g.completedAt);
+  if(g.tracked) meta.push('누적 시간: '+g.tracked);
+  return '<div class="rescard"><div class="top"><span class="gn">goal-'+g.seq+'</span>'+badge(g)
+    +'<span style="margin-left:auto;color:var(--faint);font-size:11px">상태 무관 조회</span></div>'
+    +'<div class="ttl">'+esc(g.text)+'</div>'
+    +'<div class="meta">'+meta.map(m=>'<span>'+m+'</span>').join('')+'</div>'+kids
+    +'<div class="acts">'+actions(g)+'</div></div>';
+}
+function missCard(n){
+  const near=goals.map(g=>g.seq).sort((a,b)=>Math.abs(a-n)-Math.abs(b-n)).slice(0,3);
+  return '<div class="rescard miss"><div class="ttl">goal-'+n+' — 없는 번호입니다</div>'
+    +'<div class="meta"><span>큐 후보는 번호가 없어 번호 조회에 잡히지 않습니다. 근접 번호:</span></div>'
+    +'<div class="cand">'+near.map(s=>'<button class="small" onclick="scen(\''+s+'\')">goal-'+s+'</button>').join('')
+    +'<button class="small" onclick="aiSearch()">AI검색으로 찾기</button></div></div>';
+}
+function textList(t){
+  const hit=goals.filter(g=>g.text.includes(t));
+  const qhit=queue.filter(q=>q.text.includes(t));
+  if(!hit.length&&!qhit.length) return '<div class="rescard miss"><div class="ttl">"'+esc(t)+'" 제목 일치 없음</div>'
+    +'<div class="acts"><button class="small" onclick="aiSearch()">AI검색으로 의미 검색</button></div></div>';
+  return hit.map(card).join('')
+    +qhit.map(q=>'<div class="rescard"><div class="top"><span class="badge queue">큐 후보</span></div><div class="ttl">'+esc(q.text)+'</div>'
+      +'<div class="acts"><button class="blue" onclick="logln(\'→ 큐 탭으로 이동 (확정은 큐에서)\')">큐 탭에서 확정</button></div></div>').join('');
+}
+
+function doSearch(){
+  const t=$('q').value.trim(); if(!t) return;
+  if(/^\d+$/.test(t)){
+    const n=parseInt(t,10), g=goals.find(x=>x.seq===n);
+    logln('검색(로컬 즉시): seq='+n+' → '+(g?('발견 · '+locOf(g)):'없음'));
+    $('out').innerHTML=g?card(g):missCard(n);
+    renderDs(g?n:0);
+  } else {
+    logln('검색(로컬 즉시): 제목 부분일치 "'+t+'"');
+    $('out').innerHTML=textList(t);
+    renderDs(0);
+  }
+}
+function aiSearch(){
+  const t=$('q').value.trim()||'(입력값)';
+  logln('AI검색: POST /api/goal/queue/enqueue {text:"'+t+'", search:true} — 큐에 담김(비동기)');
+  $('out').innerHTML='<div class="qbanner">큐에 담겼습니다 — AI가 비슷한 목표를 분석 중. 결과는 <b>큐</b> 탭에 \'검색 결과\' 카드로 표시됩니다 (기존 findOnly 파이프라인, 목표 생성 없음).</div>';
+}
+// ── 액션 시뮬레이션: 데이터셋을 실제로 바꿔 재검색하면 새 상태가 보인다 ──
+function find(n){ return goals.find(g=>g.seq===n); }
+function reopen(n){ const g=find(n); g.status='backlog';
+  logln('POST /api/goal/status {id:goal-'+n+', status:"backlog"} — completedAt 보존(결정사항 2)');
+  refresh(n); }
+function reopenOne(n){ const g=find(n); g.released=false; g.releaseCode_was=g.releaseCode; g.status='backlog';
+  logln('POST /api/goal/reopen {id:goal-'+n+'} (신규 API) — released=false, status→backlog. Release '+g.releaseCode+' 기록은 불변 + "1건 재오픈" 주석(결정사항 1)');
+  g.releaseCode=''; refresh(n); }
+function restoreRel(n){ const g=find(n); const code=g.releaseCode;
+  goals.forEach(x=>{ if(x.releaseCode===code){ x.released=false; x.releaseCode=''; } });
+  g.released=false; g.releaseCode='';
+  logln('POST /api/release/restore {code:'+code+'} — 릴리즈 전체 복원(기존 restoreRelease): 소속 목표 모두 released=false');
+  refresh(n); }
+function unarchive(n){ const g=find(n); g.archived=false; (g.children||[]).forEach(k=>k.archived=false);
+  logln('POST /api/goal/archive {id:goal-'+n+', archived:false} — 자식 '+(g.children||[]).length+'개 동반 해제');
+  refresh(n); }
+function goBoard(n){ logln('→ 작업 탭으로 이동, goal-'+n+' 스크롤+하이라이트 (기존 /goal?n= 앵커 재사용)'); renderDs(n); }
+function detail(n){ logln('→ /goal?n='+n+' 상세 페이지 (릴리즈·보관 목표 렌더 여부 = 결정사항 5)'); }
+function refresh(n){ const g=find(n); $('out').innerHTML=card(g); renderDs(n); }
+function scen(v){ $('q').value=v; doSearch(); }
+function reset(){ seed(); $('out').innerHTML=''; $('log').textContent='—'; renderDs(0); logln('데모 초기화'); }
+$('q').addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.isComposing) doSearch(); });
+seed(); renderDs(0);
+</script>
+</body>
+</html>

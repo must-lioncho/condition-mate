@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>스프린트 라이프사이클 테스트 — 완료·복원·채번 정책</title>
+<style>
+  :root{
+    --bg:#0b0f17; --panel:#111827; --panel2:#0d1420; --line:#1f2937;
+    --txt:#e5e7eb; --dim:#8b96a5; --faint:#5b6472;
+    --accent:#34d399; --accent2:#60a5fa; --wait:#a78bfa; --warn:#fbbf24;
+    --pill:#1a2333;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.55 -apple-system,"Apple SD Gothic Neo",sans-serif;padding:24px}
+  h1{font-size:19px;margin:0 0 4px}
+  h2{font-size:14px;margin:22px 0 8px;color:var(--dim);letter-spacing:.02em}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:18px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  @media(max-width:1100px){.cols{grid-template-columns:1fr}}
+  .board{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .board h3{margin:0 0 10px;font-size:13px;display:flex;align-items:center;gap:8px}
+  .modebadge{font-size:11px;padding:2px 9px;border-radius:99px;border:1px solid var(--line)}
+  .asis .modebadge{color:var(--warn);border-color:#4a3a12}
+  .tobe .modebadge{color:var(--accent);border-color:#144d38}
+  .sprintrow{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px}
+  .sprintrow.closed{opacity:.55}
+  .srhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .pill{background:var(--pill);border:1px solid #2a3648;border-radius:99px;padding:2px 12px;font-weight:700;font-size:12.5px}
+  .tobe .pill.editable{cursor:pointer;border-color:#2c5b8f}
+  .tobe .pill.editable:hover{background:#16233a}
+  .autoTag{font-size:10px;color:var(--faint);border:1px solid var(--line);border-radius:6px;padding:0 5px}
+  .gtext{color:var(--dim);font-size:12.5px}
+  .cd{color:var(--accent);font-weight:700;font-variant-numeric:tabular-nums;font-size:13px}
+  .cnt{margin-left:auto;display:flex;gap:5px;align-items:center}
+  .cnt b{min-width:26px;text-align:center;border-radius:8px;border:1px solid var(--line);padding:1px 4px;font-size:11.5px;font-weight:600}
+  .cnt .w{color:var(--wait)} .cnt .d{color:var(--accent2)} .cnt .f{color:var(--accent)}
+  .goals{margin:8px 0 0;padding:0;list-style:none}
+  .goals li{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--dim);padding:3px 0 3px 10px}
+  .goals li .st{font-size:10.5px;border-radius:6px;padding:0 6px;border:1px solid var(--line)}
+  .st.todo{color:var(--wait)} .st.doing{color:var(--accent2)} .st.done{color:var(--accent)}
+  .goals li.released{opacity:.45;text-decoration:line-through}
+  button{background:#16202f;border:1px solid #2a3648;color:var(--txt);border-radius:9px;padding:5px 11px;font-size:12px;cursor:pointer}
+  button:hover{background:#1b2839}
+  button.primary{border-color:#1d6b4e;color:var(--accent);font-weight:600}
+  button.small{padding:2px 8px;font-size:11px;border-radius:7px}
+  .rowbtns{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .log{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-top:10px;
+       font:11.5px/1.6 ui-monospace,Menlo,monospace;color:var(--dim);max-height:220px;overflow:auto;white-space:pre-wrap}
+  .rel{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);
+       border-radius:10px 10px 0 0;padding:8px 12px;font-size:12.5px}
+  .relwrap{margin-bottom:6px}
+  .relwrap.flat .rel{border-radius:10px}
+  .rel .val{margin-left:auto;color:var(--accent);border:1px solid #144d38;border-radius:99px;padding:1px 10px;font-size:11.5px}
+  .rel .chev{cursor:pointer;color:var(--dim);width:14px;text-align:center;user-select:none}
+  .rel b.tclk{cursor:pointer}
+  .tobe .rel b.tclk:hover{color:var(--accent2);text-decoration:underline}
+  .relbody{background:var(--panel2);border:1px solid var(--line);border-top:0;border-radius:0 0 10px 10px;
+           padding:6px 12px 8px 36px;font-size:12px;color:var(--dim)}
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0}
+  .clock{font-variant-numeric:tabular-nums;color:var(--accent2);font-weight:600;font-size:13px;
+         border:1px solid var(--line);border-radius:9px;padding:4px 12px}
+  .scen{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+  .assert{border-radius:10px;border:1px solid var(--line);padding:8px 12px;margin-top:8px;font-size:12.5px}
+  .assert.pass{border-color:#1d4b6b;color:var(--accent2)}
+  .assert.fail{border-color:#6b4a12;color:var(--warn)}
+  .policy{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-top:26px}
+  .policy h3{font-size:14px;margin:0 0 10px}
+  .policy dl{margin:0}
+  .policy dt{font-weight:700;font-size:13px;margin-top:12px;color:var(--accent)}
+  .policy dd{margin:3px 0 0 0;color:var(--dim);font-size:12.5px}
+  .policy .prob dt{color:var(--warn)}
+  code{background:#16202f;border-radius:5px;padding:0 5px;font-size:11.5px}
+  /* modal */
+  .ovl{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:9}
+  .ovl.on{display:flex}
+  .modal{background:var(--panel);border:1px solid #2a3648;border-radius:14px;padding:18px 20px;width:340px}
+  .modal h4{margin:0 0 12px;font-size:14px}
+  .modal label{display:block;font-size:11.5px;color:var(--dim);margin:10px 0 3px}
+  .modal input{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+               color:var(--txt);padding:6px 9px;font-size:13px}
+  .modal .err{color:var(--warn);font-size:11.5px;min-height:16px;margin-top:6px}
+  .modal .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+</style>
+</head>
+<body>
+
+<h1>스프린트 라이프사이클 테스트</h1>
+<div class="sub">
+  완료(Complete sprint) · 복원 · 채번 · 별칭 편집 정책을 <b>AS-IS(현행)</b> / <b>TO-BE(제안)</b> 로 나란히 시뮬레이션.
+  실제 로직 미러: <code>ReviewStore.swift completeSprint(1136) / restoreRelease(1157) / nextReleaseCode(1208) / maxYearCode(1188)</code>
+</div>
+
+<div class="toolbar">
+  <span class="clock" id="clock"></span>
+  <button onclick="tickClock(6*3600)">+6시간</button>
+  <button onclick="tickClock(24*3600)">+1일</button>
+  <span style="width:14px"></span>
+  <button class="primary" onclick="resetAll('seed')">시드 데이터로 리셋</button>
+  <button onclick="resetAll('dirty')">오염 데이터로 리셋 (케이스6용)</button>
+</div>
+
+<h2>자동 시나리오 — 양쪽 보드에 동일 조작을 가하고 결과를 비교</h2>
+<div class="scen">
+  <button onclick="runScenario(1)">케이스1 · 빈 스프린트 완료 ×3</button>
+  <button onclick="runScenario(2)">케이스2 · 미완료 이월 완료</button>
+  <button onclick="runScenario(3)">케이스3 · 복원→재완료 루프 ×2</button>
+  <button onclick="runScenario(4)">케이스4 · 부분 커밋 채번 갭</button>
+  <button onclick="runScenario(5)">케이스5 · 번호 클릭 별칭 편집 (TO-BE)</button>
+  <button onclick="runScenario(6)">케이스6 · 기존 데이터 정리</button>
+  <button onclick="runScenario(7)">케이스7 · 완료 로그 제목/기간 편집 (TO-BE)</button>
+</div>
+<div id="asserts"></div>
+
+<div class="cols" style="margin-top:14px">
+  <div class="board asis">
+    <h3>AS-IS <span class="modebadge">현행 로직</span></h3>
+    <div id="board-asis"></div>
+    <div class="log" id="log-asis"></div>
+  </div>
+  <div class="board tobe">
+    <h3>TO-BE <span class="modebadge">제안 정책 R1–R5</span></h3>
+    <div id="board-tobe"></div>
+    <div class="log" id="log-tobe"></div>
+  </div>
+</div>
+
+<div class="policy prob">
+  <h3>확인된 문제 (AS-IS)</h3>
+  <dl>
+    <dt>P1 · Complete sprint가 무조건 후속 스프린트를 생성</dt>
+    <dd><code>completeSprint</code>(ReviewStore.swift:1142)가 이월할 목표가 없어도 항상 새 1d 스프린트를 만든다.
+        빈 스프린트를 완료해도 또 빈 스프린트가 생겨 같은 날짜에 계속 쌓인다.</dd>
+    <dt>P2 · 복원해도 완료 시 생긴 후속 스프린트가 남음</dt>
+    <dd>복원은 릴리즈 삭제 + 원 스프린트 재오픈만 한다. 후속(빈) 스프린트는 그대로 → 복원→재완료를 반복하면 26-15…26-23처럼 증식.</dd>
+    <dt>P3 · 부분 재커밋이 연도 채번을 소모 → 번호 갭</dt>
+    <dd><code>nextReleaseCode</code>가 두 번째 커밋에 새 YY-n을 발급하고, <code>maxYearCode</code>가 릴리즈 코드까지 스캔하므로
+        보드에서 26-19 같은 번호가 건너뛰어진 것처럼 보인다.</dd>
+    <dt>P4 · 코드(별칭)·날짜를 정리할 UI 부재</dt>
+    <dd>code는 자동 채번뿐, 어디서도 수정 불가. 자동화가 만든 어색한 번호/날짜를 손볼 방법이 없다.</dd>
+    <dt>P5 · 완료 로그의 제목 클릭이 펼치기와 겹치고, 기간을 기록·수정할 수 없음</dt>
+    <dd>완료된 스프린트는 완료 시각(releasedAt)만 남는다. 하루 2회 스프린트, 2일에 1회 스프린트처럼
+        실제 기간이 다양해도 표현할 수 없고, 제목 클릭은 펼치기/닫기에 묶여 있어 편집 진입점도 없다.</dd>
+  </dl>
+</div>
+
+<div class="policy">
+  <h3>제안 정책 (TO-BE)</h3>
+  <dl>
+    <dt>R1 · 후속 스프린트는 "이월할 목표가 있을 때만"</dt>
+    <dd>완료 시 미완료 목표가 없으면 그냥 닫는다(생성 없음). 미완료가 있으면: 이미 열린 다른 스프린트가 있으면 그중 가장 이른 것으로 이월(재사용), 없을 때만 새로 생성(auto 표시).</dd>
+    <dt>R2 · 빈 스프린트 완료 = 기록 없이 닫기</dt>
+    <dd>목표 0개·결과물 없음이면 릴리즈 기록도 남기지 않고 닫기만 한다.</dd>
+    <dt>R3 · 복원 = 완료의 완전한 되돌리기</dt>
+    <dd>릴리즈에 <code>carriedTo/carriedIds</code>를 기록해 두고, 복원 시 이월됐던 목표를 원 스프린트로 되돌린다.
+        완료가 자동 생성한 후속 스프린트가 그로 인해 비면 함께 삭제.</dd>
+    <dt>R4 · 부분 재커밋 코드 = "26-15.2" 접미사</dt>
+    <dd>두 번째 이후 커밋은 새 채번을 소모하지 않고 스프린트 코드에 <code>.2 .3</code>을 붙인다. 번호 갭 소멸, 로그 유일성 유지.</dd>
+    <dt>R5 · 번호(pill) 클릭 → 상세 설정 모달</dt>
+    <dd>별칭(code)과 시작/목표 일시를 직접 편집. 별칭은 스프린트+릴리즈 코드 전체에서 유일해야 저장된다. TO-BE 보드에서 pill을 직접 클릭해 보세요.</dd>
+    <dt>R6 · 기존 데이터 정리 (1회성)</dt>
+    <dd>열린 빈 스프린트(목표 0·결과물 없음)가 여러 개면 정리: 비어있지 않은 열린 스프린트가 있으면 빈 것 전부 삭제, 없으면 최신 1개만 유지. <code>POST /api/sprint/cleanup</code> + 보드 버튼으로 제공.</dd>
+    <dt>R7 · 완료 로그: ▸=펼치기, 제목 클릭=제목·기간 편집</dt>
+    <dd>릴리즈가 스프린트의 시작 일시를 스냅샷(<code>startedAt</code>)하고, 완료 일시(<code>releasedAt</code>)와 함께
+        편집 가능. 하루 2회·2일 1회처럼 실제 기간을 사실대로 기록한다. 별칭도 같은 모달에서 수정(전체 코드 유일성 검증).
+        펼치기/닫기는 앞의 ▸ 버튼으로 분리.</dd>
+  </dl>
+</div>
+
+<div class="ovl" id="ovl">
+  <div class="modal">
+    <h4 id="mTitle">스프린트 상세 설정</h4>
+    <label>별칭 (code)</label>
+    <input id="mCode">
+    <label id="mStartLab">시작 일시</label>
+    <input id="mStart" type="datetime-local">
+    <label id="mTargetLab">목표 일시</label>
+    <input id="mTarget" type="datetime-local">
+    <div class="err" id="mErr"></div>
+    <div class="btns">
+      <button onclick="closeModal()">취소</button>
+      <button class="primary" onclick="saveModal()">저장</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ---------------------------------------------------------------------------
+// Virtual clock (starts 2026-07-06 10:00 to mirror the screenshots)
+// ---------------------------------------------------------------------------
+let CLOCK = new Date('2026-07-06T10:00:00').getTime()/1000;
+function tickClock(sec){ CLOCK += sec; renderAll(); }
+function fmtDT(t){ const d=new Date(t*1000);
+  return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+function fmtCD(t){ let r=Math.max(0,Math.floor(t-CLOCK));
+  const h=Math.floor(r/3600), m=Math.floor(r%3600/60), s=r%60;
+  return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0'); }
+
+// ---------------------------------------------------------------------------
+// Engine — mirrors ReviewStore.swift; `mode` switches AS-IS vs TO-BE rules
+// ---------------------------------------------------------------------------
+function makeEngine(mode){
+  return { mode, sprints:[], releases:[], goals:[], gseq:0, log:[], relOpen:new Set() };
+}
+function elog(e,msg){ e.log.push('['+fmtDT(CLOCK)+'] '+msg); }
+
+// numbering — ReviewStore.maxYearCode(1188)/nextSprintCode(1199)
+function maxYearCode(e){
+  const rx=/^26-(\d+)$/; let mx=0;
+  for(const s of e.sprints){ const m=rx.exec(s.code); if(m) mx=Math.max(mx,+m[1]); }
+  for(const r of e.releases){ const m=rx.exec(r.code); if(m) mx=Math.max(mx,+m[1]); }
+  return mx;
+}
+function nextSprintCode(e){ return '26-'+(maxYearCode(e)+1); }
+function nextSprintNumber(e){ return e.sprints.reduce((m,s)=>Math.max(m,s.number),0)+1; }
+
+function createSprint(e, goalText='', auto=false){
+  const s={ number:nextSprintNumber(e), code:nextSprintCode(e), goalText, auto,
+            closed:false, startAt:CLOCK, targetAt:CLOCK+86400, createdAt:CLOCK };
+  e.sprints.push(s);
+  elog(e,'스프린트 생성 '+s.code+(auto?' (auto)':''));
+  return s;
+}
+function addGoal(e, sprintNumber, text, value=0, status='todo'){
+  const g={ id:'g'+(++e.gseq), text, value, status, sprint:sprintNumber, released:false, releaseId:'' };
+  e.goals.push(g); return g;
+}
+function membersOf(e,n){ return e.goals.filter(g=>g.sprint===n); }
+function sprintByNum(e,n){ return e.sprints.find(s=>s.number===n); }
+
+// release code — ReviewStore.nextReleaseCode(1208). AS-IS: later commits mint a
+// fresh YY-n (consumes numbering). TO-BE(R4): suffix "code.2" — no consumption.
+function nextReleaseCode(e, sp){
+  const own = sprintByNum(e,sp)?.code || '';
+  if(own && !e.releases.some(r=>r.code===own)) return own;
+  if(e.mode==='asis') return nextSprintCode(e);
+  let k=2; while(e.releases.some(r=>r.code===own+'.'+k)) k++;
+  return own+'.'+k;
+}
+
+// releaseSprint — ReviewStore.swift:1095
+function releaseSprint(e, number){
+  const members = e.goals.filter(g=>!g.released && g.status==='done' && g.sprint===number);
+  if(!members.length) return [];
+  const rid='r'+Math.random().toString(36).slice(2,8);
+  const rel={ id:rid, sprint:number, code:nextReleaseCode(e,number), releasedAt:CLOCK,
+              startedAt:(sprintByNum(e,number)?.startAt ?? null),   // sprint period snapshot (R7)
+              value:members.reduce((a,g)=>a+g.value,0),
+              goalIds:members.map(g=>g.id), titles:members.map(g=>g.text),
+              carriedTo:0, carriedIds:[] };
+  for(const g of members){ g.released=true; g.releaseId=rid; }
+  e.releases.unshift(rel);
+  elog(e,'릴리즈 커밋 '+rel.code+' (목표 '+members.length+'개, 가치 '+rel.value+')');
+  return [rel];
+}
+
+// completeSprint — ReviewStore.swift:1136. The behavioral fork under test.
+function completeSprint(e, number){
+  const sp=sprintByNum(e,number); if(!sp) return;
+  const rels = releaseSprint(e, number);
+  const leftover = e.goals.filter(g=>g.sprint===number && !g.released);
+
+  if(e.mode==='asis'){
+    // AS-IS: ALWAYS create a successor (line 1142) and carry leftovers into it.
+    const next=createSprint(e,'',true);
+    for(const g of leftover) g.sprint=next.number;
+    sp.closed=true;
+    elog(e,'완료 '+sp.code+' → 후속 '+next.code+' 무조건 생성, 이월 '+leftover.length+'개');
+    return;
+  }
+  // TO-BE R1/R2: successor only when there is work to carry.
+  if(!leftover.length){
+    sp.closed=true;
+    elog(e, rels.length ? '완료 '+sp.code+' (전부 출고, 후속 없음)'
+                        : '빈 스프린트 '+sp.code+' → 기록 없이 닫힘 (R2)');
+    return;
+  }
+  let succ = e.sprints.filter(s=>!s.closed && s.number!==number)
+                      .sort((a,b)=>a.number-b.number)[0];
+  const reused=!!succ;
+  if(!succ) succ=createSprint(e,'',true);
+  for(const g of leftover) g.sprint=succ.number;
+  for(const r of rels){ r.carriedTo=succ.number; r.carriedIds=leftover.map(g=>g.id); }
+  sp.closed=true;
+  elog(e,'완료 '+sp.code+' → 이월 '+leftover.length+'개 → '+succ.code+(reused?' (기존 재사용)':' (신규)'));
+}
+
+// restoreRelease — ReviewStore.swift:1157 (+ TO-BE R3 full undo)
+function restoreRelease(e, id){
+  const ri=e.releases.findIndex(r=>r.id===id); if(ri<0) return;
+  const rel=e.releases[ri];
+  for(const g of e.goals) if(g.releaseId===id || rel.goalIds.includes(g.id)){ g.released=false; g.releaseId=''; }
+  const sp=sprintByNum(e,rel.sprint); if(sp) sp.closed=false;
+  if(e.mode==='tobe' && rel.carriedTo){
+    for(const g of e.goals) if(rel.carriedIds.includes(g.id) && g.sprint===rel.carriedTo) g.sprint=rel.sprint;
+    const succ=sprintByNum(e,rel.carriedTo);
+    if(succ && !succ.closed && succ.auto && !succ.goalText && !membersOf(e,succ.number).length){
+      e.sprints=e.sprints.filter(s=>s.number!==succ.number);
+      elog(e,'복원: 빈 auto 후속 '+succ.code+' 삭제 (R3)');
+    }
+  }
+  e.releases.splice(ri,1);
+  elog(e,'복원 '+rel.code+' → 스프린트 재오픈'+(e.mode==='tobe'&&rel.carriedTo?', 이월분 원위치':''));
+}
+
+// cleanup — TO-BE R6
+function cleanupSprints(e){
+  if(e.mode==='asis'){ elog(e,'정리 기능 없음 (현행)'); return; }
+  const open=e.sprints.filter(s=>!s.closed);
+  const empty=open.filter(s=>!s.goalText && !membersOf(e,s.number).length);
+  const hasWork=open.length>empty.length;
+  let drop = hasWork ? empty : empty.slice().sort((a,b)=>b.createdAt-a.createdAt).slice(1);
+  e.sprints=e.sprints.filter(s=>!drop.includes(s));
+  elog(e,'정리(R6): 빈 스프린트 '+drop.length+'개 삭제'+(hasWork?'':' (최신 1개 유지)'));
+}
+
+// ---------------------------------------------------------------------------
+// Boards
+// ---------------------------------------------------------------------------
+let E={};
+function resetAll(kind){
+  E={asis:makeEngine('asis'), tobe:makeEngine('tobe')};
+  for(const e of Object.values(E)){
+    if(kind==='seed'){
+      const s=createSprint(e,'MPC정리 & 시즌1 정리');
+      addGoal(e,s.number,'주보상패키지 지급',3,'todo');
+      addGoal(e,s.number,'NSS 주정산 문의',2,'done');
+      addGoal(e,s.number,'NSS 일일 리포트',1,'done');
+    }else{ // dirty: mirrors screenshot 4 — one working sprint + empty dupes, same day
+      const a=createSprint(e,''); a.code='26-20';
+      const b=createSprint(e,''); b.code='26-21';
+      const c=createSprint(e,'컨디션 매니저'); c.code='26-22';
+      addGoal(e,c.number,'세션 레일',1,'todo'); addGoal(e,c.number,'장비 콘텐츠',1,'doing');
+      const d=createSprint(e,''); d.code='26-23';
+      elog(e,'오염 상태 로드: 열린 빈 스프린트 3개 + 작업중 1개');
+    }
+    e.log=e.log.slice(-3);
+  }
+  document.getElementById('asserts').innerHTML='';
+  renderAll();
+}
+
+function boardHTML(e){
+  const open=e.sprints.filter(s=>!s.closed).sort((a,b)=>a.number-b.number);
+  let h='';
+  for(const s of open){
+    const gs=membersOf(e,s.number);
+    const w=gs.filter(g=>g.status==='todo').length, dg=gs.filter(g=>g.status==='doing').length,
+          dn=gs.filter(g=>g.status==='done').length;
+    h+='<div class="sprintrow"><div class="srhead">'
+      +'<span class="pill'+(e.mode==='tobe'?' editable" title="클릭해서 별칭·날짜 편집" onclick="openModal(\''+e.mode+'\','+s.number+')':'"')+'>'+s.code+'</span>'
+      +(s.auto?'<span class="autoTag">auto</span>':'')
+      +'<span class="gtext">'+(s.goalText||'예상 결과 미정')+'</span>'
+      +'<span class="cd">'+fmtCD(s.targetAt)+'</span>'
+      +'<span class="cnt"><b class="w">'+w+'</b><b class="d">'+dg+'</b><b class="f">'+dn+'</b></span></div>';
+    if(gs.length) h+='<ul class="goals">'+gs.map(g=>
+      '<li'+(g.released?' class="released"':'')+'><span class="st '+g.status+'">'
+      +({todo:'대기',doing:'진행',done:'완료'})[g.status]+'</span>'+g.text+'</li>').join('')+'</ul>';
+    h+='<div class="rowbtns">'
+      +'<button class="small" onclick="act(\''+e.mode+'\',\'addGoal\','+s.number+')">＋ 목표</button>'
+      +'<button class="small" onclick="act(\''+e.mode+'\',\'doneOne\','+s.number+')">1개 완료 처리</button>'
+      +'<button class="small primary" onclick="act(\''+e.mode+'\',\'complete\','+s.number+')">Complete sprint</button>'
+      +'</div></div>';
+  }
+  if(!open.length) h+='<div class="gtext" style="padding:6px 2px">열린 스프린트 없음</div>';
+  h+='<div class="rowbtns" style="margin-bottom:12px">'
+    +'<button class="small" onclick="act(\''+e.mode+'\',\'create\',0)">＋ Create sprint</button>'
+    +'<button class="small" onclick="act(\''+e.mode+'\',\'cleanup\',0)">빈 스프린트 정리</button></div>';
+  const rels=e.releases;
+  h+='<div class="gtext" style="margin:4px 0 6px">▾ 완료된 스프린트 (릴리즈 로그) ('+rels.length+')</div>';
+  for(const r of rels){
+    const open=e.relOpen.has(r.id);
+    const period=(r.startedAt?fmtDT(r.startedAt)+' ~ ':'')+fmtDT(r.releasedAt);
+    // AS-IS: 제목 클릭 = 펼치기/닫기 (현행 앱과 동일). TO-BE(R7): 앞의 ▸가 펼치기/닫기,
+    // 제목 클릭 = 제목·기간(시작/완료 일시) 편집 모달.
+    const chev='<span class="chev" onclick="act(\''+e.mode+'\',\'toggleRel\',\''+r.id+'\')" title="펼치기/닫기">'+(open?'▾':'▸')+'</span>';
+    const title=(e.mode==='tobe')
+      ? '<b class="tclk" onclick="openRelModal(\''+r.id+'\')" title="클릭: 제목·기간 편집">'+r.code+'</b>'
+      : '<b class="tclk" onclick="act(\'asis\',\'toggleRel\',\''+r.id+'\')" title="클릭: 펼치기/닫기 (현행)">'+r.code+'</b>';
+    h+='<div class="relwrap'+(open?'':' flat')+'"><div class="rel">'+chev+title
+      +'<span class="gtext">'+period+' · '+r.goalIds.length+'개'
+      +(e.mode==='tobe'&&r.carriedTo?' · 이월→#'+r.carriedTo:'')+'</span>'
+      +'<span class="val">만든 가치 '+r.value+'</span>'
+      +'<button class="small" onclick="act(\''+e.mode+'\',\'restore\',\''+r.id+'\')">복원</button></div>'
+      +(open?'<div class="relbody">'+(r.titles.length?r.titles.map(t=>'✓ '+t).join('<br>'):'목표 없음')+'</div>':'')
+      +'</div>';
+  }
+  return h;
+}
+function renderAll(){
+  document.getElementById('clock').textContent='가상 시각 '+fmtDT(CLOCK);
+  for(const m of ['asis','tobe']){
+    document.getElementById('board-'+m).innerHTML=boardHTML(E[m]);
+    document.getElementById('log-'+m).textContent=E[m].log.slice(-14).join('\n');
+  }
+}
+function act(mode, op, arg){
+  const e=E[mode];
+  if(op==='addGoal'){ addGoal(e,arg,'새 목표 '+(e.gseq+1),1,'todo'); elog(e,'목표 추가'); }
+  if(op==='doneOne'){ const g=membersOf(e,arg).find(g=>g.status!=='done'); if(g){g.status='done'; elog(e,'완료 처리: '+g.text);} }
+  if(op==='complete') completeSprint(e,arg);
+  if(op==='create') createSprint(e,'');
+  if(op==='cleanup') cleanupSprints(e);
+  if(op==='restore') restoreRelease(e,arg);
+  if(op==='toggleRel'){ if(e.relOpen.has(arg)) e.relOpen.delete(arg); else e.relOpen.add(arg); }
+  renderAll();
+}
+
+// ---------------------------------------------------------------------------
+// Modal (R5) — pill click, TO-BE only
+// ---------------------------------------------------------------------------
+let modalTarget=null;
+function toLocal(t){ const d=new Date(t*1000);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')
+        +'T'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+function setModal(title,code,startLab,start,targetLab,target){
+  document.getElementById('mTitle').textContent=title;
+  document.getElementById('mCode').value=code;
+  document.getElementById('mStartLab').textContent=startLab;
+  document.getElementById('mStart').value=start;
+  document.getElementById('mTargetLab').textContent=targetLab;
+  document.getElementById('mTarget').value=target;
+  document.getElementById('mErr').textContent='';
+  document.getElementById('ovl').classList.add('on');
+}
+function openModal(mode,n){
+  const e=E[mode], s=sprintByNum(e,n); if(!s) return;
+  modalTarget={mode,kind:'sprint',n};
+  setModal('스프린트 '+s.code+' 상세 설정', s.code, '시작 일시', toLocal(s.startAt), '목표 일시', toLocal(s.targetAt));
+}
+// R7: 완료된 스프린트(릴리즈)의 제목 클릭 → 제목·기간 편집. 하루 2회 스프린트나
+// 2일짜리 스프린트도 실제 기간(시작~완료 일시)을 사실대로 기록할 수 있다.
+function openRelModal(id){
+  const e=E.tobe, r=e.releases.find(x=>x.id===id); if(!r) return;
+  modalTarget={mode:'tobe',kind:'release',id};
+  setModal('완료 스프린트 '+r.code+' 편집', r.code, '시작 일시', r.startedAt?toLocal(r.startedAt):'', '완료 일시', toLocal(r.releasedAt));
+}
+function closeModal(){ document.getElementById('ovl').classList.remove('on'); modalTarget=null; }
+function saveModal(){
+  const t=modalTarget, e=E[t.mode];
+  const code=document.getElementById('mCode').value.trim();
+  const err=document.getElementById('mErr');
+  if(!code){ err.textContent='별칭을 입력하세요'; return; }
+  const st=new Date(document.getElementById('mStart').value).getTime()/1000;
+  const tg=new Date(document.getElementById('mTarget').value).getTime()/1000;
+  if(t.kind==='sprint'){
+    const s=sprintByNum(e,t.n);
+    const taken = e.sprints.some(x=>x.number!==t.n && x.code===code) || e.releases.some(r=>r.code===code);
+    if(taken){ err.textContent='이미 사용 중인 별칭입니다: '+code; return; }
+    if(isFinite(st)) s.startAt=st;
+    if(isFinite(tg)) s.targetAt=tg;
+    elog(e,'상세 설정: '+s.code+' → '+code+' / '+fmtDT(s.startAt)+' ~ '+fmtDT(s.targetAt));
+    s.code=code;
+  }else{
+    const r=e.releases.find(x=>x.id===t.id);
+    const taken = e.sprints.some(x=>x.code===code) || e.releases.some(x=>x.id!==t.id && x.code===code);
+    if(taken){ err.textContent='이미 사용 중인 별칭입니다: '+code; return; }
+    if(isFinite(tg) && isFinite(st) && st>tg){ err.textContent='시작이 완료보다 늦을 수 없습니다'; return; }
+    if(isFinite(st)) r.startedAt=st;
+    if(isFinite(tg)) r.releasedAt=tg;
+    elog(e,'완료 로그 편집: '+r.code+' → '+code+' / '+(r.startedAt?fmtDT(r.startedAt):'—')+' ~ '+fmtDT(r.releasedAt)+' (R7)');
+    r.code=code;
+  }
+  closeModal(); renderAll();
+}
+
+// ---------------------------------------------------------------------------
+// Scenarios — same operations on both boards, then assert the difference
+// ---------------------------------------------------------------------------
+function assertBox(lines){
+  document.getElementById('asserts').innerHTML =
+    lines.map(l=>'<div class="assert '+l.cls+'">'+l.txt+'</div>').join('');
+}
+function openCount(e){ return e.sprints.filter(s=>!s.closed).length; }
+
+function runScenario(k){
+  if(k===6) resetAll('dirty'); else resetAll('seed');
+  const A=E.asis, B=E.tobe;
+  const out=[];
+
+  if(k===1){
+    for(const e of [A,B]){
+      const s=createSprint(e,''); // an empty sprint
+      for(let i=0;i<3;i++){ // complete whatever empty sprint is open, 3 times
+        const t=e.sprints.filter(x=>!x.closed && !membersOf(e,x.number).length).pop();
+        if(t) completeSprint(e,t.number);
+      }
+    }
+    out.push({cls:'fail', txt:'AS-IS: 빈 스프린트 완료를 반복하면 열린 빈 스프린트가 계속 남고 채번만 증가 → 현재 열린 스프린트 '+openCount(A)+'개, 마지막 코드 '+A.sprints[A.sprints.length-1].code});
+    out.push({cls:'pass', txt:'TO-BE(R1/R2): 이월할 목표가 없으므로 후속 미생성, 릴리즈 기록도 없음 → 열린 스프린트 '+openCount(B)+'개'});
+  }
+
+  if(k===2){
+    for(const e of [A,B]){
+      const s2=createSprint(e,'다음 주 작업'); // an already-open second sprint
+      completeSprint(e, e.sprints[0].number);  // seed sprint: 2 done + 1 leftover
+    }
+    out.push({cls:'fail', txt:'AS-IS: 열린 스프린트가 이미 있어도 새 스프린트를 또 만들어 이월 → 열린 스프린트 '+openCount(A)+'개'});
+    out.push({cls:'pass', txt:'TO-BE(R1): 기존 열린 스프린트로 이월(재사용) → 열린 스프린트 '+openCount(B)+'개'});
+  }
+
+  if(k===3){
+    for(const e of [A,B]){
+      completeSprint(e, e.sprints[0].number);
+      for(let i=0;i<2;i++){
+        restoreRelease(e, e.releases[0]?.id);
+        completeSprint(e, e.sprints.find(s=>!s.closed && membersOf(e,s.number).some(g=>g.status==='done'))?.number
+                          ?? e.sprints[0].number);
+      }
+    }
+    out.push({cls:'fail', txt:'AS-IS: 복원→재완료 2회 반복 후 스프린트 총 '+A.sprints.length+'개 (매번 새 후속 생성, 같은 날짜에 증식)'});
+    out.push({cls:'pass', txt:'TO-BE(R3): 복원이 이월분을 원위치시키고 빈 auto 후속을 지워 재완료해도 증식 없음 → 총 '+B.sprints.length+'개'});
+  }
+
+  if(k===4){
+    for(const e of [A,B]){
+      const n=e.sprints[0].number;
+      releaseSprint(e,n);                    // 1st commit: 2 done goals
+      const g=membersOf(e,n).find(g=>!g.released); g.status='done';
+      releaseSprint(e,n);                    // 2nd partial commit
+      createSprint(e,'다음 스프린트');          // next sprint shows the gap (or not)
+    }
+    out.push({cls:'fail', txt:'AS-IS: 2차 커밋이 새 채번 소모('+A.releases[0].code+') → 다음 스프린트가 '+A.sprints[A.sprints.length-1].code+' (번호 갭 발생)'});
+    out.push({cls:'pass', txt:'TO-BE(R4): 2차 커밋은 접미사('+B.releases[0].code+') → 다음 스프린트 '+B.sprints[B.sprints.length-1].code+' (갭 없음)'});
+  }
+
+  if(k===5){
+    out.push({cls:'pass', txt:'TO-BE 보드에서 스프린트 번호(pill)를 직접 클릭 → 별칭·시작/목표 일시 편집 모달. 중복 별칭은 저장 거부. AS-IS는 클릭 불가(현행과 동일).'});
+  }
+
+  if(k===6){
+    cleanupSprints(A); cleanupSprints(B);
+    out.push({cls:'fail', txt:'AS-IS: 정리 수단 없음 → 열린 스프린트 '+openCount(A)+'개 그대로'});
+    out.push({cls:'pass', txt:'TO-BE(R6): 작업 중 스프린트가 있으므로 빈 스프린트 전부 삭제 → 열린 스프린트 '+openCount(B)+'개'});
+  }
+
+  if(k===7){
+    // Produce a release on both boards, then compare the log interactions by hand.
+    for(const e of [A,B]) completeSprint(e, e.sprints[0].number);
+    out.push({cls:'fail', txt:'AS-IS: 완료 로그 제목 클릭 = 펼치기/닫기와 겹침. 기간(시작~완료 일시) 수정 불가 — 하루 2회 스프린트나 2일짜리 스프린트를 사실대로 기록할 수 없음. 왼쪽 보드에서 제목을 눌러보세요(토글만 됨).'});
+    out.push({cls:'pass', txt:'TO-BE(R7): 앞의 ▸ 클릭 = 펼치기/닫기, 제목 클릭 = 제목·기간 편집 모달(시작/완료 일시). 오른쪽 보드에서 제목을 눌러 시작을 어제로, 완료를 오늘 오전으로 바꿔보세요 — 기간 표기가 "시작 ~ 완료"로 바뀝니다.'});
+  }
+
+  assertBox(out);
+  renderAll();
+}
+
+resetAll('seed');
+setInterval(()=>{ CLOCK+=1; renderAll(); }, 1000);
+</script>
+</body>
+</html>

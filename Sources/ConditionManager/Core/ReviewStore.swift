@@ -215,14 +215,25 @@ final class ReviewStore {
         // records with no code fall back to the sprint's current code at display time.
         var code: String
         var releasedAt: Date
+        // Start of the sprint period this release covers, snapshotted from the sprint's
+        // startAt at commit time (nil for legacy records / 미배정). With releasedAt it
+        // records the REAL cycle length — two sprints a day or one per two days — and
+        // both ends are user-editable in the 완료 로그 (title-click edit).
+        var startedAt: Date? = nil
         var value: Int             // summed produced value of the committed goals
         var goalIds: [String]      // ids of the goals committed (for 복원/restore)
         var titles: [String]       // title snapshot at release time (readable log)
+        // Carry record for full-undo restore: at complete-time the sprint's unfinished
+        // goals were rolled into sprint `carriedTo` (0 = none). 복원 moves them back and
+        // removes an auto-created successor that ends up empty because of it.
+        var carriedTo: Int = 0
+        var carriedIds: [String] = []
 
-        enum CodingKeys: String, CodingKey { case id, sprint, code, releasedAt, value, goalIds, titles }
-        init(id: String, sprint: Int, code: String = "", releasedAt: Date, value: Int, goalIds: [String], titles: [String]) {
+        enum CodingKeys: String, CodingKey { case id, sprint, code, releasedAt, startedAt, value, goalIds, titles, carriedTo, carriedIds }
+        init(id: String, sprint: Int, code: String = "", releasedAt: Date, startedAt: Date? = nil,
+             value: Int, goalIds: [String], titles: [String]) {
             self.id = id; self.sprint = sprint; self.code = code; self.releasedAt = releasedAt
-            self.value = value; self.goalIds = goalIds; self.titles = titles
+            self.startedAt = startedAt; self.value = value; self.goalIds = goalIds; self.titles = titles
         }
         init(from dec: Decoder) throws {
             let c = try dec.container(keyedBy: CodingKeys.self)
@@ -230,9 +241,12 @@ final class ReviewStore {
             sprint = try c.decodeIfPresent(Int.self, forKey: .sprint) ?? 0
             code = try c.decodeIfPresent(String.self, forKey: .code) ?? ""
             releasedAt = try c.decodeIfPresent(Date.self, forKey: .releasedAt) ?? Date(timeIntervalSince1970: 0)
+            startedAt = try c.decodeIfPresent(Date.self, forKey: .startedAt)
             value = try c.decodeIfPresent(Int.self, forKey: .value) ?? 0
             goalIds = try c.decodeIfPresent([String].self, forKey: .goalIds) ?? []
             titles = try c.decodeIfPresent([String].self, forKey: .titles) ?? []
+            carriedTo = try c.decodeIfPresent(Int.self, forKey: .carriedTo) ?? 0
+            carriedIds = try c.decodeIfPresent([String].self, forKey: .carriedIds) ?? []
         }
     }
 
@@ -251,13 +265,17 @@ final class ReviewStore {
         // closed = released. A released sprint drops out of the active board and filter;
         // its record lives on in the 완료 로그. 복원 reopens it.
         var closed: Bool = false
+        // auto = created by completeSprint as a carry-forward slot, untouched by the user.
+        // Only auto sprints are eligible for silent removal (restore undo); any user edit
+        // (updateSprint) clears the flag so a claimed sprint is never deleted implicitly.
+        var auto: Bool = false
 
-        enum CodingKeys: String, CodingKey { case number, code, goalText, durationKind, startAt, targetAt, createdAt, closed }
+        enum CodingKeys: String, CodingKey { case number, code, goalText, durationKind, startAt, targetAt, createdAt, closed, auto }
         init(number: Int, code: String = "", goalText: String, durationKind: String,
-             startAt: Date? = nil, targetAt: Date? = nil, createdAt: Date, closed: Bool = false) {
+             startAt: Date? = nil, targetAt: Date? = nil, createdAt: Date, closed: Bool = false, auto: Bool = false) {
             self.number = number; self.code = code; self.goalText = goalText
             self.durationKind = durationKind; self.startAt = startAt; self.targetAt = targetAt
-            self.createdAt = createdAt; self.closed = closed
+            self.createdAt = createdAt; self.closed = closed; self.auto = auto
         }
         init(from dec: Decoder) throws {
             let c = try dec.container(keyedBy: CodingKeys.self)
@@ -269,6 +287,7 @@ final class ReviewStore {
             targetAt = try c.decodeIfPresent(Date.self, forKey: .targetAt)
             createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
             closed = try c.decodeIfPresent(Bool.self, forKey: .closed) ?? false
+            auto = try c.decodeIfPresent(Bool.self, forKey: .auto) ?? false
         }
     }
     static let validDurations: Set<String> = ["1d", "2d", "3d", "1w", "2w", "1m"]
@@ -1106,7 +1125,9 @@ final class ReviewStore {
             let rid = UUID().uuidString
             let value = members.reduce(0) { $0 + goals[$1].value }
             let rel = Release(id: rid, sprint: sp, code: nextReleaseCode(forSprint: sp),
-                              releasedAt: now, value: value,
+                              releasedAt: now,
+                              startedAt: sprints.first(where: { $0.number == sp })?.startAt,
+                              value: value,
                               goalIds: members.map { goals[$0].id },
                               titles: members.map { goals[$0].text })
             for i in members { goals[i].released = true; goals[i].releaseId = rid }
@@ -1123,47 +1144,139 @@ final class ReviewStore {
         return created
     }
 
-    // Complete a sprint and roll forward. This is the "Complete sprint" action — the
-    // bump-out / reset moment (see .doc/sprint-policy.md). In one step it: (1) commits the
-    // sprint's finished goals to the 완료 로그, (2) opens a fresh successor sprint (auto
-    // start=now, target=now+24h, 1d default — editable), (3) carries every still-unfinished
-    // goal of the old sprint into that successor so no work is dropped, and (4) closes the
-    // old sprint. Returning the successor lets the caller surface its new code (26-2 → 26-3).
-    // The unique sprint code always advances — never reused — so company resource tracking
-    // keeps a monotonic period id. Releasing without rolling is still available via
-    // releaseSprint (used for the "모든 스프린트" commit path).
+    // Complete a sprint. This is the "Complete sprint" action — the bump-out / reset
+    // moment (see .doc/sprint-policy.md, tests/prototypes/sprint-lifecycle-test.html).
+    // In one step it: (1) commits the sprint's finished goals to the 완료 로그 (nothing
+    // done → no log entry at all), (2) closes the old sprint, and (3) ONLY IF unfinished
+    // goals remain, carries them into a successor: the earliest already-open sprint when
+    // one exists, else a fresh auto sprint (start=now, target=now+24h, 1d default).
+    // Completing an empty sprint therefore just closes it — no successor, no release —
+    // which stops the "complete → new empty sprint → complete …" same-day proliferation.
+    // The carry is stamped on the release (carriedTo/carriedIds) so 복원 can undo it fully.
     @discardableResult
     func completeSprint(_ number: Int) -> Sprint? {
         guard sprints.contains(where: { $0.number == number }) else { return nil }
         // 1. Commit finished work (done + not-yet-released). Safe when nothing is done —
-        //    releaseSprint just returns []; we still close and roll forward below.
-        releaseSprint(number)
-        // 2. Open the successor (auto 24h window, 1d default).
-        let next = createSprint(goalText: "", durationKind: "1d")
-        // 3. Carry every still-unfinished goal of the old sprint into the successor.
-        for i in goals.indices where goals[i].sprint == number && !goals[i].released {
-            goals[i].sprint = next.number
+        //    releaseSprint just returns [] and the 완료 로그 stays untouched.
+        let committed = releaseSprint(number)
+        // 2. Unfinished goals decide whether a successor is needed at all.
+        let leftover = goals.indices.filter { goals[$0].sprint == number && !goals[$0].released }
+        var successor: Sprint? = nil
+        if !leftover.isEmpty {
+            successor = sprints.filter({ !$0.closed && $0.number != number })
+                               .min(by: { $0.number < $1.number })
+                        ?? createSprint(goalText: "", durationKind: "1d", auto: true)
+            for i in leftover { goals[i].sprint = successor!.number }
+            let ids = leftover.map { goals[$0].id }
+            for rel in committed where rel.sprint == number {
+                if let ri = releases.firstIndex(where: { $0.id == rel.id }) {
+                    releases[ri].carriedTo = successor!.number
+                    releases[ri].carriedIds = ids
+                }
+            }
         }
-        // 4. Close the old sprint regardless of whether it had finished goals to commit.
+        // 3. Close the old sprint regardless of whether anything was committed.
         if let si = sprints.firstIndex(where: { $0.number == number }) {
             sprints[si].closed = true
         }
-        saveGoals(); saveSprints()
-        return next
+        saveGoals(); saveSprints(); saveReleases()
+        return successor
     }
 
-    // Restore (복원) a release: bring its goals back into the active list, reopen its sprint
-    // (so it returns to 스프린트 관리), and drop the release record.
+    // Restore (복원) a release = the full undo of its complete: bring its goals back into
+    // the active list, reopen its sprint (so it returns to 스프린트 관리), move goals that
+    // were carried into a successor at complete-time back home, delete that successor if
+    // it was auto-created and is now empty, and drop the release record.
     func restoreRelease(id: String) {
         guard let ri = releases.firstIndex(where: { $0.id == id }) else { return }
-        let sp = releases[ri].sprint
-        let ids = Set(releases[ri].goalIds)
+        let rel = releases[ri]
+        let ids = Set(rel.goalIds)
         for i in goals.indices where goals[i].releaseId == id || ids.contains(goals[i].id) {
             goals[i].released = false; goals[i].releaseId = ""
         }
-        if sp > 0, let si = sprints.firstIndex(where: { $0.number == sp }) { sprints[si].closed = false }
+        if rel.sprint > 0, let si = sprints.firstIndex(where: { $0.number == rel.sprint }) { sprints[si].closed = false }
+        if rel.carriedTo > 0 {
+            let carried = Set(rel.carriedIds)
+            for i in goals.indices where carried.contains(goals[i].id) && goals[i].sprint == rel.carriedTo {
+                goals[i].sprint = rel.sprint
+            }
+            // The successor is removed only when auto (never touched by the user), still
+            // open, and left with no members at all — a user-claimed sprint stays.
+            if let si = sprints.firstIndex(where: { $0.number == rel.carriedTo }),
+               sprints[si].auto, !sprints[si].closed, sprints[si].goalText.isEmpty,
+               !goals.contains(where: { effectiveSprint($0) == rel.carriedTo }) {
+                sprints.remove(at: si)
+            }
+        }
         releases.remove(at: ri)
         saveGoals(); saveReleases(); saveSprints()
+    }
+
+    // Reopen ONE goal out of its release (목표 검색 → 다시 열기), unlike restoreRelease
+    // which reverts the whole commit. The Release record stays immutable — it is the
+    // fact of what shipped at that moment; the dashboard derives a "재오픈" mark by
+    // spotting goalIds whose goal is no longer released. The goal lands in Backlog when
+    // its sprint has closed (a shipped sprint is off the board, so keeping the goal
+    // there would make it invisible); an open sprint keeps it. Also serves done and
+    // cancelled goals: for those it is just the status transition back to backlog.
+    func reopenGoal(id: String) {
+        guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
+        goals[idx].released = false
+        goals[idx].releaseId = ""
+        if goals[idx].sprint > 0,
+           let s = sprints.first(where: { $0.number == goals[idx].sprint }), s.closed {
+            goals[idx].sprint = 0
+        }
+        // setStatus banks live time, clears completedAt on leaving done, and saves.
+        setStatus(id: id, status: "backlog")
+    }
+
+    // Edit a completed-sprint log entry: alias (code) and the close time (releasedAt).
+    // The log shows only WHEN the sprint was closed — a start~end period reads as "time
+    // spent" even though breaks fall inside it, so the period is no longer surfaced or
+    // edited (startedAt stays on old records as inert metadata). Same Date?? semantics
+    // as updateSprint. code applies only when non-empty and unique across sprint AND
+    // release codes.
+    func updateRelease(id: String, code: String? = nil,
+                       startedAt: Date?? = nil, releasedAt: Date?? = nil) {
+        guard let idx = releases.firstIndex(where: { $0.id == id }) else { return }
+        if let c = code {
+            let t = c.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty,
+               !sprints.contains(where: { $0.code == t }),
+               !releases.contains(where: { $0.id != id && $0.code == t }) {
+                releases[idx].code = t
+            }
+        }
+        var st = releases[idx].startedAt
+        var re = releases[idx].releasedAt
+        if case let .some(s) = startedAt { st = s }
+        if case let .some(r) = releasedAt, let r { re = r }   // 마감 일시 is never cleared
+        // A stored legacy start sitting after the new close time is stale — drop it
+        // instead of letting it veto the close-time edit.
+        if let s = st, s > re { st = nil }
+        releases[idx].startedAt = st
+        releases[idx].releasedAt = re
+        saveReleases()
+    }
+
+    // Collapse duplicate empty open sprints (no members, no 결과물). When another open
+    // sprint still carries work the empties are pure noise — remove them all; when nothing
+    // else is open, keep the newest one as the landing slot. Returns the removed count.
+    @discardableResult
+    func cleanupSprints() -> Int {
+        let open = sprints.filter { !$0.closed }
+        var empty = open.filter { s in
+            s.goalText.isEmpty && !goals.contains(where: { effectiveSprint($0) == s.number })
+        }
+        if open.count == empty.count, let keep = empty.max(by: { $0.createdAt < $1.createdAt }) {
+            empty.removeAll { $0.number == keep.number }
+        }
+        guard !empty.isEmpty else { return 0 }
+        let nums = Set(empty.map { $0.number })
+        sprints.removeAll { nums.contains($0.number) }
+        saveSprints()
+        return nums.count
     }
 
     private func loadReleases() {
@@ -1202,15 +1315,22 @@ final class ReviewStore {
     }
 
     // Code stamped on a new release. The FIRST commit of a sprint keeps the sprint's own
-    // code; any LATER partial commit of the same sprint (its code already claimed by an
-    // earlier release) splits off under a fresh advancing code, so the release log never
-    // shows the same code twice. 미배정 (sprint 0) carries no code.
+    // code; any LATER partial commit re-uses it with a ".k" suffix (26-15.2, 26-15.3 …)
+    // so the release log stays unique WITHOUT consuming the year sequence — suffixed
+    // codes don't parse as "YY-n" in maxYearCode, so sprint numbering shows no gaps.
+    // (Legacy sprints with no code of their own still mint a fresh year code.)
+    // 미배정 (sprint 0) carries no code.
     private func nextReleaseCode(forSprint sp: Int) -> String {
         guard sp > 0 else { return "" }
         let own = sprints.first(where: { $0.number == sp })?.code ?? ""
-        if !own.isEmpty && !releases.contains(where: { $0.code == own }) { return own }
-        let yy = Calendar.current.component(.year, from: Date()) % 100
-        return "\(yy)-\(maxYearCode(yy) + 1)"
+        if own.isEmpty {
+            let yy = Calendar.current.component(.year, from: Date()) % 100
+            return "\(yy)-\(maxYearCode(yy) + 1)"
+        }
+        if !releases.contains(where: { $0.code == own }) { return own }
+        var k = 2
+        while releases.contains(where: { $0.code == "\(own).\(k)" }) { k += 1 }
+        return "\(own).\(k)"
     }
     // Add a duration tag to a date (1d/2d/3d/1w/2w/1m). Used to auto-fill targetAt.
     private func addDuration(_ d: Date, _ kind: String) -> Date {
@@ -1227,14 +1347,15 @@ final class ReviewStore {
     }
 
     // Create a sprint. startAt auto-fills to now, targetAt to now + duration (both editable).
+    // auto marks a carry-forward slot minted by completeSprint (see Sprint.auto).
     @discardableResult
-    func createSprint(goalText: String, durationKind: String) -> Sprint {
+    func createSprint(goalText: String, durationKind: String, auto: Bool = false) -> Sprint {
         let dur = Self.validDurations.contains(durationKind) ? durationKind : "1d"
         let now = Date()
         let s = Sprint(number: nextSprintNumber(), code: nextSprintCode(),
                        goalText: goalText.trimmingCharacters(in: .whitespacesAndNewlines),
                        durationKind: dur, startAt: now, targetAt: addDuration(now, dur),
-                       createdAt: now)
+                       createdAt: now, auto: auto)
         sprints.append(s)
         saveSprints()
         return s
@@ -1242,9 +1363,21 @@ final class ReviewStore {
     // Update a sprint. Each arg is applied only when provided. Changing the duration
     // recomputes targetAt from startAt UNLESS targetAt is explicitly supplied too. The
     // date args are Date?? so .none = leave alone, .some(nil) = clear, .some(date) = set.
-    func updateSprint(number: Int, goalText: String? = nil, durationKind: String? = nil,
+    // code (별칭) is applied only when non-empty and unique across sprint AND release
+    // codes — a silently rejected duplicate keeps the old code (client pre-validates).
+    // Any user edit claims the sprint: the auto flag is cleared.
+    func updateSprint(number: Int, code: String? = nil, goalText: String? = nil, durationKind: String? = nil,
                       startAt: Date?? = nil, targetAt: Date?? = nil) {
         guard let idx = sprints.firstIndex(where: { $0.number == number }) else { return }
+        sprints[idx].auto = false
+        if let c = code {
+            let t = c.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty,
+               !sprints.contains(where: { $0.number != number && $0.code == t }),
+               !releases.contains(where: { $0.code == t }) {
+                sprints[idx].code = t
+            }
+        }
         if let t = goalText { sprints[idx].goalText = t.trimmingCharacters(in: .whitespacesAndNewlines) }
         if let d = durationKind, Self.validDurations.contains(d) {
             sprints[idx].durationKind = d
