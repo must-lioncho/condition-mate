@@ -1188,9 +1188,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // unless an explicit sessions-dir override points the stamper somewhere safe.
         if AppPaths.isCustom,
            ProcessInfo.processInfo.environment["CM_CLAUDE_SESSIONS_DIR"] == nil { return }
-        var map: [String: Int] = [:]
-        for g in reviewStore.goals where !g.sessionId.isEmpty { map[g.sessionId] = g.seq }
-        SessionTitleStamper.stamp(seqBySession: map)
+        var map: [String: SessionTitleStamper.Entry] = [:]
+        for g in reviewStore.goals where !g.sessionId.isEmpty {
+            map[g.sessionId] = .init(seq: g.seq, fallbackTitle: g.text)
+        }
+        SessionTitleStamper.stamp(bySession: map)
     }
 
     // Parse the transcript and report its tail state: the name of the last still-open
