@@ -1,11 +1,13 @@
 // E2E for context-aware tier smoothing (carry-forward), bound to the REAL source.
-// Extracts withCarryForward / timelineSegments / timeBuckets from DashboardContent.swift
+// Extracts withCarryForward / timelineSegments / timeBuckets from BGMPlayerContent.swift
+// (오늘 활동 분석이 대시보드에서 컨디션 관리 페이지로 이동하며 함수들도 같이 이주)
 // and asserts the user's neighbor-agreement rules on screenshot-derived inputs.
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/DashboardContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/BGMPlayerContent.swift', 'utf8');
 function slice(from, to) { const a = SRC.indexOf(from); const b = SRC.indexOf(to, a); if (a < 0 || b < 0) throw new Error('extract ' + from); return SRC.slice(a, b); }
-eval(slice('function timelineSegments', 'function renderTimeline') + '\n'
-   + slice('const TENMIN', 'function timeBuckets') + '\n'
+// BGMPlayerContent 배치: TENMIN→withCarryForward→timelineSegments 가 연속이라 한 슬라이스로
+// 끊는다 (rowHtml 이후는 DOM/window 를 만져 eval 불가).
+eval(slice('const TENMIN', 'function rowHtml') + '\n'
    + slice('function timeBuckets', 'function drawTiers'));
 function catLabel(seg) { if (seg.meeting) return '미팅'; if (seg.tier === '적극') return '집중'; if (seg.tier === '중간') return '책상'; return '휴식'; }
 

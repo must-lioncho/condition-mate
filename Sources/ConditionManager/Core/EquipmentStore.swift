@@ -1,6 +1,6 @@
 import Foundation
 
-// 장비 + 숙련도 ledger (see equipment-test.html for the design prototype).
+// 장비 + 숙련도 ledger (see tests/prototypes/equipment-test.html for the design prototype).
 //
 // Six equipment categories — the rail's nav abilities (대화·스킬·위임·워커·팀) plus
 // 플러그인 — each carry a proficiency level 0..7 and an XP gauge. The OVERALL level
@@ -28,6 +28,7 @@ final class EquipmentStore {
                              "워커 자동화", "팀 오케스트레이션", "완전자율"]
 
     static let rewardXP = 80          // XP per successful pomodoro
+    static let rainSummonCost = 200   // XP spent to summon a 폭우 리셋 from the 장비 page
     static let maxLevel = 7
 
     struct Prof: Codable { var lv: Int; var xp: Int }
@@ -96,6 +97,29 @@ final class EquipmentStore {
         prof[category] = p
         saveLocked()
         return leveled
+    }
+
+    // Spend accumulated XP progress — the 경험치로 폭우소환 gate. Draws only from the
+    // per-category XP gauges (never levels, so hard-won mastery is safe), highest gauge
+    // first so the cost comes out of surplus progress. Returns the amount actually spent,
+    // or nil if the pooled gauges can't cover `amount` — the summon is then refused so the
+    // user is never charged for nothing.
+    @discardableResult
+    func spendXP(_ amount: Int) -> Int? {
+        lock.lock(); defer { lock.unlock() }
+        let pool = Self.categories.reduce(0) { $0 + (prof[$1]?.xp ?? 0) }
+        guard pool >= amount else { return nil }
+        var remaining = amount
+        for c in Self.categories.sorted(by: { (prof[$0]?.xp ?? 0) > (prof[$1]?.xp ?? 0) }) {
+            if remaining <= 0 { break }
+            guard var p = prof[c], p.xp > 0 else { continue }
+            let take = min(p.xp, remaining)
+            p.xp -= take
+            remaining -= take
+            prof[c] = p
+        }
+        saveLocked()
+        return amount
     }
 
     // A successful pomodoro: the full reward goes to the most-used category.

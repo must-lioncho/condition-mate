@@ -98,31 +98,10 @@ final class MenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // --- Setup ---
+        // Per-app tracked-strategy and BPM/release settings entries were removed:
+        // the plan map (bgm-plan.json slots) drives strategy now, and the stored
+        // Settings values keep working without a menu surface.
         addItem("음악 폴더 선택…", action: #selector(onChooseFolder))
-        addItem("현재 앱을 추적에 추가", action: #selector(onAddApp))
-
-        // Tracked apps submenu — each app maps to a BGM strategy (profile).
-        let trackedItem = NSMenuItem(title: "추적 앱 · BGM 전략 (\(s.trackedApps.count))", action: nil, keyEquivalent: "")
-        let sub = NSMenu()
-        if s.trackedApps.isEmpty {
-            let empty = NSMenuItem(title: "없음 — '현재 앱을 추적에 추가' 사용", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            sub.addItem(empty)
-        } else {
-            for id in s.trackedApps {
-                let name = appName(forBundleID: id) ?? id
-                let currentKey = s.profileKey(for: id)
-                let profile = BGMProfile.by(key: currentKey)
-                let appItem = NSMenuItem(title: "\(name) — \(profile.label)", action: nil, keyEquivalent: "")
-                appItem.submenu = buildAppProfileMenu(bundleID: id, name: name, currentKey: currentKey)
-                sub.addItem(appItem)
-            }
-        }
-        trackedItem.submenu = sub
-        menu.addItem(trackedItem)
-
-        // Settings submenu (BPM range + release minutes)
-        menu.addItem(buildSettingsSubmenu(s))
 
         menu.addItem(.separator())
 
@@ -158,59 +137,6 @@ final class MenuController: NSObject, NSMenuDelegate {
             return d.appWindowMode == .bgm ? "창 열기 (컨디션 모드)" : "창 열기 (대시보드 모드)"
         }
         return d.appWindowMode == .bgm ? "대시보드 모드로 전환" : "컨디션 모드로 전환"
-    }
-
-    // Per-app BGM strategy picker.
-    private func buildAppProfileMenu(bundleID: String, name: String, currentKey: String) -> NSMenu {
-        let m = NSMenu()
-        let header = NSMenuItem(title: "\(name) · 1분 이상 사용 시 이 전략으로", action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        m.addItem(header)
-        for p in BGMProfile.all {
-            let i = NSMenuItem(title: "\(p.label)  \(Int(p.minBPM))–\(Int(p.maxBPM))",
-                               action: #selector(onSetProfile(_:)), keyEquivalent: "")
-            i.target = self
-            i.representedObject = [bundleID, p.key]
-            i.state = (p.key == currentKey) ? .on : .off
-            m.addItem(i)
-        }
-        m.addItem(.separator())
-        let remove = NSMenuItem(title: "✕  추적에서 제거", action: #selector(onRemoveApp(_:)), keyEquivalent: "")
-        remove.target = self
-        remove.representedObject = bundleID
-        m.addItem(remove)
-        return m
-    }
-
-    private func buildSettingsSubmenu(_ s: Settings) -> NSMenuItem {
-        let item = NSMenuItem(title: "설정", action: nil, keyEquivalent: "")
-        let sub = NSMenu()
-
-        let bpmHeader = NSMenuItem(title: "BPM 범위: \(Int(s.minBPM))–\(Int(s.maxBPM))", action: nil, keyEquivalent: "")
-        bpmHeader.isEnabled = false
-        sub.addItem(bpmHeader)
-        for (lo, hi) in [(70.0, 130.0), (70.0, 150.0), (80.0, 170.0), (90.0, 180.0)] {
-            let i = NSMenuItem(title: "  \(Int(lo))–\(Int(hi)) BPM", action: #selector(onSetBPMRange(_:)), keyEquivalent: "")
-            i.target = self
-            i.representedObject = [lo, hi]
-            i.state = (s.minBPM == lo && s.maxBPM == hi) ? .on : .off
-            sub.addItem(i)
-        }
-
-        sub.addItem(.separator())
-        let relHeader = NSMenuItem(title: "릴리즈 길이: \(Int(s.releaseMinutes))분", action: nil, keyEquivalent: "")
-        relHeader.isEnabled = false
-        sub.addItem(relHeader)
-        for m in [5.0, 7.0, 10.0] {
-            let i = NSMenuItem(title: "  \(Int(m))분", action: #selector(onSetRelease(_:)), keyEquivalent: "")
-            i.target = self
-            i.representedObject = m
-            i.state = (s.releaseMinutes == m) ? .on : .off
-            sub.addItem(i)
-        }
-
-        item.submenu = sub
-        return item
     }
 
     // MARK: - Item builders
@@ -275,14 +201,6 @@ final class MenuController: NSObject, NSMenuDelegate {
         menu.addItem(item)
     }
 
-    private func appName(forBundleID id: String) -> String? {
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
-            return FileManager.default.displayName(atPath: url.path)
-                .replacingOccurrences(of: ".app", with: "")
-        }
-        return nil
-    }
-
     // MARK: - Actions
 
     @objc private func onToggleWorking() { delegate?.toggleWorking() }
@@ -293,32 +211,7 @@ final class MenuController: NSObject, NSMenuDelegate {
     @objc private func onToggleAppWindowMode() { delegate?.toggleAppWindowMode() }
     @objc private func onToggleBGMWindow() { delegate?.toggleBGMWindowAutoOpen() }
     @objc private func onChooseFolder() { delegate?.chooseMusicFolder() }
-    @objc private func onAddApp() { delegate?.addCurrentFrontmostApp() }
     @objc private func onRequestAccessibility() { delegate?.requestAccessibility() }
     @objc private func onToggleLoginItem() { delegate?.toggleLoginItem() }
     @objc private func onQuit() { delegate?.quit() }
-
-    @objc private func onRemoveApp(_ sender: NSMenuItem) {
-        if let id = sender.representedObject as? String {
-            Settings.shared.removeTrackedApp(id)
-        }
-    }
-
-    @objc private func onSetProfile(_ sender: NSMenuItem) {
-        if let arr = sender.representedObject as? [String], arr.count == 2 {
-            delegate?.setAppProfile(arr[1], for: arr[0])
-        }
-    }
-
-    @objc private func onSetBPMRange(_ sender: NSMenuItem) {
-        if let pair = sender.representedObject as? [Double], pair.count == 2 {
-            delegate?.setBPMRange(min: pair[0], max: pair[1])
-        }
-    }
-
-    @objc private func onSetRelease(_ sender: NSMenuItem) {
-        if let m = sender.representedObject as? Double {
-            delegate?.setReleaseMinutes(m)
-        }
-    }
 }

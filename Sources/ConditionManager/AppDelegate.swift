@@ -95,6 +95,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if path.hasPrefix("/api/bgm/now") {
                 return self?.bgmNowJSON()
             }
+            // 액션 로그 feed (the /actions page): last N user actions + BGM reactions.
+            if path.hasPrefix("/api/actions") {
+                let limit = URLComponents(string: "http://x" + path)?.queryItems?
+                    .first(where: { $0.name == "limit" })?.value.flatMap(Int.init) ?? 500
+                return ActionLog.shared.recentJSON(limit: limit)
+            }
             // 전략3 plan map + planner context (current slot, real theme folders).
             if path.hasPrefix("/api/bgm/plan") {
                 return self?.bgmPlanJSON()
@@ -110,8 +116,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if path.hasPrefix("/api/equipment") {
                 return self?.equipmentJSON()
             }
+            // Storage locations for the rail's 설정 menu (data dir, BGM folder, Claude sessions).
+            if path.hasPrefix("/api/settings/paths") {
+                return self?.settingsPathsJSON()
+            }
+            // 표시 타임존 설정 (rail ⚙️설정) — 저장은 항상 epoch(UTC), 표시만 이 tz를 따른다.
+            if path.hasPrefix("/api/settings/timezone") {
+                return self?.timezoneJSON()
+            }
+            // In-app update availability for the rail's 업데이트 button (local-source model).
+            if path.hasPrefix("/api/update/check") {
+                return self?.updateCheckJSON()
+            }
             if path.hasPrefix("/api/bgm/stats") {
                 return self?.bgmStatsJSON(path)
+            }
+            // 전략4 · 상태 인지형 (observe-only): per-plan-slot hit/miss scores derived
+            // from actions.jsonl on every read — nothing is stored or written.
+            if path.hasPrefix("/api/bgm/slot-scores") {
+                return self?.bgmSlotScoresJSON()
             }
             if path.hasPrefix("/api/bgm/list") {
                 return self?.bgmListJSON()
@@ -123,7 +146,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return nil
         },
-        sse: { [weak self] path, channel in self?.handleChat2Stream(path, channel) }
+        sse: { [weak self] path, channel in
+            // Live action-log feed: the channel subscribes to ActionLog and every append
+            // is pushed instantly (the 액션로그 view renders without waiting for a poll).
+            if path.hasPrefix("/api/actions/stream") { ActionLog.shared.subscribe(channel) }
+            else { self?.handleChat2Stream(path, channel) }
+        }
     )
     private var minuteInput = 0   // input-present seconds while working (any app), this minute
     private var minuteAppSeconds: [String: Int] = [:] // frontmost seconds per app this minute
@@ -196,6 +224,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // lives in `session`; this keeps those sites unchanged while there is one owner of the state.
     var isWorking: Bool { session.isRunning }
     private(set) var sessionSeconds: Double = 0   // active seconds this session
+    // Pomodoro completion is a WALL-CLOCK judgement (25 real minutes), independent of the
+    // activity-gated sessionSeconds above — 포모도로는 벽시계다. The server owns the check
+    // (heartbeat), so it holds regardless of whether any webview is alive to observe it.
+    private(set) var sessionStartedAt: Date?
+    // 완주 후 수확 오브 대기 — server-owned so a rail reload can't lose the reward moment.
+    private(set) var pomodoroRewardPending = false
+    let pomodoroStats = PomodoroStats()
+    // 25 wall-clock minutes; CM_POMODORO_SECS shrinks it for e2e (same pattern as CM_DWELL).
+    static let pomodoroWallSeconds =
+        Int(ProcessInfo.processInfo.environment["CM_POMODORO_SECS"] ?? "") ?? 25 * 60
     private(set) var liveStatus = "정지"
 
     // Per-app BGM strategy: an app's profile takes over once it has been the
@@ -322,7 +360,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         //   ⌘M — 음원 뮤트 on/off      ⌘S — 챌린지 시작/중단
         // Returning nil consumes the event so it never reaches the webview (⌘S "save", ⌘M "minimize").
         shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleShortcut(event) ?? event
+            // NOT `self?.handleShortcut(event) ?? event`: optional chaining flattens the
+            // NSEvent?? to NSEvent?, so handleShortcut's nil ("swallow") would be replaced by
+            // the original event — it then reaches the WKWebView, which re-dispatches unhandled
+            // key equivalents, firing the shortcut twice (mute→unmute) and beeping.
+            guard let self else { return event }
+            return self.handleShortcut(event)
         }
 
         updateStatusTitle()
@@ -559,13 +602,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var qaAuditFile: URL { AppPaths.base.appendingPathComponent("qa-audit.json") }
 
     // Best-effort path to the runner script, so "즉시 실행" can spawn it for true
-    // immediacy. Derived from the dev data dir (<repo>/.localdata → <repo>/Scripts).
-    // Returns nil for an installed app with no sibling repo (run-now falls back to the
-    // force-run flag, which the next launchd tick picks up).
+    // immediacy. Resolved from the dev build's repo root (executable under <root>/.build/);
+    // the old data-dir sibling probe is kept as a fallback for CM_DATA_DIR runs that point
+    // inside a repo. Returns nil for an installed app with no reachable repo (run-now falls
+    // back to the force-run flag, which the next launchd tick picks up).
     static func qaScriptURL() -> URL? {
-        let candidate = AppPaths.base.deletingLastPathComponent()
-            .appendingPathComponent("Scripts/qa-scan.sh")
-        return FileManager.default.isExecutableFile(atPath: candidate.path) ? candidate : nil
+        var candidates: [URL] = []
+        if let proj = AppPaths.projectRoot {
+            candidates.append(proj.appendingPathComponent("Scripts/qa-scan.sh"))
+        }
+        candidates.append(AppPaths.base.deletingLastPathComponent()
+            .appendingPathComponent("Scripts/qa-scan.sh"))
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
     // Run the QA scan once, immediately, bypassing the interval + change gates. Spawns
@@ -656,6 +704,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             store.add(seconds: 1, app: bundle)
             sessionSeconds += 1
         }
+        // 포모도로 완주(벽시계): 25 real minutes after start, regardless of the idle/app-filter
+        // gates above — a pomodoro is a wall-clock interval, and the judgement lives HERE so it
+        // holds even when no webview is open (the old rail-JS check silently missed these).
+        if isWorking, director.sessionMode == "pomodoro", let startedAt = sessionStartedAt,
+           Date().timeIntervalSince(startedAt) >= Double(Self.pomodoroWallSeconds) {
+            completePomodoro()
+        }
         // Presence input: any input second while in a working session (regardless
         // of the tracked-app filter) — basis for total/desk/focus time.
         if isWorking && !isIdle { minuteInput += 1 }
@@ -713,6 +768,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 committedProfileKey = key
                 director.applyProfile(BGMProfile.by(key: key))
                 activeAppLabel = appDisplayName(bundle)
+                ActionLog.shared.append(actionEvent("profileShift", kind: "system",
+                    detail: "앱 전환 → \(activeAppLabel) · 프로필 \(director.activeProfileLabel)"))
             }
         }
 
@@ -1133,13 +1190,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // countdown must still switch the auto-started session's BGM playlist.
         if let mode = mode { director.setSessionMode(mode) }
         guard !isWorking else { return }
+        // 시작 큐: a short rising cue marks the focus onset. Every start path (rail
+        // dial, menu, ⌘S, launch auto-start) funnels here, so they all get the same
+        // cue. Quieter than the completion chime — the BGM opener lands right after,
+        // and the cue must read as a lead-in, not compete with the music. A user-
+        // dropped pomodoro-start.mp3 overrides the generated default.
+        if let cue = SoundEffects.shared.playFirst(
+            ["pomodoro-start.mp3", "session-start.m4a"], volume: 0.7) {
+            ActionLog.shared.append(actionEvent("chime", kind: "system",
+                detail: "세션 시작음 (sound/\(cue))"))
+        }
         // Each session opens on its mode's pinned first track (per-mode playlist).
         director.armModeOpener()
         session.setRunning(true)
         sessionSeconds = 0
+        sessionStartedAt = Date()
+        // Starting the next session auto-claims any unharvested 🍅 — the completion was
+        // already counted in PomodoroStats, so an untapped orb never loses the pomodoro.
+        pomodoroRewardPending = false
         committedProfileKey = ""
         frontStableSeconds = 0
         activeAppLabel = ""
+        ActionLog.shared.append(actionEvent("sessionStart",
+            detail: "세션 시작 (\(director.sessionMode))"))
         // The gauge follows the live condition on the heartbeat; updateStatusTitle
         // below refreshes it immediately so the bolt lights up on session start.
         updateStatusTitle()
@@ -1147,13 +1220,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func stopWorking() {
         guard isWorking else { return }
+        ActionLog.shared.append(actionEvent("sessionStop",
+            detail: "세션 중지 · \(Int(sessionSeconds))초 경과"))
         session.setRunning(false)
+        sessionStartedAt = nil
         committedProfileKey = ""
         activeAppLabel = ""
         director.pauseSession()
         store.saveIfNeeded()
         gauge.showIdle()
         updateStatusTitle()
+    }
+
+    // 포모도로 25:00(벽시계) 도달 — the server concludes the interval: durable history,
+    // equipment EXP, success chime, session stop, then the reward orb waits server-side.
+    // Webviews only render this state from /api/session/state; none of it depends on a
+    // page being open at the moment the clock hits zero.
+    private func completePomodoro() {
+        let active = Int(sessionSeconds)
+        ActionLog.shared.append(actionEvent("pomodoro.complete",
+            detail: "포모도로 25분 완주(벽시계) · 활동 \(active)초 — 장비 EXP 반영",
+            category: "pomodoro"))
+        equipment.recordPomodoro(usage: equipmentUsage(within: TimeInterval(Self.pomodoroWallSeconds)))
+        pomodoroStats.recordCompletion(mode: director.sessionMode, activeSecs: active)
+        stopWorking()
+        pomodoroRewardPending = true
+        // 완주 성공음 plays into the silence right after the stop — a deliberate "완주"
+        // signal, distinct from a mere stop. Asset is user-swappable at <data>/sound/.
+        SoundEffects.shared.play("pomodoro-success.mp3")
+        ActionLog.shared.append(actionEvent("chime", kind: "system",
+            detail: "포모도로 완주 성공음 (sound/pomodoro-success.mp3)"))
+    }
+
+    // 🍅 수확 탭 — the count was already recorded at completion; the tap only claims the
+    // orb (confetti + chime) and clears the pending state.
+    func harvestPomodoro() {
+        guard pomodoroRewardPending else { return }
+        pomodoroRewardPending = false
+        ActionLog.shared.append(actionEvent("pomodoro.harvest",
+            detail: "🍅 수확 탭", category: "pomodoro"))
+        if let played = SoundEffects.shared.playFirst(["pomodoro-harvest.mp3", "harvest.m4a"]) {
+            ActionLog.shared.append(actionEvent("chime", kind: "system",
+                detail: "이펙트음 harvest (sound/\(played))"))
+        }
+    }
+
+    // A user-action event pre-filled with the moment's BGM context (mode, playing
+    // track, phase, profile, frontmost app) so /actions rows can show "what was
+    // sounding when the user did this" without a join.
+    private func actionEvent(_ action: String, kind: String = "user", detail: String = "",
+                             category: String = "") -> ActionLog.Event {
+        var e = ActionLog.Event()
+        e.kind = kind
+        e.action = action
+        e.category = category
+        e.detail = detail
+        e.mode = director?.sessionMode ?? "-"
+        e.track = audio.currentTitle ?? ""
+        e.trackKey = audio.currentURL?.lastPathComponent ?? ""
+        e.phase = director?.phase.rawValue ?? "-"
+        e.profile = director?.activeProfileLabel ?? "-"
+        e.app = activeAppLabel
+        return e
     }
 
     // Refresh the cached browser domain off the main thread (osascript can block
@@ -1208,6 +1336,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func toggleMute() {
         session.toggleMuted()
         applyMuteToSurfaces()
+        ActionLog.shared.append(actionEvent(session.isMuted ? "mute" : "unmute",
+            detail: session.isMuted ? "음소거 켬" : "음소거 해제"))
         AppLog.log("⌘M mute -> \(session.isMuted) (windowOpen=\(appWindow.isOpen) nativeMuted=\(audio.muted))")
     }
 
@@ -1228,8 +1358,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Remote mute control from any page (POST /api/session/mute): set the source of truth and sync
     // all surfaces. Safe to call from the BGM webview itself — the echo back is a no-op (see above).
     func setMutedRemote(_ muted: Bool) {
+        let changed = session.isMuted != muted
         session.setMuted(muted)
         applyMuteToSurfaces()
+        // Only real flips are logged — the poll-reconcile echo posts the same state back.
+        if changed {
+            ActionLog.shared.append(actionEvent(muted ? "mute" : "unmute",
+                detail: muted ? "음소거 켬" : "음소거 해제"))
+        }
     }
 
     // MARK: - Actions invoked by the menu
@@ -1293,15 +1429,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func addCurrentFrontmostApp() {
-        // Frontmost app excluding ourselves; resolve a moment after activation.
-        if let app = NSWorkspace.shared.runningApplications.first(where: {
-            $0.isActive && $0.bundleIdentifier != Bundle.main.bundleIdentifier
-        }), let id = app.bundleIdentifier {
-            Settings.shared.addTrackedApp(id)
-        }
-    }
-
     func toggleMusic() {
         Settings.shared.musicEnabled.toggle()
         if !Settings.shared.musicEnabled { director.stop() }
@@ -1314,6 +1441,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func setBGMEnabled(_ on: Bool) {
         guard Settings.shared.musicEnabled != on else { return }
         Settings.shared.musicEnabled = on
+        ActionLog.shared.append(actionEvent(on ? "bgmOn" : "bgmOff",
+            detail: on ? "BGM 시스템 켬" : "BGM 시스템 끔"))
         if !on { director.stop(); applyNativeMute() }
     }
 
@@ -1344,18 +1473,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         c.weekday = cal.component(.weekday, from: Date())
         c.meeting = ValueTier.isMeeting(bundleID: frontBundle, site: chromeDomain)
         trackEvents.append(c)
-    }
-
-    func setAppProfile(_ key: String, for bundleID: String) {
-        Settings.shared.setProfile(key, for: bundleID)
-        // Force re-evaluation so a change to the current app applies right away.
-        committedProfileKey = ""
-    }
-
-    func setReleaseMinutes(_ m: Double) { Settings.shared.releaseMinutes = m }
-    func setBPMRange(min: Double, max: Double) {
-        Settings.shared.minBPM = min
-        Settings.shared.maxBPM = max
+        var e = actionEvent("dislike", detail: "이 곡 싫어요 — 쿨다운 + 즉시 전환")
+        e.track = info.title
+        e.trackKey = info.key
+        e.bpm = Int(info.bpm)
+        ActionLog.shared.append(e)
     }
 
     func requestAccessibility() {
@@ -1670,6 +1792,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let tf = DateFormatter()
         tf.locale = Locale(identifier: "en_US_POSIX")
+        tf.timeZone = Settings.shared.displayTimeZone
         tf.dateFormat = "MM-dd HH:mm:ss"
         var rows = ""
         for e in entries {
@@ -1717,6 +1840,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let tf = DateFormatter()
         tf.locale = Locale(identifier: "en_US_POSIX")
+        tf.timeZone = Settings.shared.displayTimeZone
         tf.dateFormat = "MM-dd HH:mm:ss"
         var rows = ""
         for e in merged {
@@ -2019,11 +2143,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let total = totalIn + totalOut + totalCC
         let hm = DateFormatter()
         hm.locale = Locale(identifier: "en_US_POSIX")
+        hm.timeZone = Settings.shared.displayTimeZone
         hm.dateFormat = "HH:mm"
 
         // Header card: grand total + breakdown + session facts.
         let spanFmt = DateFormatter()
         spanFmt.locale = Locale(identifier: "en_US_POSIX")
+        spanFmt.timeZone = Settings.shared.displayTimeZone
         spanFmt.dateFormat = "MM-dd HH:mm"
         let span: String = {
             guard let f = firstDate, let l = lastDate else { return "-" }
@@ -2176,6 +2302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let totalLabel = Formatting.hoursLabel(store.data.totalSeconds)
         let df = DateFormatter()
         df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = Settings.shared.displayTimeZone
         df.dateFormat = "yyyy-MM-dd (EEE)"
         let date = df.string(from: Date())
         let nowApp = activeAppLabel.isEmpty ? "-" : activeAppLabel
@@ -2232,8 +2359,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let sp = self.reviewStore.currentSprint
             let spStart = sp?.startAt.map { Int($0.timeIntervalSince1970) } ?? 0
             let spTarget = sp?.targetAt.map { Int($0.timeIntervalSince1970) } ?? 0
+            // wall = wall-clock seconds since session start (the pomodoro dial's basis);
+            // seconds stays the activity-gated count for the surfaces that mean "active time".
+            let wall = self.sessionStartedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
             return "{\"working\":\(self.session.isRunning),\"muted\":\(self.session.isMuted),"
-                + "\"seconds\":\(Int(self.sessionSeconds)),\"today\":\(Int(self.store.todaySeconds)),"
+                + "\"seconds\":\(Int(self.sessionSeconds)),\"wall\":\(wall),"
+                + "\"mode\":\(jsonString(self.director?.sessionMode ?? "")),"
+                + "\"reward\":\(self.pomodoroRewardPending),"
+                + "\"pomoToday\":\(self.pomodoroStats.todayCount()),"
+                + "\"today\":\(Int(self.store.todaySeconds)),"
                 + "\"bgm\":\(Settings.shared.musicEnabled),"
                 + "\"sprintStart\":\(spStart),\"sprintTarget\":\(spTarget)}"
         }
@@ -2247,11 +2381,121 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let payload = equipment.statePayload()
         let base = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
         var s = String(decoding: base, as: UTF8.self)
+        // Rain state rides along so the /equipment page can rain on the avatar while a
+        // 폭우 리셋 is falling. Director state lives on the main thread; this is called
+        // both from server threads (GET) and inside main.sync (rain POST), so only hop
+        // when needed to avoid a nested-sync deadlock.
+        let rainRemaining: Int = Thread.isMainThread
+            ? Int(director?.rainRemaining ?? 0)
+            : DispatchQueue.main.sync { Int(self.director?.rainRemaining ?? 0) }
         if s.hasSuffix("}") {
             s.removeLast()
-            s += ",\"plugins\":\(pluginStore.pluginsJSON())}"
+            s += ",\"plugins\":\(pluginStore.pluginsJSON())"
+            s += ",\"rain\":{\"active\":\(rainRemaining > 0),\"remaining\":\(rainRemaining)}}"
         }
         return s
+    }
+
+    // GET /api/settings/paths — the storage locations the rail's 설정 menu shows, so the
+    // user can always SEE which folders the app is actually reading/writing (added after
+    // the dev/prod store split kept "losing" data): the active data dir (AppPaths.base),
+    // the BGM music folder (settings, or the CM_SCAN_DIR test override), and the Claude
+    // session store (~/.claude/projects). `shared` says whether this run uses the single
+    // unified store (no CM_DATA_DIR override), `dev` whether it's a dev build (CM_DEV).
+    func settingsPathsJSON() -> String {
+        let dataDir = AppPaths.base.path
+        let bgm = ProcessInfo.processInfo.environment["CM_SCAN_DIR"]
+            ?? Settings.shared.musicFolderPath ?? ""
+        let claude = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/projects").path
+        return "{\"data\":\(jsonString(dataDir)),\"bgm\":\(jsonString(bgm)),"
+            + "\"claude\":\(jsonString(claude)),\"shared\":\(!AppPaths.isCustom),"
+            + "\"dev\":\(AppPaths.isDev)}"
+    }
+
+    // GET /api/settings/timezone — the display-timezone setting for the rail's 설정 menu.
+    // `tz` is the stored value ("system" | IANA id), `effective` the resolved zone, `label`
+    // the human form ("KST (UTC+9)"). Timestamps are stored as epoch (UTC-based) throughout;
+    // this setting only changes the wall clock they are rendered in.
+    func timezoneJSON() -> String {
+        let id = Settings.shared.timeZoneID
+        let tz = Settings.shared.displayTimeZone
+        let hours = Double(tz.secondsFromGMT()) / 3600
+        let off = hours == hours.rounded() ? String(Int(hours)) : String(format: "%.1f", hours)
+        // TimeZone(identifier:"UTC") canonicalizes to "GMT"; keep the user-facing name "UTC".
+        let name = tz.identifier == "Asia/Seoul" ? "KST"
+            : (tz.identifier == "GMT" || tz.identifier == "UTC") ? "UTC" : tz.identifier
+        let label = "\(name) (UTC\(hours >= 0 ? "+" : "")\(off))"
+        return "{\"tz\":\(jsonString(id)),\"effective\":\(jsonString(tz.identifier)),"
+            + "\"label\":\(jsonString(label))}"
+    }
+
+    // Source mtime snapshot taken when an in-app update build failed (script exited
+    // non-zero while this instance kept running). While the tree hasn't changed since,
+    // the same sources would fail the same way — so /api/update/check reports the
+    // update as unavailable instead of surfacing an error: the user keeps the current
+    // version and the button simply reappears once the sources change. Failure details
+    // go to update.log and the action log only, never to the rail UI.
+    private var updateFailedSrcAt: TimeInterval?
+
+    // GET /api/update/check — "is a newer build available?" for the rail's 업데이트 button.
+    // Local-source model, no update server: an update exists when any source file in the
+    // repo (its path stamped into the bundle as CMSourceRoot by Scripts/build-app.sh) is
+    // newer than this executable. Dev builds and raw runs have no stamp -> always false
+    // (dev-watch owns their rebuild loop).
+    func updateCheckJSON() -> String {
+        guard let root = Bundle.main.object(forInfoDictionaryKey: "CMSourceRoot") as? String,
+              !root.isEmpty,
+              let exe = Bundle.main.executableURL,
+              let built = (try? FileManager.default.attributesOfItem(atPath: exe.path))?[.modificationDate] as? Date
+        else { return "{\"available\":false}" }
+        let src = Self.latestSourceMTime(root: root)
+        // A build already failed for this exact tree state: report unavailable (plus a
+        // deferred flag so an in-flight "업데이트 중…" button can quietly stand down).
+        // The moment any source changes the failure snapshot is stale — clear it and
+        // let the button come back.
+        if let failedAt = updateFailedSrcAt {
+            if src <= failedAt + 0.5 {
+                return "{\"available\":false,\"deferred\":true}"
+            }
+            updateFailedSrcAt = nil
+        }
+        // +2s slack: assembly copies the binary moments after compiling the same sources.
+        let available = src > built.timeIntervalSince1970 + 2
+        return "{\"available\":\(available),\"builtAt\":\(Int(built.timeIntervalSince1970)),"
+            + "\"srcAt\":\(Int(src))}"
+    }
+
+    // Newest modification time across the app's own sources: Sources/**/*.swift (skipping
+    // node_modules / dotdirs — the bundled JS plugin tree is huge and not compiled in),
+    // plus the few root files a rebuild depends on.
+    private static func latestSourceMTime(root: String) -> TimeInterval {
+        let fm = FileManager.default
+        let rootURL = URL(fileURLWithPath: root, isDirectory: true)
+        var latest: TimeInterval = 0
+        for extra in ["Package.swift", "Info.plist", "Scripts/build-app.sh"] {
+            let p = rootURL.appendingPathComponent(extra).path
+            if let d = (try? fm.attributesOfItem(atPath: p))?[.modificationDate] as? Date {
+                latest = max(latest, d.timeIntervalSince1970)
+            }
+        }
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .isDirectoryKey]
+        guard let en = fm.enumerator(at: rootURL.appendingPathComponent("Sources", isDirectory: true),
+                                     includingPropertiesForKeys: keys) else { return latest }
+        for case let url as URL in en {
+            let name = url.lastPathComponent
+            if name == "node_modules" || name.hasPrefix(".") {
+                if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                    en.skipDescendants()
+                }
+                continue
+            }
+            guard url.pathExtension == "swift" else { continue }
+            if let d = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate {
+                latest = max(latest, d.timeIntervalSince1970)
+            }
+        }
+        return latest
     }
 
     // USER-driven usage-event counts per equipment category over the last `window`
@@ -2299,10 +2543,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fm = FileManager.default
         // Only look back `days` from the start of today; a transcript touched before that
         // window cannot contribute to any in-window day, so skip it by mtime (cheap stat).
-        let cutoff = Calendar.current.startOfDay(for: Date()).addingTimeInterval(-Double(days) * 86400)
+        var cal = Calendar.current
+        cal.timeZone = Settings.shared.displayTimeZone
+        let cutoff = cal.startOfDay(for: Date()).addingTimeInterval(-Double(days) * 86400)
         let dayFmt = DateFormatter()
         dayFmt.locale = Locale(identifier: "en_US_POSIX")
-        dayFmt.dateFormat = "yyyy-MM-dd"   // LOCAL time — same day boundary the rest of the UI uses
+        dayFmt.timeZone = Settings.shared.displayTimeZone
+        dayFmt.dateFormat = "yyyy-MM-dd"   // 표시 타임존 — same day boundary the rest of the UI uses
 
         // Enumerate every project's *.jsonl. Missing base dir -> empty timeline.
         guard let subs = try? fm.contentsOfDirectory(at: claudeProjectsBase,
@@ -2351,7 +2598,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // unchanged file is never re-parsed — the live/growing session re-parses, completed ones
     // stay cached. Shared by the daily timeline and the per-session goal total.
     private func tokensByDay(file: URL, mtime: Date, size: Int) -> [String: Int] {
-        let key = file.path
+        // Cache key carries the display timezone: switching KST↔UTC moves day boundaries,
+        // so per-day splits cached under another zone must not be reused.
+        let key = file.path + "|" + Settings.shared.displayTimeZone.identifier
         tokenDayLock.lock()
         let cached = tokenDayCache[key]
         tokenDayLock.unlock()
@@ -2360,7 +2609,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var perDay: [String: Int] = [:]
         let dayFmt = DateFormatter()
         dayFmt.locale = Locale(identifier: "en_US_POSIX")
-        dayFmt.dateFormat = "yyyy-MM-dd"   // LOCAL time — same day boundary as the rest of the UI
+        dayFmt.timeZone = Settings.shared.displayTimeZone
+        dayFmt.dateFormat = "yyyy-MM-dd"   // 표시 타임존 — same day boundary as the rest of the UI
         if let data = try? Data(contentsOf: file) {
             String(decoding: data, as: UTF8.self).enumerateLines { line, _ in
                 guard let d = line.data(using: .utf8),
@@ -2450,17 +2700,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     + "\"energy\":\(g.energy),\"agents\":[\(agents)],\"tokens\":\(effTokens),\"value\":\(g.value),"
                     + "\"evidence\":[\(evidence)],\"sessionId\":\(jsonString(g.sessionId)),"
                     + "\"targetAt\":\(target),\"completedAt\":\(completed),"
-                    + "\"sprint\":\(g.sprint),\"bump\":\(g.bump),\"released\":\(g.released),\"archived\":\(g.archived),\"priority\":\(jsonString(g.priority)),"
+                    + "\"sprint\":\(g.sprint),\"bump\":\(g.bump),\"released\":\(g.released),\"releaseId\":\(jsonString(g.releaseId)),\"archived\":\(g.archived),\"priority\":\(jsonString(g.priority)),"
                     + "\"tasks\":[\(tasks)]}"
             }
             .joined(separator: ",")
         // Release log (newest first): when each commit happened + the value it produced.
+        // startedAt (0 = unknown/legacy) makes the covered period editable in the log.
         let releases = reviewStore.releases
             .map { rel -> String in
                 let titles = rel.titles.map { jsonString($0) }.joined(separator: ",")
                 let gids = rel.goalIds.map { jsonString($0) }.joined(separator: ",")
+                let started = rel.startedAt.map { String($0.timeIntervalSince1970) } ?? "0"
                 return "{\"id\":\(jsonString(rel.id)),\"sprint\":\(rel.sprint),\"code\":\(jsonString(rel.code)),"
-                    + "\"releasedAt\":\(rel.releasedAt.timeIntervalSince1970),\"value\":\(rel.value),"
+                    + "\"releasedAt\":\(rel.releasedAt.timeIntervalSince1970),\"startedAt\":\(started),\"value\":\(rel.value),"
                     + "\"goalIds\":[\(gids)],\"titles\":[\(titles)]}"
             }
             .joined(separator: ",")
@@ -3124,10 +3376,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return "\(yy). \(c.month ?? 1). \(c.day ?? 1)."
     }
 
+    // One tap for EVERY dashboard POST: each API call becomes an action-log event,
+    // so 목표설정·설정 변경도 BGM 조작과 같은 타임라인에 남는다 — the filterable
+    // behavior stream that EXP rules and agent decisions read from. The action name
+    // is derived from the path ("goal.add", "goal.queue.resolve"), so new endpoints
+    // are logged automatically with no per-endpoint table to keep in sync. Paths
+    // that already log a richer event inside their handler (session/BGM controls)
+    // and pure plumbing (webview audio sync, CLI keystrokes, debug hooks, worker
+    // session hooks) are skipped so the log stays 1 user action = 1 line.
+    // Known gap: headless agents that POST the same endpoints (e.g. goal-title-sync
+    // hitting /api/goal/title) are indistinguishable from the user here and land as
+    // kind:user — acceptable for v1; an origin marker can split them later.
+    private func logDashboardAction(_ path: String, _ obj: [String: Any]) {
+        let skip: Set<String> = [
+            "/api/bgm/native",                        // webview audio-ownership sync
+            "/api/bgm/control",                       // handler logs bgmOn/bgmOff
+            "/api/session/control",                   // handler logs sessionStart/Stop
+            "/api/session/mute",                      // handler logs mute/unmute
+            "/api/equipment/pomodoro",                // handler logs equipment.devAward
+            "/api/sfx",                               // handler logs harvest/chime
+            "/api/bgm/rain", "/api/equipment/rain",   // handlers log rainSummon
+            "/api/update/run",                        // handler logs updateRun
+            "/api/goal/aiAdd",                        // dup pre-check inside the add flow
+            "/api/session/event",                     // Claude session hooks, not the user
+            "/api/goal/cli/io", "/api/goal/cli/resize", // terminal keystrokes (noise)
+        ]
+        guard path.hasPrefix("/api/"), !skip.contains(path),
+              !path.hasPrefix("/api/debug/") else { return }
+
+        // Category = domain of the action (the 액션로그 필터 축).
+        let category: String
+        if path.hasPrefix("/api/goal/") || path.hasPrefix("/api/queue/")
+            || path.hasPrefix("/api/sprint/") || path.hasPrefix("/api/team/")
+            || path.hasPrefix("/api/chat/") { category = "goal" }
+        else if path.hasPrefix("/api/session/") { category = "pomodoro" }
+        else if path.hasPrefix("/api/bgm/") { category = "bgm" }
+        else if path.hasPrefix("/api/equipment/") { category = "equipment" }
+        else if path.hasPrefix("/api/settings/") || path.hasPrefix("/api/window/")
+            || path.hasPrefix("/api/update/") || path.hasPrefix("/api/skills/")
+            || path.hasPrefix("/api/agents/") || path.hasPrefix("/api/plugin/") { category = "settings" }
+        else { category = "other" }
+
+        var action = path.dropFirst("/api/".count).split(separator: "/").joined(separator: ".")
+        // AI검색 rides the same enqueue endpoint (search:true = findOnly) — split the
+        // action name so 검색 and 목표 추가 are distinguishable in the log.
+        if path == "/api/goal/queue/enqueue", (obj["search"] as? Bool) == true {
+            action = "goal.queue.search"
+        }
+
+        // Short human trail: goal number plus the single most telling body field,
+        // truncated so one long paste can't bloat the log line.
+        var bits: [String] = []
+        if let n = obj["seq"] as? NSNumber { bits.append("#\(n.intValue)") }
+        else if let s = obj["seq"] as? String, !s.isEmpty { bits.append("#" + s) }
+        for key in ["action", "status", "text", "title", "name", "tz", "mode"] {
+            if let v = obj[key] as? String, !v.isEmpty {
+                bits.append(v.count > 60 ? String(v.prefix(60)) + "…" : v)
+                break
+            }
+        }
+        let detail = bits.joined(separator: " · ")
+        // actionEvent reads main-thread state (director/audio); handlePost runs on
+        // the server thread, so hop to main for the snapshot + append.
+        DispatchQueue.main.async {
+            ActionLog.shared.append(self.actionEvent(action, detail: detail, category: category))
+        }
+    }
+
     func handlePost(_ path: String, _ body: String) -> String {
         let obj = (body.data(using: .utf8)).flatMap {
             try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
         } ?? [:]
+        logDashboardAction(path, obj)
         // AI dedup pass runs an external `claude -p` (seconds, blocking). Handle it HERE
         // on the server thread — never inside the main.sync block below, or the whole UI
         // would freeze while the model thinks. It only reads a goals snapshot, so it is
@@ -3188,17 +3508,165 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.sync {
                 if action == "start" { self.startWorking(mode: mode) }
                 else if action == "stop" { self.stopWorking() }
+                // 🍅 수확 탭: claim the server-owned reward orb (count already recorded
+                // at completion — this only clears the pending state + plays the chime).
+                else if action == "harvest" { self.harvestPomodoro() }
             }
             return "{\"ok\":true}"
         }
-        // 포모도로 성공 보상 — the rail posts this when the pomodoro dial hits 25:00
-        // (cmChOnComplete). The last 25 minutes' real usage decides which equipment
-        // category receives the EXP (EquipmentStore.recordPomodoro); returns the
-        // refreshed equipment state so the caller can show the result.
+        // 장비 EXP 지급 시뮬 — the /equipment page's dev-only 시뮬 button. Real pomodoro
+        // completions are judged server-side (heartbeat wall-clock → completePomodoro),
+        // which grants EXP itself and logs pomodoro.complete; this endpoint only exercises
+        // the award pipeline and must NOT log a complete or touch the durable N/2 history.
         if path == "/api/equipment/pomodoro" {
-            let usage = equipmentUsage(within: 25 * 60)
+            let usage = equipmentUsage(within: TimeInterval(Self.pomodoroWallSeconds))
             equipment.recordPomodoro(usage: usage)
+            DispatchQueue.main.async {
+                ActionLog.shared.append(self.actionEvent("equipment.devAward", kind: "system",
+                    detail: "장비 EXP 지급 시뮬 (/equipment 시뮬 버튼)", category: "pomodoro"))
+            }
             return equipmentJSON()
+        }
+        // 원샷 이펙트음 재생 — the rail's 🍅 harvest tap is purely client-side (confetti +
+        // daily counter, no server state change), so it requests the native chime here.
+        // Names map through a fixed whitelist, NEVER a caller-supplied filename, so the
+        // loopback page cannot probe or play arbitrary files.
+        if path == "/api/sfx" {
+            // First existing candidate wins: a user-dropped mp3 overrides the
+            // generated m4a default (the sound folder is the interface).
+            let sfx: [String: [String]] = [
+                "harvest": ["pomodoro-harvest.mp3", "harvest.m4a"],
+                "session-start": ["pomodoro-start.mp3", "session-start.m4a"],
+            ]
+            guard let name = obj["name"] as? String, let files = sfx[name] else {
+                return "{\"ok\":false,\"error\":\"unknown sfx\"}"
+            }
+            DispatchQueue.main.async {
+                // 수확 탭은 서버 상태를 안 바꾸는 순수 클라이언트 제스처라 이 sfx 요청이
+                // 유일한 서버 접점 — 유저 행동 이벤트는 여기서 남긴다.
+                if name == "harvest" {
+                    ActionLog.shared.append(self.actionEvent("pomodoro.harvest",
+                        detail: "🍅 수확 탭", category: "pomodoro"))
+                }
+                if let played = SoundEffects.shared.playFirst(files) {
+                    ActionLog.shared.append(self.actionEvent("chime", kind: "system",
+                        detail: "이펙트음 \(name) (sound/\(played))"))
+                }
+            }
+            return "{\"ok\":true}"
+        }
+        // 설정 menu 표시 타임존 — accepts "system" (machine local) or a valid IANA identifier
+        // only; anything else is rejected so settings.json can never hold a broken zone.
+        // Storage/기준 stays epoch (UTC); this drives display conversion only, so no stored
+        // data is rewritten. Pages pick it up on their next load (the rail reloads itself).
+        if path == "/api/settings/timezone" {
+            let raw = (obj["tz"] as? String) ?? ""
+            guard raw == "system" || TimeZone(identifier: raw) != nil else {
+                return "{\"ok\":false,\"error\":\(jsonString("알 수 없는 타임존: " + raw))}"
+            }
+            Settings.shared.timeZoneID = raw
+            return timezoneJSON()
+        }
+        // 설정 menu "Finder에서 열기" — reveal one of the app's storage folders. Target is a
+        // fixed key (data|bgm|claude), NEVER a caller-supplied path, so the loopback page
+        // cannot open arbitrary filesystem locations.
+        if path == "/api/settings/reveal" {
+            let target = (obj["target"] as? String) ?? ""
+            let url: URL?
+            switch target {
+            case "data":
+                url = AppPaths.base
+            case "bgm":
+                let p = ProcessInfo.processInfo.environment["CM_SCAN_DIR"]
+                    ?? Settings.shared.musicFolderPath
+                url = p.flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+            case "claude":
+                url = FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent(".claude/projects", isDirectory: true)
+            default:
+                url = nil
+            }
+            guard let u = url, FileManager.default.fileExists(atPath: u.path) else {
+                return "{\"ok\":false,\"error\":\"폴더가 없거나 설정되지 않았습니다\"}"
+            }
+            DispatchQueue.main.async { NSWorkspace.shared.open(u) }
+            return "{\"ok\":true}"
+        }
+        // 설정 menu 업데이트 button — run the local auto-update. Scripts/build-app.sh rebuilds
+        // from CMSourceRoot (a build-time stamp, never caller-supplied), quits this instance
+        // through the normal shutdown path, swaps /Applications, and relaunches. The script is
+        // spawned as its own child that outlives this process (orphaned to launchd on quit);
+        // output goes to <data>/update.log for post-mortem.
+        if path == "/api/update/run" {
+            guard let root = Bundle.main.object(forInfoDictionaryKey: "CMSourceRoot") as? String,
+                  !root.isEmpty else {
+                return "{\"ok\":false,\"error\":\"소스 경로가 없는 빌드입니다 (dev 빌드는 dev-watch가 갱신)\"}"
+            }
+            let script = root + "/Scripts/build-app.sh"
+            guard FileManager.default.isExecutableFile(atPath: script) else {
+                return "{\"ok\":false,\"error\":\"빌드 스크립트를 찾을 수 없습니다: \(script)\"}"
+            }
+            let logPath = AppPaths.base.appendingPathComponent("update.log").path
+            if !FileManager.default.fileExists(atPath: logPath) {
+                FileManager.default.createFile(atPath: logPath, contents: nil)
+            }
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/bash")
+            p.arguments = [script]
+            p.currentDirectoryURL = URL(fileURLWithPath: root, isDirectory: true)
+            // Strip CM_* overrides so the relaunched prod app never inherits a dev data dir
+            // (same reason build-app.sh launches with `env -u CM_DATA_DIR`).
+            var env = ProcessInfo.processInfo.environment
+            for k in ["CM_DATA_DIR", "CM_DEV", "CM_DEV_AUTO_OPEN"] { env.removeValue(forKey: k) }
+            p.environment = env
+            if let h = FileHandle(forWritingAtPath: logPath) {
+                h.seekToEndOfFile()
+                p.standardOutput = h
+                p.standardError = h
+            }
+            // On success this process is replaced, so the handler only ever fires for
+            // failure (script exited non-zero, app still alive). No user-facing error:
+            // snapshot the source state so check reports the update as unavailable until
+            // the tree changes, and keep the post-mortem in update.log + action log.
+            updateFailedSrcAt = nil
+            p.terminationHandler = { [weak self] proc in
+                guard proc.terminationStatus != 0 else { return }
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.updateFailedSrcAt = Self.latestSourceMTime(root: root)
+                    ActionLog.shared.append(self.actionEvent("updateFail", kind: "system",
+                        detail: "업데이트 빌드 실패 (exit \(proc.terminationStatus)) — 현재 버전 유지, 상세는 update.log"))
+                }
+            }
+            do { try p.run() } catch {
+                return "{\"ok\":false,\"error\":\"업데이트 실행 실패: \(error.localizedDescription)\"}"
+            }
+            ActionLog.shared.append(actionEvent("updateRun",
+                detail: "설정 메뉴 업데이트 — build-app.sh 실행 (빌드 후 자동 재시작)"))
+            return "{\"ok\":true}"
+        }
+        // 경험치로 폭우소환 — the 장비 page's manual nature-sound summon. The idea: when the
+        // BGM has become tiring, spend accumulated EXP to swap it for 30–60분 of rain and
+        // observe how condition recovers. Refused (no charge) if rain is already falling or
+        // the XP gauges can't cover the cost. Returns the updated equipment payload + {ok}
+        // so the page's gauges refresh in place.
+        if path == "/api/equipment/rain" {
+            return DispatchQueue.main.sync {
+                if self.director?.rainActive == true {
+                    return "{\"ok\":false,\"error\":\"이미 폭우가 내리는 중입니다\"}"
+                }
+                guard self.equipment.spendXP(EquipmentStore.rainSummonCost) != nil else {
+                    return "{\"ok\":false,\"error\":\"경험치가 부족합니다 (필요 \(EquipmentStore.rainSummonCost) XP)\"}"
+                }
+                ActionLog.shared.append(self.actionEvent("rainSummon",
+                    detail: "경험치로 폭우 소환 (\(EquipmentStore.rainSummonCost) XP)"))
+                self.director?.triggerRain()
+                let base = self.equipmentJSON()
+                if base.hasSuffix("}") {
+                    return String(base.dropLast()) + ",\"ok\":true,\"spent\":\(EquipmentStore.rainSummonCost)}"
+                }
+                return base
+            }
         }
         // Canonical music-mute control — the ONE endpoint every surface (dashboard mute dot, BGM
         // player, menu) posts to. {toggle:true} flips; {muted:bool} sets an explicit state. Source of
@@ -3231,7 +3699,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let action = obj["action"] as? String, action == "start" || action == "stop" else {
                 return "{\"ok\":false,\"error\":\"action must be start|stop\"}"
             }
-            DispatchQueue.main.sync { self.director?.triggerRain(stop: action == "stop") }
+            DispatchQueue.main.sync {
+                ActionLog.shared.append(self.actionEvent("rainSummon",
+                    detail: action == "stop" ? "폭우 수동 종료" : "폭우 수동 시작"))
+                self.director?.triggerRain(stop: action == "stop")
+            }
             return "{\"ok\":true}"
         }
         // 전략3 plan-map replace — the 관리자 AI's safe write path (agents never edit
@@ -3314,7 +3786,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return chat2Say(Scope.from(body: obj), text: (obj["text"] as? String) ?? "",
                             mode: (obj["mode"] as? String) ?? "bypassPermissions",
                             model: (obj["model"] as? String) ?? "",
-                            allow: (obj["allow"] as? [String]) ?? [])
+                            allow: (obj["allow"] as? [String]) ?? [],
+                            preset: (obj["preset"] as? String) ?? "")
+        }
+        // 팀위임: mint a discussion goal for the pasted topic and hand its number back —
+        // the rail then navigates to the goal page, which auto-sends the first chat2 turn
+        // with preset:"team" (the team-lead multi-agent debate preamble). The goal itself
+        // is a plain addGoal so the discussion is tracked like any other work.
+        if path == "/api/team/delegate" {
+            let text = ((obj["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return "{\"ok\":false,\"error\":\"empty\"}" }
+            let firstLine = text.split(separator: "\n", omittingEmptySubsequences: true)
+                .first.map(String.init) ?? text
+            let title = "팀토론: " + String(firstLine.prefix(60))
+            let seq = DispatchQueue.main.sync { reviewStore.addGoal(text: title) }
+            guard seq > 0 else { return "{\"ok\":false,\"error\":\"create-failed\"}" }
+            return "{\"ok\":true,\"seq\":\(seq)}"
         }
         if path == "/api/goal/chat2/stop" {
             chat2Stop(Scope.from(body: obj))
@@ -3636,6 +4123,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         ?? ((obj["archived"] as? NSNumber)?.boolValue ?? true)
                     reviewStore.setArchived(id: id, archived: archived)
                 }
+            case "/api/goal/reopen":
+                // 목표 검색 → 다시 열기: pull ONE goal back to backlog regardless of how
+                // it left (done / cancelled / released). Release records stay immutable.
+                if let id = obj["id"] as? String {
+                    reviewStore.reopenGoal(id: id)
+                }
             case "/api/goal/title":
                 // Rename a goal from the dashboard. For a session-mirrored goal, also
                 // append the new title to its transcript so the session hook honors it
@@ -3776,6 +4269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let startAt: Date?? = obj.keys.contains("startAt") ? Optional(Self.parseEpoch(obj["startAt"])) : nil
                     let targetAt: Date?? = obj.keys.contains("targetAt") ? Optional(Self.parseEpoch(obj["targetAt"])) : nil
                     reviewStore.updateSprint(number: n,
+                                             code: obj["code"] as? String,
                                              goalText: obj["goalText"] as? String,
                                              durationKind: obj["durationKind"] as? String,
                                              startAt: startAt, targetAt: targetAt)
@@ -3784,6 +4278,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let n = (obj["number"] as? NSNumber)?.intValue ?? Int((obj["number"] as? String) ?? "") {
                     reviewStore.deleteSprint(number: n)
                 }
+            case "/api/sprint/cleanup":
+                // Collapse duplicate empty open sprints (see ReviewStore.cleanupSprints).
+                reviewStore.cleanupSprints()
             case "/api/sprint/release":
                 // Commit the finished work of a sprint. sprint "all"/absent = across all
                 // sprints; otherwise the given number. Done+unreleased goals are snapshotted.
@@ -3794,8 +4291,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 else { sprint = nil }
                 reviewStore.releaseSprint(sprint)
             case "/api/sprint/complete":
-                // Complete a sprint and roll forward: commit done goals, carry unfinished
-                // ones into a fresh successor (auto 24h), close the old one, advance the code.
+                // Complete a sprint: commit done goals, close it, and only when unfinished
+                // goals remain carry them into the earliest open sprint (or a fresh auto one).
                 if let n = (obj["number"] as? NSNumber)?.intValue ?? Int((obj["number"] as? String) ?? "") {
                     reviewStore.completeSprint(n)
                 }
@@ -3803,6 +4300,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Bring a release's committed goals back into the active list.
                 if let id = obj["id"] as? String {
                     reviewStore.restoreRelease(id: id)
+                }
+            case "/api/release/update":
+                // Edit a 완료 로그 entry: alias (code) + real covered period (started/released).
+                if let id = obj["id"] as? String {
+                    let startedAt: Date?? = obj.keys.contains("startedAt") ? Optional(Self.parseEpoch(obj["startedAt"])) : nil
+                    let releasedAt: Date?? = obj.keys.contains("releasedAt") ? Optional(Self.parseEpoch(obj["releasedAt"])) : nil
+                    reviewStore.updateRelease(id: id, code: obj["code"] as? String,
+                                              startedAt: startedAt, releasedAt: releasedAt)
                 }
             case "/api/goal/evidence/add":
                 // A subtask scope (task set) has no Goal: write the uploaded file straight
@@ -5237,7 +5742,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // POST /api/goal/chat2/say — persist the user turn, then run a streaming claude turn
     // on a background queue whose events flow out over the goal's SSE channel. Returns
     // immediately; the answer arrives via the stream, not this response.
-    func chat2Say(_ scope: Scope, text: String, mode: String, model: String, allow: [String]) -> String {
+    func chat2Say(_ scope: Scope, text: String, mode: String, model: String, allow: [String],
+                  preset: String = "") -> String {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty, let store = chatStore(for: scope), let claude = Self.resolveClaude(),
               let workDir = scope.workDir else { return "{\"ok\":false}" }
@@ -5252,7 +5758,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 reviewStore.setStatus(id: g.id, status: "in_progress")
             }
         }
-        let preamble = goalChatPreamble(scope)
+        // preset selects the FIRST-turn framing: "team" turns this chat into a team-lead
+        // multi-agent debate (팀위임); anything else keeps the 목표 명확화 preamble.
+        let preamble = (preset == "team") ? teamChatPreamble(scope) : goalChatPreamble(scope)
         let key = scope.key
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.chat2RunTurn(key: key, store: store, claude: claude, goalDir: workDir.path,
@@ -5651,6 +6159,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         """
     }
 
+    // First-turn context for a 팀위임 discussion (chat2 preset:"team"): the chat acts as a
+    // team lead who runs a parallel multi-agent debate (PM perspective vs devil's advocate)
+    // over the user's pasted topic and synthesizes a decided answer — replicating the deep
+    // team-discussion flow the user otherwise runs by hand in Claude Code. The agents are
+    // general-purpose subagents with role prompts (NOT project agents), because this claude
+    // runs from the goal folder where repo-local agent definitions are not visible.
+    private func teamChatPreamble(_ scope: Scope) -> String {
+        let title = DispatchQueue.main.sync {
+            reviewStore.goals.first { $0.seq == scope.seq }?.text ?? ""
+        }
+        let dir = scope.workDir?.path ?? ""
+        return """
+        당신은 이 세션의 팀리드입니다. 사용자가 가져온 주제를 팀 단위로 깊게 토론해 결론을 내리는 것이 이 대화의 목적입니다.
+        - 골 번호: goal-\(scope.seq)
+        - 제목: \(title)
+        - 작업 폴더: \(dir) (토론 산출물을 파일로 남기고 싶을 때 사용)
+
+        진행 방식 — 반드시 이 순서대로:
+        1. 파악: 사용자의 입력에서 주제와 질문들을 항목별로 정리합니다. 파일 경로·링크·첨부가 언급되면 먼저 직접 읽습니다.
+        2. 팀 토론: Task(Agent) 도구로 general-purpose 서브에이전트를 최소 2개, 서로 다른 관점으로 한 메시지에서 병렬 실행합니다.
+           - 팀리드/PM 관점: 원인 분석, 사용자의 각 질문에 대한 정면 답변, 주제 문서 기준의 구체적 개선안
+           - 비판자(devil's advocate) 관점: 통념과 교과서식 정답까지 의심하는 반론, 리스크, 반례
+           - 주제에 따라 필요하면 도메인 전문가 관점을 1개 더 추가합니다.
+           각 에이전트의 프롬프트에는 사용자의 입력 전문(주제+질문)을 그대로 포함해 독립적으로 판단하게 하고, 답변은 한국어로 받습니다.
+        3. 종합: 두 관점을 맞붙여 아래 순서로 정리합니다.
+           - 합의된 결론
+           - 이견이 남은 지점과 각 진영의 근거 (숨기지 말 것)
+           - 사용자의 각 질문에 대한 최종 답 (질문마다 번호를 붙여 빠짐없이)
+           - 실행 가능한 개선안 (우선순위 포함)
+
+        규칙: 한국어로 답합니다. 결론을 먼저 쓰고 근거를 뒤에 씁니다. 토론을 시작하기 전에 사용자에게 되묻지 말고 바로 진행합니다(입력이 정말 모호할 때만 짧게 확인). 이후 사용자가 추가 질문을 하면 필요할 때 에이전트를 다시 실행해 같은 방식으로 깊게 답합니다.
+        """
+    }
+
     // Map the dashboard's model picker to a claude --model alias. "자동"/"" => nil (default).
     private static func claudeModelAlias(_ key: String) -> String? {
         switch key {
@@ -5834,6 +6376,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "{\"total\":\(total),\"strategy\":\(filter ?? 0),\"activeStrategy\":\(active),"
                 + "\"strategies\":[\(strategies.joined(separator: ","))],"
                 + "\"tracks\":[\(items.joined(separator: ","))]}"
+        }
+    }
+
+    // GET /api/bgm/slot-scores — 전략4 · 상태 인지형 (Phase 1, observe-only): per-plan-slot
+    // hit/miss scores derived by replaying the same actions.jsonl window ActionLog serves
+    // (rules in BGMSlotScores.swift / docs/specs/strategy4-state-aware-bgm.md §5). Slot
+    // metadata (days/from/to/themes) is joined from the live plan by label. Pure
+    // read/derive — no file is written, selection and the plan are untouched.
+    func bgmSlotScoresJSON() -> String {
+        // ActionLog reads on its own serial queue; only the plan/catalog need main.
+        let eventsJSON = ActionLog.shared.recentJSON(limit: 2000)
+        return DispatchQueue.main.sync {
+            let meta = bgmPlan.plan.slots.map {
+                BGMSlotScores.SlotMeta(label: $0.label, days: $0.days, from: $0.from,
+                                       to: $0.to, themes: $0.themes)
+            }
+            return BGMSlotScores.deriveJSON(eventsJSON: eventsJSON, slots: meta,
+                                            activeStrategy: trackPlayStats.activeStrategy)
         }
     }
 
@@ -6894,7 +7454,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             msgs.forEach(function(m){ box.appendChild(bubble(m.role,m.text,false)); });
             box.scrollTop=box.scrollHeight;
           }
-          function loadChat(){ fetch('/api/goal/chat?seq='+SEQ+TQ).then(function(r){return r.json();}).then(renderChat).catch(function(){}); }
+          function loadChat(){ fetch('/api/goal/chat?seq='+SEQ+TQ).then(function(r){return r.json();})
+            .then(function(d){ renderChat(d); sendTeamKick(); }).catch(function(){}); }
+          // 팀위임 hand-off: the rail's 팀위임 page stashes the discussion text in
+          // sessionStorage and navigates here; fire it as the first chat2 turn with
+          // preset:'team' so the team-lead debate preamble frames the session. Runs after
+          // renderChat so the optimistic user bubble is never wiped by the history load.
+          function sendTeamKick(){
+            if(TASK) return;
+            var k='cmTeamKick:'+SEQ, v=null;
+            try{ v=sessionStorage.getItem(k); if(v) sessionStorage.removeItem(k); }catch(e){}
+            if(!v||streaming) return;
+            var box=document.getElementById('chatbody');
+            var ce=box.querySelector('.chatempty'); if(ce) ce.remove();
+            box.appendChild(bubble('user',v,false)); box.scrollTop=box.scrollHeight;
+            lastMode='bypassPermissions'; openStream();
+            fetch('/api/goal/chat2/say',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({seq:SEQ,task:'',text:v,mode:'bypassPermissions',model:'',allow:persistedAllow(),preset:'team'})})
+              .then(function(r){return r.json();}).then(function(d){ if(!d||!d.ok){ box.appendChild(bubble('assistant','⚠️ 전송 실패',false)); } })
+              .catch(function(){ box.appendChild(bubble('assistant','⚠️ 전송 실패',false)); });
+          }
           function sendChat(){
             var t=document.getElementById('ci'); var v=t.value.trim(); if(!v||streaming) return;
             t.value=''; t.style.height='auto';

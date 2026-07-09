@@ -168,7 +168,8 @@ final class AudioEngine {
     }
 
     // ~0.2s of 16-bit mono PCM silence wrapped in a minimal WAV container.
-    private static let silenceWAV: Data = {
+    // Internal (not private): SoundEffects reuses it for its own output warm-up.
+    static let silenceWAV: Data = {
         let sampleRate: UInt32 = 44_100
         let numSamples = sampleRate / 5          // 0.2 seconds
         let dataSize = numSamples * 2            // 16-bit mono

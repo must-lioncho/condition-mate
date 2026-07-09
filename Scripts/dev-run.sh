@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Dev launcher: keep the app's JSON "DB" inside the project folder (gitignored)
-# instead of ~/Library/Application Support, so it survives OS re-setup and stays
-# next to the code. AppPaths reads CM_DATA_DIR; see Sources/.../Core/AppPaths.swift.
-#
-# Data lives in .localdata/ : stats.json, review/goals.json, activity/*.jsonl, evidence/...
-# NOTE: app Settings (music folder, tracked apps, BPM, volume) still use UserDefaults,
-# not this folder — to be unified when we split out a real store later.
+# Dev launcher. DATA IS SHARED with the installed app: the single ~/.condition-manager
+# store (AppPaths.base). The old repo-local .localdata isolation was retired 2026-07-09 —
+# two stores made goals/settings diverge and "disappear" when switching dev↔prod. Set
+# CM_DATA_DIR explicitly before running for a throwaway/isolated run.
 #
 # Build → SIGN → run (not `swift run`): signing the binary with a stable identity
 # keeps the Accessibility (TCC) grant alive across rebuilds. See Scripts/setup-signing.sh.
@@ -13,19 +10,13 @@ set -euo pipefail
 
 # Project root = parent of this Scripts/ dir, regardless of where it's invoked from.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# Dev runtime store is repo-local and isolated: <root>/.localdata (gitignored). This keeps
-# dev runs from ever touching the production home store (~/.condition-manager). Because this
-# path is INSIDE the repo, IssuePaths.root resolves goal definitions to <root>/.issue, so dev
-# goals stay git-tracked next to the code.
-export CM_DATA_DIR="$ROOT/.localdata"
-mkdir -p "$CM_DATA_DIR"
 cd "$ROOT"
 
 IDENTITY="ConditionManager Dev"
 BUNDLE_ID="com.lioncho.conditionmanager"
 BIN=".build/debug/ConditionManager"
 
-echo "[dev-run] CM_DATA_DIR=$CM_DATA_DIR"
+echo "[dev-run] data=${CM_DATA_DIR:-$HOME/.condition-manager (shared with prod)}"
 echo "[dev-run] building"
 swift build "$@"
 

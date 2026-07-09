@@ -11,23 +11,13 @@ import Foundation
 //   goal-detail.md — 디테일 버전 (full detail for AI execution)
 // Both follow the same four sections: 문제정의·예상결과·예상해결방안·예상테스트시나리오.
 enum IssuePaths {
-    // The root that holds every goal-NN folder. Goal docs are git-tracked design
-    // artifacts (like .doc), so a dev build keeps them in <repo>/.issue — including
-    // under dev-run.sh, whose CM_DATA_DIR=.localdata lives inside the repo. Only a
-    // CM_DATA_DIR pointing OUTSIDE the repo (tests / throwaway runs via mktemp) wins
-    // and isolates writes there, so tests never touch the real .issue. An installed
-    // app (no projectRoot) falls back to <data>/issue.
+    // The root that holds every goal-NN folder: <data>/issue, always. Dev builds used to
+    // keep goals in <repo>/.issue (git-tracked), but that split the goal set from the
+    // installed app's ~/.condition-manager/issue — the same dev/prod divergence that made
+    // data "disappear". Unified 2026-07-09 with AppPaths.base: every build follows the
+    // active data dir, so a CM_DATA_DIR override (tests) still isolates automatically.
     static var root: URL {
-        let override = ProcessInfo.processInfo.environment["CM_DATA_DIR"] ?? ""
-        let url: URL
-        if let proj = AppPaths.projectRoot,
-           override.isEmpty || URL(fileURLWithPath: override).standardizedFileURL.path.hasPrefix(proj.standardizedFileURL.path) {
-            url = proj.appendingPathComponent(".issue", isDirectory: true)
-        } else {
-            url = AppPaths.sub("issue")
-        }
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+        AppPaths.sub("issue")
     }
 
     // "goal-07" style label (seq zero-padded to two digits). nil for an

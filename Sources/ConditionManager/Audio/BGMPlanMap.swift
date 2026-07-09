@@ -239,12 +239,28 @@ final class BGMPlanMap {
             Slot(days: "weekend", from: "19:00", to: "23:30", label: "주말 밤 · 귀환",
                  themes: ["return", "peace"], opener: nil,
                  note: "원정에서 돌아와 차분하게 마무리"),
-            // ---- 심야 공통: 모든 요일의 깊은 밤은 고요하게 ----
-            // heavy_rain(폭우)은 더 이상 스케줄 슬롯이 아니다 — 디렉터가 활동 저하를
-            // 감지하면 하루 1회 1시간 "폭우 리셋"으로 소환한다(ConditionDirector 참고).
-            Slot(days: "all", from: "23:30", to: "05:00", label: "심야 · 고요한 밤",
-                 themes: ["snow", "peace"], opener: nil,
-                 note: "깊은 밤 — 조용한 설원·평온으로 이완 (요일 슬롯이 없는 시간대의 공통 커버). 폭우는 활동 저하 시 디렉터가 별도로 소환"),
+            // ---- 심야 (23:30~05:00): 요일별로 그날의 성격을 살린 몰입 테마 ----
+            // 매일 같은 "고요한 밤"이 심심하다는 피드백 → 요일별로 분리. 화·수·목은
+            // 자주 밤을 새므로 시네마틱하게 강조(별빛 초원 / 야간 항해 / 달빛 정원).
+            // heavy_rain(폭우)은 스케줄에 없다 — 디렉터가 활동 저하 시 하루 1회 소환.
+            Slot(days: "mon", from: "23:30", to: "05:00", label: "월 심야 · 정박한 항구",
+                 themes: ["ship", "snow"], opener: nil,
+                 note: "조용한 밤 항구 — 정박한 배와 설원의 고요로 마무리"),
+            Slot(days: "tue", from: "23:30", to: "05:00", label: "화 심야 · 별빛 초원",
+                 themes: ["mongolia", "snow"], opener: nil,
+                 note: "밤을 새는 화요일 — 별빛 쏟아지는 광활한 초원의 몰입감"),
+            Slot(days: "wed", from: "23:30", to: "05:00", label: "수 심야 · 야간 항해",
+                 themes: ["england", "ship"], opener: nil,
+                 note: "밤을 새는 수요일 — 밤바다를 가르는 야간 항해, 깊은 밤의 집중"),
+            Slot(days: "thu", from: "23:30", to: "05:00", label: "목 심야 · 달빛 정원",
+                 themes: ["joseon", "samurai"], opener: nil,
+                 note: "밤을 새는 목요일 — 달빛 정원과 대나무 그림자 속 고요한 몰입"),
+            Slot(days: "fri", from: "23:30", to: "05:00", label: "금 심야 · 애프터 라운지",
+                 themes: ["lounge", "snow"], opener: nil,
+                 note: "불금 애프터 — 클럽의 여운을 새벽 라운지로 잔잔하게"),
+            Slot(days: "weekend", from: "23:30", to: "05:00", label: "주말 심야 · 밤의 여운",
+                 themes: ["return", "peace"], opener: nil,
+                 note: "주말 밤 — 개선의 여운과 평온으로 잔잔하게 마무리"),
         ]
     )
 }

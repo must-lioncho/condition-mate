@@ -1,7 +1,7 @@
 import Foundation
 
 // Lightweight persistence of user preferences, backed by a JSON file under AppPaths.base
-// (dev: <root>/.localdata/settings.json, installed: ~/.condition-manager/settings.json).
+// (~/.condition-manager/settings.json — single store shared by dev and installed builds).
 //
 // WHY a file, not UserDefaults: the dev binary launched by Scripts/dev-run.sh is an
 // UNBUNDLED SwiftPM executable (no Info.plist → Bundle.main.bundleIdentifier == nil).
@@ -40,6 +40,7 @@ final class Settings {
         static let conditionMate  = "cm.conditionMate"
         static let skillsRoot     = "cm.skillsRoot"
         static let bgmWindow      = "cm.bgmWindowEnabled"
+        static let timeZone       = "cm.timeZone"
     }
 
     // Defaults for values the user has not touched. Mirrors the old register(defaults:).
@@ -279,5 +280,22 @@ final class Settings {
     var conditionMate: String {
         get { string(K.conditionMate) ?? "routine" }
         set { set(newValue, K.conditionMate) }
+    }
+
+    // 표시 타임존. Storage stays epoch (UTC-based) everywhere; this only decides which
+    // wall clock timestamps are RENDERED in — both the dashboard JS (via window.CM_TZ)
+    // and the Swift-side display formatters. "system" (default) = the machine's local
+    // timezone; anything else must be an IANA identifier ("Asia/Seoul", "UTC", …).
+    var timeZoneID: String {
+        get { string(K.timeZone) ?? "system" }
+        set { set(newValue, K.timeZone) }
+    }
+
+    // The setting resolved to an actual TimeZone; invalid identifiers fall back to local
+    // so a hand-edited settings.json can never break rendering.
+    var displayTimeZone: TimeZone {
+        let id = timeZoneID
+        if id == "system" { return .current }
+        return TimeZone(identifier: id) ?? .current
     }
 }

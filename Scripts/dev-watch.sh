@@ -8,13 +8,30 @@
 # Uses fswatch if installed, otherwise a lightweight mtime poll. Ctrl-C to stop.
 # Docker is intentionally NOT used: it runs Linux containers and cannot host a macOS menu-bar
 # app / WKWebView, so a local watch-rebuild loop is the right tool.
+#
+# COEXISTENCE: this dev build is stamped with its OWN bundle id ($DEV_BUNDLE_ID), so it runs
+# SIDE BY SIDE with the installed/production ConditionManager.app. DATA IS SHARED: both apps
+# use the single ~/.condition-manager store (unified 2026-07-09 — the old per-build .localdata
+# isolation made goals/settings diverge and "disappear" when switching apps). Avoid running
+# both apps at the same time for long; last-writer-wins on shared files like dashboard.port.
+# Without a distinct id the app's
+# single-instance dedup (terminateOtherInstances, keyed on bundle id) would force-quit whichever
+# copy launched first, so the two could never run at once. The ".dev" suffix still starts with
+# ValueTier.ownAppPrefix (matched via hasPrefix), so each app still excludes the other from
+# "work" activity. First launch of the dev app prompts for its OWN Automation/Accessibility grant
+# (it is a separate app to macOS) — grant once and the stable dev signing identity keeps it.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+DEV_BUNDLE_ID="com.lioncho.conditionmanager.dev"   # distinct from prod's com.lioncho.conditionmanager
+DEV_SIGN_IDENTITY="ConditionManager Dev"           # stable TCC across rebuilds; falls back to ad-hoc
+
 # Dev mode: tell the app not to grab the foreground / auto-pop its window on every rebuild-
 # relaunch (AppPaths.isDev). Without this, the watch loop keeps covering the editor. The window
-# still opens from the menu bar. Passed via `open --env` below (NOT a plain shell export — `open`
-# hands the app to launchd, which does not inherit this shell's environment).
+# still opens from the menu bar. NO CM_DATA_DIR here — dev shares the single
+# ~/.condition-manager store with the installed app (see COEXISTENCE above). Passed via
+# `open --env` below (NOT a plain shell export — `open` hands the app to launchd, which does
+# not inherit this shell's environment).
 # Set CM_DEV_AUTO_OPEN=1 before running this to auto-open the window after each rebuild
 # (for dashboard-UI sessions); it is forwarded through when present.
 DEV_ENV=(--env CM_DEV=1)
@@ -39,11 +56,26 @@ build_and_run() {
     cp "$BIN" "$APP/Contents/MacOS/ConditionManager"
     cp Info.plist "$APP/Contents/Info.plist"
     printf 'APPL????' > "$APP/Contents/PkgInfo"
-    codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+    # Re-stamp the copied plist with the dev identity so this build coexists with prod (see the
+    # COEXISTENCE note at the top). Distinct name too, so the menu-bar / Dock / switcher entries
+    # are tellable apart.
+    PB=/usr/libexec/PlistBuddy
+    "$PB" -c "Set :CFBundleIdentifier $DEV_BUNDLE_ID"                 "$APP/Contents/Info.plist" 2>/dev/null || true
+    "$PB" -c "Set :CFBundleName ConditionManager Dev"                "$APP/Contents/Info.plist" 2>/dev/null || true
+    "$PB" -c "Set :CFBundleDisplayName Condition Manager (Dev)"      "$APP/Contents/Info.plist" 2>/dev/null || true
+    # Sign with the stable dev identity when present so the dev app's own TCC grant survives
+    # rebuilds; pin -i to the dev bundle id so the designated requirement stays constant. Fall
+    # back to ad-hoc (grant will need re-approving after each rebuild in that case).
+    if security find-identity -p codesigning 2>/dev/null | grep -q "$DEV_SIGN_IDENTITY"; then
+        codesign --force --sign "$DEV_SIGN_IDENTITY" -i "$DEV_BUNDLE_ID" "$APP" >/dev/null 2>&1 || true
+    else
+        codesign --force --sign - -i "$DEV_BUNDLE_ID" "$APP" >/dev/null 2>&1 || true
+    fi
     pkill -f "$APP/Contents/MacOS/ConditionManager" 2>/dev/null || true
     sleep 0.4
     open "${DEV_ENV[@]}" "$APP"
-    echo "==> relaunched $(date +%H:%M:%S) — CM_DEV on (window stays in the menu bar; click to open)"
+    echo "==> relaunched $(date +%H:%M:%S) — id=$DEV_BUNDLE_ID data=\$HOME/.condition-manager (shared with prod)"
+    echo "    (coexists with the installed app; window stays in the menu bar — click 'Condition Manager (Dev)' to open)"
 }
 
 build_and_run

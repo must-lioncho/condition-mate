@@ -19,19 +19,11 @@ enum AppPaths {
             try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             return url
         }
-        // 2. Dev build: keep the store next to the code in <root>/.localdata, regardless of
-        //    how the binary was launched (raw exec or dev-run.sh). This makes the data dir
-        //    launch-independent, so a raw launch and dev-run can never diverge into two stores.
-        if let root = devProjectRoot {
-            let url = URL(fileURLWithPath: root, isDirectory: true)
-                .appendingPathComponent(".localdata", isDirectory: true)
-            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            return url
-        }
-        // 3. Installed/normal default: a single home-profile store at ~/.condition-manager.
-        //    Unifies what used to be split between ~/Library/Application Support/ConditionManager
-        //    and the workspace-level .condition-manager. Dev builds still isolate into
-        //    <root>/.localdata (case 2), so dev runs never touch this production store.
+        // 2. Single store for EVERY build: ~/.condition-manager. Dev builds used to isolate
+        //    into <root>/.localdata, but running dev and prod against two stores made data
+        //    "disappear" whenever the user switched apps (goals/settings/stats diverged per
+        //    store). Unified 2026-07-09: dev, dev-watch, and the installed app all read and
+        //    write the same home-profile store; only an explicit CM_DATA_DIR (case 1) isolates.
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".condition-manager", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -52,13 +44,20 @@ enum AppPaths {
         return url
     }
 
-    // True when NOT using the real ~/.condition-manager store — i.e. a CM_DATA_DIR override
-    // or a dev build running out of <root>/.localdata. Surfaced in the dashboard as a "DEV"
-    // badge so the active dataset is never mistaken for production, and used to keep the
-    // Policy 3 title stamper from mutating the real Claude store during dev runs.
+    // True when NOT using the real ~/.condition-manager store — i.e. an explicit CM_DATA_DIR
+    // override (tests / throwaway runs). Surfaced in the dashboard as a "DEV" badge so the
+    // active dataset is never mistaken for production, and used to keep the Policy 3 title
+    // stamper from mutating the real Claude store during isolated runs. Dev builds no longer
+    // count as custom: since the 2026-07-09 unification they share the production store. A
+    // CM_DATA_DIR that RESOLVES to the home store (e.g. injected by .claude settings) is the
+    // real store, not an isolation — compare resolved paths, not mere env presence.
     static var isCustom: Bool {
-        if !(ProcessInfo.processInfo.environment["CM_DATA_DIR"] ?? "").isEmpty { return true }
-        return devProjectRoot != nil
+        let override = ProcessInfo.processInfo.environment["CM_DATA_DIR"] ?? ""
+        guard !override.isEmpty else { return false }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".condition-manager", isDirectory: true)
+        return URL(fileURLWithPath: override, isDirectory: true).standardizedFileURL.path
+            != home.standardizedFileURL.path
     }
     // Short label for the active data dir (its folder name), shown next to the badge.
     static var label: String { base.lastPathComponent }

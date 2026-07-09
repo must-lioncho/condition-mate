@@ -114,6 +114,20 @@ enum BGMPlayerContent {
   .pm-frame{flex:1 1 auto; width:100%; border:0; background:transparent}
   .strat .stsum{font-size:12.5px; color:var(--txt); margin-top:5px; line-height:1.5}
   .strat .stretro{font-size:12px; color:var(--dim); margin-top:3px; line-height:1.5}
+  /* 슬롯 성적표 (전략4 관측) — per-plan-slot hit/miss scores. NEUTRAL tones only:
+     the hitRate bar uses the purple accent (never red/green traffic-light colors —
+     green is reserved for the mute button), the 재계획 후보 badge uses teal. */
+  .slotrow{padding:10px 12px; border-radius:11px; background:#12141c}
+  .slotrow+.slotrow{margin-top:6px}
+  .slotrow .slhead{display:flex; align-items:center; gap:9px; flex-wrap:wrap}
+  .slotrow .slname{font-size:13.5px; font-weight:700}
+  .slotrow .slmeta{font-size:11.5px; color:var(--dim); font-variant-numeric:tabular-nums}
+  .slotrow .slreplan{font-size:11px; color:var(--accent2); border:1px solid var(--accent2); border-radius:999px; padding:2px 8px}
+  .slotrow .slnums{margin-left:auto; font-size:12px; color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap}
+  .slotrow .slnums b{color:var(--txt); font-weight:600}
+  .slotrow .slbarwrap{margin-top:7px; height:6px; border-radius:999px; background:#1c1f2c; overflow:hidden}
+  .slotrow .slbar{height:100%; border-radius:999px; background:linear-gradient(90deg,var(--accent),#5a3ff0)}
+  .slotrow .slsub{font-size:11.5px; color:var(--dim); margin-top:6px; line-height:1.5}
   /* BGM analytics tables (앱별 BGM · 타임라인 로그) */
   .tblwrap{overflow-x:auto}
   table{width:100%; border-collapse:collapse; font-size:13px}
@@ -224,6 +238,12 @@ enum BGMPlayerContent {
   .maplegend{display:flex;gap:14px;flex-wrap:wrap;margin-top:6px;font-size:11px;color:var(--dim)}
   .maplegend span{display:inline-flex;align-items:center;gap:5px}
   .maplegend i{width:12px;height:12px;border-radius:3px;display:inline-block}
+  /* 컨디션맵 → 액션로그 드릴다운: 띠가 클릭 대상임을 손모양으로 알린다 */
+  .mapband{cursor:pointer}
+  /* 액션로그 (대시보드에서 이동) — 렌더 함수가 쓰는 .panel/.pill 을 이 페이지 변수로 정의 */
+  #actPanel .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  #actPanel .pill{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid var(--line)}
+  #actPanel .empty{font-size:13px;padding:10px 4px;line-height:1.6}
   /* 오늘 활동 블록 (대시보드에서 이동) — #todayBlocks 스코프로 target의 .card 와 충돌 방지 */
   #todayBlocks h2.tbh2{font-size:14px;margin:22px 0 10px;color:var(--txt)}
   #todayBlocks .cards{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px}
@@ -267,6 +287,7 @@ enum BGMPlayerContent {
   <div class="subtabs" id="subtabs">
     <button class="subtab on" data-m="map" onclick="setMode('map')">컨디션맵</button>
     <button class="subtab" data-m="activity" onclick="setMode('activity')">액티비티</button>
+    <button class="subtab" data-m="actions" onclick="setMode('actions')">액션로그</button>
     <button class="subtab" data-m="debug" onclick="setMode('debug')">디버그</button>
   </div>
 
@@ -331,6 +352,40 @@ enum BGMPlayerContent {
       <h2 class="tbh2">주요 앱 (오늘)</h2>
       <div class="panel"><div class="bars" id="appbars"><span class="empty">데이터 없음</span></div></div>
     </div>
+  </div>
+
+  <!-- 액션로그 (대시보드에서 이동): 모든 유저 액션 + 그때 나온 BGM 반응 타임라인.
+       데이터는 /api/actions(+SSE /api/actions/stream), 기간 필터는 컨디션맵과 같은
+       CMTimeFilter 공유. 컨디션맵의 띠를 클릭하면 그 업무일로 필터되어 열린다(mapDrill). -->
+  <div class="card" id="actPanel" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <p class="lbl" style="margin:0">액션로그 · 유저 액션 + BGM 반응</p>
+      <button class="btn" onclick="loadActions(true)" title="액션로그 새로고침">↻ 새로고침</button>
+    </div>
+    <p class="actnote" style="margin:0 0 12px">모든 유저 액션과 그때 시스템이 어떻게 반응했는지를 시간순으로 봅니다. <b>컨디션맵의 띠를 클릭</b>하면 그 업무일의 로그로 바로 이동합니다.</p>
+    <div id="actFilter" style="margin:0 0 10px"></div>
+    <div class="cmf-row" style="margin:0 0 8px">
+      <span style="font-size:12px;color:var(--dim)">종류</span>
+      <button class="cmf-btn" id="ak_all" onclick="setActKind('')" title="모든 이벤트">전체</button>
+      <button class="cmf-btn" id="ak_user" onclick="setActKind('user')" title="세션 시작·중지, 목표 조작, 음소거, 폭우 소환, 싫어요 등 직접 조작">유저 액션</button>
+      <button class="cmf-btn" id="ak_bgm" onclick="setActKind('bgm')" title="곡 전환·오프너 — 어떤 규칙(풀)이 그 곡을 골랐는지">BGM 반응</button>
+      <button class="cmf-btn" id="ak_system" onclick="setActKind('system')" title="앱 전환에 따른 프로필 이동 등 자동 동작">자동 전환</button>
+      <span class="muted" id="actSummary" style="font-size:12px;margin-left:auto">불러오는 중…</span>
+    </div>
+    <div class="cmf-row" style="margin:0 0 8px">
+      <span style="font-size:12px;color:var(--dim)">분류</span>
+      <button class="cmf-btn" id="ac_all" onclick="setActCat('')" title="모든 분류">전체</button>
+      <button class="cmf-btn" id="ac_pomodoro" onclick="setActCat('pomodoro')" title="세션 시작·중지, 포모도로 완주, 수확 — 포모도로에 대한 유저 행동">포모도로</button>
+      <button class="cmf-btn" id="ac_goal" onclick="setActCat('goal')" title="목표 추가·큐 결정·상태 변경·스프린트·팀 위임 — 목표설정을 위한 행동">목표설정</button>
+      <button class="cmf-btn" id="ac_bgm" onclick="setActCat('bgm')" title="음원 켬/끔·음소거·폭우·싫어요·곡 전환">BGM</button>
+      <button class="cmf-btn" id="ac_equipment" onclick="setActCat('equipment')" title="장비 페이지 조작">장비</button>
+      <button class="cmf-btn" id="ac_settings" onclick="setActCat('settings')" title="타임존·폴더 열기·창 전환·업데이트 등 설정 조작">설정</button>
+    </div>
+    <div class="muted" style="font-size:12px;margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:9px">
+      곡 전환 줄의 <b>풀 칩</b>이 그 곡을 고른 규칙입니다 — <b>폭우 리셋</b> &gt; <b>플랜 · 슬롯</b>(요일·시간대) &gt; <b>모드 · 세션모드</b> 순으로 우선합니다.
+      포모도로·스프린트·트래커가 같은 곡을 낸다면 풀 칩이 전부 <b>플랜 · …</b>으로 찍혀 있을 것입니다(플랜 슬롯이 모드보다 우선이라 모드가 선곡에 반영되지 않는 상태).
+    </div>
+    <div id="actList"></div>
   </div>
 
   <!-- 디버그: 라이브러리에서 곡을 골라 공간감 이펙트를 테스트 (음원 검증 전용) -->
@@ -402,6 +457,14 @@ enum BGMPlayerContent {
     <p class="lbl" style="margin:0 0 6px">전략 히스토리</p>
     <p class="actnote" style="margin:0 0 12px">선곡 전략의 변천사입니다. 위 순위 필터로 전략별 적립 데이터를 비교하며 회고합니다.</p>
     <div id="stratHist"><div class="tkempty">불러오는 중…</div></div>
+  </div>
+
+  <!-- 슬롯 성적표 (전략4 관측): /api/bgm/slot-scores — actions.jsonl을 재생해 파생한
+       플랜 슬롯별 hit/miss 점수. 관측 전용(선곡·플랜 무변경), 저장 없음. -->
+  <div class="card" data-bgmcard>
+    <p class="lbl" style="margin:0 0 6px">슬롯 성적표 (전략4 관측)</p>
+    <p class="actnote" style="margin:0 0 12px">플랜 슬롯이 실제로 맞았는지 액션 로그로 채점합니다. hit=부정 신호 없이 세션 종료(포모도로는 완주), miss=싫어요·세션 중 음소거. 세션 3회 이상인데 적중률이 절반 미만이면 재계획 후보로 표시합니다.</p>
+    <div id="slotScores"><div class="tkempty">불러오는 중…</div></div>
   </div>
 
   <!-- 앱별 BGM (적절성 디버그): 대시보드에서 이동 — BGM 컨텍스트 통합 -->
@@ -486,6 +549,7 @@ enum BGMPlayerContent {
 </div>
 
 <script>
+\#(CMTimeFilter.tzAssignJS())
 \#(CMTimeFilter.js)
 </script>
 <script>
@@ -544,11 +608,13 @@ function setMode(m){
   mode=m;
   [...document.querySelectorAll('.subtab')].forEach(b=>b.classList.toggle('on', b.dataset.m===m));
   $("mapPanel").style.display=(m==='map')?'':'none';
+  $("actPanel").style.display=(m==='actions')?'':'none';
   $("actStatus").style.display=(m==='activity')?'':'none';   // 액티비티: 상태가 재생 카드에 합쳐진다
   $("dbgPanel").style.display=(m==='debug')?'':'none';
-  // 컨디션맵 모드에선 BGM 재생/디버그 카드를 모두 숨겨 맵에 집중한다.
-  document.querySelectorAll('[data-bgmcard]').forEach(el=>{ el.style.display=(m==='map')?'none':''; });
+  // 컨디션맵·액션로그 모드에선 BGM 재생/디버그 카드를 모두 숨겨 분석에 집중한다.
+  document.querySelectorAll('[data-bgmcard]').forEach(el=>{ el.style.display=(m==='map'||m==='actions')?'none':''; });
   if(m==='map'){ initMap(); if(typeof loadBGMAnalytics==='function') loadBGMAnalytics(); }  // 맵 탭 진입 시 오늘 활동 블록 즉시 갱신(캔버스 폭이 이제 유효)
+  if(m==='actions') initActions();
   if(m==='debug'){
     if(!TRACKS.length) loadTracks();
     if(!curTrack || audioEl.paused) $("status").textContent="라이브러리에서 곡을 골라 공간감을 테스트하세요.";
@@ -1211,6 +1277,48 @@ $("statsReset").onclick=()=>{
 loadStats();
 setInterval(loadStats, 5000);
 
+// ---------- 슬롯 성적표 (전략4 관측) ----------
+// Renders /api/bgm/slot-scores: per-plan-slot hit/miss derived from actions.jsonl.
+// Neutral tones only (no red/green status colors); times go through CMTimeFilter.
+const SLOT_DAYS_KO={mon:"월",tue:"화",wed:"수",thu:"목",fri:"금",sat:"토",sun:"일",weekday:"평일",weekend:"주말",all:"매일"};
+function slotWhen(t){ return CMTimeFilter.dayStr(t*1000)+" "+CMTimeFilter.hhmm(t); }
+async function loadSlotScores(){
+  const host=$("slotScores"); if(!host) return;
+  let j=null;
+  try{ const r=await fetch("/api/bgm/slot-scores"); j=await r.json(); }catch(e){}
+  if(!j || !Array.isArray(j.slots)){ host.innerHTML='<div class="tkempty">슬롯 성적을 불러오지 못했습니다.</div>'; return; }
+  if(!j.slots.length){
+    host.innerHTML='<div class="tkempty">아직 채점할 세션이 없습니다.<br>플랜 슬롯에서 세션이 진행되면 슬롯별 성적이 여기에 쌓입니다.</div>';
+    return;
+  }
+  host.innerHTML="";
+  j.slots.forEach(s=>{
+    const row=document.createElement("div");
+    row.className="slotrow";
+    const dayKo=SLOT_DAYS_KO[s.days]||s.days||"";
+    const band=(s.from&&s.to)?(s.from+"–"+s.to):"";
+    const meta=[dayKo,band].filter(Boolean).join(" ")+(s.themes&&s.themes.length?" · "+s.themes.join("/"):"");
+    const ratePct=Math.round((s.hitRate||0)*100);
+    const scored=(s.hits+s.misses)>0;
+    const subs=[];
+    if(s.sampleTracks&&s.sampleTracks.length) subs.push("hit 근거 곡 · "+s.sampleTracks.map(esc).join(" · "));
+    const stamps=[];
+    if(s.lastHitAt) stamps.push("최근 hit "+slotWhen(s.lastHitAt));
+    if(s.lastMissAt) stamps.push("최근 miss "+slotWhen(s.lastMissAt));
+    if(stamps.length) subs.push(stamps.join(" · "));
+    row.innerHTML='<div class="slhead"><span class="slname">'+esc(s.label)+'</span>'
+      +(meta?'<span class="slmeta">'+esc(meta)+'</span>':'')
+      +(s.rePlanCandidate?'<span class="slreplan">재계획 후보</span>':'')
+      +'<span class="slnums">세션 '+s.sessions+' · hit <b>'+s.hits+'</b> · miss <b>'+s.misses+'</b>'
+      +' · 점수 <b>'+s.score+'</b>'+(scored?' · 적중률 <b>'+ratePct+'%</b>':'')+'</span></div>'
+      +'<div class="slbarwrap"><div class="slbar" style="width:'+(scored?Math.max(ratePct,3):0)+'%"></div></div>'
+      +(subs.length?'<div class="slsub">'+subs.join("<br>")+'</div>':'');
+    host.appendChild(row);
+  });
+}
+loadSlotScores();
+setInterval(loadSlotScores, 30000);
+
 // ---------- BGM analytics (앱별 BGM · 타임라인 로그) — moved from the dashboard so all
 // BGM context lives on one page. Both render from /data.json (same-origin loopback). ----------
 const PALETTE=['#5b8cff','#36c08a','#e8a13a','#c879e6','#e2667d','#3ac6c6','#d98c5f','#9aa4b2'];
@@ -1222,7 +1330,7 @@ function appColor(a){ if(colorCache[a]) return colorCache[a];
 const BANDS={'칠 (느긋)':[75,100],'스테디 (안정)':[100,125],'집중 (몰입)':[120,150],'하이프 (고조)':[140,175]};
 function trackBpm(t){ const m=/\[(\d{2,3})\]/.exec(t||''); return m?parseInt(m[1],10):null; }
 function fmtMin(m){ if(m>=60) return (m/60).toFixed(1)+'시간'; return m+'분'; }
-function hhmm(t){ const d=new Date(t*1000); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
+function hhmm(t){ return CMTimeFilter.hhmm(t); }   // 표시 타임존 기준 HH:MM
 function categoryBadge(seg){ let label,color;
   if(seg.meeting){label='미팅';color='#9aa4b2';}
   else if(seg.tier==='적극'){label='집중';color='#36c08a';}
@@ -1350,7 +1458,7 @@ function renderBgmTable(samples){
 // ===== 오늘 활동 블록 (대시보드에서 이동) =====
 // appColor / appStats / withCarryForward / fmtMin / esc / $ 는 이미 이 페이지에 있으므로
 // 중복 정의하지 않는다. 아래는 대시보드에만 있던 렌더러와 그 헬퍼를 그대로 옮긴 것.
-function minOfDay(s){ const dt=new Date(s.t*1000); return dt.getHours()*60+dt.getMinutes(); }
+function minOfDay(s){ const p=CMTimeFilter.parts(s.t*1000); return p.h*60+p.mi; }
 function fmtH(min){ const h=Math.floor(min/60), m=min%60; return h>0? h+'시간 '+m+'분' : m+'분'; }
 // Provisional value hours (weighted active time) — same formula as the dashboard.
 function provisionalHours(samples){ return samples.reduce((a,s)=>a+(s.active||0)*(s.mult||1),0)/3600; }
@@ -1697,7 +1805,7 @@ function initMap(){
   $("mapTz").textContent='시각 '+CMTimeFilter.tzLabel()+' 기준';
   reflectBase();
   _mapCtl = CMTimeFilter.mount($("mapFilter"), {
-    presets:['today','yesterday','7d','1m','30d'], auto:true, custom:true, initial:'auto',
+    presets:['today','yesterday','7d','30d','90d'], auto:true, custom:true, initial:'auto',
     onChange:(r)=>{ _mapRange=r; loadMap(); }
   });
 }
@@ -1739,7 +1847,7 @@ function mapStartCandidates(active){
 }
 function localDayStr(t){ return CMTimeFilter.dayStr(new Date(t*1000)); }
 function condLevel(s){ const a=s.active||0; if(a<=0) return 0; if(s.meeting) return 3; if(s.tier==='적극') return a>=40?5:4; if(s.tier==='중간') return a>=40?3:2; return 1; }
-function clock(t){ const d=new Date(t*1000); return (d.getHours()<10?'0':'')+d.getHours()+':'+(d.getMinutes()<10?'0':'')+d.getMinutes(); }
+function clock(t){ return CMTimeFilter.hhmm(t); }   // 표시 타임존 기준 HH:MM
 
 // 하나의 업무일 띠 데이터: 96개(15분) 셀 레벨 + 통계.
 function buildBand(startT, allSamples, nowT){
@@ -1779,7 +1887,9 @@ function bandHTML(band, nowT, showNow){
   }
   // 축: 0/6/12/18/24h 시점의 실제 시각
   let axis=''; [0,6,12,18,24].forEach(h=>{ const p=(h/24*100).toFixed(2); axis+='<span style="left:'+p+'%">'+clock(band.startT+h*3600)+'</span>'; });
-  return '<div class="mapband">'+cells+marks+'</div><div class="mapaxis">'+axis+'</div>';
+  // 띠 클릭 → 액션로그 드릴다운. 24h 창이 자정을 넘으면 두 날짜에 걸치므로 범위로 넘긴다.
+  const d1=localDayStr(band.startT), d2=localDayStr(band.startT+MAP_DAY-60);
+  return '<div class="mapband" title="이 업무일의 액션로그 보기" onclick="mapDrill(\''+d1+'\',\''+d2+'\')">'+cells+marks+'</div><div class="mapaxis">'+axis+'</div>';
 }
 
 function mapLegend(){
@@ -1811,29 +1921,30 @@ function renderMap(){
     if(startT==null){ $("mapSummary").innerHTML=''; $("mapBody").innerHTML='<div class="tkempty">해당 날짜에 활동 기록이 없습니다.</div>'; return; }
     return renderSingle(startT, all, nowT, day===todayStr, (day===todayStr?'오늘':day===CMTimeFilter.presetRange('yesterday').start?'어제':day));
   } else {
-    // 다일 범위: 시작~끝 각 날짜를 한 행씩 (최신순, 최대 31행)
+    // 다일 범위: 시작~끝 각 날짜를 한 행씩 (최신순, 띠 표시는 최대 31행)
     const list=[]; let d=_mapRange.end;
-    while(d>=_mapRange.start && list.length<400){ list.push(d); const dt=CMTimeFilter.parseDay(d); dt.setDate(dt.getDate()-1); d=CMTimeFilter.dayStr(dt); }
+    while(d>=_mapRange.start && list.length<400){ list.push(d); d=CMTimeFilter.dayStr(new Date(CMTimeFilter.parseDay(d).getTime()-43200000)); }   // 자정-12h=전날 정오 → 하루 뒤로 (DST 안전)
     days=list;
   }
-  // 다일 렌더
-  const capped=days.slice(0,31);
+  // 다일 렌더 — 요약(누적·평균)은 기간 전체로 계산하고, 띠는 최근 31일만 그린다.
   const bands=[];
-  capped.forEach(day=>{ const st=startForDay(day, cands, active); if(st!=null) bands.push({day, band:buildBand(st, all, nowT)}); });
+  days.forEach(day=>{ const st=startForDay(day, cands, active); if(st!=null) bands.push({day, band:buildBand(st, all, nowT)}); });
   if(!bands.length){ $("mapSummary").innerHTML=''; $("mapBody").innerHTML='<div class="tkempty">기간 내 활동 기록이 없습니다.</div>'; return; }
-  const avgWork=bands.reduce((a,b)=>a+b.band.elapsedHours,0)/bands.length;
+  const totalWork=bands.reduce((a,b)=>a+b.band.elapsedHours,0);
+  const avgWork=totalWork/bands.length;
   const avgLv=bands.reduce((a,b)=>a+b.band.avgLevel,0)/bands.length;
   $("mapSummary").innerHTML = card('업무일', bands.length+'일')
+    + card('누적 업무시간', totalWork.toFixed(1)+'h', '기준 합 '+(bands.length*_mapBase)+'h')
     + card('평균 업무시간', avgWork.toFixed(1)+'h', '기준 '+_mapBase+'h')
     + card('평균 컨디션', 'Lv '+avgLv.toFixed(1), levelName(avgLv));
-  const rows=bands.map(x=>{
-    const b=x.band, wd=new Date(b.startT*1000);
-    const wk=['일','월','화','수','목','금','토'][wd.getDay()];
+  const rows=bands.slice(0,31).map(x=>{
+    const b=x.band;
+    const wk=CMTimeFilter.weekdayKo(b.startT*1000);
     return '<div class="maprow"><div class="rl"><b>'+x.day+' ('+wk+')</b>'
       +'<span class="rr">시작 '+clock(b.startT)+' · '+b.elapsedHours.toFixed(1)+'h · Lv '+b.avgLevel.toFixed(1)+'</span></div>'
       + bandHTML(b, nowT, x.day===todayStr) + '</div>';
   }).join('');
-  const note=days.length>31?'<div class="tkempty" style="text-align:left">최근 31일만 표시합니다 (범위 '+days.length+'일).</div>':'';
+  const note=bands.length>31?'<div class="tkempty" style="text-align:left">띠는 최근 31일만 표시합니다 (요약은 업무일 '+bands.length+'일 전체 기준).</div>':'';
   $("mapBody").innerHTML=rows+note;
 }
 
@@ -1848,6 +1959,158 @@ function renderSingle(startT, all, nowT, showNow, label){
   $("mapBody").innerHTML='<div class="maprow">'+bandHTML(b, nowT, showNow)+'</div>';
 }
 // ======================= /컨디션 맵 =======================
+
+// ======================= 액션로그 (대시보드에서 이동) =======================
+// 모든 유저 액션 + BGM 반응 타임라인. 데이터/실시간(SSE)은 /api/actions 계열,
+// 기간 필터는 컨디션맵과 같은 CMTimeFilter를 공유한다('자동'=최근 전체).
+// actCat/renderActions는 .e2e/actioncat.test.js 가 이 파일에서 추출해 검증하므로
+// 상태 let 선언은 ACT_LABEL 앞에, actPad~renderActions는 종료 마커 앞에 둔다.
+let _actInited=false, _actCtl=null, _actRange={mode:'auto',preset:'auto',start:'',end:''};
+let _actEvents=null, _actKind='', _actCat='', _actFetchedAt=0, _actFetchedLimit=0, _actLoading=false, _actRenderedSig='';
+const ACT_LABEL={ sessionStart:'세션 시작', sessionStop:'세션 중지', modeChange:'모드 변경',
+  mute:'음소거 켬', unmute:'음소거 해제', bgmOn:'BGM 켬', bgmOff:'BGM 끔',
+  profileShift:'프로필 전환', rainSummon:'폭우 소환', rainStart:'폭우 시작',
+  rainEnd:'폭우 종료', dislike:'싫어요', trackChange:'곡 전환', opener:'오프너 재생',
+  // 대시보드 POST 자동 로깅(경로 유도 이름) — 미등록 이름은 원문 그대로 표시된다
+  'pomodoro.complete':'포모도로 완주', 'pomodoro.harvest':'포모도로 수확',
+  'goal.add':'목표 추가', 'goal.queue.add':'나중에 검토', 'goal.queue.enqueue':'AI 목표 추가',
+  'goal.queue.search':'AI 검색', 'goal.queue.resolve':'큐 결정', 'goal.queue.undo':'큐 번복',
+  'goal.queue.refine':'큐 다듬기', 'goal.queue.cli':'큐 CLI', 'queue.retry':'큐 재시도',
+  'queue.remove':'큐 제거', 'queue.enqueue-linkmap':'링크맵 큐 등록',
+  'goal.remove':'목표 삭제', 'goal.note':'노트 수정', 'goal.parent':'목표 이동',
+  'goal.reorder':'순서 변경', 'goal.status':'상태 변경', 'goal.archive':'보관',
+  'goal.reopen':'다시 열기', 'goal.title':'제목 수정', 'goal.task':'부분과제 추가',
+  'goal.energy':'에너지 설정', 'goal.tokens':'토큰 기록', 'goal.value':'가치 설정',
+  'goal.priority':'우선순위 변경', 'goal.target':'목표일 설정', 'goal.completed':'완료 처리',
+  'goal.sprint':'스프린트 배정', 'goal.bump':'범프', 'goal.link':'목표 연결',
+  'goal.unlink':'연결 해제', 'goal.connect':'세션 연결(파일)', 'goal.session.link':'세션 연결',
+  'goal.session.unlink':'세션 해제', 'goal.definition.save':'정의 저장',
+  'goal.chat.send':'채팅 전송', 'goal.chat.reset':'채팅 리셋', 'goal.chat2.say':'팀 채팅',
+  'goal.chat2.stop':'팀 채팅 중단', 'goal.aiChat':'AI 채팅', 'goal.aiSearch':'AI 검색(구)',
+  'goal.cli.start':'CLI 시작', 'goal.cli.stop':'CLI 중단',
+  'chat.send':'채팅 전송', 'chat.reset':'채팅 리셋', 'team.delegate':'팀 위임',
+  'sprint.create':'스프린트 생성', 'sprint.update':'스프린트 수정',
+  'sprint.delete':'스프린트 삭제', 'sprint.cleanup':'스프린트 정리',
+  'settings.timezone':'타임존 변경', 'settings.reveal':'폴더 열기',
+  'window.mode':'창 전환', 'bgm.plan':'플랜 저장', 'bgm.stats.reset':'통계 리셋',
+  'skills.summary':'스킬 요약', 'skills.folder':'스킬 폴더', 'skills.folder.pick':'스킬 폴더 선택',
+  'skills.reveal':'스킬 폴더 열기', 'agents.reveal':'에이전트 폴더 열기' };
+const ACT_MODE={ pomodoro:'25분', sprint:'스프린트', unlimited:'트래커' };
+// 분류(도메인 축) — 서버가 cat을 안 준 옛 라인은 액션 이름으로 유도(서버의
+// ActionLog.defaultCategory와 같은 규칙).
+const ACT_CAT_LABEL={ pomodoro:'포모도로', goal:'목표설정', bgm:'BGM', equipment:'장비', settings:'설정', other:'기타' };
+function actCat(e){ if(e.cat) return e.cat;
+  if(e.action==='sessionStart'||e.action==='sessionStop'||e.action==='modeChange') return 'pomodoro';
+  if(e.action==='updateRun') return 'settings';
+  return 'bgm'; }
+function setActKind(k){ _actKind=k; reflectActKind(); renderActions(); }
+function reflectActKind(){ [['ak_all',''],['ak_user','user'],['ak_bgm','bgm'],['ak_system','system']]
+  .forEach(p=>{ const b=$(p[0]); if(b) b.classList.toggle('on', _actKind===p[1]); }); }
+function setActCat(c){ _actCat=c; reflectActCat(); renderActions(); }
+function reflectActCat(){ [['ac_all',''],['ac_pomodoro','pomodoro'],['ac_goal','goal'],['ac_bgm','bgm'],['ac_equipment','equipment'],['ac_settings','settings']]
+  .forEach(p=>{ const b=$(p[0]); if(b) b.classList.toggle('on', _actCat===p[1]); }); }
+function initActions(){
+  if(_actInited){ loadActions(); return; }
+  _actInited=true;
+  _actCtl = CMTimeFilter.mount($("actFilter"), {
+    presets:['today','yesterday','7d','30d','90d'], auto:true, custom:true, initial:'auto',
+    onChange:(r)=>{ _actRange=r; renderActions(); loadActions(); }
+  });
+}
+function loadActions(force){
+  reflectActKind(); reflectActCat(); ensureActStream();
+  if(_actLoading) return;
+  // '자동'(최근 전체)은 500건, 기간 조회는 서버 캡까지 깊게 (ActionLog.recentJSON cap 2000).
+  const lim=(_actRange.mode==='auto')?500:2000;
+  // SSE가 즉시 반영을 담당 — 재진입(뷰 전환·필터)은 신선하고 충분히 깊으면 렌더만 한다.
+  if(_actEvents && !force && lim<=_actFetchedLimit && (Date.now()-_actFetchedAt)<4500){ renderActions(); return; }
+  _actLoading=true;
+  fetch('/api/actions?limit='+lim).then(x=>x.json()).then(j=>{
+    _actEvents=(j&&j.events)||[]; _actFetchedAt=Date.now(); _actFetchedLimit=lim; _actLoading=false; renderActions();
+  }).catch(()=>{ _actLoading=false; const e=$('actList'); if(e&&!_actEvents) e.innerHTML='<div class="empty">불러오지 못했습니다</div>'; });
+}
+// 실시간 피드: 서버가 액션 발생 즉시 SSE(/api/actions/stream)로 밀어준다 — 폴링 지연 0.
+// 액션로그 탭에 처음 들어올 때 한 번 열고 계속 유지(EventSource가 끊기면 자동 재접속).
+let _actES=null;
+function ensureActStream(){
+  if(_actES || typeof EventSource==='undefined') return;
+  try{ _actES=new EventSource('/api/actions/stream'); }catch(e){ return; }
+  _actES.onmessage=function(m){
+    let e; try{ e=JSON.parse(m.data); }catch(_){ return; }
+    if(!_actEvents) _actEvents=[];
+    _actEvents.push(e); if(_actEvents.length>2200) _actEvents=_actEvents.slice(-2000);
+    if(mode==='actions') renderActions();
+  };
+}
+// 보정 폴링(15초): SSE 재접속 사이에 놓친 이벤트를 있으면 메꾼다. 탭이 보일 때만.
+setInterval(function(){
+  if(mode==='actions' && document.visibilityState==='visible') loadActions(true);
+}, 15000);
+function actPad(n){ return (n<10?'0':'')+n; }
+// 기간 필터: '자동'은 무제한(최근 N건 전체), 그 외엔 표시 타임존 날짜로 [start,end] 포함.
+function actInRange(e){
+  if(!_actRange || _actRange.mode==='auto') return true;
+  const d=CMTimeFilter.parts(e.t*1000), day=d.y+'-'+actPad(d.mo)+'-'+actPad(d.d);
+  return day>=_actRange.start && day<=_actRange.end;
+}
+function renderActions(){
+  const host=$('actList'); if(!host) return;
+  const all=(_actEvents||[]).filter(actInRange);
+  // 폴링 재렌더 가드: 이벤트·필터가 그대로면 innerHTML 재구성을 건너뛴다
+  // (폴링이 스크롤 위치를 흔들거나 DOM을 계속 갈아끼우지 않게).
+  const last=all.length?all[all.length-1]:null;
+  const sig=all.length+':'+(last?last.t+'/'+last.action:'')+'|'+_actKind+'|'+_actCat
+    +'|'+(_actRange?(_actRange.mode+_actRange.start+_actRange.end):'');
+  if(sig===_actRenderedSig && host.firstChild) return;
+  _actRenderedSig=sig;
+  const evs=all.filter(e=>(!_actKind||e.kind===_actKind)&&(!_actCat||actCat(e)===_actCat));
+  const s=$('actSummary');
+  if(s){ const c={user:0,bgm:0,system:0}, cc={};
+    all.forEach(e=>{ if(c[e.kind]!=null)c[e.kind]++; const k=actCat(e); cc[k]=(cc[k]||0)+1; });
+    s.textContent=all.length?('유저 '+c.user+' · BGM '+c.bgm+' · 자동 '+c.system
+      +' — 포모도로 '+(cc.pomodoro||0)+' · 목표 '+(cc.goal||0)):'기록 없음'; }
+  if(!evs.length){ host.innerHTML='<div class="empty">기간 내 기록된 액션이 없습니다 — 세션을 시작·중지하거나 모드를 바꾸면 여기에 쌓입니다.</div>'; return; }
+  // 종류 배지 색: 유저=액센트, BGM=시안, 자동=보라 (상태 신호등 빨강/녹색은 쓰지 않는다).
+  const KC={ user:['유저','var(--accent)'], bgm:['BGM','#33c9e6'], system:['자동','#a97bff'] };
+  let h='', lastDay='';
+  for(let i=evs.length-1;i>=0;i--){   // 최신이 위로 (시각·일 경계 모두 표시 타임존 기준)
+    const e=evs[i], d=CMTimeFilter.parts(e.t*1000);
+    const day=d.y+'-'+actPad(d.mo)+'-'+actPad(d.d);
+    if(day!==lastDay){ if(lastDay) h+='</div>';
+      h+='<div class="muted" style="font-size:11.5px;font-weight:700;margin:14px 0 6px">'+day+'</div>'
+        +'<div class="panel" style="padding:2px 12px">'; lastDay=day; }
+    const kc=KC[e.kind]||[e.kind,'var(--dim)'];
+    // 분류 칩 색: 포모도로=주황, 목표=액센트, BGM=시안, 나머지=중립 (신호등 빨강/녹색 금지).
+    const CATC={pomodoro:'#ffb454',goal:'var(--accent)',bgm:'#33c9e6'};
+    const cat=actCat(e);
+    let l2='<span class="pill" style="color:'+(CATC[cat]||'var(--dim)')+'" title="분류 — 어떤 도메인의 행동인지">'+esc(ACT_CAT_LABEL[cat]||cat)+'</span>';
+    if(e.track) l2+='<span class="pill" title="'+esc(e.trackKey||'')+'">♪ '+esc(e.track)+'</span>';
+    if(e.pool) l2+='<span class="pill" style="color:#8fd9ea;border-color:#1e5563" title="이 곡을 고른 규칙 (폭우 &gt; 플랜 슬롯 &gt; 모드)">'+esc(e.pool)+'</span>';
+    if(e.bpm) l2+='<span class="pill">'+e.bpm+' BPM</span>';
+    if(e.mode&&e.mode!=='-') l2+='<span class="pill">모드 '+esc(ACT_MODE[e.mode]||e.mode)+'</span>';
+    if(e.phase&&e.phase!=='-') l2+='<span class="pill">'+esc(e.phase)+'</span>';
+    if(e.app) l2+='<span class="pill">'+esc(e.app)+'</span>';
+    h+='<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);align-items:flex-start">'
+      +'<span class="muted" style="flex:none;width:60px;font-variant-numeric:tabular-nums;font-size:12px;padding-top:1px">'
+        +actPad(d.h)+':'+actPad(d.mi)+':'+actPad(d.s)+'</span>'
+      +'<div style="flex:1;min-width:0">'
+        +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+        +'<span style="flex:none;font-size:10px;font-weight:800;letter-spacing:.4px;color:'+kc[1]+';border:1px solid;border-radius:999px;padding:1px 7px">'+kc[0]+'</span>'
+        +'<b style="font-size:13px">'+esc(ACT_LABEL[e.action]||e.action)+'</b>'
+        +(e.detail?'<span class="muted" style="font-size:12px">'+esc(e.detail)+'</span>':'')
+        +'</div>'
+        +(l2?'<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px">'+l2+'</div>':'')
+      +'</div></div>';
+  }
+  if(lastDay) h+='</div>';
+  host.innerHTML=h;
+}
+// 컨디션맵 → 액션로그 드릴다운: 띠(24h 창)를 클릭하면 그 창이 걸치는 날짜 범위로 필터해 연다.
+function mapDrill(d1,d2){
+  setMode('actions');                          // initActions()가 여기서 보장된다
+  if(_actCtl) _actCtl.setRange(d1, d2||d1);    // 커스텀 범위 → onChange가 렌더+로드까지
+}
+// ======================= /액션로그 =======================
 
 renderPresets(); syncLabels(); setMode("map");
 

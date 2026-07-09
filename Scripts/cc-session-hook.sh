@@ -42,14 +42,10 @@ sid="$(field session_id)"
 
 # The data dir mirrors AppPaths.base. Resolution order, so the hook always reaches the
 # same store the app writes to:
-#   1. CM_DATA_DIR            - explicit override (tests / custom / dev-run)
-#   2. CLAUDE_PROJECT_DIR/.localdata - the dev store (dev-run.sh points the app here too),
-#                              so a session in this project posts to the running dev app
-#   3. ~/.condition-manager  - the single production/home store
+#   1. CM_DATA_DIR          - explicit override (tests / throwaway runs)
+#   2. ~/.condition-manager - the single shared store (dev + prod, unified 2026-07-09)
 if [ -n "$CM_DATA_DIR" ]; then
   data_dir="$CM_DATA_DIR"
-elif [ -n "$CLAUDE_PROJECT_DIR" ] && [ -d "$CLAUDE_PROJECT_DIR/.localdata" ]; then
-  data_dir="$CLAUDE_PROJECT_DIR/.localdata"
 else
   data_dir="$HOME/.condition-manager"
 fi

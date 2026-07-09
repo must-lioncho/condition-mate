@@ -11,6 +11,7 @@ import Foundation
 enum DashboardContent {
     static func html(lastView: String = "input", doneCutoff: Double? = nil, uiPrefs: String? = nil) -> String {
         // Clamp to a known view key so the injected JS literal can never be malformed.
+        // "actions"(액션로그)는 컨디션 관리 페이지(/bgm-player)로 이동 — 저장돼 있던 옛 값은 input으로 클램프된다.
         let valid: Set<String> = ["input", "group", "table", "token", "queue", "schedule", "preview", "sprint", "archived", "history"]
         let view = valid.contains(lastView) ? lastView : "input"
         // Server-persisted 완료 컷오프 as a JS literal: an integer epoch (0 = 해제) when the
@@ -779,6 +780,9 @@ enum DashboardContent {
       <div id="archivedList"></div>
     </div>
 
+    <!-- 액션로그 뷰는 컨디션 관리 페이지(/bgm-player)의 액션로그 탭으로 이동했다 —
+         컨디션맵 띠 클릭 드릴다운과 함께 분석 (BGMPlayerContent 참고). 대시보드에선 제거. -->
+
     <!-- HISTORY VIEW (히스토리 — 날짜별 집중도 + 초집중 세션 + 시간대 분석) -->
     <div id="historyView" style="display:none">
       <div class="row" style="margin:0 0 8px;gap:6px;align-items:center;flex-wrap:wrap">
@@ -881,10 +885,11 @@ enum DashboardContent {
     <div class="row">
       <input type="text" id="gaText" placeholder="목표/디테일 입력 후 Enter (AI추가로 계속 추가)" style="flex:1;min-width:200px">
       <button class="btn primary" id="gaAiBtn" onclick="gaAi()" title="추가 전에 AI가 비슷한 목표가 있는지 먼저 검사합니다">AI추가</button>
-      <button class="btn" id="gaSearchBtn" onclick="gaSearch()" title="추가하지 않고, 의미가 비슷한 기존 목표가 있는지 찾기만 합니다 (AI 큐에 결과가 뜹니다)">검색</button>
-      <button class="btn" onclick="gaAdd()">추가</button>
+      <button class="btn" id="gaSearchBtn" onclick="gaSearch()" title="번호 또는 제목으로 즉시 찾습니다 — 완료·릴리즈·보관·취소된 목표도 찾아줍니다">검색</button>
+      <button class="btn" id="gaAddBtn" onclick="gaAdd()">추가</button>
     </div>
-    <div class="muted" style="font-size:12px;margin-top:8px"><b>Enter</b>를 누르면 <b>AI추가</b>로 담깁니다 — 비슷한 목표가 있는지 먼저 확인하며, 창은 열린 채 계속 추가할 수 있습니다. <b>검색</b>은 추가하지 않고 비슷한 목표만 찾아줍니다. 바로 추가하려면 <b>추가</b> 버튼을 누르세요.</div>
+    <div class="muted" id="gaHint" style="font-size:12px;margin-top:8px"><b>Enter</b>를 누르면 <b>AI추가</b>로 담깁니다 — 비슷한 목표가 있는지 먼저 확인하며, 창은 열린 채 계속 추가할 수 있습니다. <b>검색</b>은 추가하지 않고 비슷한 목표만 찾아줍니다. 바로 추가하려면 <b>추가</b> 버튼을 누르세요.</div>
+    <div id="gaResults" style="margin-top:4px;max-height:340px;overflow:auto"></div>
   </div>
 </div>
 <!-- 작성 중이던 목표 초안 이어쓰기 칩: 모달을 ESC/닫기로 닫아도 입력이 남아 있으면 표시된다. -->
@@ -1043,7 +1048,7 @@ function verifyPlugin(id){ post('/api/plugin/verify',{id}); pluginRefresh(); }
 // Toggle plugins (e.g. 컨디션 메이트): install/uninstall, no folder picker. 제거하면 BGM도 꺼짐.
 function installPlugin(id){ post('/api/plugin/install',{id}); pluginRefresh(); }
 function uninstallPlugin(id){ if(confirm('이 플러그인을 제거할까요? (컨디션 메이트는 BGM도 함께 꺼집니다)')){ post('/api/plugin/uninstall',{id}); pluginRefresh(); } }
-function hhmm(t){ const d=new Date(t*1000); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
+function hhmm(t){ return CMTimeFilter.hhmm(t); }   // 표시 타임존 기준 HH:MM
 
 // 최근 요약 렌더(renderSummary)·타임라인 로그 렌더(timelineSegments/rowHtml/
 // paintTimeline/renderTimeline)는 컨디션 관리 페이지(/bgm-player)로 이동했다 — 대시보드에선 제거.
@@ -1148,6 +1153,8 @@ function onHistDate(){
 function tzLabel(){ return CMTimeFilter.tzLabel(); }
 function setDeepMin(m){ _dfMin=m; reflectDeepBtn(); if(_histData) renderHistory(); }
 function reflectDeepBtn(){ [15,25,45].forEach(k=>{ const b=$('df'+k); if(b) b.classList.toggle('primary', k===_dfMin); }); }
+// 액션로그 뷰(ACT_LABEL/loadActions/renderActions/SSE)는 컨디션 관리 페이지로 이동 —
+// BGMPlayerContent.swift 의 액션로그 섹션 참고 (.e2e/actioncat.test.js 도 그 파일에서 추출).
 function loadHistory(force){
   if(!_histStart){ _histPreset='3m'; _histEnd=histDayStr(new Date()); _histStart=histPresetStart('3m'); syncHistInputs(); }  // 최초 진입 기본값: 3달
   reflectDeepBtn(); reflectRangeBtn();
@@ -1191,7 +1198,7 @@ function renderHistory(){
     const sess=deepFocusSessions(ss);
     if(b.focus>0) focusDays++;
     totFocus+=b.focus; totSessions+=sess.length;
-    sess.forEach(x=>{ for(let t=x.startT;t<=x.endT;t+=60){ hourMin[new Date(t*1000).getHours()]++; } });
+    sess.forEach(x=>{ for(let t=x.startT;t<=x.endT;t+=60){ hourMin[CMTimeFilter.hourOf(t)]++; } });
     rows.push({day:d.day,b,sess});
   });
   const sumH=$('histSummary');
@@ -1298,18 +1305,27 @@ function openGoalAdd(opts){
   // 검색 모드(opts.search): 같은 모달을 '목표 검색'으로 표시하고 검색을 주 액션으로 강조한다.
   // 입력·큐 흐름은 동일하고 결과만 찾기만 한다. 일반(추가) 모드면 원래대로 되돌린다.
   _gaSearchMode=!!opts.search;
-  const ttl=$('gaTitle'), inp0=$('gaText'), aiB=$('gaAiBtn'), seB=$('gaSearchBtn');
+  const ttl=$('gaTitle'), inp0=$('gaText'), aiB=$('gaAiBtn'), seB=$('gaSearchBtn'), adB=$('gaAddBtn'), hint=$('gaHint');
   if(opts.search){
     if(ttl) ttl.textContent='목표 검색';
-    if(inp0) inp0.placeholder='찾을 내용 입력 후 검색 — 비슷한 기존 목표를 찾습니다';
-    if(aiB) aiB.classList.remove('primary');
+    if(inp0) inp0.placeholder='goal 번호(예: 346) 또는 제목 일부 — Enter로 즉시 조회';
+    // 검색 모드의 AI추가 버튼은 AI검색으로 바뀐다: 같은 findOnly 큐 파이프라인, 목표 생성 없음.
+    if(aiB){ aiB.classList.remove('primary'); aiB.textContent='AI검색';
+      aiB.title='표현이 달라도 의미가 비슷한 목표를 AI가 찾습니다 — 큐에 담겨 비동기로 분석, 결과는 큐 탭'; }
     if(seB) seB.classList.add('primary');
+    if(adB) adB.style.display='none';   // 검색 모드에서 '추가'는 혼란만 준다
+    if(hint) hint.innerHTML='<b>검색</b>은 번호를 넣으면 그 목표를 <b>상태와 무관하게</b>(완료·릴리즈·보관·취소 포함) 즉시 찾고, 텍스트면 제목 부분일치로 찾습니다. 표현이 달라 못 찾으면 <b>AI검색</b> — AI가 의미가 비슷한 목표를 찾아 큐 탭에 결과를 남깁니다.';
   } else {
     if(ttl) ttl.textContent='목표 추가';
     if(inp0) inp0.placeholder='목표/디테일 입력 후 Enter (AI추가로 계속 추가)';
-    if(aiB) aiB.classList.add('primary');
+    if(aiB){ aiB.classList.add('primary'); aiB.textContent='AI추가';
+      aiB.title='추가 전에 AI가 비슷한 목표가 있는지 먼저 검사합니다'; }
     if(seB) seB.classList.remove('primary');
+    if(adB) adB.style.display='';
+    if(hint) hint.innerHTML='<b>Enter</b>를 누르면 <b>AI추가</b>로 담깁니다 — 비슷한 목표가 있는지 먼저 확인하며, 창은 열린 채 계속 추가할 수 있습니다. <b>검색</b>은 추가하지 않고 비슷한 목표만 찾아줍니다. 바로 추가하려면 <b>추가</b> 버튼을 누르세요.';
   }
+  const res=$('gaResults'); if(res) res.innerHTML='';   // 지난 검색 결과는 열 때 비운다
+  _gsQuery='';
   // 초안이 남아 있으면 복원(내용 유지) — 없으면 빈칸으로 시작.
   const inp=$('gaText'); if(inp) inp.value=_gaDraft||'';
   const ei=$('gaEditIcon'); if(ei) ei.style.display=(_gaDraft&&_gaDraft.trim())?'':'none';
@@ -1336,10 +1352,109 @@ function resumeGoalDraft(){ openGoalAdd(_gaLastOpts||{}); }
 function gaClearDraft(){ _gaDraft=''; gaPersistDraft(); updateGaDraftChip(); const ei=$('gaEditIcon'); if(ei) ei.style.display='none'; }
 // 추가 후 모달은 열어둔다(placeholder의 "계속 추가"). 닫기는 사용자가 직접.
 function gaAdd(){ const inp=$('gaText'); if(goalAddSubmit(inp.value,_gaCtx)){ inp.value=''; gaClearDraft(); inp.focus(); } }
-function gaAi(){ const inp=$('gaText'); goalAddAi(inp.value,_gaCtx,$('gaAiBtn'),()=>{ inp.value=''; gaClearDraft(); closeGoalAdd(); },()=>{ inp.value=''; gaClearDraft(); closeGoalAdd(); }); }
-// 검색(찾기만): AI추가와 동일한 큐 파이프라인을 쓰되 search:true → 워커가 dedup 분석으로 비슷한
-// 기존 목표를 찾아 AI 큐에 '검색 결과' 카드로만 보여준다 (목표 생성 없음). 입력창은 비우고 창은 닫는다.
-function gaSearch(){ const inp=$('gaText'); if(goalSearchFind(inp.value)){ inp.value=''; gaClearDraft(); closeGoalAdd(); } }
+function gaAi(){ const inp=$('gaText');
+  // 검색 모드의 [AI검색]: findOnly 큐 파이프라인(search:true) — 목표 생성 없이 유사도 분석만.
+  // 모달은 열어두고 결과가 큐 탭에 쌓인다는 안내를 결과 영역에 남긴다.
+  if(_gaSearchMode){
+    if(goalSearchFind(inp.value)){ inp.value=''; gaClearDraft();
+      const res=$('gaResults'); if(res) res.innerHTML='<div class="muted" style="font-size:12.5px;border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin-top:6px">큐에 담겼습니다 — AI가 의미가 비슷한 목표를 분석 중입니다. 결과는 <b>큐</b> 탭에 \'검색 결과\' 카드로 표시됩니다.</div>'; }
+    return;
+  }
+  goalAddAi(inp.value,_gaCtx,$('gaAiBtn'),()=>{ inp.value=''; gaClearDraft(); closeGoalAdd(); },()=>{ inp.value=''; gaClearDraft(); closeGoalAdd(); }); }
+// ── 검색(즉시 조회): 큐를 거치지 않는 로컬 검색. 숫자 입력 → seq 정확 일치, 텍스트 입력 →
+// 제목 부분일치. /data.json 의 goals 는 릴리즈·보관 포함 전부 내려오므로 상태와 무관하게
+// 찾는다 — 완료·릴리즈됨·보관·취소된 목표도 결과 카드로 보여주고, 상태에 맞는 '다시 열기'
+// 액션을 함께 제공한다. AI 유사도 검색은 검색 모드의 [AI검색](gaAi→goalSearchFind)이 담당.
+let _gsQuery='';   // 마지막 검색어 — 카드 액션 반영(load 완료) 후 같은 검색을 다시 그린다
+function gaSearch(){ const inp=$('gaText'); const t=String(inp.value||'').trim(); if(!t) return;
+  _gsQuery=t; gsRender(); }
+function gsRefresh(){ if(_gsQuery) gsRender(); }
+function gsRender(){
+  const host=$('gaResults'); if(!host) return;
+  const all=(_review&&_review.goals)||_goals||[];
+  const t=_gsQuery;
+  if(/^\d+$/.test(t)){
+    const n=parseInt(t,10);
+    const g=all.find(x=>(x.seq||0)===n && n>0);
+    host.innerHTML=g?gsCard(g,all):gsMiss(n,all);
+  } else {
+    const q=t.toLowerCase();
+    const hits=all.filter(x=>String(x.text||'').toLowerCase().includes(q)).slice(0,8);
+    const qhits=((_review&&_review.aiQueue)||[]).filter(x=>!x.jobKind&&String(x.text||'').toLowerCase().includes(q)).slice(0,3);
+    host.innerHTML=(hits.length||qhits.length)
+      ? hits.map(g=>gsCard(g,all)).join('')+qhits.map(gsQueueRow).join('')
+      : '<div class="muted" style="font-size:12.5px;padding:8px 2px">"'+esc(t)+'" 제목 일치 없음 — 표현이 다를 수 있으면 <b>AI검색</b>을 눌러보세요.</div>';
+  }
+}
+// 목표가 속한 릴리즈: releaseId 우선, 레거시 레코드는 goalIds 로 역산.
+function gsRelOf(g){ const rels=(_review&&_review.releases)||[];
+  return rels.find(r=>r.id===g.releaseId)||rels.find(r=>(r.goalIds||[]).includes(g.id))||null; }
+// 현재 위치 설명: 보드 어디에도 안 보이는 상태(릴리즈·보관·취소)를 사람이 읽게 풀어준다.
+function gsWhere(g){
+  if(g.archived) return '보관함';
+  if(g.released){ const rel=gsRelOf(g);
+    return '릴리즈 '+((rel&&rel.code)?esc(rel.code):'')+((rel&&rel.releasedAt)?(' · '+fmtDate(rel.releasedAt)):''); }
+  if(g.status==='cancelled') return '취소됨';
+  if(g.sprint>0) return '스프린트 '+esc(sprintCode(g.sprint));
+  return g.bump?'Bump out 인박스':'백로그';
+}
+function gsBadge(g){
+  if(g.archived) return '<span class="pill" style="color:var(--mut)">보관</span>';
+  if(g.released) return '<span class="pill" style="color:#5eead4;border-color:#134e4a">릴리즈됨</span>';
+  const lab=(STATUS_OPTS.find(o=>o[0]===(g.status||'backlog'))||[])[1]||g.status;
+  return '<span class="pill">'+esc(lab)+'</span>';
+}
+function gsCard(g,all){
+  const kids=(all||[]).filter(x=>x.parent===g.id);
+  const meta=['위치: '+gsWhere(g)];
+  if(g.completedAt) meta.push('완료 '+fmtDate(g.completedAt));
+  if(g.trackedSeconds>0) meta.push('누적 '+fmtDur(g.trackedSeconds));
+  const kidRows=kids.length?('<div class="muted" style="font-size:12px;margin-top:6px;padding-left:10px;border-left:2px solid var(--line)">'
+    +kids.slice(0,5).map(k=>'goal-'+pad2(k.seq||0)+' '+esc(k.text)).join('<br>')
+    +(kids.length>5?('<br>… 외 '+(kids.length-5)+'개'):'')+'</div>'):'';
+  return '<div style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px">'
+    +'<div class="row" style="gap:8px;flex-wrap:wrap">'+gpill(g)+gsBadge(g)
+      +'<span style="font-weight:600">'+esc(g.text)+'</span></div>'
+    +'<div class="muted" style="font-size:12px;margin-top:4px">'+meta.join(' · ')+'</div>'
+    +kidRows
+    +'<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">'+gsActions(g)+'</div></div>';
+}
+// 상태 → 액션 매핑 (기획 핵심): 활성=보기만, 완료·취소=다시 열기, 릴리즈=개별/전체 복원, 보관=해제.
+function gsActions(g){
+  const view='<a class="btn" href="/goal?n='+(g.seq||0)+'" style="text-decoration:none" title="골 페이지 — 정의·첨부 보기">상세 보기 →</a>';
+  if(g.archived)
+    return view+'<button class="btn primary" onclick="gsAct(\'unarchive\',\''+g.id+'\')" title="보관을 해제해 활성 목록으로 되돌립니다">보관 해제</button>';
+  if(g.released){
+    const rel=gsRelOf(g);
+    return view
+      +'<button class="btn primary" onclick="gsAct(\'reopen\',\''+g.id+'\')" title="이 목표만 릴리즈에서 꺼내 백로그로 되돌립니다 — 릴리즈 기록은 그대로 남고 재오픈 표시가 붙습니다">이 목표만 다시 열기</button>'
+      +(rel?('<button class="btn" onclick="gsAct(\'restore\',\''+rel.id+'\')" title="릴리즈 전체를 복원합니다 — 소속 목표 모두 활성으로, 스프린트도 다시 열립니다">릴리즈 전체 복원</button>'):'');
+  }
+  if(g.status==='done'||g.status==='cancelled')
+    return view+'<button class="btn primary" onclick="gsAct(\'reopen\',\''+g.id+'\')" title="백로그로 되돌립니다 (번호 유지)">다시 열기</button>';
+  return view;   // 활성(대기·진행·응답 대기·중지): 이미 보드에 있다 — 보기만 제공
+}
+// 카드 액션 실행 — post()가 load()까지 끝낸 뒤(_review 갱신) 같은 검색을 다시 그린다.
+function gsAct(kind,id){
+  const p = kind==='unarchive' ? post('/api/goal/archive',{id:id,archived:false})
+        : kind==='restore'    ? post('/api/release/restore',{id:id})
+        :                       post('/api/goal/reopen',{id:id});
+  p.then(gsRefresh);
+}
+function gsMiss(n,all){
+  const near=all.filter(g=>(g.seq||0)>0).map(g=>g.seq)
+    .sort((a,b)=>Math.abs(a-n)-Math.abs(b-n)).slice(0,3);
+  return '<div class="muted" style="font-size:12.5px;padding:8px 2px">goal-'+n+' — 없는 번호입니다. 큐 후보는 승급 전이라 번호가 없습니다.'
+    +(near.length?('<div class="row" style="gap:6px;margin-top:6px;align-items:center">근접: '
+      +near.map(s=>'<button class="btn" onclick="gsGo('+s+')">goal-'+pad2(s)+'</button>').join('')+'</div>'):'')
+    +'</div>';
+}
+function gsGo(n){ const i=$('gaText'); if(i) i.value=String(n); gaSearch(); }
+function gsQueueRow(q){
+  return '<div style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px;opacity:.85">'
+    +'<div class="row" style="gap:8px;flex-wrap:wrap"><span class="pill">큐 후보</span><span>'+esc(q.text)+'</span></div>'
+    +'<div class="muted" style="font-size:12px;margin-top:4px">아직 번호가 없습니다 — 추가/스킵 확정은 큐 탭에서.</div></div>';
+}
 function goalSearchFind(text){ const t=String(text||'').trim(); if(!t) return false;
   post('/api/goal/queue/enqueue',{text:t,search:true}); return true; }
 // ===== 재사용 목표 추가 모듈 (single source of truth) =====
@@ -1826,9 +1941,10 @@ let _qHist=[];
 let _qHistMsg={};
 function queueHistoryHTML(){
   const hist=_qHist||[]; if(!hist.length) return '';
-  function when(ts){ const d=new Date((ts||0)*1000), now=new Date();
-    const hm=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
-    return (d.toDateString()===now.toDateString())?hm:((d.getMonth()+1)+'/'+d.getDate()+' '+hm); }
+  function when(ts){ const p=CMTimeFilter.parts((ts||0)*1000), n=CMTimeFilter.parts(new Date());
+    const hm=('0'+p.h).slice(-2)+':'+('0'+p.mi).slice(-2);
+    const sameDay=(p.y===n.y&&p.mo===n.mo&&p.d===n.d);
+    return sameDay?hm:(p.mo+'/'+p.d+' '+hm); }
   const rows=hist.map(function(h){
     // 결정 요약: 액션별로 "무엇이 생겼는지"를 링크로. #seq 클릭 → 그 목표 페이지.
     let what;
@@ -2125,7 +2241,7 @@ const TYPE_KEYS=['parent','child','task'];
 // 기본값은 필터 바 datetime-local 입력의 초기값과 동일하게 맞춘다(2026-06-24 17:00).
 // 완료 외 상태(대기·진행 등)는 이 컷오프의 영향을 받지 않는다 — 현재 진행 중인 일은 항상 보인다.
 const DONE_CUTOFF_DEFAULT='2026-06-24T17:00';
-const DC_DEFAULT=Math.floor(new Date(DONE_CUTOFF_DEFAULT).getTime()/1000);
+const DC_DEFAULT=CMTimeFilter.inputToEpoch(DONE_CUTOFF_DEFAULT);   // 표시 tz 벽시계로 해석
 // Server-injected: the persisted cutoff (0 = 해제) if the user has set one, else DC_DEFAULT.
 // This is what survives an app restart; the URL hash, if present, still overrides it below.
 let _doneSince=\#(dcInit);
@@ -2290,7 +2406,7 @@ function initReportFilter(){
   if(_reportCtl) return;
   const host=$('reportFilter'); if(!host) return;
   _reportCtl=CMTimeFilter.mount(host, {
-    presets:['today','yesterday','7d','1m','30d'], auto:true, custom:true, initial:'auto',
+    presets:['today','yesterday','7d','30d','90d'], auto:true, custom:true, initial:'auto',
     onChange:(r)=>{ _reportRange=r;
       // 캐시된 리뷰로 리포트만 즉시 다시 그린다 (5초 폴링을 기다리지 않음).
       if(_lastReportArgs){ const a=_lastReportArgs; _md=buildMarkdown(a.d,a.r,a.conf,a.prov); renderReport(a.d,a.r,a.conf,a.prov); }
@@ -2405,8 +2521,8 @@ function updateSprintCombo(){
   if(cnt){ if(n>0){ cnt.textContent=n; cnt.style.display=''; } else cnt.style.display='none'; }
   if(combo) combo.classList.toggle('active', n>0);
 }
-// 완료 컷오프 설정/해제. datetime-local 값(로컬 tz)을 Unix 초로 환산; 빈 값이면 해제(0).
-function setDoneSince(v){ _doneSince=v?Math.floor(new Date(v).getTime()/1000):0; reapplyFilter(); syncURL(); post('/api/prefs/donecutoff',{dc:_doneSince}); }
+// 완료 컷오프 설정/해제. datetime-local 값(표시 tz 벽시계)을 Unix 초로 환산; 빈 값이면 해제(0).
+function setDoneSince(v){ _doneSince=CMTimeFilter.inputToEpoch(v); reapplyFilter(); syncURL(); post('/api/prefs/donecutoff',{dc:_doneSince}); }
 function clearDoneSince(){ _doneSince=0; const el=$('flt_donesince'); if(el) el.value=''; reapplyFilter(); syncURL(); post('/api/prefs/donecutoff',{dc:_doneSince}); }
 function anyStatusActive(){ return _statusFilter.backlog||_statusFilter.in_progress||_statusFilter.done||_statusFilter.cancelled; }
 // Summary text mirrors the active combo: 모두 / 완료 만 / 완료 진행 만 …
@@ -2525,8 +2641,9 @@ function restoreFromURL(){
   // 명시적 URL 해시 뷰가 없으면, 사용자가 지정한 기본 보기(Set as default)로 연다.
   // 기본 보기가 없으면 서버가 주입한 마지막 보기(lastView)를 그대로 쓴다.
   if(!hashHasView && _defaultView) _view=_defaultView;
-  // 'skills'·'agents'는 더 이상 대시보드 탭이 아니다(레일 독립 오버레이). 오래된 해시/저장값이 오면 기본 작업뷰로 보정.
-  if(_view==='skills'||_view==='agents') _view='input';
+  // 'skills'·'agents'(레일 독립 오버레이)·'actions'(컨디션 관리 페이지로 이동)는 더 이상
+  // 대시보드 탭이 아니다. 오래된 해시/저장값이 오면 기본 작업뷰로 보정.
+  if(_view==='skills'||_view==='agents'||_view==='actions') _view='input';
   renderTabs();
   const ds=$('flt_donesince'); if(ds) ds.value=_doneSince?localInput(_doneSince):'';
   _urlReady=true;
@@ -2763,6 +2880,8 @@ const VIEW_DEFS=[
   {k:'input',t:'목록'},{k:'group',t:'그룹'},{k:'table',t:'테이블'},
   {k:'token',t:'토큰'},{k:'queue',t:'큐'},{k:'schedule',t:'일정'},{k:'preview',t:'리포트'},
   {k:'sprint',t:'스프린트'},{k:'archived',t:'아카이브'},{k:'history',t:'히스토리'}
+  // 액션로그는 더 이상 대시보드 탭이 아니다 — 컨디션 관리 페이지(/bgm-player)의 액션로그 탭으로 이동
+  // (컨디션맵 띠 클릭 드릴다운과 함께 분석). normTabOrder가 저장된 옛 'actions' 키를 걸러낸다.
   // 에이전트는 더 이상 대시보드 탭이 아니다 — 레일의 '위임' 메뉴가 소유하는 독립 오버레이(SessionRail cmNav('delegate')).
   // 워커(백그라운드/주기 작업)도 대시보드에서 분리됐다 — 레일의 '크론' 메뉴가 독립 페이지 /cron 을 연다.
 ];
@@ -3074,16 +3193,14 @@ function gnote(r,id){ return (r.notes&&r.notes[id])||''; }
 // the board reads "what's overdue / due today / this week / later". Completed goals collect
 // in their own 완료 group (newest first) regardless of target. Each row carries inline
 // target/완료 datetime pickers; editing one posts to the server and the 5s poll re-renders.
-function startOfDay(epochSec){ const d=new Date(epochSec*1000); d.setHours(0,0,0,0); return d.getTime()/1000; }
-// datetime-local needs "YYYY-MM-DDTHH:mm" in LOCAL time; 0/absent => empty field.
-function localInput(epochSec){ if(!epochSec) return '';
-  const d=new Date(epochSec*1000), p=n=>(n<10?'0':'')+n;
-  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
-function fmtDate(epochSec){ if(!epochSec) return '–'; const d=new Date(epochSec*1000), p=n=>(n<10?'0':'')+n;
-  return (d.getMonth()+1)+'/'+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes()); }
-// datetime-local value -> epoch seconds (local tz); empty -> 0 (clears the field server-side).
-function setTarget(id,val){ const v=val?Math.floor(new Date(val).getTime()/1000):0; post('/api/goal/target',{id:id,target:v}); }
-function setCompleted(id,val){ const v=val?Math.floor(new Date(val).getTime()/1000):0; post('/api/goal/completed',{id:id,completed:v}); }
+function startOfDay(epochSec){ return CMTimeFilter.parseDay(CMTimeFilter.dayStr(new Date(epochSec*1000))).getTime()/1000; }   // 표시 tz 자정
+// datetime-local needs "YYYY-MM-DDTHH:mm" — 표시 타임존 벽시계로; 0/absent => empty field.
+function localInput(epochSec){ return CMTimeFilter.epochToInput(epochSec); }
+function fmtDate(epochSec){ if(!epochSec) return '–'; const q=CMTimeFilter.parts(epochSec*1000), p=n=>(n<10?'0':'')+n;
+  return q.mo+'/'+q.d+' '+p(q.h)+':'+p(q.mi); }
+// datetime-local value -> epoch seconds (표시 tz); empty -> 0 (clears the field server-side).
+function setTarget(id,val){ post('/api/goal/target',{id:id,target:CMTimeFilter.inputToEpoch(val)}); }
+function setCompleted(id,val){ post('/api/goal/completed',{id:id,completed:CMTimeFilter.inputToEpoch(val)}); }
 function ddayBadge(g){
   if((g.status||'backlog')==='done'){ const c=g.completedAt||0; return '<span class="dday done">✓ '+(c?fmtDate(c):'완료')+'</span>'; }
   const t=g.targetAt||0; if(!t) return '<span class="dday">미정</span>';
@@ -3698,6 +3815,7 @@ function renderSprintBoard(r){
   h+=completedLogHTML(r);
   $('sprintHost').innerHTML=h;
   if(_spModalNum!=null) fillSprintModal();   // 열려 있으면 최신 데이터로 갱신(기간 변경 시 목표일 반영)
+  if(_relModalId!=null) fillRelModal();      // 릴리즈 편집 모달도 최신 데이터로 갱신
 }
 // 상태 카운트 배지 (대기 · 진행 · 완료)
 function countsHTML(members){
@@ -3755,7 +3873,7 @@ function extApplyLabel(){ if(_extAbs>0) return '이 시각으로 설정';
   const mag=Math.abs(_extHours); if(_extHours>0) return mag+'시간 연장'; if(_extHours<0) return mag+'시간 단축'; return '변경 없음'; }
 // 직접 지정 입력: 값만 예약(스테이징)하고 미리보기·버튼만 부분 갱신한다. 여기서 모달을
 // 통째로 다시 그리면 입력 도중 포커스가 튕겨(분을 못 넣고 닫힘) 버리므로 재렌더하지 않는다.
-function extSetAbs(val){ _extAbs=val?Math.floor(new Date(val).getTime()/1000):0; if(_extAbs) _extHours=0;
+function extSetAbs(val){ _extAbs=CMTimeFilter.inputToEpoch(val); if(_extAbs) _extHours=0;
   const pv=$('extPrev'); if(pv){ const nt=extPreviewAt(); pv.innerHTML='조정 후 <b>'+(nt?fmtDate(nt):'변경 없음')+'</b>'; }
   const ap=$('extApply'); if(ap){ const on=extDirty(); ap.disabled=!on; ap.style.opacity=on?'':'0.5'; ap.style.cursor=on?'':'default'; ap.textContent=extApplyLabel(); } }
 function extModalForm(s){
@@ -3843,7 +3961,7 @@ function sprintGroupHTML(s,shown,allLive){
   return '<div class="spgrp'+(col?' collapsed':'')+'" ondragover="spOver(event)" ondragleave="spLeave(event)" ondrop="spDrop(event,'+s.number+')">'
     +'<div class="spgrp-hd">'
       +'<span class="spchev" onclick="toggleSpCollapse('+s.number+')" title="펼치기/접기">▾</span>'
-      +'<span class="pill sp">'+esc(s.code||('#'+s.number))+'</span>'
+      +'<span class="pill sp clk" onclick="openSprintModal('+s.number+')" title="클릭: 별칭·날짜 상세 설정" style="cursor:pointer">'+esc(s.code||('#'+s.number))+'</span>'
       +'<span class="ttl">'+(s.goalText?esc(s.goalText):'<span class="muted">예상 결과 미정</span>')+'</span>'
       +sprintCountdownHTML(s)+'<span style="flex:1"></span>'+countsHTML(members)
       +'<button class="btn" onclick="addGoalToSprint('+s.number+')" title="이 스프린트에 목표 바로 추가">＋ 목표</button>'
@@ -3865,6 +3983,7 @@ function backlogHTML(shown,allLive){
       +'<b>Backlog</b><span class="muted" style="font-size:12px">미배정</span>'
       +'<span style="flex:1"></span>'+countsHTML(members)
       +'<button class="btn" onclick="addGoalToBacklog()" title="목표를 추가합니다 (입력·AI추가 모듈)">＋ 목표</button>'
+      +'<button class="btn" onclick="cleanupSprintsNow()" title="열린 빈 스프린트(목표 0·예상 결과 없음)를 정리합니다">빈 스프린트 정리</button>'
       +'<button class="btn primary" onclick="createSprintNow()">＋ Create sprint</button></div>'
     +'<div class="spgrp-body">'+body+'</div>'
   +'</div>';
@@ -3900,6 +4019,8 @@ function completedLogHTML(r){
   const sgoalOf={}; ((r&&r.sprints)||[]).forEach(s=>{ sgoalOf[s.number]=s.goalText||''; });
   const codeOf={}; ((r&&r.sprints)||[]).forEach(s=>{ codeOf[s.number]=s.code||('#'+s.number); });
   const items=rels.map(function(rel){
+    // 마감 시각만 표기한다. 시작~완료 기간은 휴식까지 스프린트 시간으로 보이게 해서 오해를
+    // 부르므로 (2026-07-09 결정) 로그에는 "언제 마감쳤는가"만 남긴다.
     const when=rel.releasedAt?fmtDate(rel.releasedAt):'—';
     // Prefer the release's own snapshot code (unique per release); fall back to the sprint's
     // current code for legacy records saved before per-release codes existed.
@@ -3908,6 +4029,9 @@ function completedLogHTML(r){
     const head=code?(code+gtext):'미배정';
     const open=_relOpen.has(rel.id);
     const ids=rel.goalIds||[], titles=rel.titles||[];
+    // 재오픈 표시: 릴리즈 기록은 불변이지만, 소속 goal 이 더는 released 가 아니면(검색의
+    // '이 목표만 다시 열기') 그 사실을 역산해 헤더와 행에 주석으로 보여준다.
+    const reopened=ids.filter(function(id){ const g=goalById[id]; return g&&!g.released; }).length;
     // 접힌 아이템은 행을 만들지 않는다 — 펼칠 때(open) 재렌더에서 생성되어 DOM 노드를 아낀다.
     const rows=!open ? '' : (titles.length ? titles.map(function(t,i){
       const g=goalById[ids[i]]; const gn=g?('<span class="gn">goal-'+pad2(g.seq||0)+'</span>'):'';
@@ -3917,12 +4041,15 @@ function completedLogHTML(r){
         if(g.parent){ const p=goalById[g.parent]; pn='<span class="pn" title="상위 목표">'+(p?('goal-'+pad2(p.seq||0)):'상위')+'</span>'; }
         else { pn='<span class="pn top" title="최상위 목표">부모</span>'; }
       }
-      return '<div class="relrow">'+pn+gn+'✓ '+esc(t)+'</div>';
+      const ro=(g&&!g.released)?' <span class="muted" style="font-size:11px">↩ 재오픈됨</span>':'';
+      return '<div class="relrow">'+pn+gn+'✓ '+esc(t)+ro+'</div>';
     }).join('') : '<div class="muted" style="font-size:12px">목표 없음</div>');
+    // 펼치기/닫기는 앞의 ▸ 버튼, 제목(코드·마감 시각 전체) 클릭은 편집 모달 — 두 상호작용을 분리한다.
     return '<div class="relitem">'
-      +'<h4 class="clk" onclick="toggleRel(\''+rel.id+'\')">'
-        +'<span><span class="chev'+(open?' open':'')+'">▸</span>'+head+' · '+when
-        +' <span class="muted" style="font-weight:400;font-size:12px">('+titles.length+'개)</span></span>'
+      +'<h4>'
+        +'<span><span class="chev'+(open?' open':'')+' clk" onclick="toggleRel(\''+rel.id+'\')" title="펼치기/닫기" style="padding:2px 6px 2px 2px">▸</span>'
+        +'<span class="clk" onclick="openRelModal(\''+rel.id+'\')" title="클릭: 제목·마감 시간 편집">'+head+' · '+when+'</span>'
+        +' <span class="muted" style="font-weight:400;font-size:12px">('+titles.length+'개'+(reopened?(' · '+reopened+'건 재오픈'):'')+')</span></span>'
         +'<span class="row" style="gap:8px"><span class="valbadge">만든 가치 '+(rel.value||0)+'</span>'
         +'<button class="btn" onclick="event.stopPropagation();restoreRelease(\''+rel.id+'\')">복원</button></span></h4>'
       +'<div class="relbody'+(open?' open':'')+'">'+rows+'</div></div>';
@@ -4282,15 +4409,45 @@ let _spModalNum=null;
 function spModalForm(s){
   const chips=DUR_OPTS.map(o=>'<span class="durchip'+(o[0]===s.durationKind?' on':'')+'" onclick="setSprintDur('+s.number+',\''+o[0]+'\')">'+o[1]+'</span>').join('');
   return '<h3>스프린트 '+esc(s.code||('#'+s.number))+' 편집</h3>'
+    +'<div class="line"><span class="lab">별칭</span><input value="'+esc(s.code||'').replace(/"/g,'&quot;')+'" placeholder="예: 26-15 · 자유 별칭 가능" onchange="setSprintCode('+s.number+',this.value)"></div>'
     +'<div class="line"><span class="lab">예상 결과</span><input class="spmgoal" value="'+esc(s.goalText).replace(/"/g,'&quot;')+'" placeholder="이 스프린트가 끝나면 완성될 것" onchange="updateSprintGoal('+s.number+',this.value)"></div>'
     +'<div class="line"><span class="lab">기간</span><span class="chips">'+chips+'</span></div>'
     +'<div class="line"><span class="lab">시작</span><input type="datetime-local" value="'+localInput(s.startAt)+'" onchange="setSprintDate('+s.number+',\'startAt\',this.value)"></div>'
     +'<div class="line"><span class="lab">목표</span><input type="datetime-local" value="'+localInput(s.targetAt)+'" onchange="setSprintDate('+s.number+',\'targetAt\',this.value)"></div>'
     +'<div class="line" style="margin-top:4px"><button class="btn danger" style="border-color:#5a2738;color:#ff9db0" onclick="deleteSprintNow('+s.number+')">스프린트 삭제</button><span style="flex:1"></span><button class="btn primary" onclick="closeSprintModal()">닫기</button></div>';
 }
-function openSprintModal(n){ _spModalNum=n; fillSprintModal(); const m=$('spModal'); if(m) m.style.display='flex'; }
+function openSprintModal(n){ _spModalNum=n; _relModalId=null; fillSprintModal(); const m=$('spModal'); if(m) m.style.display='flex'; }
 function fillSprintModal(){ if(_spModalNum==null) return; const s=((_review&&_review.sprints)||[]).find(x=>x.number===_spModalNum); if(!s){ closeSprintModal(); return; } const b=$('spModalBox'); if(b) b.innerHTML=spModalForm(s); }
-function closeSprintModal(){ _spModalNum=null; const m=$('spModal'); if(m) m.style.display='none'; }
+function closeSprintModal(){ _spModalNum=null; _relModalId=null; const m=$('spModal'); if(m) m.style.display='none'; }
+
+// --- 완료 스프린트(릴리즈) 편집 모달 --- 완료 로그의 제목(코드·마감 시각) 클릭으로 열린다.
+// 별칭과 마감 일시만 편집한다 — 시작~완료 기간은 휴식까지 포함돼 오해를 부르므로 기록·편집
+// 대상에서 제외 (startedAt 데이터는 남아 있지만 노출하지 않는다).
+// 스프린트 편집 모달과 같은 #spModal 컨테이너를 공유한다 (_spModalNum과 상호 배타).
+let _relModalId=null;
+function relModalForm(rel){
+  return '<h3>완료 스프린트 '+esc(rel.code||'미배정')+' 편집</h3>'
+    +'<div class="line"><span class="lab">별칭</span><input value="'+esc(rel.code||'').replace(/"/g,'&quot;')+'" placeholder="예: 26-15 · 자유 별칭 가능" onchange="setRelCode(\''+rel.id+'\',this.value)"></div>'
+    +'<div class="line"><span class="lab">마감</span><input type="datetime-local" value="'+localInput(rel.releasedAt)+'" onchange="setRelDate(\''+rel.id+'\',this.value)"></div>'
+    +'<div class="line" style="margin-top:4px"><span style="flex:1"></span><button class="btn primary" onclick="closeSprintModal()">닫기</button></div>';
+}
+function openRelModal(id){ _relModalId=id; _spModalNum=null; fillRelModal(); const m=$('spModal'); if(m) m.style.display='flex'; }
+function fillRelModal(){ if(_relModalId==null) return; const rel=((_review&&_review.releases)||[]).find(x=>x.id===_relModalId); if(!rel){ closeSprintModal(); return; } const b=$('spModalBox'); if(b) b.innerHTML=relModalForm(rel); }
+// 별칭 변경 — 스프린트·릴리즈 코드 전체에서 유일해야 저장된다 (서버도 재검증 후 무시).
+function setRelCode(id,v){
+  const t=String(v||'').trim();
+  if(!t){ alert('별칭을 입력하세요.'); fillRelModal(); return; }
+  const r=_review||{};
+  const dup=((r.sprints)||[]).some(s=>s.code===t) || ((r.releases)||[]).some(x=>x.id!==id&&x.code===t);
+  if(dup){ alert('이미 사용 중인 별칭입니다: '+t); fillRelModal(); return; }
+  post('/api/release/update',{id:id,code:t});
+}
+// 마감 일시 변경 — 비울 수 없다 (서버도 재검증: releasedAt은 never cleared).
+function setRelDate(id,val){
+  const ep=CMTimeFilter.inputToEpoch(val);
+  if(!ep){ alert('마감 일시는 비울 수 없습니다.'); fillRelModal(); return; }
+  post('/api/release/update',{id:id,releasedAt:ep});
+}
 
 // 이 스프린트에 목표 바로 추가 — 재사용 목표 추가 모듈을 연다 (입력·AI추가·추가 공유).
 function addGoalToSprint(n){ const s=((_review&&_review.sprints)||[]).find(x=>x.number===n); openGoalAdd({sprint:n,label:(s&&s.code)||('#'+n)}); }
@@ -4299,13 +4456,25 @@ function addGoalToBacklog(){ openGoalAdd({sprint:0,label:'Backlog'}); }
 // Bump out(아이디어 인박스)에 담기 — 같은 재사용 모듈, 대상만 Bump out.
 function addGoalToBump(){ openGoalAdd({bump:true,label:'Bump out'}); }
 function createSprintNow(){ post('/api/sprint/create',{goalText:'',durationKind:'1d'}); }   // 자동 코드(26-N), Backlog 비움
+// 열린 빈 스프린트(목표 0·예상 결과 없음)를 정리한다. 다른 작업 중 스프린트가 있으면 전부,
+// 없으면 최신 1개만 남기고 삭제 (서버 cleanupSprints 규칙).
+function cleanupSprintsNow(){ if(!confirm('열린 빈 스프린트(목표 0개·예상 결과 없음)를 정리합니다. 작업 중인 스프린트는 건드리지 않습니다.')) return; post('/api/sprint/cleanup',{}); }
+// 별칭(code) 변경 — 스프린트·릴리즈 코드 전체에서 유일해야 저장된다 (서버도 재검증 후 무시).
+function setSprintCode(n,v){
+  const t=String(v||'').trim();
+  if(!t){ alert('별칭을 입력하세요.'); fillSprintModal(); return; }
+  const r=_review||{};
+  const dup=((r.sprints)||[]).some(s=>s.number!==n&&s.code===t) || ((r.releases)||[]).some(x=>x.code===t);
+  if(dup){ alert('이미 사용 중인 별칭입니다: '+t); fillSprintModal(); return; }
+  post('/api/sprint/update',{number:n,code:t});
+}
 function updateSprintGoal(n,v){ post('/api/sprint/update',{number:n,goalText:String(v||'')}); }
 function setSprintDur(n,k){ post('/api/sprint/update',{number:n,durationKind:k}); }   // 목표 날짜는 서버가 재계산
-function setSprintDate(n,key,val){ const ep=val?Math.floor(new Date(val).getTime()/1000):0; const o={number:n}; o[key]=ep; post('/api/sprint/update',o); }
+function setSprintDate(n,key,val){ const ep=CMTimeFilter.inputToEpoch(val); const o={number:n}; o[key]=ep; post('/api/sprint/update',o); }
 function deleteSprintNow(n){ if(!confirm('이 스프린트를 삭제합니다. 배정된 목표는 Backlog로 돌아갑니다.')) return; post('/api/sprint/delete',{number:n}); }
-// Complete sprint = 닫고·이월하고·전진한다: 완료 목표는 커밋, 미완료는 다음 스프린트로 이월,
-// 현재 스프린트는 닫고, 다음 번호(26-2→26-3)가 24시간 자동으로 새로 열린다.
-function releaseSprintGroup(n){ if(!confirm('이 스프린트를 완료합니다. 완료 목표는 커밋되고, 미완료 목표는 다음 스프린트로 이월되며, 다음 번호의 스프린트가 24시간으로 새로 열립니다.')) return; post('/api/sprint/complete',{number:n}); }
+// Complete sprint = 커밋하고 닫는다. 미완료 목표가 있을 때만 이월 — 이미 열린 스프린트가
+// 있으면 그리로, 없으면 새 스프린트(24시간 auto)가 열린다. 빈 스프린트는 기록 없이 닫힌다.
+function releaseSprintGroup(n){ if(!confirm('이 스프린트를 완료합니다. 완료 목표는 커밋되고, 미완료 목표가 있으면 열린 스프린트로 이월됩니다(없으면 새로 열림). 목표가 없으면 기록 없이 닫힙니다.')) return; post('/api/sprint/complete',{number:n}); }
 
 // 완료 로그 펼침/복원
 function toggleRel(id){ if(_relOpen.has(id))_relOpen.delete(id); else _relOpen.add(id); if(_review) renderSprintBoard(_review); }
@@ -4318,7 +4487,7 @@ function releaseCurrentSprint(){
   // 단일 스프린트 선택 시 = 완료 후 다음 번호로 전진(이월 포함). '모두' 선택 시 = 전진 없이
   // 전 스프린트의 완료 목표만 커밋(번호 전진은 특정 스프린트를 완료할 때만 의미가 있으므로).
   if(only){
-    if(!confirm('스프린트 '+sprintCode(only)+'을(를) 완료합니다. 완료 목표는 커밋되고, 미완료 목표는 다음 스프린트로 이월되며, 다음 번호의 스프린트가 24시간으로 새로 열립니다.')) return;
+    if(!confirm('스프린트 '+sprintCode(only)+'을(를) 완료합니다. 완료 목표는 커밋되고, 미완료 목표가 있으면 열린 스프린트로 이월됩니다(없으면 새로 열림). 목표가 없으면 기록 없이 닫힙니다.')) return;
     post('/api/sprint/complete',{number:only});
   }else{
     if(!confirm('모든 스프린트의 완료 목표를 커밋합니다. 목록에서 사라지고 완료 로그로 이동합니다.')) return;

@@ -181,9 +181,10 @@ final class DashboardServer {
         let method = Self.parseMethod(headerText)
         let path = Self.parsePath(headerText)
 
-        if method == "GET" && path.hasPrefix("/api/goal/chat2/stream") {
-            // Held-open SSE stream for the streaming chat. Must be checked BEFORE the
-            // generic /api/goal/chat GET branch (which would otherwise swallow it).
+        if method == "GET" && (path.hasPrefix("/api/goal/chat2/stream") || path.hasPrefix("/api/actions/stream")) {
+            // Held-open SSE streams (streaming chat + live action-log feed). Must be
+            // checked BEFORE the generic /api/goal/chat and /api/actions GET branches
+            // (which would otherwise swallow them).
             startSSE(conn, path: path)
         } else if method == "POST" && path.hasPrefix("/api/") {
             let json = self.post(path, String(decoding: reqBody, as: UTF8.self))
@@ -239,7 +240,12 @@ final class DashboardServer {
                                       || path.hasPrefix("/workers.json")
                                       || path.hasPrefix("/api/bgm/list") || path.hasPrefix("/api/bgm/now")
                                       || path.hasPrefix("/api/bgm/stats") || path.hasPrefix("/api/bgm/plan")
-                                      || path.hasPrefix("/api/session/state") || path.hasPrefix("/api/equipment")) {
+                                      || path.hasPrefix("/api/bgm/slot-scores")
+                                      || path.hasPrefix("/api/session/state") || path.hasPrefix("/api/equipment")
+                                      || path.hasPrefix("/api/settings/paths")
+                                      || path.hasPrefix("/api/settings/timezone")
+                                      || path.hasPrefix("/api/update/check")
+                                      || path.hasPrefix("/api/actions")) {
             // Per-goal chat, the raw core/detail definition text, the goal's linked-session
             // list, the recent-session picker feed (all keyed by ?seq=), and the 히스토리
             // tab's per-day activity feed. Dynamic, so routed via apiGet.

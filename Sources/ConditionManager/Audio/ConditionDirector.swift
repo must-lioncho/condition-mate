@@ -33,11 +33,13 @@ final class ConditionDirector {
 
     // 폭우 리셋 (activity-triggered rain reset). Once a day, when the user has been in
     // sustained focus and then their activity noticeably drops, the director rolls the
-    // dice and — on a hit — summons a 1-hour rain "reset" (the heavy_rain pool),
-    // overriding whatever the plan slot would otherwise play, then returns to the plan
+    // dice and — on a hit — summons a rain "reset" (the heavy_rain pool), overriding
+    // whatever the plan slot would otherwise play, then returns to the plan
     // automatically. A spontaneous squall to clear the head, not a nightly schedule.
+    // Also summonable on demand from the 장비 page at an EXP cost (see triggerRain).
     private let rainTheme = "heavy_rain"
-    private let rainDurationMinutes: TimeInterval = 60      // rain lasts one hour
+    private let rainMinMinutes: TimeInterval = 30          // each rain lasts 30–60 min,
+    private let rainMaxMinutes: TimeInterval = 60          // rolled fresh per summon
     private let rainFocusHighNorm = 0.7                     // norm ≥ this = "focused" (builds credit)
     private let rainDropNorm = 0.5                          // norm < this = "focus dropping" (trigger window)
     private let rainFocusThreshold = 30                     // ticks (~10 min) of focus credit before eligible
@@ -205,7 +207,14 @@ final class ConditionDirector {
     // switch is audible.
     func setSessionMode(_ mode: String) {
         guard Self.modePlaylists[mode] != nil, mode != sessionMode else { return }
+        let previous = sessionMode
         sessionMode = mode
+        var e = ActionLog.Event()
+        e.kind = "user"; e.action = "modeChange"
+        e.detail = "세션 모드 \(previous) → \(mode)"
+        e.mode = mode; e.phase = phase.rawValue; e.profile = activeProfileLabel
+        e.pool = poolLabel
+        ActionLog.shared.append(e)
         if isActive { playOpener() }
     }
 
@@ -253,6 +262,33 @@ final class ConditionDirector {
         return inModePlaylist(track)
     }
 
+    // MARK: - 액션 로그 (why-this-track audit)
+
+    // Which gate is choosing tracks right now — mirrors inActivePool's precedence.
+    // Surfaced on every trackChange event so the /actions page can show that the
+    // plan slot (not the session mode) is what actually picked the music.
+    private var poolLabel: String {
+        if rainActive { return "폭우 리셋" }
+        if let slot = currentSlot { return "플랜 · \(slot.label)" }
+        return "모드 · \(sessionMode)"
+    }
+
+    // One line per ACTUAL track switch, tagged with the selecting pool + mode/phase.
+    private func logTrack(_ action: String, url: URL, title: String, detail: String) {
+        var e = ActionLog.Event()
+        e.kind = "bgm"
+        e.action = action
+        e.detail = detail
+        e.mode = sessionMode
+        e.track = title
+        e.trackKey = url.lastPathComponent
+        e.bpm = Int(library.tracks.first(where: { $0.url == url })?.bpm ?? 0)
+        e.pool = poolLabel
+        e.phase = phase.rawValue
+        e.profile = activeProfileLabel
+        ActionLog.shared.append(e)
+    }
+
     // MARK: - 폭우 리셋 (rain reset)
 
     // "Once a day" persistence: store the day-string of the last rain so a restart can't
@@ -279,7 +315,8 @@ final class ConditionDirector {
     // Begin the rain reset: pin a heavy_rain track and hold for the duration.
     private func startRain() {
         guard let rain = library.tracks.first(where: { $0.theme == rainTheme }) else { return } // no rain pool
-        rainUntil = Date().addingTimeInterval(rainDurationMinutes * 60)
+        let minutes = TimeInterval.random(in: rainMinMinutes...rainMaxMinutes)
+        rainUntil = Date().addingTimeInterval(minutes * 60)
         markRainedToday()
         focusCredit = 0
         forcedRainPending = false
@@ -291,8 +328,10 @@ final class ConditionDirector {
         notePlayed(rain.url)
         audio.play(url: rain.url, title: rain.title)
         WorkerRegistry.shared.recordRun("director",
-            why: "몰입 후 활동 저하 감지 — 폭우 리셋 발동(하루 1회)",
-            effect: "🌧 폭우 리셋 시작 · \(Int(rainDurationMinutes))분")
+            why: "몰입 후 활동 저하 감지 — 폭우 리셋 발동",
+            effect: "🌧 폭우 리셋 시작 · \(Int(minutes.rounded()))분")
+        logTrack("rainStart", url: rain.url, title: rain.title,
+                 detail: "폭우 리셋 시작 · \(Int(minutes.rounded()))분")
     }
 
     // Rain window elapsed (or stopped): warm back up and jump to plan selection.
@@ -301,6 +340,10 @@ final class ConditionDirector {
         phase = .warmup
         targetBPM = activeMinBPM + (activeMaxBPM - activeMinBPM) * 0.25
         plateauCount = 0
+        var e = ActionLog.Event()
+        e.kind = "system"; e.action = "rainEnd"; e.detail = "폭우 리셋 종료 — 일반 선곡 복귀"
+        e.mode = sessionMode; e.phase = phase.rawValue; e.profile = activeProfileLabel
+        ActionLog.shared.append(e)
         applyTrack(force: true)
         WorkerRegistry.shared.recordRun("director",
             why: "폭우 리셋 종료", effect: "↩ 플랜 선곡으로 복귀")
@@ -356,10 +399,14 @@ final class ConditionDirector {
         // opener (stop → restart in the same mode) must resume instead.
         if audio.currentURL == opener.url {
             audio.resume()
+            logTrack("opener", url: opener.url, title: opener.title,
+                     detail: "오프너 재개 (같은 곡에서 정지했던 세션)")
         } else {
             lastTrackChange = Date()
             notePlayed(opener.url)
             audio.play(url: opener.url, title: opener.title)
+            let source = currentSlot?.opener != nil ? "플랜 슬롯 고정 오프너" : "모드(\(sessionMode)) 오프너"
+            logTrack("opener", url: opener.url, title: opener.title, detail: source)
         }
         return true
     }
@@ -580,6 +627,8 @@ final class ConditionDirector {
                         lastTrackChange = Date()
                         notePlayed(release.url)
                         audio.play(url: release.url, title: release.title)
+                        logTrack("trackChange", url: release.url, title: release.title,
+                                 detail: "감속 진입 — 릴리즈 곡 고정")
                     }
                 }
             } else {
@@ -667,5 +716,8 @@ final class ConditionDirector {
         lastTrackChange = now
         notePlayed(candidate.url)
         audio.play(url: candidate.url, title: candidate.title)
+        logTrack("trackChange", url: candidate.url, title: candidate.title,
+                 detail: force ? "강제 전환 (슬롯/프로필 변경·싫어요·유휴 전환)"
+                               : "목표 \(Int(targetBPM))BPM 근접 선곡")
     }
 }
