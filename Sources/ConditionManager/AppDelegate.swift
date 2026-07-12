@@ -448,6 +448,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         director.stop()
         audio.stop()
         activity.stop()
+        // Stop the loopback server; when dashboard.port still holds OUR port this removes
+        // the file so a dev-watch relaunch never leaves it pointing at this dying port.
+        dashboard.stop()
         appWindow.closeForQuit()
         gauge?.showIdle()
         if let m = shortcutMonitor { NSEvent.removeMonitor(m); shortcutMonitor = nil }
