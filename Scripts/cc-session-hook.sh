@@ -154,8 +154,29 @@ esc_text="$(jesc "$text")"
 esc_path="$(jesc "$tpath")"
 body="{\"sessionId\":\"$sid\",\"event\":\"$event\",\"text\":\"$esc_text\",\"transcriptPath\":\"$esc_path\",\"waitKind\":\"$wait_kind\"}"
 
-curl -s -m 1 -X POST "http://127.0.0.1:$port/api/session/event" \
-  -H 'Content-Type: application/json' \
-  -d "$body" >/dev/null 2>&1 || true
+# POST the event to one dashboard instance. curl's exit status is the liveness signal:
+# non-zero means the port didn't answer at all (connection refused / timeout) — a dead port.
+deliver() {
+  curl -s -m 1 -X POST "http://127.0.0.1:$1/api/session/event" \
+    -H 'Content-Type: application/json' \
+    -d "$body" >/dev/null 2>&1
+}
+
+if ! deliver "$port"; then
+  # dashboard.port can go stale during a dev-watch relaunch: the dying instance's port-file
+  # write can land after the new instance's, so the file points at a dead port. The app
+  # self-heals the file within a few seconds, but THIS event fires now — probe the ports
+  # ConditionManager actually listens on and deliver to the instance that serves the SAME
+  # data dir (checked via GET /api/settings/paths), so a test/dev instance on another
+  # store never receives this store's events.
+  for p in $(lsof -nP -a -iTCP -sTCP:LISTEN -c ConditionManager 2>/dev/null \
+               | grep -o '127\.0\.0\.1:[0-9]*' | sed 's/.*://' | sort -un); do
+    [ "$p" = "$port" ] && continue
+    owner="$(curl -s -m 1 "http://127.0.0.1:$p/api/settings/paths" 2>/dev/null \
+               | grep -o '"data":"[^"]*"' | head -1 | sed 's/^"data":"\(.*\)"$/\1/')"
+    [ "$owner" = "$data_dir" ] || continue
+    deliver "$p" && break
+  done
+fi
 
 exit 0

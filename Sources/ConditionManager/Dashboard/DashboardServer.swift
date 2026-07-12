@@ -55,6 +55,9 @@ final class DashboardServer {
     private var listener: NWListener?
     private(set) var port: UInt16 = 0
     private var onReady: ((UInt16) -> Void)?
+    // Re-checks dashboard.port periodically and reclaims it when it points at a dead
+    // port — see startPortGuard() for the dev-watch relaunch race this heals.
+    private var portGuard: DispatchSourceTimer?
 
     private let html: () -> String
     private let data: () -> String
@@ -126,8 +129,8 @@ final class DashboardServer {
                 // Publish the (dynamic) port so external tooling — notably the
                 // Claude Code session hooks — can reach the loopback API without
                 // guessing. Plain text, single integer, overwritten each launch.
-                let portFile = AppPaths.base.appendingPathComponent("dashboard.port")
-                try? String(p).write(to: portFile, atomically: true, encoding: .utf8)
+                self.publishPort(p)
+                self.startPortGuard()
                 self.onReady?(p)
                 self.onReady = nil
             }
@@ -138,9 +141,85 @@ final class DashboardServer {
     }
 
     func stop() {
+        portGuard?.cancel()
+        portGuard = nil
+        // Graceful stop: remove the port file so consumers exit early instead of curling
+        // a dead port — but only when it still holds OUR port. A foreign value means
+        // another live instance owns the file (dev/prod coexistence); leave theirs alone.
+        if port != 0, publishedPort() == port {
+            try? FileManager.default.removeItem(at: Self.portFileURL)
+        }
         listener?.cancel()
         listener = nil
         port = 0
+    }
+
+    // MARK: - dashboard.port publication
+
+    private static var portFileURL: URL { AppPaths.base.appendingPathComponent("dashboard.port") }
+
+    private func publishPort(_ p: UInt16) {
+        try? String(p).write(to: Self.portFileURL, atomically: true, encoding: .utf8)
+    }
+
+    // The port currently recorded in dashboard.port, or nil when missing/garbage.
+    private func publishedPort() -> UInt16? {
+        guard let s = try? String(contentsOf: Self.portFileURL, encoding: .utf8) else { return nil }
+        return UInt16(s.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    // dashboard.port is last-writer-wins across instances, and a dev-watch relaunch races
+    // the writes: the dying instance's .ready write can land AFTER the new instance's,
+    // leaving the file pointing at a dead port (observed 2026-07-12: file said 61687 while
+    // the live app listened on 61689). Session hooks then curl the corpse and silently
+    // fail. This guard re-checks every few seconds: if the file no longer holds our port
+    // AND the port it does hold is dead, reclaim it. A LIVE foreign port is respected so
+    // a coexisting dev/prod instance isn't fought over (no flapping).
+    private func startPortGuard() {
+        portGuard?.cancel()
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now() + 5, repeating: 5, leeway: .seconds(1))
+        t.setEventHandler { [weak self] in self?.reclaimPortFileIfStale() }
+        t.resume()
+        portGuard = t
+    }
+
+    private func reclaimPortFileIfStale() {
+        guard port != 0, let l = listener, l.state == .ready else { return }
+        let recorded = publishedPort()
+        if recorded == port { return }
+        if let recorded, Self.isListening(port: recorded) { return }   // live foreign owner
+        AppLog.log("dashboard.port stale (held \(recorded.map(String.init) ?? "nothing"), dead) — reclaiming as \(port)")
+        publishPort(port)
+    }
+
+    // True when something accepts TCP connections on 127.0.0.1:<p>. Non-blocking BSD
+    // connect with a short deadline; a dead loopback port refuses instantly, so the
+    // common (stale) case never waits.
+    private static func isListening(port p: UInt16) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        let flags = fcntl(fd, F_GETFL, 0)
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = p.bigEndian
+        addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let r = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        if r == 0 { return true }
+        guard errno == EINPROGRESS else { return false }
+        var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        guard poll(&pfd, 1, 300) > 0, pfd.revents & Int16(POLLOUT) != 0 else { return false }
+        var err: Int32 = 0
+        var len = socklen_t(MemoryLayout<Int32>.size)
+        getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len)
+        return err == 0
     }
 
     private func handle(_ conn: NWConnection) {
