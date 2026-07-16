@@ -10,8 +10,8 @@ import Foundation
 //
 // One self-contained block (markup + CSS + JS), returned as a raw string so it can
 // be interpolated into the dashboard's raw string (`\#(...)`) and the goal page's
-// normal string (`\(...)`) alike. The JS branches on whether the page-local goal-add
-// functions exist (dashboard) or not (goal page → navigate to `/?compose=...`).
+// normal string (`\(...)`) alike. 목표 만들기/검색 nav items navigate to the dedicated
+// goal-add page (`/goal-add`), which works identically from every page.
 enum SessionRail {
     static func html() -> String {
         return #"""
@@ -24,6 +24,9 @@ enum SessionRail {
             background:#0d1017; border-right:1px solid #1c2230; display:flex; flex-direction:column;
             font:13px/1.4 -apple-system,BlinkMacSystemFont,system-ui,sans-serif; color:#c8cfdb }
           body.cmrail-collapsed .cmrail{ transform:translateX(-100%) }
+          /* Zen (rail-width window) shows ONLY the rail — it must win over a persisted manual
+             collapse, or the zen window would be entirely empty. Same specificity, later rule. */
+          body.cm-zen .cmrail{ transform:none }
           /* The native window uses fullSizeContentView (see AppWindow.swift) so this web content
              rides up under the transparent titlebar — the traffic-light window buttons occupy
              roughly the top-left ~78px wide x ~28px tall. Push the rail header down below them
@@ -65,6 +68,11 @@ enum SessionRail {
           .cmrail.chrun .cmrail-work{ opacity:1; pointer-events:auto; transition-delay:.22s; padding-bottom:190px }
           .cmrail-sessions{ flex:1; overflow-y:auto; padding:0 8px 14px }
           .cmrail-empty{ display:block; padding:8px 10px; color:#5d6678; font-size:12px }
+          /* 세션 목록 안의 소제목(고정됨 / 세션). 상단 고정 seclabel 과 같은 서체지만 목록
+             안쪽이라 여백을 줄였고, 첫 소제목은 위 여백을 더 줄여 목록 상단에 붙인다. */
+          .cmrail-sessions .cmrail-subhd{ padding:8px 8px 4px; font-size:11px; letter-spacing:.04em;
+            color:#5d6678; text-transform:uppercase }
+          .cmrail-sessions .cmrail-subhd:first-child{ padding-top:2px }
           .cmrail-sess{ display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:8px; cursor:pointer }
           .cmrail-sess:hover{ background:#161c2a }
           .cmrail-sess.on{ background:#1a2438 }
@@ -72,12 +80,31 @@ enum SessionRail {
           .cmrail-sess .dot.pulse{ animation:cmpulse 1.4s ease-in-out infinite }      /* 진행 중 (gray blink) */
           .cmrail-sess .dot.hollow{ background:transparent; border:1.5px solid #8b93a7 }/* 완료 (empty ring) */
           @keyframes cmpulse{ 0%,100%{ opacity:1 } 50%{ opacity:.3 } }
-          .cmrail-sess .meta{ min-width:0; flex:1 }
-          .cmrail-sess .ttl{ color:#dbe2ee; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
-          .cmrail-sess .sub{ color:#6b7589; font-size:11px }
+          .cmrail-sess .meta{ min-width:0; flex:1; margin:0 }
+          /* margin:0 defends against host-page globals — the dashboard defines a generic
+             `.sub{margin-bottom:20px}` that would otherwise bleed in and balloon each row's
+             gap (rail looked wide on `/`, tight on goal pages). Reset it here so the rail
+             renders identically everywhere. */
+          .cmrail-sess .ttl{ color:#dbe2ee; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin:0 }
+          .cmrail-sess .sub{ color:#6b7589; font-size:11px; margin:0 }
           .cmrail-sess .kill{ flex:none; visibility:hidden; background:none; border:0; color:#7a8499; cursor:pointer; font-size:13px; padding:2px 4px; border-radius:5px }
           .cmrail-sess:hover .kill{ visibility:visible }
           .cmrail-sess .kill:hover{ background:#2a2230; color:#e2667d }
+          /* Per-session "⋯" overflow button → opens a small menu (보관 / 세션 종료). Shown on
+             hover for every row (not just live PTY ones) so any session can be archived away. */
+          .cmrail-sess .more{ flex:none; visibility:hidden; background:none; border:0; color:#7a8499;
+            cursor:pointer; font-size:16px; line-height:1; padding:2px 5px; border-radius:5px }
+          .cmrail-sess:hover .more{ visibility:visible }
+          .cmrail-sess .more:hover{ background:#222a3a; color:#e7ecf4 }
+          /* Body-level floating menu anchored under the clicked "⋯" (fixed, so the 3s session
+             poll rebuilding the list never yanks it out from under the pointer). */
+          .cmrail-menu{ position:fixed; z-index:60; min-width:158px; background:#171d2b; border:1px solid #2a3450;
+            border-radius:10px; box-shadow:0 12px 34px rgba(0,0,0,.55); padding:5px; display:none }
+          .cmrail-menu button{ display:flex; align-items:center; gap:9px; width:100%; text-align:left;
+            background:none; border:0; color:#c8cfdb; font:inherit; font-size:12.5px; padding:8px 10px;
+            border-radius:7px; cursor:pointer; white-space:nowrap }
+          .cmrail-menu button:hover{ background:#222c40 }
+          .cmrail-menu button.danger:hover{ background:#2a2230; color:#e2667d }
           /* Native-style sidebar toggle: a flat icon button (no filled gray box) using the
              macOS "sidebar.left" glyph (rectangle with a vertical divider) instead of a chevron
              or hamburger, so it reads like a real toolbar control next to the traffic lights
@@ -172,17 +199,24 @@ enum SessionRail {
           .cmch-timer{ display:none; font-variant-numeric:tabular-nums; font-size:21px; font-weight:800;
             color:#e7ecf4; letter-spacing:.5px; line-height:1 }
           .cmch.run .cmch-label{ display:none } .cmch.run .cmch-timer{ display:block }
-          .cmch-sub{ display:none; align-items:center; gap:7px; font-size:11px; color:#6b7589 }
+          .cmch-sub{ display:none; align-items:center; justify-content:center; flex-wrap:wrap;
+            gap:3px 7px; font-size:11px; color:#6b7589; line-height:1.5; text-align:center }
           .cmch.run .cmch-sub{ display:flex }
+          /* Keep the daily counter ("· 오늘 3/2") as one unbreakable chunk so it never splits
+             mid-token, and give it a hair of left breathing room from the mode name. */
+          .cmch-day{ white-space:nowrap; margin-left:1px }
           /* Live APM readout (moved here from the old dashboard header gauge). D-style:
              a small intensity pulse-dot + a spring-animated number, shown only while a
              challenge runs. The dot's color/size and the number are driven every frame
              by cmApmFrame() from /live.json's apm·norm. */
-          .cmch-apm{ display:none; align-items:center; gap:4px }
-          .cmch-apm::before{ content:"·"; margin:0 1px 0 -2px; color:#4b5568 }
+          /* Pin the APM readout to its own bottom line (flex-basis:100% forces a wrap) with a hair
+             of top gap, so a changing number width never re-wraps the sub-line and makes the block
+             jump up/down. Own line → drop the inline "·" separator. */
+          .cmch-apm{ display:none; align-items:center; justify-content:center; gap:5px;
+            flex-basis:100%; margin-top:2px }
           .cmch-apm .dot{ width:6px; height:6px; border-radius:50%; background:#36c08a; flex:none }
           .cmch-apm b{ font-variant-numeric:tabular-nums; font-weight:700; color:#c8cfdb }
-          .cmch-apm .u{ font-size:9.5px; color:#5d6678; letter-spacing:.02em }
+          .cmch-apm .u{ font-size:9.5px; color:#5d6678; letter-spacing:.03em; margin-left:1px }
           /* During the launch auto-start countdown, show the timer + hint but KEEP the mode selector
              visible — the user can switch what will auto-start, press the dial to start right away,
              or hit the 취소 link in the sub line to cancel. */
@@ -247,6 +281,11 @@ enum SessionRail {
           .cmcond-full{ width:100%; margin-top:4px; border:0; background:#20283a; color:#e7ecf4; border-radius:9px;
             padding:9px 10px; font-size:12.5px; font-weight:600; cursor:pointer; text-align:left }
           .cmcond-full:hover{ background:#28324a }
+          /* 아이콘: 컬러 이모지 대신 상단 레일 네비와 같은 단색 라인 SVG로 톤앤매너 통일
+             (muted gray → hover 시 밝아짐, 레일 .cmr-ico 규칙과 동일 색상). */
+          .cmcond-full .cmcond-ico{ display:inline-flex; vertical-align:-3px; margin-right:7px; color:#8b93a7 }
+          .cmcond-full .cmcond-ico svg{ width:15px; height:15px; display:block }
+          .cmcond-full:hover .cmcond-ico{ color:#c8cfdb }
           /* 업데이트 row: accent-tinted so a pending new build is noticeable but not alarming
              (no red/green status colors by convention). Hidden unless /api/update/check says so. */
           .cmcond-update{ background:#16263f; color:#8fc0ff; border:1px solid #24457a }
@@ -362,10 +401,10 @@ enum SessionRail {
             <div class="cmcond-row"><span class="lbl">음소거</span>
               <button class="cmcond-tog" id="cmCondMuteTog" onclick="cmChMuteToggle(event)">—</button></div>
             <div class="cmcond-now" id="cmCondNow">컨디션 상태를 불러오는 중…</div>
-            <button class="cmcond-full" onclick="cmCondFull(event)">🎛  컨디션 전체 보기 (맵·비주얼라이저) →</button>
-            <button class="cmcond-full" onclick="cmOpenPlugins(event)" style="margin-top:4px">🧩  플러그인 관리</button>
-            <button class="cmcond-full cmcond-equip" onclick="cmOpenEquip(event)" style="margin-top:4px">⚔️  장비<span class="cmcond-lv" id="cmCondEquipLv">—</span></button>
-            <button class="cmcond-full" onclick="cmCondSettings(event)" style="margin-top:4px">⚙️  설정</button>
+            <button class="cmcond-full" onclick="cmCondFull(event)"><span class="cmcond-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M4 2.6v10.8M8 2.6v10.8M12 2.6v10.8"/><path d="M2.5 5.5h3M6.5 10h3M10.5 7h3"/></svg></span>시스템관리</button>
+            <button class="cmcond-full" onclick="cmOpenPlugins(event)" style="margin-top:4px"><span class="cmcond-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M9 2.6c-.9 0-1.6.7-1.6 1.5 0 .3.1.5.2.7H4.6c-.3 0-.5.2-.5.5v2.1c-.2-.1-.4-.2-.7-.2-.8 0-1.5.7-1.5 1.6s.7 1.6 1.5 1.6c.3 0 .5-.1.7-.2v2.1c0 .3.2.5.5.5h2.1c-.1.2-.2.4-.2.7 0 .8.7 1.5 1.6 1.5s1.6-.7 1.6-1.5c0-.3-.1-.5-.2-.7h2.6c.3 0 .5-.2.5-.5v-2.1c.2.1.4.2.7.2.8 0 1.5-.7 1.5-1.6s-.7-1.6-1.5-1.6c-.3 0-.5.1-.7.2V5.3c0-.3-.2-.5-.5-.5h-2.1c.1-.2.2-.4.2-.7 0-.8-.7-1.5-1.6-1.5Z"/></svg></span>플러그인 관리</button>
+            <button class="cmcond-full cmcond-equip" onclick="cmOpenEquip(event)" style="margin-top:4px"><span class="cmcond-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2 3.2 3.8v3.6c0 3 2 5.2 4.8 6.4 2.8-1.2 4.8-3.4 4.8-6.4V3.8z"/></svg></span>장비<span class="cmcond-lv" id="cmCondEquipLv">—</span></button>
+            <button class="cmcond-full" onclick="cmCondSettings(event)" style="margin-top:4px"><span class="cmcond-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.9 13.3 5v6L8 14.1 2.7 11V5z"/><circle cx="8" cy="8" r="2.1"/></svg></span>설정</button>
             <div class="cmcond-paths" id="cmCondPaths" style="display:none"></div>
           </div>
           <div class="cmcond-bar" id="cmCondBar" onclick="cmCondToggle(event)">
@@ -382,11 +421,63 @@ enum SessionRail {
             <span class="cmcond-chev">⌄</span>
           </div>
         </aside>
+        <!-- 세션 행의 "⋯" 메뉴 (body 레벨 고정 팝업). 보관=완료 처리 후 레일에서 제거. -->
+        <div class="cmrail-menu" id="cmRailMenu">
+          <button id="cmRailMenuPin" onclick="cmRailPin()" title="이 목표를 레일 맨 위 고정됨 섹션에 고정합니다 — 완료·종료돼도 남아 있고 앱을 재시작해도 유지됩니다">📌  고정</button>
+          <button onclick="cmRailArchive()" title="이 목표를 완료 처리하고 보관합니다 — 세션 목록에서 사라집니다">🗄  보관 (완료 처리)</button>
+          <button class="danger" id="cmRailMenuKill" onclick="cmRailKillActive()" style="display:none" title="실행 중인 터미널 세션을 종료합니다">✕  세션 종료</button>
+        </div>
         <script>
         (function(){
           // Which goal page we are on, if any (so the rail can highlight the active session).
           var CMRAIL_SEQ = (function(){ try{ var m=/[?&]n=(\d+)/.exec(location.search); return m?parseInt(m[1],10):null; }catch(e){ return null; } })();
+          // The subtask folder this page is scoped to (?t=/?task=), if any — so the matching
+          // "보는 중" task row highlights, and a goal row only highlights on the goal's own page.
+          var CMRAIL_TASK = (function(){ try{ var m=/[?&](?:t|task)=([^&]*)/.exec(location.search); return m?decodeURIComponent(m[1]):null; }catch(e){ return null; } })();
           function esc(t){ var d=document.createElement('div'); d.textContent=(t==null?'':t); return d.innerHTML; }
+
+          // ===== Zen start: on the app session's FIRST dashboard load ('/'), hide the whole
+          // right-hand board (body.cm-zen — CSS lives in DashboardContent) so launch shows only
+          // this rail's challenge dial. A board full of in-progress work makes starting feel
+          // heavy; a clean slate makes it easy. Revealed the moment a challenge actually runs
+          // (cmChRender below) or via the dashboard's 둘러보기 escape. This must read cmChArmed
+          // BEFORE cmChMaybeAutoStart stamps it, so in-session navigations and reloads never
+          // re-hide the board — only a genuine app launch does.
+          // cmrail-force-open rides along: the native window is at just the rail's width during
+          // zen (AppWindow), which is inside the <=720px responsive breakpoint that would
+          // otherwise auto-collapse the rail — the one thing zen exists to show.
+          try{ if(location.pathname==='/' && !sessionStorage.getItem('cmChArmed')) document.body.classList.add('cm-zen','cmrail-force-open'); }catch(e){}
+          // A stop on another rail page (goal 세부 페이지 등) lands back here with ?zen=1 —
+          // enter zen straight from the load so the stopped session's page never reappears,
+          // then strip the param so a later reload of a revealed board doesn't re-hide it.
+          try{ if(location.pathname==='/' && /[?&]zen=1/.test(location.search)){
+            document.body.classList.add('cm-zen','cmrail-force-open');
+            try{ webkit.messageHandlers.cmzen.postMessage('narrow'); }catch(e){}
+            try{ history.replaceState(null,'','/'); }catch(e){}
+          } }catch(e){}
+          window.cmZenReveal=function(){ var b=document.body; if(!b.classList.contains('cm-zen')) return;
+            b.classList.remove('cm-zen','cmrail-force-open');
+            // Tell the native window to grow back from its zen-narrow frame (no-op in a browser
+            // or when the window was never narrowed — AppWindow ignores it unless zen is active).
+            try{ webkit.messageHandlers.cmzen.postMessage('reveal'); }catch(e){} };
+          // Stopping the 음원/챌린지 folds the board away again — 메모리를 걷어내는 효과: a board
+          // full of half-done work makes the next start feel heavy, so ending a session returns
+          // the window to the clean start palette. Entered only on a genuine running→stopped
+          // TRANSITION (cmChRender below), and only while this page is actually the visible
+          // surface (a detached/covered webview must not fold the window out from under the
+          // BGM page). On the dashboard the board hides in place; on any OTHER rail page
+          // (goal 세부 페이지 등) the page itself is the leftover memory, so fold the window and
+          // leave for the zen dashboard — keeping the detail page would defeat the clean slate.
+          // Idle page loads without a transition (navigation) keep the board.
+          window.cmZenEnter=function(){ var b=document.body;
+            if(document.hidden || b.classList.contains('cm-zen')) return;
+            if(location.pathname!=='/'){
+              try{ webkit.messageHandlers.cmzen.postMessage('narrow'); }catch(e){}
+              location.href='/?zen=1';
+              return; }
+            b.classList.add('cm-zen','cmrail-force-open');
+            try{ webkit.messageHandlers.cmzen.postMessage('narrow'); }catch(e){} };
+          var cmZenWasRun=false;   // last MAIN-PATH render's running state, for the stop transition
 
           // Collapse toggle (persisted) — frees the 240px when the user wants full width.
           window.cmRailToggle=function(){
@@ -395,16 +486,14 @@ enum SessionRail {
           };
           try{ if(localStorage.getItem('cmRailCollapsed')==='1') document.body.classList.add('cmrail-collapsed'); }catch(e){}
 
-          // 목표 만들기 (AI추가): on the dashboard, open the existing reusable goal-add modal
-          // (which hosts the AI추가 button); elsewhere, navigate to the dashboard and open it.
+          // 목표 만들기 (AI추가): navigate to the dedicated goal-add PAGE (/goal-add,
+          // GoalAddContent.swift) — a fresh document with a clean heap, from any page.
           // Used by the "chat" rail nav item.
-          window.cmComposeAi=function(){
-            if(typeof openGoalAdd==='function'){ openGoalAdd({sprint:0,label:'Backlog'}); }
-            else { location.href='/?compose=ai'; }
-          };
-          // Honor a ?compose= hint after navigating here from another page's rail.
+          window.cmComposeAi=function(){ location.href='/goal-add'; };
+          // Honor a legacy ?compose= hint (old bookmarks/links): 'ai' now redirects to the
+          // goal-add page; anything else focuses the dashboard's quick-add bar as before.
           (function(){ try{ var c=new URLSearchParams(location.search).get('compose'); if(!c) return;
-            function go(){ if(c==='ai'){ if(typeof openGoalAdd==='function') openGoalAdd({sprint:0,label:'Backlog'}); }
+            function go(){ if(c==='ai'){ location.replace('/goal-add'); }
               else { var inp=document.getElementById('goalText'); if(inp){ inp.scrollIntoView({block:'center'}); inp.focus(); } } }
             if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',function(){ setTimeout(go,60); }); else setTimeout(go,60);
           }catch(e){} })();
@@ -426,7 +515,27 @@ enum SessionRail {
           // Timer mode chosen before start: 'pomodoro' (25분, default) · 'sprint' · 'unlimited'.
           var cmChMode=(function(){ try{ return localStorage.getItem('cmChMode')||'pomodoro'; }catch(e){ return 'pomodoro'; } })();
           var cmChSprintStart=0, cmChSprintTarget=0;   // current sprint window (epoch secs), from state poll
-          var CMCH_POMODORO=25*60, CMCH_LEADIN=5, CMCH_DAILY_GOAL=2;
+          var CMCH_LEADIN=5, CMCH_DAILY_GOAL=2;
+          // 포모도로 목표시간(분): 25분 칩을 다시 누르면 이 프리셋을 순환한다(25→45→50→25).
+          // 45·50분은 "초집중" 롱세션용. 선택값은 localStorage 에 남고 시작 시 서버로 전달돼
+          // 완주 판정(벽시계)도 이 시간으로 이뤄진다.
+          var CMCH_POMO_PRESETS=[25,45,50];
+          var cmChPomoMin=(function(){ try{ var v=parseInt(localStorage.getItem('cmChPomoMin'),10);
+            return CMCH_POMO_PRESETS.indexOf(v)>=0?v:25; }catch(e){ return 25; } })();
+          function cmChPomoSecs(){ return cmChPomoMin*60; }
+          // Reflect the current mode selection AND the pomodoro chip's live duration: the 25분
+          // chip shows its chosen minutes and, while selected, a ↻ hint that re-tapping cycles it.
+          function cmChSyncModeBtns(el){
+            var mb=el.querySelectorAll('#cmChModes button');
+            for(var i=0;i<mb.length;i++){
+              var m=mb[i].getAttribute('data-m'), on=(m===cmChMode);
+              mb[i].classList.toggle('on', on);
+              if(m==='pomodoro'){
+                mb[i].textContent = cmChPomoMin+'분'+(on?' ↻':'');
+                mb[i].title = '포모도로 '+cmChPomoMin+'분 — 다시 누르면 시간 변경 ('+CMCH_POMO_PRESETS.join('·')+'분)';
+              }
+            }
+          }
           // Pomodoro completion reward state (B tap-to-harvest + C daily N/2 tracker).
           // The SERVER owns completion now: the app's wall-clock heartbeat judges 25:00
           // (webview-independent), the daily count is the durable PomodoroStats history
@@ -438,15 +547,20 @@ enum SessionRail {
           var cmChDailyN=0;          // today's completion count (server d.pomoToday)
           function cmChFmt(s){ s=Math.max(0,s|0); var h=(s/3600)|0, m=((s%3600)/60)|0, ss=s%60;
             return (h>0?h+':':'')+((m<10&&h>0)?'0'+m:m)+':'+(ss<10?'0'+ss:ss); }
-          // Coarser duration for the 스프린트 mode, which can span days: "3d 4h" / "5h 12m" / "12:34".
-          function cmChDur(s){ s=Math.max(0,s|0); var d=(s/86400)|0, h=((s%86400)/3600)|0, m=((s%3600)/60)|0, ss=s%60;
-            if(d>0) return d+'d '+h+'h'; if(h>0) return h+'h '+m+'m'; return m+':'+(ss<10?'0'+ss:ss); }
+          // Digital-clock duration for 트래커/스프린트 readouts: always zero-padded HH:MM:SS
+          // ("03:41:00"), a calmer, more modern look than the old "3h 41m" unit-mix. Hours keep
+          // accumulating past 24 for a clean clock feel (오늘 총 rarely exceeds a day anyway).
+          function cmChDur(s){ s=Math.max(0,s|0); var h=(s/3600)|0, m=((s%3600)/60)|0, ss=s%60;
+            var p=function(n){ return n<10?'0'+n:''+n; };
+            return p(h)+':'+p(m)+':'+p(ss); }
           function cmChModeLabel(){
             if(cmChMode==='sprint') return cmChSprintTarget>0?'스프린트':'스프린트(설정 없음)';
-            if(cmChMode==='unlimited') return '트래커 · 오늘 총';
+            if(cmChMode==='unlimited') return '트래커 <span class="cmch-day">· 오늘 총</span>';
             // 오늘 N/2 rides on the idle/running label too, so the daily tracker is
             // always visible — not only during the fleeting reward/done moments.
-            return '포모도로 25분 · 오늘 '+cmChDailyN+'/'+CMCH_DAILY_GOAL;
+            // The count is its own nowrap chunk (see .cmch-day) so a wrap breaks cleanly
+            // after "포모도로 25분" instead of cramming "오늘 3/2" against the line above.
+            return '포모도로 25분 <span class="cmch-day">· 오늘 '+cmChDailyN+'/'+CMCH_DAILY_GOAL+'</span>';
           }
           // The dial's live readout while running: {text, frac} where frac∈[0,1] is how full the ring is.
           //  - pomodoro: count DOWN from 25:00; ring fills as the 25분이 소진됨.
@@ -466,8 +580,8 @@ enum SessionRail {
             }
             // pomodoro (default): WALL-CLOCK countdown — 포모도로는 벽시계 25분이라 유휴/앱
             // 필터로 멈추는 활동초(cmChSecs)가 아니라 d.wall을 기준으로 그린다.
-            var pr=Math.max(0, CMCH_POMODORO-cmChWall);
-            return { text: cmChFmt(pr), frac: Math.min(1, cmChWall/CMCH_POMODORO) };
+            var pr=Math.max(0, cmChPomoSecs()-cmChWall);
+            return { text: cmChFmt(pr), frac: Math.min(1, cmChWall/cmChPomoSecs()) };
           }
           function cmChClearCd(){ if(cmChCdTimer){ clearInterval(cmChCdTimer); cmChCdTimer=null; } cmChCountdown=null; }
           // Full-takeover render for the 5→1 pre-start countdown (amber center digit, ring filling).
@@ -483,18 +597,23 @@ enum SessionRail {
             if(subEl) subEl.innerHTML='누르면 즉시 시작 · <span class="cmch-cdcancel" onclick="cmChCancelCd(event)">취소</span>';
             var apmCd=document.getElementById('cmChApm'); if(apmCd) apmCd.style.display='none';
             // Keep the mode selector reflecting the current choice — the user may switch mid-countdown.
-            var mb=el.querySelectorAll('#cmChModes button');
-            for(var i=0;i<mb.length;i++){ mb[i].classList.toggle('on', mb[i].getAttribute('data-m')===cmChMode); }
+            cmChSyncModeBtns(el);
             var frac=(CMCH_LEADIN-cmChCountdown)/CMCH_LEADIN;   // ring fills across the 5s lead-in
             document.getElementById('cmChProg').style.strokeDashoffset=(333*(1-frac)).toFixed(1);
           }
           // Pomodoro-done reward: a beating amber 🍅 orb in the hero, waiting for a tap to harvest.
+          // 수확 단계 = 인간 메모리 클리어: the finished session's board is leftover working memory,
+          // so the moment the orb appears the right-hand content folds away (zen) — the user faces
+          // only the harvest, then re-engages deliberately. Edge-triggered off cmZenWasRun (true only
+          // when THIS page just watched the session run), so a fresh page load mid-reward or a
+          // deliberate 둘러보기 reveal is never re-folded.
           function cmChRenderReward(el){
             el.classList.add('reward'); el.classList.remove('run','counting','done');
+            if(cmZenWasRun){ cmZenWasRun=false; cmZenEnter(); }   // fold once, on the live 완주 transition
             var rail=document.getElementById('cmRail'); if(rail) rail.classList.remove('chrun');
             var btn=document.getElementById('cmChBtn'); if(btn){ btn.classList.remove('on'); btn.title='탭해서 수확'; }
             var lab=el.querySelector('.cmch-label'); if(lab) lab.textContent='수확하기';
-            var sub=document.getElementById('cmChSubLabel'); if(sub) sub.textContent='🍅 탭해서 수확 · 오늘 '+cmChDailyN+'/'+CMCH_DAILY_GOAL;
+            var sub=document.getElementById('cmChSubLabel'); if(sub) sub.innerHTML='🍅 탭해서 수확 <span class="cmch-day">· 오늘 '+cmChDailyN+'/'+CMCH_DAILY_GOAL+'</span>';
             var apmR=document.getElementById('cmChApm'); if(apmR) apmR.style.display='none';
             document.getElementById('cmChProg').style.strokeDashoffset='0';   // full ring = 완료
           }
@@ -509,20 +628,25 @@ enum SessionRail {
             // Rail layout: running docks the dial (bottom) + reveals the work surface; idle floats the
             // hero dial up top. The CSS transition on .cmch does the slide+shrink (proposal A).
             var rail=document.getElementById('cmRail'); if(rail) rail.classList.toggle('chrun', cmChRun);
+            // Zen ties the board to the session: running reveals it (not during the countdown —
+            // that branch returns above), and the running→stopped transition folds it away again.
+            // Transition-only, so idle page loads (navigating back while stopped) keep the board.
+            if(cmChRun) cmZenReveal();
+            else if(cmZenWasRun) cmZenEnter();
+            cmZenWasRun=cmChRun;
             el.classList.toggle('run', cmChRun);
             // Post-harvest "한 판 더?" chooser hero (mode selector doubles as the re-selection).
             var isDone=(cmChDone && !cmChRun); el.classList.toggle('done', isDone);
             btn.classList.toggle('on', cmChRun);
             btn.title = cmChRun ? '챌린지 중단 (⌘S)' : '챌린지 시작 (⌘S)';
             var lab=el.querySelector('.cmch-label'); if(lab) lab.textContent = isDone ? '한 판 더?' : '챌린지 시작';
-            // Reflect the selected mode on the pre-start selector.
-            var mb=el.querySelectorAll('#cmChModes button');
-            for(var i=0;i<mb.length;i++){ mb[i].classList.toggle('on', mb[i].getAttribute('data-m')===cmChMode); }
+            // Reflect the selected mode (and pomodoro duration) on the pre-start selector.
+            cmChSyncModeBtns(el);
             var view = cmChRun ? cmChView() : { text: cmChFmt(0), frac: 0 };
             document.getElementById('cmChTimer').textContent = view.text;
             var subEl=document.getElementById('cmChSubLabel');
-            if(subEl) subEl.textContent = isDone
-              ? ('🍅 오늘 '+cmChDailyN+'/'+CMCH_DAILY_GOAL+(cmChDailyN>=CMCH_DAILY_GOAL?' · 목표 달성 🎉':' · 다음 세션 고르기'))
+            if(subEl) subEl.innerHTML = isDone
+              ? ('<span class="cmch-day">🍅 오늘 '+cmChDailyN+'/'+CMCH_DAILY_GOAL+'</span>'+(cmChDailyN>=CMCH_DAILY_GOAL?' · 목표 달성 🎉':' · 다음 세션 고르기'))
               : cmChModeLabel();
             // APM readout: only meaningful while truly running (hidden during the post-harvest chooser).
             var apmEl=document.getElementById('cmChApm');
@@ -535,7 +659,16 @@ enum SessionRail {
           // Pre-start mode selection (persisted). Ignored while running — mode is locked once started.
           window.cmChSetMode=function(m,ev){ if(ev) ev.stopPropagation();
             if(cmChRun && cmChCountdown==null) return;   // truly running → mode is locked
+            // 이미 선택된 25분 칩을 (자동 리드인·완료 상태가 아닐 때) 다시 누르면 "시작"이 아니라
+            // 목표시간을 순환한다(25→45→50). 다른 모드에서 넘어온 첫 탭은 그냥 선택.
+            var reTapPomo = (m==='pomodoro' && cmChMode==='pomodoro' && cmChCountdown==null && !cmChDone);
             cmChMode=m; try{ localStorage.setItem('cmChMode',m); }catch(e){}
+            if(reTapPomo){
+              var pi=CMCH_POMO_PRESETS.indexOf(cmChPomoMin); pi=(pi+1)%CMCH_POMO_PRESETS.length;
+              cmChPomoMin=CMCH_POMO_PRESETS[pi];
+              try{ localStorage.setItem('cmChPomoMin',cmChPomoMin); }catch(e){}
+              cmChRender(); return;   // 순환만 — 시작하지 않는다
+            }
             // 카운트다운은 유저가 가만히 있을 때만 적용한다. 그동안 모드 버튼을 누르는 건 곧 "지금 이 모드로
             // 시작"이라는 명시적 의사 → 카운트다운을 걷어내고 즉시 시작(인터랙티브 반응감).
             if(cmChCountdown!=null){ cmChFire(); return; }   // during launch countdown → start now
@@ -558,7 +691,7 @@ enum SessionRail {
             // Carry the chosen mode so the server selects that mode's BGM playlist
             // (each mode opens on its own pinned first track).
             fetch('/api/session/control',{method:'POST',headers:{'Content-Type':'application/json'},
-              body:JSON.stringify({action:'start', mode:cmChMode})}).catch(function(){});
+              body:JSON.stringify({action:'start', mode:cmChMode, pomodoroSecs:cmChPomoSecs()})}).catch(function(){});
           }
           // Confetti burst from the dial center (harvest reward).
           function cmChBurst(){
@@ -697,7 +830,7 @@ enum SessionRail {
           // ===== Condition control popup (bottom of rail, always present) =====
           // The headphone icon is a mute shortcut (same state as the dial's green dot); the menu
           // duplicates it as a 음소거 row so users who don't discover the shortcut still reach it.
-          // Rest: BGM on/off, current track/condition, and "전체 보기" which switches the app window.
+          // Rest: BGM on/off, current track/condition, and "시스템관리" which switches the app window.
           window.cmCondToggle=function(ev){ if(ev) ev.stopPropagation();
             var bar=document.getElementById('cmCondBar'), m=document.getElementById('cmCondMenu');
             if(!bar||!m) return; var open=(m.style.display==='none');
@@ -717,10 +850,19 @@ enum SessionRail {
               if(rail) rail.classList.toggle('cmupd', b.style.display!=='none');
             }).catch(function(){});
           }
+          // Fast lead-in polling (2s for the first 30s): a pending build must surface
+          // while the 5s launch countdown is still on screen, not a minute later —
+          // the user updates first, works after. Steady state stays at 60s.
           cmUpdateCheck(); setInterval(cmUpdateCheck, 60000);
+          var cmUpdFast=setInterval(cmUpdateCheck, 2000);
+          setTimeout(function(){ clearInterval(cmUpdFast); }, 30000);
           window.cmCondUpdate=function(ev){ if(ev) ev.stopPropagation();
             var b=document.getElementById('cmCondUpdate'); if(!b||b.disabled) return;
-            b.disabled=true; b.textContent='⏳  업데이트 중… 빌드 후 자동 재시작됩니다';
+            // Pressing 업데이트 during the launch countdown means "update first, work
+            // after" — cancel the auto-start (and the server's auto-started session) so
+            // a phantom seconds-long session doesn't run while the app rebuilds.
+            if(cmChCountdown!=null) cmChCancelCd();
+            b.disabled=true; b.textContent='⏳  업데이트 중…';
             // 실패는 유저에게 에러로 보여주지 않는다: 현재 버전이 그대로 살아있으므로 잃은 것이
             // 없고, 상세는 update.log·액션로그에 남는다. 중립 문구를 잠깐 보여준 뒤 버튼을
             // 숨긴다 — 서버가 소스 변경을 감지하면 버튼이 다시 나타난다.
@@ -873,51 +1015,138 @@ enum SessionRail {
           function killSession(token, ev){ if(ev) ev.stopPropagation();
             fetch('/api/goal/cli/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:token})}).then(loadSessions).catch(loadSessions);
           }
+          // ===== Per-session "⋯" overflow menu (보관 / 세션 종료) =====
+          // One shared body-level popup carries the row's identity while open. 보관 marks the
+          // goal done + archives it (server clears the 보는 중 marker and stops any live PTY),
+          // so it drops out of all three rail sources — the session disappears.
+          var cmRailMenuSeq=null, cmRailMenuTok='', cmRailMenuPinned=false;
+          window.cmRailMenuOpen=function(seq, live, token, pinned, ev){ if(ev){ ev.stopPropagation(); ev.preventDefault(); }
+            var menu=document.getElementById('cmRailMenu'); if(!menu) return;
+            cmRailMenuSeq=seq; cmRailMenuTok=token||''; cmRailMenuPinned=!!pinned;
+            var kb=document.getElementById('cmRailMenuKill'); if(kb) kb.style.display=live?'flex':'none';
+            // 고정 버튼은 현재 상태에 따라 라벨을 바꾼다: 고정 안 됨 → "📌 고정", 고정됨 → "📌 고정 해제".
+            var pb=document.getElementById('cmRailMenuPin');
+            if(pb){ pb.textContent = cmRailMenuPinned ? '📌  고정 해제' : '📌  고정';
+              pb.title = cmRailMenuPinned ? '이 목표를 고정됨 섹션에서 내립니다'
+                : '이 목표를 레일 맨 위 고정됨 섹션에 고정합니다 — 완료·종료돼도 남아 있고 앱을 재시작해도 유지됩니다'; }
+            var r=ev.currentTarget.getBoundingClientRect();
+            menu.style.display='block';
+            var mw=menu.offsetWidth||160, mh=menu.offsetHeight||90;
+            var left=Math.min(r.right-mw, window.innerWidth-mw-8);
+            var top=r.bottom+4; if(top+mh>window.innerHeight-8) top=r.top-mh-4;
+            menu.style.left=Math.max(8,left)+'px'; menu.style.top=Math.max(8,top)+'px';
+          };
+          window.cmRailMenuClose=function(){ var m=document.getElementById('cmRailMenu');
+            if(m) m.style.display='none'; cmRailMenuSeq=null; cmRailMenuTok=''; };
+          document.addEventListener('click', function(e){ var m=document.getElementById('cmRailMenu');
+            if(m && m.style.display==='block' && !m.contains(e.target)) cmRailMenuClose(); });
+          window.cmRailArchive=function(){ var seq=cmRailMenuSeq; cmRailMenuClose(); if(seq==null) return;
+            fetch('/api/goal/rail/archive',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({seq:seq})}).then(loadSessions).catch(loadSessions); };
+          // 고정 토글: 현재 상태의 반대로 보내고(명시적 pin) 목록을 다시 그린다 — 고정된 목표는
+          // 서버 union(Settings.pinnedGoalSeqs)에 항상 포함돼 고정됨 섹션에 남는다.
+          window.cmRailPin=function(){ var seq=cmRailMenuSeq, want=!cmRailMenuPinned; cmRailMenuClose();
+            if(seq==null) return;
+            fetch('/api/cli/pin',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({seq:seq,pin:want})}).then(loadSessions).catch(loadSessions); };
+          window.cmRailKillActive=function(){ var tok=cmRailMenuTok; cmRailMenuClose();
+            if(tok) killSession(tok); };
           // Claude-Desktop status vocabulary. The dot's color/shape mirrors what the session
           // needs from the user, NOT just whether a terminal is open:
           //   확인 요청  (waiting+permission) -> blue solid     #5b8cff
           //   의사결정 요청 (waiting+decision)  -> amber solid    #e8a33d
+          //   보는 중    (viewing)            -> purple pulsing  #a78bfa (the page I'm on now)
           //   진행 중    (in_progress)         -> gray pulsing   (blinking)
           //   완료       (done)               -> gray hollow ring
-          // rank: lower = higher up the list (actionable items first).
+          // rank: lower = higher up the list (actionable items first). An actionable prompt
+          // (확인/의사결정) still outranks everything — you need to answer it first.
+          // IMPORTANT: 보는 중(viewing)은 정렬 순위를 바꾸지 않는다 — rank는 항상 실제 작업
+          // 상태(진행/완료/중지)로 결정한다. 세션을 클릭해 그 페이지로 이동하면 viewing 이 켜지는데,
+          // 그때 순위가 올라가면 방금 누른 항목이 목록 맨 위로 튀어 위치가 바뀐다. 그래서 viewing 은
+          // 점 색/라벨(보라 보는 중)만 덧입히고 자리(rank)는 그대로 유지한다.
           function stateMeta(s){
             if(s.status==='waiting' && s.waitKind==='permission') return {color:'#5b8cff', label:'확인 요청', rank:0};
             if(s.status==='waiting') return {color:'#e8a33d', label:'의사결정 요청', rank:1};
-            if(s.status==='done') return {color:'#8b93a7', label:'완료', hollow:true, rank:3};
-            if(s.status==='stopped') return {color:'#8b93a7', label:'중지', rank:2};
-            return {color:'#8b93a7', label:'진행 중', pulse:true, rank:2};   // in_progress / running
+            var m;
+            if(s.status==='done') m={color:'#8b93a7', label:'완료', hollow:true, rank:3};
+            else if(s.status==='stopped') m={color:'#8b93a7', label:'중지', rank:2};
+            else m={color:'#8b93a7', label:'진행 중', pulse:true, rank:2};   // in_progress / running
+            if(s.viewing){ m.color='#a78bfa'; m.label='보는 중'; m.pulse=true; m.hollow=false; }
+            return m;
           }
-          // 🔍 header button → GOAL search (찾기만). Reuses the AI목표 파이프라인: 같은 goal-add
-          // 모달을 '검색' 모드로 열어 입력을 받고, 같은 AI 큐에 담되(search:true) 결과는 비슷한
-          // 기존 목표를 찾아 보여줄 뿐 목표를 만들지 않는다. On the dashboard openGoalAdd exists;
-          // from other pages (goal) navigate to the dashboard. Exposed on window (inline onclick).
-          window.cmRailGoalSearch=function(){
-            if(typeof openGoalAdd==='function'){ openGoalAdd({search:true}); }
-            else { location.href='/?search=1'; }
-          };
+          // 🔍 header button → GOAL search (찾기만). The goal-add PAGE in '검색' mode
+          // (/goal-add?search=1): 번호/제목 즉시 조회 + AI검색(search:true 큐, findOnly) —
+          // 목표를 만들지 않는다. Works from any page. Exposed on window (inline onclick).
+          window.cmRailGoalSearch=function(){ location.href='/goal-add?search=1'; };
+          // Build one session row element (dot + title/sub + "⋯" overflow menu).
+          function cmRailRow(s){
+            var m=s._m;
+            // A goal row highlights only on the goal's OWN page — not when a subtask of it is
+            // open (that page highlights the task row instead).
+            var on=(s.seq===CMRAIL_SEQ && !CMRAIL_TASK);
+            var row=document.createElement('div'); row.className='cmrail-sess'+(on?' on':'');
+            // 세션을 다시 열면 그 목표에서 '마지막 본 탭'(CLI/GUI/DETAIL)으로 복원한다.
+            // cm.lastTab.<seq> 는 각 탭 진입 시 goal-add·목표 페이지가 기록한다. 없으면 DETAIL.
+            row.onclick=function(){
+              var t=''; try{ t=localStorage.getItem('cm.lastTab.'+s.seq)||''; }catch(e){}
+              if(t==='gui') location.href='/goal-add?goal='+s.seq+'&ui=gui';
+              else if(t==='cli') location.href='/goal-add?goal='+s.seq+'&ui=cli';
+              else location.href='/goal?n='+s.seq+'&cli=1';
+            };
+            var dotCls='dot'+(m.pulse?' pulse':'')+(m.hollow?' hollow':'');
+            var style=m.hollow?('border-color:'+m.color):('background:'+m.color);
+            row.innerHTML='<span class="'+dotCls+'" style="'+style+'"></span>'
+              +'<div class="meta"><div class="ttl">'+esc(s.title||('goal-'+s.seq))+'</div>'
+              +'<div class="sub">goal-'+s.seq+' · '+m.label+'</div></div>';
+            // "⋯" overflow menu on every row (고정 / 보관 / 세션 종료). 고정 pins to the top
+            // 고정됨 섹션; 보관 completes+archives; 세션 종료 only when a live terminal exists.
+            var more=document.createElement('button'); more.className='more'; more.title='메뉴'; more.textContent='⋯';
+            (function(sess){ more.onclick=function(e){ cmRailMenuOpen(sess.seq, !!sess.live, sess.token||'', !!sess.pinned, e); }; })(s);
+            row.appendChild(more);
+            return row;
+          }
+          // One "보는 중" TASK row: the task's own title over a "task-NN · 보는 중" sub-line,
+          // clicking back into the subtask page. Always the purple 보는 중 dot (these rows exist
+          // only because the task was recently viewed). No "⋯" menu — tasks aren't pinned/archived
+          // from the rail.
+          function cmRailTaskRow(t){
+            var on=(t.seq===CMRAIL_SEQ && t.task===CMRAIL_TASK);
+            var row=document.createElement('div'); row.className='cmrail-sess'+(on?' on':'');
+            row.onclick=function(){ location.href='/goal?n='+t.seq+'&task='+encodeURIComponent(t.task)+'&cli=1'; };
+            row.innerHTML='<span class="dot pulse" style="background:#a78bfa"></span>'
+              +'<div class="meta"><div class="ttl">'+esc(t.title||t.task)+'</div>'
+              +'<div class="sub">'+esc(t.label||'task')+' · 보는 중</div></div>';
+            return row;
+          }
+          function cmRailSubhead(text){
+            var h=document.createElement('div'); h.className='cmrail-subhd'; h.textContent=text; return h;
+          }
           function loadSessions(){
             fetch('/api/cli/sessions').then(function(r){return r.json();}).then(function(d){
               var box=document.getElementById('cmRailSessions'); if(!box) return;
               var list=(d&&d.sessions)||[];
-              if(!list.length){ box.innerHTML='<span class="cmrail-empty">진행 중인 세션이 없습니다</span>'; return; }
-              // Actionable first (확인/의사결정 요청), then 진행 중, then 완료; ties by goal number.
+              var tasks=(d&&d.tasks)||[];   // 보는 중 task rows (newest-first, already ordered)
+              if(!list.length && !tasks.length){ box.innerHTML='<span class="cmrail-empty">진행 중인 세션이 없습니다</span>'; return; }
               list.forEach(function(s){ s._m=stateMeta(s); });
-              list.sort(function(a,b){ return a._m.rank-b._m.rank || (a.seq||0)-(b.seq||0); });
+              // 고정됨(pinned) vs 나머지. Actionable first (확인/의사결정 요청), then 진행 중,
+              // then 완료; ties by goal number — the same ordering inside each group.
+              function ord(a,b){ return a._m.rank-b._m.rank || (a.seq||0)-(b.seq||0); }
+              var pinned=list.filter(function(s){ return s.pinned; }).sort(ord);
+              var rest=list.filter(function(s){ return !s.pinned; }).sort(ord);
               box.innerHTML='';
-              list.forEach(function(s){
-                var m=s._m;
-                var row=document.createElement('div'); row.className='cmrail-sess'+(s.seq===CMRAIL_SEQ?' on':'');
-                row.onclick=function(){ location.href='/goal?n='+s.seq+'&cli=1'; };
-                var dotCls='dot'+(m.pulse?' pulse':'')+(m.hollow?' hollow':'');
-                var style=m.hollow?('border-color:'+m.color):('background:'+m.color);
-                row.innerHTML='<span class="'+dotCls+'" style="'+style+'"></span>'
-                  +'<div class="meta"><div class="ttl">'+esc(s.title||('goal-'+s.seq))+'</div>'
-                  +'<div class="sub">goal-'+s.seq+' · '+m.label+'</div></div>';
-                // Only live PTY sessions can be terminated (idle/done goals have no process).
-                if(s.live){ var kill=document.createElement('button'); kill.className='kill'; kill.title='세션 종료'; kill.textContent='✕';
-                  kill.onclick=function(e){ killSession(s.token,e); }; row.appendChild(kill); }
-                box.appendChild(row);
-              });
+              // 고정됨 섹션 — 고정된 항목이 하나라도 있을 때만 헤더를 보인다.
+              if(pinned.length){
+                box.appendChild(cmRailSubhead('고정됨'));
+                pinned.forEach(function(s){ box.appendChild(cmRailRow(s)); });
+              }
+              // 세션 섹션 — 고정된 항목이 있을 때만 소제목을 붙여 두 그룹을 구분한다.
+              // 보는 중 task 행이 먼저(최신순), 이어서 goal 세션 행. task 를 여러 개 열어 봤다면
+              // 각각 자기 정보(제목·task-NN)로 순서대로 나온다.
+              if(rest.length || tasks.length){
+                if(pinned.length) box.appendChild(cmRailSubhead('세션'));
+                tasks.forEach(function(t){ box.appendChild(cmRailTaskRow(t)); });
+                rest.forEach(function(s){ box.appendChild(cmRailRow(s)); });
+              }
             }).catch(function(){});
           }
           loadSessions(); setInterval(loadSessions, 3000);
@@ -1443,7 +1672,8 @@ enum SessionRail {
             for(var i=0;i<items.length;i++){ items[i].classList.toggle('on', items[i].getAttribute('data-nav')===kind); }
           }
           // Reflect the dashboard's current state onto the nav highlight. Called on load and after a
-          // placeholder closes. On a goal page (_view undefined) nothing is highlighted.
+          // placeholder closes. Something is ALWAYS highlighted so the nav reads as a selected-state
+          // switcher: when no other surface matches (goal pages, /goal-add), 'chat' is the default.
           window.cmNavReflect=function(){
             // 독립 크론 페이지(/cron)에선 '크론'을 항상 켠다 — 대시보드 뷰 상태와 무관.
             if(window.CM_PAGE==='cron'){ setActive('cron'); return; }
@@ -1454,9 +1684,15 @@ enum SessionRail {
             var ag=document.getElementById('cmAgOverlay');
             if(ag && ag.style.display!=='none'){ setActive('delegate'); return; }   // 에이전트 오버레이가 떠 있으면 '위임'
             if(typeof _view!=='undefined'){ setActive('work'); return; }
-            setActive('');
+            setActive('chat');   // 기본 선택 = chat (goal 페이지 / /goal-add 포함)
           };
           window.cmNav=function(kind){
+            // 장비 장착풍 클릭음 (sound/nav-equip.mp3, 네이티브 재생) — cron/work 분기는 같은 틱에
+            // location.href 로 페이지를 떠나므로, 언로드에도 살아남는 sendBeacon 을 우선 사용한다.
+            try{ var sb=JSON.stringify({name:'nav'});
+              if(navigator.sendBeacon) navigator.sendBeacon('/api/sfx', new Blob([sb],{type:'application/json'}));
+              else fetch('/api/sfx',{method:'POST',headers:{'Content-Type':'application/json'},body:sb}).catch(function(){});
+            }catch(e){}
             // 팀위임: 레일이 소유하는 독립 오버레이(내용 입력 → 팀 토론 세션 생성)를 연다.
             if(kind==='team'){ setActive(kind);
               if(typeof cmTeamOpen==='function') cmTeamOpen(); return; }
@@ -1471,7 +1707,7 @@ enum SessionRail {
             if(kind==='skills'){ if(typeof cmSkillsOpen==='function') cmSkillsOpen(); else location.href='/#skills'; return; }
             // 다른 목적지로 이동하면 열려 있던 스킬 오버레이는 닫는다(cmSkClose는 순수 함수라 하이라이트를 건드리지 않음).
             if(typeof window.cmSkClose==='function') window.cmSkClose();
-            if(kind==='chat'){ if(typeof cmComposeAi==='function') cmComposeAi(); else location.href='/?compose=ai'; return; }
+            if(kind==='chat'){ if(typeof cmComposeAi==='function') cmComposeAi(); else location.href='/goal-add'; return; }
             // 크론: 대시보드 뷰가 아니라 자체 페이지(/cron)로 이동한다(의존성 분리).
             if(kind==='cron'){ if(window.CM_PAGE!=='cron') location.href='/cron'; return; }
             if(kind==='work'){ if(typeof setView==='function') setView(firstWorkView()); else location.href='/'; return; }

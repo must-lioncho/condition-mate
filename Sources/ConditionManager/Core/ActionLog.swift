@@ -39,6 +39,13 @@ final class ActionLog {
         var app = ""            // frontmost tracked app display name
     }
 
+    // 업무 경과 스탬프: EVERY event records "업무 시작 후 몇 분"(workMin) so the
+    // 시작 컨텍스트 선곡(전략6)의 판단 근거를 로그만으로 재검증할 수 있다.
+    // AppDelegate wires this to its 6h-gap work-block detector at launch; the
+    // provider must be thread-safe (append is called from main AND server threads).
+    // Unset provider stamps -1 (unknown).
+    var workMinutesProvider: (() -> Int)?
+
     private let fileURL: URL
     // All file access funnels through one serial queue: appends come from the main
     // thread (heartbeat/endpoints) while reads come from the HTTP server thread.
@@ -76,7 +83,8 @@ final class ActionLog {
         var e = e
         if e.category.isEmpty { e.category = Self.defaultCategory(for: e.action) }
         let t = Int(Date().timeIntervalSince1970)
-        let line = "{\"t\":\(t),\"kind\":\(js(e.kind)),\"action\":\(js(e.action)),"
+        let workMin = workMinutesProvider?() ?? -1
+        let line = "{\"t\":\(t),\"workMin\":\(workMin),\"kind\":\(js(e.kind)),\"action\":\(js(e.action)),"
             + "\"cat\":\(js(e.category)),"
             + "\"detail\":\(js(e.detail)),\"mode\":\(js(e.mode)),"
             + "\"track\":\(js(e.track)),\"trackKey\":\(js(e.trackKey)),\"bpm\":\(e.bpm),"

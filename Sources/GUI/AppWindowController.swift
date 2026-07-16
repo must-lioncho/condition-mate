@@ -1,11 +1,16 @@
 import AppKit
 import WebKit
 
-// A single native app window that hosts the app's web surfaces (served from the local
-// DashboardServer) in TWO separate, persistent WKWebViews — no external browser. A segmented
-// toggle in the title bar switches which one is visible:
-//   .dashboard -> "/"           (활동 / 목표 / 세션 대시보드)
-//   .bgm       -> "/bgm-player" (guaranteed-autoplay BGM surface, with the venue Web Audio effect)
+// A single native app window that hosts an app's web surfaces (served from a local HTTP
+// server) in TWO separate, persistent WKWebViews — no external browser. The two surfaces:
+//   .dashboard -> config.surfacePaths[.dashboard]  (활동 / 목표 / 세션 대시보드)
+//   .bgm       -> config.surfacePaths[.bgm]        (guaranteed-autoplay BGM surface)
+//
+// REUSABLE (GUI module): this class has no dependency on the host app. App-specific behavior
+// is injected — logging (`onLog`), lifecycle tracing (`onTrace`), the screen-catalog observer
+// (`screenCatalog`), and the injected JS + paths/titles/geometry (`Configuration`). The host
+// app wires these once at construction; every behavioral comment below still describes the
+// Condition Manager usage that shaped the design.
 //
 // Autoplay is enabled (mediaTypesRequiringUserActionForPlayback = []) so BGM mode plays the
 // activity BGM with the space effect the moment it opens — zero clicks.
@@ -65,17 +70,74 @@ private final class TitlebarDragView: NSView {
     // mouseDownCanMoveWindow override on a view added directly to the theme frame did NOT
     // actually start a window drag (mouse-down was confirmed reaching this view via logging, but
     // no windowDidMove ever followed), so this explicitly performs the drag from mouseDown.
+    //
+    // A DOUBLE-click on the empty titlebar zooms the window (maximize ⇄ restore), matching the
+    // standard macOS titlebar-double-click gesture. fullSizeContentView + this drag view sitting
+    // above the webviews would otherwise swallow it (the system never sees a plain titlebar
+    // double-click), so drive it here: clickCount == 2 → NSWindow.zoom(_:), which toggles between
+    // the zoomed frame and the user's previous size. The excluded zones (traffic lights, segmented
+    // control) are already filtered out in hitTest, so their own double-clicks are unaffected.
     override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            window?.zoom(nil)
+            return
+        }
         window?.performDrag(with: event)
     }
 }
 
-final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
-    enum Mode: String { case dashboard, bgm }
+// Host-app-provided screen-catalog sink (컨디션 매니저의 ScreenCatalog가 구현). The window probes
+// the visible webview for its screen-state key on a timer; `observe` registers the sighting and
+// answers whether this state wants a (re)shot; `record` stores the captured PNG.
+public protocol AppWindowScreenCatalogObserver: AnyObject {
+    func observe(key: String, mode: String, page: String, view: String, flags: String,
+                 w: Int, h: Int, entered: Bool) -> Bool
+    func record(key: String, png: Data)
+}
+
+public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate,
+                                        WKScriptMessageHandler {
+    public enum Mode: String { case dashboard, bgm }
+
+    // Everything about this window that is host-app-specific: which local paths the two surfaces
+    // load, window titles, injected JS, geometry, autosave identity. Defaults match Condition
+    // Manager so its construction stays a one-liner; other apps override what they need.
+    public struct Configuration {
+        // Local-server path each surface loads (joined with the port passed to show/autoOpen).
+        public var surfacePaths: [Mode: String] = [.dashboard: "/", .bgm: "/bgm-player"]
+        // Window title per visible mode.
+        public var titles: [Mode: String] = [.dashboard: "대시보드", .bgm: "컨디션 관리"]
+        // Labels for the (currently hidden) mode segmented control; still sized for the
+        // titlebar-drag exclusion zone, so keep them realistic.
+        public var segmentLabels: [String] = ["대시보드", "컨디션"]
+        // NSWindow frame autosave name (persists size/position across launches per bundle id).
+        public var frameAutosaveName = "ConditionMateAppWindow"
+        // Window/webview background (shown during load gaps).
+        public var backgroundColor = NSColor(calibratedRed: 0.043, green: 0.047, blue: 0.063, alpha: 1)
+        // Zen fold: the rail-only width the window narrows to when no challenge runs, and the
+        // width it expands to when no saved frame is usable. The page announces reveal/narrow via
+        // webkit.messageHandlers.<zenMessageName>.
+        public var zenWidth: CGFloat = 242     // rail 240 + right border
+        public var defaultExpandedWidth: CGFloat = 1040
+        public var zenMessageName = "cmzen"
+        public var initialContentSize = NSSize(width: 1040, height: 720)
+        // JS source injected at documentStart into EVERY page both webviews load (e.g. the
+        // 0.5s view-trace heartbeat). Empty = nothing injected.
+        public var documentStartScripts: [String] = []
+        // JS probe returning the visible page's screen-state JSON (see screenCatalogTick). nil
+        // disables the screen-catalog loop even when an observer is attached.
+        public var screenStateScript: String?
+        // In-page sub-tabs snapshotPNG may switch to (via the page's own setMode(tab) JS)
+        // before capturing.
+        public var snapshotTabs: [String] = ["activity", "debug", "screens", "map", "actions", "diag", "syslog"]
+        public init() {}
+    }
+
+    private let config: Configuration
 
     // Shared with the frame-restore logic in ensureBuilt() — kept as one source of truth so the
     // save call (windowWillClose/closeForQuit) and the restore call always agree on the name.
-    private let windowAutosaveName = NSWindow.FrameAutosaveName("ConditionMateAppWindow")
+    private var windowAutosaveName: NSWindow.FrameAutosaveName { config.frameAutosaveName }
 
     private var window: NSWindow?
     private var container: NSView?          // fills the content area; hosts whichever webview is visible
@@ -84,26 +146,90 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
     private var segmented: NSSegmentedControl?
     private var dragView: TitlebarDragView?  // restores titlebar drag-to-move; see TitlebarDragView
     private var lastPort: UInt16 = 0
-    private(set) var mode: Mode = .dashboard
+    public private(set) var mode: Mode = .dashboard
     private var audioProbeTimer: Timer?   // periodic instrumentation while the window is open
 
     // Called when the window owns audio (open, in either mode) and when it hands it back on close,
     // so the app can keep native BGM muted the whole time the window is open (no double playback),
     // and unmute once it closes.
-    var onOwnAudio: ((_ owns: Bool) -> Void)?
+    public var onOwnAudio: ((_ owns: Bool) -> Void)?
     // Called when the USER closes the window (not on app quit).
-    var onUserClose: (() -> Void)?
+    public var onUserClose: (() -> Void)?
+    // Host-app logging sink (컨디션 매니저: AppLog). All messages arrive pre-prefixed "app-window …".
+    public var onLog: ((String) -> Void)?
+    // Host-app lifecycle-trace sink (컨디션 매니저: ViewTrace.native). (event, page, detail) —
+    // empty strings mean "no value", matching ViewTrace's defaulted parameters.
+    public var onTrace: ((_ event: String, _ page: String, _ detail: String) -> Void)?
+    // Host-app screen-catalog sink; the capture loop only runs when this AND
+    // config.screenStateScript are both present.
+    public weak var screenCatalog: AppWindowScreenCatalogObserver?
+
     private var quitting = false   // set during app termination so a quit doesn't count as a user-close
 
+    public init(configuration: Configuration = Configuration()) {
+        self.config = configuration
+        super.init()
+    }
+
+    private func log(_ message: String) { onLog?(message) }
+    private func trace(_ event: String, page: String = "", detail: String = "") {
+        onTrace?(event, page, detail)
+    }
+
+    // ===== Zen (레일 폭 시작/휴식 창) =====
+    // The window is at just the rail's width whenever no challenge is running: on the app
+    // session's FIRST dashboard open (the user faces only the challenge dial, not a board full
+    // of in-progress work — and not a big blank right half, which reads as "still loading"),
+    // and AGAIN whenever the 음원/챌린지 stops (메모리를 걷어내는 효과 — ending a session folds
+    // the board away so the next start is a clean slate). The page-side counterpart is
+    // body.cm-zen (SessionRail): when the challenge actually starts, the page posts
+    // webkit.messageHandlers.cmzen "reveal" → expandFromZen() animates the window back to its
+    // real frame while the board fades in; a running→stopped transition posts "narrow" →
+    // narrowFromPage() folds it back down. The user dragging the narrow window wider is an
+    // explicit "show me the board" (windowDidResize → reveal, no fighting the drag). Window
+    // close quits the app, so first-open-per-process == first-load-per-session.
+    private var zenActive = false
+    private var zenSavedFrame: NSRect?      // the real (pre-narrow) frame to expand back to
+    private var zenProgrammaticResize = false  // our own narrow animation must not read as a user drag
+    private var didFirstOpen = false
+    private var zenWidth: CGFloat { config.zenWidth }
+
+    // ===== 화면 카탈로그 (ScreenCatalog) =====
+    // Every ~2s while the window is open+visible, probe the VISIBLE webview for its screen-state
+    // key (page + view + UI flags) and hand it to the screenCatalog observer. A state must hold
+    // across two consecutive ticks (settled — no mid-transition shots) before its screenshot is
+    // taken.
+    private var screenCatTimer: Timer?
+    private var screenCatLastKey = ""       // previous tick's key (transition + settle detection)
+    private var screenCatCapturing = false  // one in-flight snapshot at a time
+
     // Open + focus the window in a given mode (menu action).
-    func show(port: UInt16, mode: Mode) {
+    public func show(port: UInt16, mode: Mode) {
         openInternal(port: port, mode: mode, activate: true)
     }
 
+    // TEMPORARY QA hook (Korean-IME investigation, 2026-07-12): headlessly navigate the
+    // dashboard webview to an arbitrary in-app path, mirroring /api/debug/window-mode /
+    // window-close. Lets an automated repro drive a specific page (e.g. /goal?n=NN&cli=1)
+    // without simulating clicks through the SPA-ish nav. Only reachable once the window is
+    // already open (does not open it itself). Remove alongside the other IME debug taps once
+    // the fix is verified, or keep — it follows the same established test-only pattern.
+    public func debugNavigate(path: String, port: UInt16) {
+        guard let wv = dashboardWebView, let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return }
+        setMode(.dashboard, forceApply: false)
+        if zenActive { expandFromZen() }
+        wv.load(URLRequest(url: url))
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeFirstResponder(wv)
+    }
+
+
+
     // Auto-open on launch: bring the window on screen (so the WKWebView is not occluded and
     // therefore not throttled) without stealing key focus from the user's current app.
-    func autoOpen(port: UInt16, mode: Mode) {
-        AppLog.log("app-window autoOpen(port=\(port), mode=\(mode.rawValue))")
+    public func autoOpen(port: UInt16, mode: Mode) {
+        log("app-window autoOpen(port=\(port), mode=\(mode.rawValue))")
         openInternal(port: port, mode: mode, activate: false)
     }
 
@@ -112,13 +238,23 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
         lastPort = port
         loadIfNeeded(port: port)
         setMode(mode, forceApply: true)
+        // Zen start: narrow the window to the rail BEFORE it comes on screen, so the first frame
+        // the user ever sees is already the compact start palette (never a full-size flash).
+        let firstOpen = !didFirstOpen
+        didFirstOpen = true
+        if firstOpen && mode == .dashboard { applyZenNarrow() }
         if activate {
             window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         } else {
             window?.orderFrontRegardless()
         }
+        // The moment the window is actually on screen — everything the user sees before the
+        // page's own firstPaint event is the blank/white gap being investigated.
+        trace("windowOpen",
+              detail: "mode=\(mode.rawValue) firstOpen=\(firstOpen) zen=\(zenActive) activate=\(activate)")
         startAudioProbeTimer()
+        startScreenCatalogTimer()
     }
 
     // Periodic instrumentation (independent of mode switches): every few seconds while the window
@@ -140,13 +276,80 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
         audioProbeTimer = nil
     }
 
+    // MARK: - 화면 카탈로그 capture loop (see the property block above; sink = screenCatalog)
+
+    private func startScreenCatalogTimer() {
+        guard screenCatTimer == nil, screenCatalog != nil, config.screenStateScript != nil else { return }
+        let t = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.screenCatalogTick()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        screenCatTimer = t
+    }
+
+    private func stopScreenCatalogTimer() {
+        screenCatTimer?.invalidate()
+        screenCatTimer = nil
+        screenCatLastKey = ""
+    }
+
+    // Probe the visible webview for its screen-state identity. Everything the key needs is
+    // read in ONE evaluateJavaScript round-trip; the JS (config.screenStateScript) returns a
+    // compact JSON string or null (non-http page / not ready). Query VALUES are dropped from
+    // the key on purpose — /goal?n=12 and /goal?n=34 are the same SCREEN — and flags capture
+    // the layout-changing UI states the path can't see (zen fold, 수확 오브, running dial,
+    // open modal, collapsed rail).
+    private func screenCatalogTick() {
+        guard let catalog = screenCatalog, let probeScript = config.screenStateScript else { return }
+        guard isOpen, window?.occlusionState.contains(.visible) == true else { return }
+        let curMode = mode
+        let wv: WKWebView? = (curMode == .bgm) ? bgmWebView : dashboardWebView
+        guard let webView = wv, webView.url != nil else { return }
+        webView.evaluateJavaScript(probeScript) { [weak self] result, _ in
+            guard let self, let json = result as? String,
+                  let data = json.data(using: .utf8),
+                  let s = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let path = s["p"] as? String else { return }
+            let qKeys = (s["q"] as? String) ?? ""
+            let page = path + (qKeys.isEmpty ? "" : "?" + qKeys)
+            let view = (s["v"] as? String) ?? ""
+            let flags = (s["f"] as? String) ?? ""
+            let w = (s["w"] as? NSNumber)?.intValue ?? 0
+            let h = (s["h"] as? NSNumber)?.intValue ?? 0
+            let key = "\(curMode.rawValue)|\(page)|\(view)|\(flags)"
+
+            let entered = key != self.screenCatLastKey
+            let settled = !entered            // same state on two consecutive ticks
+            let wantsShot = catalog.observe(
+                key: key, mode: curMode.rawValue, page: page, view: view, flags: flags,
+                w: w, h: h, entered: entered)
+            self.screenCatLastKey = key
+            guard wantsShot, settled, !self.screenCatCapturing,
+                  self.isOpen, self.mode == curMode else { return }
+            self.screenCatCapturing = true
+            let cfg = WKSnapshotConfiguration()
+            cfg.rect = webView.bounds
+            // Downscale wide windows so a state's PNG stays ~a few hundred KB while text in
+            // the shot remains readable for UX review.
+            if webView.bounds.width > 1200 { cfg.snapshotWidth = 1200 }
+            webView.takeSnapshot(with: cfg) { image, _ in
+                defer { self.screenCatCapturing = false }
+                guard let image, let tiff = image.tiffRepresentation,
+                      let rep = NSBitmapImageRep(data: tiff),
+                      let png = rep.representation(using: .png, properties: [:]) else { return }
+                catalog.record(key: key, png: png)
+            }
+        }
+    }
+
     // Called from applicationWillTerminate: stop both webviews' audio and hide the window
     // explicitly, so nothing keeps playing during the brief window before the process actually dies.
-    func closeForQuit() {
+    public func closeForQuit() {
         quitting = true
-        AppLog.log("app-window closeForQuit (isOpen=\(isOpen))")
+        log("app-window closeForQuit (isOpen=\(isOpen))")
         saveWindowFrame()
         stopAudioProbeTimer()
+        stopScreenCatalogTimer()
         onOwnAudio?(false)
         pauseWebAudio()
         bgmWebView?.loadHTMLString("", baseURL: nil)
@@ -154,13 +357,13 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
         window?.orderOut(nil)
     }
 
-    var isOpen: Bool { window?.isVisible ?? false }
+    public var isOpen: Bool { window?.isVisible ?? false }
 
     // Test hook: close the window exactly as a user clicking the red close button would — via the
     // real NSWindow.close(), so windowWillClose fires the genuine user-close path (onUserClose ->
     // quit()), not a synthetic shortcut. Lets QA exercise Q1 ("closing the window quits the whole
     // app") headlessly.
-    func testUserClose() {
+    public func testUserClose() {
         window?.close()
     }
 
@@ -180,6 +383,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
     // detach when not shown.
     private func setMode(_ newMode: Mode, forceApply: Bool = false) {
         guard forceApply || newMode != mode else { return }
+        if newMode != mode { trace("modeSwitch", detail: "\(mode.rawValue) -> \(newMode.rawValue)") }
         mode = newMode
         segmented?.selectedSegment = (mode == .dashboard) ? 0 : 1
         window?.title = titleForMode
@@ -235,9 +439,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
             "lastNow:(typeof lastNow!=='undefined'?lastNow:null), " +
             "engaged:(typeof engaged!=='undefined'?engaged:null), " +
             "curTrack:(typeof curTrack!=='undefined'?curTrack:null)});})()"
-        ) { result, _ in
+        ) { [weak self] result, _ in
             let probe = (result as? String) ?? "unavailable"
-            AppLog.log("app-window audio-probe(\(context)) bgmWebView.audio=\(probe)")
+            self?.log("app-window audio-probe(\(context)) bgmWebView.audio=\(probe)")
         }
     }
 
@@ -249,16 +453,16 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
     // Uses a named JS hook (window.__setMute) rather than clicking the button, so it sets the target
     // state directly (no drift if the two ever disagree) and never loops back to the server. The BGM
     // webview owns audio in both modes, so this controls what the user hears.
-    func setWebMute(_ muted: Bool) {
+    public func setWebMute(_ muted: Bool) {
         bgmWebView?.evaluateJavaScript("try{window.__setMute(\(muted))}catch(e){}", completionHandler: nil)
     }
 
     // QA-only: render whichever webview is asked for (regardless of which is currently the visible
     // subview) as a PNG, for SPEC.html's per-page screenshots. `tab` (only meaningful for mode=="bgm")
-    // switches the in-page 액티비티/디버그 sub-tab via BGMPlayerContent.swift's own `setMode()` JS
-    // function before snapshotting. Must run on main (WKWebView requirement); the caller (server
-    // thread) blocks via a semaphore since HTTP responses here are synchronous.
-    func snapshotPNG(mode: Mode, tab: String?, completion: @escaping (Data?) -> Void) {
+    // switches the in-page 액티비티/디버그 sub-tab via the page's own `setMode()` JS function
+    // before snapshotting (see config.snapshotTabs). Must run on main (WKWebView requirement); the
+    // caller (server thread) blocks via a semaphore since HTTP responses here are synchronous.
+    public func snapshotPNG(mode: Mode, tab: String?, completion: @escaping (Data?) -> Void) {
         guard isOpen else { completion(nil); return }
         let wv: WKWebView? = (mode == .bgm) ? bgmWebView : dashboardWebView
         guard let webView = wv, webView.url != nil else { completion(nil); return }
@@ -275,9 +479,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
                 completion(png)
             }
         }
-        if mode == .bgm, let tab, tab == "activity" || tab == "debug" {
-            // BGMPlayerContent.swift's own `setMode('activity'|'debug')` toggles the sub-tab; call
-            // it directly rather than adding a QA-only hook.
+        if mode == .bgm, let tab, config.snapshotTabs.contains(tab) {
+            // The page's own `setMode(tab)` toggles the sub-tab; call it directly rather than
+            // adding a QA-only hook.
             webView.evaluateJavaScript("try{setMode('\(tab)')}catch(e){}") { _, _ in
                 // Give the sub-tab a beat to render before capturing.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { snap() }
@@ -287,22 +491,103 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
         }
     }
 
+    // MARK: - Zen start (narrow first-open window; see the property block above)
+
+    private func applyZenNarrow() {
+        guard let win = window else { return }
+        zenSavedFrame = win.frame
+        zenActive = true
+        // Detach frame autosave while narrow: AppKit auto-saves on every frame change, and the
+        // 242pt zen frame must never overwrite the user's real saved window size.
+        win.setFrameAutosaveName("")
+        var f = win.frame
+        f.size.width = zenWidth
+        win.setFrame(f, display: true)
+        log("app-window zen narrow (full frame saved: \(NSStringFromRect(zenSavedFrame ?? .zero)))")
+        trace("zenNarrow")
+    }
+
+    // The page announced the board reveal (challenge started / 둘러보기) → grow the window back.
+    private func expandFromZen() {
+        guard zenActive, let win = window else { return }
+        zenActive = false
+        var target = zenSavedFrame ?? win.frame
+        if target.width < 400 { target.size.width = config.defaultExpandedWidth }   // never "expand" into another sliver
+        win.setFrame(target, display: true, animate: true)
+        win.setFrameAutosaveName(windowAutosaveName)
+        log("app-window zen expand -> \(NSStringFromRect(target))")
+        trace("zenExpand")
+    }
+
+    // The page re-entered zen (음원/챌린지 stopped on the dashboard) → fold the window back down
+    // to the rail. Captures the CURRENT frame as the next expand target, so restarting brings
+    // back exactly the size the user was working at. Ignored while the BGM surface is the
+    // visible mode — that page owns the window then (the page-side visibility guard should
+    // already prevent this, but the window must defend itself too).
+    private func narrowFromPage() {
+        guard !zenActive, mode == .dashboard, let win = window, win.isVisible else { return }
+        zenSavedFrame = win.frame
+        zenActive = true
+        win.setFrameAutosaveName("")   // the narrow frame must never overwrite the real saved one
+        var f = win.frame
+        f.size.width = zenWidth
+        // Animated fold, with windowDidResize told this is OUR resize: the shrink passes through
+        // widths > 320 which would otherwise read as a user drag and instantly un-zen.
+        zenProgrammaticResize = true
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.28
+            win.animator().setFrame(f, display: true)
+        }, completionHandler: { [weak self] in self?.zenProgrammaticResize = false })
+        log("app-window zen re-narrow (full frame saved: \(NSStringFromRect(zenSavedFrame ?? .zero)))")
+        trace("zenNarrow", detail: "session stopped")
+    }
+
+    // While zen-narrow, the user dragging the window wider means "show me the board without
+    // starting": exit zen, reveal the page's hidden board, and let the drag own the frame
+    // (no programmatic resize fighting the user's hand).
+    public func windowDidResize(_ notification: Notification) {
+        guard zenActive, !zenProgrammaticResize, let win = window, win.frame.width > 320 else { return }
+        zenActive = false
+        win.setFrameAutosaveName(windowAutosaveName)
+        dashboardWebView?.evaluateJavaScript("try{window.cmZenReveal&&cmZenReveal()}catch(e){}",
+                                             completionHandler: nil)
+        log("app-window zen exit via user resize \(NSStringFromRect(win.frame))")
+        trace("zenExpand", detail: "user resize")
+    }
+
+    // JS → native: SessionRail posts "reveal" when the board becomes visible (challenge started /
+    // 둘러보기) and "narrow" when a stop folds the board away again.
+    public func userContentController(_ userContentController: WKUserContentController,
+                                      didReceive message: WKScriptMessage) {
+        guard message.name == config.zenMessageName else { return }
+        let cmd = (message.body as? String) ?? "reveal"
+        DispatchQueue.main.async { [weak self] in
+            if cmd == "narrow" { self?.narrowFromPage() } else { self?.expandFromZen() }
+        }
+    }
+
     @objc private func onSegmentChanged(_ sender: NSSegmentedControl) {
         let newMode: Mode = (sender.selectedSegment == 1) ? .bgm : .dashboard
         setMode(newMode)
     }
 
-    private var titleForMode: String { mode == .bgm ? "컨디션 관리" : "대시보드" }
+    private var titleForMode: String {
+        config.titles[mode] ?? config.titles[.dashboard] ?? ""
+    }
 
     // Load each surface exactly once per port (e.g. on first open, or if the server restarted on
     // a new port). Switching modes afterward never calls this again — see setMode.
     private func loadIfNeeded(port: UInt16) {
         if let wv = bgmWebView, wv.url == nil || lastPort != port,
-           let url = URL(string: "http://127.0.0.1:\(port)/bgm-player") {
+           let path = config.surfacePaths[.bgm],
+           let url = URL(string: "http://127.0.0.1:\(port)\(path)") {
+            trace("loadStart", page: path)
             wv.load(URLRequest(url: url))
         }
         if let wv = dashboardWebView, wv.url == nil || lastPort != port,
-           let url = URL(string: "http://127.0.0.1:\(port)/") {
+           let path = config.surfacePaths[.dashboard],
+           let url = URL(string: "http://127.0.0.1:\(port)\(path)") {
+            trace("loadStart", page: path)
             wv.load(URLRequest(url: url))
         }
         lastPort = port
@@ -312,11 +597,19 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
 
     private func ensureBuilt() {
         guard window == nil else { return }
-        let bg = NSColor(calibratedRed: 0.043, green: 0.047, blue: 0.063, alpha: 1)
+        let bg = config.backgroundColor
 
         func makeWebView() -> WKWebView {
             let cfg = WKWebViewConfiguration()
             cfg.mediaTypesRequiringUserActionForPlayback = []   // <- the guarantee: autoplay allowed
+            cfg.userContentController.add(self, name: config.zenMessageName)  // zen-start reveal channel (JS → native)
+            // Host-app scripts injected at documentStart into EVERY page these webviews load
+            // (컨디션 매니저: the 0.5s view-trace heartbeat), so route changes (/goal-add,
+            // /equipment, …) are covered without touching each page's HTML.
+            for source in config.documentStartScripts {
+                cfg.userContentController.addUserScript(WKUserScript(
+                    source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            }
             let wv = WKWebView(frame: .zero, configuration: cfg)
             wv.navigationDelegate = self
             wv.uiDelegate = self   // without this, JS confirm()/alert()/prompt() resolve to their
@@ -334,7 +627,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
         // titlebar accessory, next to the traffic lights) instead of a separate strip below the
         // title bar — this is what makes the top read as one continuous unified bar (item 2),
         // matching the reference where toolbar controls share the very top row.
-        let seg = NSSegmentedControl(labels: ["대시보드", "컨디션"], trackingMode: .selectOne,
+        let seg = NSSegmentedControl(labels: config.segmentLabels, trackingMode: .selectOne,
                                      target: self, action: #selector(onSegmentChanged(_:)))
         seg.segmentStyle = .texturedRounded
         seg.controlSize = .small
@@ -357,7 +650,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
         seg.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin]
         bar.addSubview(seg)
 
-        let frame = NSRect(x: 0, y: 0, width: 1040, height: 720)
+        let frame = NSRect(origin: .zero, size: config.initialContentSize)
         let contentContainer = NSView(frame: frame)
         container = contentContainer
 
@@ -367,7 +660,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
         let win = NSWindow(contentRect: frame,
                            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                            backing: .buffered, defer: false)
-        win.title = "대시보드"
+        win.title = config.titles[.dashboard] ?? ""
         win.backgroundColor = bg
         win.appearance = NSAppearance(named: .darkAqua)   // dark title bar + toggle to match the web UI
         win.titlebarAppearsTransparent = true
@@ -385,10 +678,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
         if !hadSavedFrame {
             win.center()
         }
-        AppLog.log("app-window ensureBuilt hadSavedFrame=\(hadSavedFrame) frame=\(NSStringFromRect(win.frame))")
+        log("app-window ensureBuilt hadSavedFrame=\(hadSavedFrame) frame=\(NSStringFromRect(win.frame))")
 
         // The 대시보드/컨디션 segmented toggle is no longer shown in the titlebar — navigation is
-        // unified elsewhere (the rail's condition popup "컨디션 전체 보기" switches to the BGM surface,
+        // unified elsewhere (the rail's condition popup "시스템관리" switches to the BGM surface,
         // and that page's "← 대시보드" button switches back). The mode-switch MECHANISM (setMode,
         // driven by openDashboard/openBGMWindow) is unchanged; only its titlebar control is removed.
         // `segmented` stays wired so setMode's selectedSegment update remains a harmless no-op.
@@ -405,7 +698,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
     // segmented-control accessory's own frame excluded so their clicks still reach them.
     private func installTitlebarDragView(on win: NSWindow, segmentedBar: NSView) {
         guard let themeFrame = win.contentView?.superview else {
-            AppLog.log("app-window installTitlebarDragView FAILED: no themeFrame")
+            log("app-window installTitlebarDragView FAILED: no themeFrame")
             return
         }
         let titlebarHeight = win.frame.height - (win.contentView?.frame.height ?? win.frame.height)
@@ -440,38 +733,75 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
     // shortly after a resize/move, before AppKit's own autosave write-behind would otherwise fire.
     private func saveWindowFrame() {
         guard let window else { return }
+        // Quitting while still zen-narrow must persist the REAL frame, not the 242pt sliver —
+        // otherwise the next launch would restore (and zen-save) an already-narrow window.
+        if zenActive, let f = zenSavedFrame { window.setFrame(f, display: false) }
         window.saveFrame(usingName: windowAutosaveName)
         // Force an immediate flush: the process may be killed (NSApp.terminate finishing, or the
         // OS reclaiming it) shortly after this call, before NSUserDefaults' normal write-behind
         // buffer would otherwise flush to disk on its own.
         UserDefaults.standard.synchronize()
-        AppLog.log("app-window saveWindowFrame \(NSStringFromRect(window.frame))")
+        log("app-window saveWindowFrame \(NSStringFromRect(window.frame))")
+    }
+
+    // Screen-visibility changes the page cannot see (document.hidden stays false while the
+    // window is merely covered by another app's window): macOS occlusion is ALSO when WebKit
+    // throttles timers, so heartbeat gaps in the trace line up with these events.
+    public func windowDidChangeOcclusionState(_ notification: Notification) {
+        guard let win = window else { return }
+        let visible = win.occlusionState.contains(.visible)
+        trace("occlusion", detail: visible ? "visible" : "occluded")
     }
 
     // Closing stops audio: blank both pages (a WKWebView keeps playing while alive otherwise).
-    func windowWillClose(_ notification: Notification) {
+    public func windowWillClose(_ notification: Notification) {
         saveWindowFrame()
         stopAudioProbeTimer()
+        stopScreenCatalogTimer()
         onOwnAudio?(false)
         pauseWebAudio()
         bgmWebView?.load(URLRequest(url: URL(string: "about:blank")!))
         dashboardWebView?.load(URLRequest(url: URL(string: "about:blank")!))
+        trace("windowClose", detail: quitting ? "quit" : "user mode=\(mode.rawValue)")
         if quitting {
-            AppLog.log("app-window windowWillClose (during quit)")
+            log("app-window windowWillClose (during quit)")
         } else {
-            AppLog.log("app-window windowWillClose (user, mode=\(mode.rawValue))")
+            log("app-window windowWillClose (user, mode=\(mode.rawValue))")
             onUserClose?()
         }
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    // View-trace path label for a webview's current URL ("/", "/bgm-player", "/goal-add?…").
+    private func tracePath(_ webView: WKWebView) -> String {
+        guard let url = webView.url, url.scheme == "http" else { return "" }
+        return url.path + (url.query.map { "?\($0)" } ?? "")
+    }
+
+    // The three WebKit render milestones bracket the blank gap: didStartProvisionalNavigation
+    // (request went out) → didCommit (first bytes accepted — the OLD content is gone and the
+    // window shows the webview's background until the new page paints) → didFinish (load done).
+    // Together with the injected heartbeat's boot/firstPaint these make "흰 화면 3초" a
+    // measurable interval instead of a screenshot.
+    public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        let p = tracePath(webView)
+        if !p.isEmpty { trace("navStart", page: p) }
+    }
+
+    public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        let p = tracePath(webView)
+        if !p.isEmpty { trace("navCommit", page: p) }
+    }
+
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if webView.url?.scheme == "http" {
             FileHandle.standardError.write("[app-window] loaded \(webView.url?.absoluteString ?? "")\n".data(using: .utf8)!)
+            trace("navFinish", page: tracePath(webView))
         }
     }
 
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+    public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         FileHandle.standardError.write("[app-window] load failed: \(error.localizedDescription)\n".data(using: .utf8)!)
+        trace("navFail", page: tracePath(webView), detail: error.localizedDescription)
     }
 
     // MARK: - WKUIDelegate: JavaScript dialog panels
@@ -483,19 +813,19 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
     // the new-window request — clicking 전체 로그 타임라인(/worker-log) on the 크론 page, or the
     // dashboard's transcript/breakdown viewers, silently did nothing. This app has a single
     // webview window, so hand the URL to the default browser instead of spawning a webview.
-    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
-                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+    public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                        for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         // Logged because a silent window.open is invisible to the user AND to app.log —
         // the 플랜 맵 button's "click did nothing" report was undiagnosable without this.
-        AppLog.log("app-window window.open \(navigationAction.request.url?.absoluteString ?? "nil")")
+        log("app-window window.open \(navigationAction.request.url?.absoluteString ?? "nil")")
         if let url = navigationAction.request.url, url.scheme?.hasPrefix("http") == true {
             NSWorkspace.shared.open(url)
         }
         return nil
     }
 
-    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
-                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+    public func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                        initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let alert = NSAlert()
         alert.messageText = message
         alert.addButton(withTitle: "확인")
@@ -506,8 +836,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
         }
     }
 
-    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
-                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+    public func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                        initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
         let alert = NSAlert()
         alert.messageText = message
         alert.addButton(withTitle: "확인")
@@ -519,9 +849,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
         }
     }
 
-    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
-                 defaultText: String?, initiatedByFrame frame: WKFrameInfo,
-                 completionHandler: @escaping (String?) -> Void) {
+    public func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
+                        defaultText: String?, initiatedByFrame frame: WKFrameInfo,
+                        completionHandler: @escaping (String?) -> Void) {
         let alert = NSAlert()
         alert.messageText = prompt
         alert.addButton(withTitle: "확인")
@@ -543,10 +873,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, WKNavigationDelegat
     // implements this. With no implementation, clicking "파일 첨부" in the goal page silently
     // did nothing (the goal's addFiles() never received any files). Present a native open panel
     // and hand the chosen URLs back so FileReader can read + upload them.
-    func webView(_ webView: WKWebView,
-                 runOpenPanelWith parameters: WKOpenPanelParameters,
-                 initiatedByFrame frame: WKFrameInfo,
-                 completionHandler: @escaping ([URL]?) -> Void) {
+    public func webView(_ webView: WKWebView,
+                        runOpenPanelWith parameters: WKOpenPanelParameters,
+                        initiatedByFrame frame: WKFrameInfo,
+                        completionHandler: @escaping ([URL]?) -> Void) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent: NSS 리포트 (SUT / Supertrust) — runs the /nss-report-daily skill
+  once every morning at 09:10 KST and republishes the "NSS 리포트 허브" artifact.
+
+  09:10 is deliberate: the on-chain day boundary is 09:00 KST, so at 09:10 the
+  previous day's bucket has just closed and the report captures a complete day.
+
+  Install (copy into LaunchAgents, then load):
+    cp Scripts/com.condition-manager.nss-daily.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.condition-manager.nss-daily.plist
+
+  Stop / uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.condition-manager.nss-daily.plist
+    rm ~/Library/LaunchAgents/com.condition-manager.nss-daily.plist
+
+  Run once now (without waiting for 09:10 — for testing):
+    launchctl start com.condition-manager.nss-daily
+
+  Turn OFF from the app: the 크론 페이지 NSS 리포트 row's 꺼짐 button writes
+  ~/.condition-manager/nss-report-disabled, which the runner honors (it no-ops).
+  This plist stays loaded; the toggle is the on/off switch.
+
+  REQUIRES VPN at fire time (the settlement fetch queries internal Redash). If VPN
+  is off the run stops without a stale fallback and reports 오류 to the dashboard
+  plus a macOS notification — re-run /nss-report-daily by hand after connecting.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.condition-manager.nss-daily</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/lioncho/Work/departtment_service/projects/condition-manager/Scripts/nss-report-daily.sh</string>
+    </array>
+
+    <!-- Fire once a day at 09:10 (local time). Not StartInterval — this is a
+         calendar trigger, not a periodic tick. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>10</integer>
+    </dict>
+
+    <!-- Do NOT run at load: loading the agent (e.g. after login) must not fire an
+         unscheduled report. The only trigger is the 09:10 calendar entry (or a manual
+         `launchctl start`). If the Mac is asleep at 09:10, launchd runs it on next wake. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/cm-nss-daily.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/cm-nss-daily.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

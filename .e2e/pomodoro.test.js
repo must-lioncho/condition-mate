@@ -36,8 +36,11 @@ cmChWall = 26 * 60;
 check('dial clamps at 0:00', cmChView(), { text: '0:00', frac: 1 });
 
 // 3) The N/2 tracker is always on the pomodoro label, not only in reward/done states.
+//    The count rides in its own .cmch-day nowrap chunk so a wrap can't split "오늘 2/2".
 cmChDailyN = 2;
-check('label carries daily N/2', cmChModeLabel(), '포모도로 25분 · 오늘 2/2');
+const modeLabel = cmChModeLabel();
+check('label carries daily N/2', modeLabel.replace(/<[^>]*>/g, ''), '포모도로 25분 · 오늘 2/2');
+check('daily chunk is nowrap-wrapped', /<span class="cmch-day">· 오늘 2\/2<\/span>$/.test(modeLabel), true);
 
 // 4) State-poll contract on the live source: the sync handler must consume the
 //    server fields and shield the local post-harvest chooser from a lagging poll.

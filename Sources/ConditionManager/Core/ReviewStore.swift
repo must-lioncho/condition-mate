@@ -111,6 +111,28 @@ final class ReviewStore {
         // user triage which work matters most. Order: urgent > high > medium > low > lowest.
         var priority: String = "medium"
 
+        // Execution settings captured in the 목표 추가 composer, applied when the goal is
+        // actually worked by the headless worker (chat2Say/sessionSay → chat2RunTurn) and the
+        // in-page CLI. They persist on the goal so every later run reuses the same choices.
+        //   effort - reasoning effort → `claude --effort <level>` (low|medium|high|xhigh|max);
+        //            "" leaves the CLI default.
+        //   mode   - permission mode → `--permission-mode` (default|acceptEdits|plan|auto|
+        //            bypassPermissions); "" falls back to the caller-supplied mode.
+        //   cwd    - absolute working folder the goal runs in (a real project dir); "" keeps the
+        //            legacy behavior (goal-NN folder / app cwd).
+        //   branch - git branch to check out in cwd before the session runs; "" keeps whatever
+        //            branch the repo is on (only meaningful when cwd is a git repo).
+        //   model  - claude model the goal runs on → `--model <alias>` (fable|opus|sonnet|haiku);
+        //            "" leaves the CLI's configured default (자동).
+        //   images - attachment filenames under goal-NN/attachments, surfaced to the worker as
+        //            Read-able file paths on the first turn.
+        var effort: String = ""
+        var mode: String = ""
+        var cwd: String = ""
+        var branch: String = ""
+        var model: String = ""
+        var images: [String] = []
+
         init(id: String, seq: Int = 0, text: String, parent: String = "",
              status: String = "backlog", trackedSeconds: Double = 0, startedAt: Date? = nil,
              waitingSince: Date? = nil, waitKind: String = "",
@@ -120,7 +142,9 @@ final class ReviewStore {
              targetAt: Date? = nil, completedAt: Date? = nil,
              sprint: Int = 0, bump: Bool = false, released: Bool = false, releaseId: String = "",
              archived: Bool = false,
-             priority: String = "medium") {
+             priority: String = "medium",
+             effort: String = "", mode: String = "", cwd: String = "", branch: String = "",
+             model: String = "", images: [String] = []) {
             self.id = id; self.seq = seq; self.text = text; self.parent = parent
             self.status = status; self.trackedSeconds = trackedSeconds; self.startedAt = startedAt
             self.waitingSince = waitingSince; self.waitKind = waitKind
@@ -131,6 +155,8 @@ final class ReviewStore {
             self.sprint = sprint; self.bump = bump; self.released = released; self.releaseId = releaseId
             self.archived = archived
             self.priority = priority
+            self.effort = effort; self.mode = mode; self.cwd = cwd; self.branch = branch
+            self.model = model; self.images = images
         }
 
         // Tolerant decoder: fields added over time (seq, status, energy, ...) may be absent
@@ -138,7 +164,7 @@ final class ReviewStore {
         // key (it ignores default values), wiping every goal on load — so decode each
         // optional-with-default field via decodeIfPresent and fall back to its default.
         enum CodingKeys: String, CodingKey {
-            case id, seq, text, parent, status, trackedSeconds, startedAt, waitingSince, waitKind, energy, agents, tokens, value, evidence, sessionId, transcriptPath, linkedSessions, links, targetAt, completedAt, sprint, bump, released, releaseId, archived, priority
+            case id, seq, text, parent, status, trackedSeconds, startedAt, waitingSince, waitKind, energy, agents, tokens, value, evidence, sessionId, transcriptPath, linkedSessions, links, targetAt, completedAt, sprint, bump, released, releaseId, archived, priority, effort, mode, cwd, branch, model, images
         }
         init(from dec: Decoder) throws {
             let c = try dec.container(keyedBy: CodingKeys.self)
@@ -168,6 +194,12 @@ final class ReviewStore {
             releaseId = try c.decodeIfPresent(String.self, forKey: .releaseId) ?? ""
             archived = try c.decodeIfPresent(Bool.self, forKey: .archived) ?? false
             priority = try c.decodeIfPresent(String.self, forKey: .priority) ?? "medium"
+            effort = try c.decodeIfPresent(String.self, forKey: .effort) ?? ""
+            mode = try c.decodeIfPresent(String.self, forKey: .mode) ?? ""
+            cwd = try c.decodeIfPresent(String.self, forKey: .cwd) ?? ""
+            branch = try c.decodeIfPresent(String.self, forKey: .branch) ?? ""
+            model = try c.decodeIfPresent(String.self, forKey: .model) ?? ""
+            images = try c.decodeIfPresent([String].self, forKey: .images) ?? []
         }
     }
 
@@ -382,15 +414,33 @@ final class ReviewStore {
         var priority: String = "medium"
         var confidence: Double = 0
         var rationale: String = ""
+        // Relationship of the candidate to its suggested parent (DASH-9). Drives the RECOMMENDED
+        // action in the 큐 card: "recurring-execution" → task 추가, "sub-problem" → 서브 목표 추가,
+        // "unrelated"/"" → 별도 새 목표. Legacy items decode to "" (UI falls back to kind).
+        var relation: String = ""
 
-        enum CodingKeys: String, CodingKey { case id, text, parent, sprint, note, matches, createdAt, status, duplicate, kind, refineSession, originPrompt, jobKind, title, resultHTML, error, findOnly, placement, suggestedParentSeq, priority, confidence, rationale }
+        // Execution settings carried from the 목표 추가 composer through the dedup queue, so a
+        // candidate promoted to a real goal (resolveQueueItem "add") keeps the user's chosen
+        // effort/mode/cwd/images. Images are the filenames already saved under the queue item's
+        // pending attachments folder (moved into goal-NN/attachments on promote). Legacy items
+        // decode to empty defaults and behave exactly as before.
+        var effort: String = ""
+        var mode: String = ""
+        var cwd: String = ""
+        var branch: String = ""
+        var model: String = ""
+        var images: [String] = []
+
+        enum CodingKeys: String, CodingKey { case id, text, parent, sprint, note, matches, createdAt, status, duplicate, kind, refineSession, originPrompt, jobKind, title, resultHTML, error, findOnly, placement, suggestedParentSeq, priority, confidence, rationale, relation, effort, mode, cwd, branch, model, images }
         init(id: String, text: String, parent: String = "", sprint: Int = 0, note: String = "",
              matches: [QueueMatch] = [], createdAt: Date, status: String = "ready", duplicate: Bool = false,
              kind: String = "new", refineSession: String = "", originPrompt: String = "",
              jobKind: String = "dedup", title: String = "", resultHTML: String = "", error: String = "",
              findOnly: Bool = false,
              placement: String = "top", suggestedParentSeq: Int = 0, priority: String = "medium",
-             confidence: Double = 0, rationale: String = "") {
+             confidence: Double = 0, rationale: String = "", relation: String = "",
+             effort: String = "", mode: String = "", cwd: String = "", branch: String = "",
+             model: String = "", images: [String] = []) {
             self.id = id; self.text = text; self.parent = parent; self.sprint = sprint
             self.note = note; self.matches = matches; self.createdAt = createdAt
             self.status = status; self.duplicate = duplicate; self.kind = kind; self.refineSession = refineSession
@@ -399,6 +449,9 @@ final class ReviewStore {
             self.findOnly = findOnly
             self.placement = placement; self.suggestedParentSeq = suggestedParentSeq
             self.priority = priority; self.confidence = confidence; self.rationale = rationale
+            self.relation = relation
+            self.effort = effort; self.mode = mode; self.cwd = cwd; self.branch = branch
+            self.model = model; self.images = images
         }
         init(from dec: Decoder) throws {
             let c = try dec.container(keyedBy: CodingKeys.self)
@@ -424,6 +477,13 @@ final class ReviewStore {
             priority = try c.decodeIfPresent(String.self, forKey: .priority) ?? "medium"
             confidence = try c.decodeIfPresent(Double.self, forKey: .confidence) ?? 0
             rationale = try c.decodeIfPresent(String.self, forKey: .rationale) ?? ""
+            relation = try c.decodeIfPresent(String.self, forKey: .relation) ?? ""
+            effort = try c.decodeIfPresent(String.self, forKey: .effort) ?? ""
+            mode = try c.decodeIfPresent(String.self, forKey: .mode) ?? ""
+            cwd = try c.decodeIfPresent(String.self, forKey: .cwd) ?? ""
+            branch = try c.decodeIfPresent(String.self, forKey: .branch) ?? ""
+            model = try c.decodeIfPresent(String.self, forKey: .model) ?? ""
+            images = try c.decodeIfPresent([String].self, forKey: .images) ?? []
         }
     }
 
@@ -609,14 +669,55 @@ final class ReviewStore {
     // (queue.json) remains a separate dedup path reached only via enqueuePending (AI추가) — a
     // plain add never routes through it.
     @discardableResult
-    func addGoal(text: String, parent: String = "", sprint: Int = 0, bump: Bool = false) -> Int {
+    func addGoal(text: String, parent: String = "", sprint: Int = 0, bump: Bool = false,
+                 effort: String = "", mode: String = "", cwd: String = "", branch: String = "",
+                 model: String = "", images: [String] = []) -> Int {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return 0 }
         let seq = nextSeq()
         goals.append(Goal(id: UUID().uuidString, seq: seq, text: t, parent: parent,
-                          sprint: max(0, sprint), bump: bump))
+                          sprint: max(0, sprint), bump: bump,
+                          effort: effort, mode: mode, cwd: cwd, branch: branch, model: model, images: images))
         saveGoals()
         return seq
+    }
+
+    // Move a promoted queue candidate's staged images (issue/_pending-att/<queueId>/*) into the
+    // real goal-NN/attachments folder, returning the moved filenames. Best-effort: a missing
+    // staging folder just yields []. The staging folder is removed once drained.
+    static func movePendingAttachments(queueId: String, toSeq seq: Int) -> [String] {
+        let fm = FileManager.default
+        guard seq > 0,
+              let src = IssuePaths.pendingAttachmentsDir(id: queueId),
+              let dst = IssuePaths.attachmentsDir(seq: seq),
+              let names = try? fm.contentsOfDirectory(atPath: src.path), !names.isEmpty else { return [] }
+        try? fm.createDirectory(at: dst, withIntermediateDirectories: true)
+        var moved: [String] = []
+        for name in names where name != ".DS_Store" {
+            let target = dst.appendingPathComponent(name)
+            try? fm.removeItem(at: target)   // overwrite any name clash
+            if (try? fm.moveItem(at: src.appendingPathComponent(name), to: target)) != nil {
+                moved.append(name)
+            }
+        }
+        try? fm.removeItem(at: src)
+        return moved
+    }
+
+    // Update the execution settings on an existing goal (effort/mode/cwd/images) — used when
+    // the 목표 추가 composer's choices need to land on a goal that already exists (e.g. images
+    // saved after the seq was minted). Passing nil leaves that field unchanged.
+    func setGoalExecSettings(seq: Int, effort: String? = nil, mode: String? = nil,
+                             cwd: String? = nil, branch: String? = nil, model: String? = nil,
+                             images: [String]? = nil) {
+        guard let idx = goals.firstIndex(where: { $0.seq == seq }) else { return }
+        if let effort { goals[idx].effort = effort }
+        if let mode { goals[idx].mode = mode }
+        if let cwd { goals[idx].cwd = cwd }
+        if let branch { goals[idx].branch = branch }
+        if let model { goals[idx].model = model }
+        if let images { goals[idx].images = images }
+        saveGoals()
     }
     func removeGoal(id: String) {
         // Remove the goal and re-parent (delete) its children too.
@@ -717,7 +818,9 @@ final class ReviewStore {
     // it, and flips it to "ready". Returns the new id (caller kicks the worker).
     @discardableResult
     func enqueuePending(text: String, parent: String = "", sprint: Int = 0, origin: String? = nil,
-                        findOnly: Bool = false) -> String? {
+                        findOnly: Bool = false,
+                        effort: String = "", mode: String = "", cwd: String = "", branch: String = "",
+                        model: String = "", images: [String] = []) -> String? {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return nil }
         // Snapshot the raw prompt now so refine can't erase the hints (defaults to the
@@ -726,9 +829,18 @@ final class ReviewStore {
         let id = UUID().uuidString
         aiQueue.append(AIQueueItem(id: id, text: t, parent: parent, sprint: max(0, sprint),
                                    createdAt: Date(), status: "pending", originPrompt: o.isEmpty ? t : o,
-                                   findOnly: findOnly))
+                                   findOnly: findOnly,
+                                   effort: effort, mode: mode, cwd: cwd, branch: branch, model: model, images: images))
         saveQueue()
         return id
+    }
+
+    // Record the staged image filenames on a just-enqueued candidate (files live in the
+    // pending-att/<id> folder until the candidate is promoted to a goal).
+    func setQueueItemImages(id: String, images: [String]) {
+        guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return }
+        aiQueue[idx].images = images
+        saveQueue()
     }
 
     // Worker step 1: atomically claim the oldest pending candidate by flipping it to
@@ -748,6 +860,7 @@ final class ReviewStore {
     // queue card can pre-fill the promote form. `priority` is validated against the 5-level
     // bucket; an unknown value falls back to "medium".
     func completeAnalysis(id: String, duplicate: Bool, kind: String, note: String, matches: [QueueMatch],
+                          relation: String = "",
                           placement: String = "top", suggestedParentSeq: Int = 0,
                           priority: String = "medium", confidence: Double = 0, rationale: String = "") {
         guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return }
@@ -756,6 +869,7 @@ final class ReviewStore {
         aiQueue[idx].kind = kind
         aiQueue[idx].note = note
         aiQueue[idx].matches = matches
+        aiQueue[idx].relation = relation
         aiQueue[idx].placement = (placement == "sub") ? "sub" : "top"
         aiQueue[idx].suggestedParentSeq = max(0, suggestedParentSeq)
         aiQueue[idx].priority = ReviewStore.validPriorities.contains(priority) ? priority : "medium"
@@ -808,7 +922,12 @@ final class ReviewStore {
     func removeQueueItem(id: String) -> Bool {
         guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return false }
         guard aiQueue[idx].status != "analyzing" else { return false }
+        let item = aiQueue[idx]
         aiQueue.remove(at: idx)
+        // Drop staged composer images (never promoted to a goal → would otherwise leak).
+        if !item.images.isEmpty, let pdir = IssuePaths.pendingAttachmentsDir(id: item.id) {
+            try? FileManager.default.removeItem(at: pdir)
+        }
         saveQueue()
         return true
     }
@@ -887,7 +1006,13 @@ final class ReviewStore {
             }
             // Create the goal top-level first (unique seq minted in addGoal), then attempt the
             // sub-attach through setParent so its 1-level guard is the single source of truth.
-            let newSeq = addGoal(text: final, sprint: item.sprint)
+            // The composer's execution settings (effort/mode/cwd) ride along; images are then
+            // moved from the pending staging folder into the new goal-NN/attachments.
+            let newSeq = addGoal(text: final, sprint: item.sprint,
+                                 effort: item.effort, mode: item.mode, cwd: item.cwd,
+                                 branch: item.branch, model: item.model)
+            let promoteImages = ReviewStore.movePendingAttachments(queueId: item.id, toSeq: newSeq)
+            if !promoteImages.isEmpty { setGoalExecSettings(seq: newSeq, images: promoteImages) }
             // Locate the just-created goal by seq (addGoal appends it).
             guard let gIdx = goals.firstIndex(where: { $0.seq == newSeq }) else {
                 aiQueue.remove(at: idx); saveQueue()
@@ -935,6 +1060,11 @@ final class ReviewStore {
             logQueueDecision(action: "edit", item: aiQueue[idx], snapshot: false)
         default:   // "skip" and unknown actions drop the item
             aiQueue.remove(at: idx)
+            // Drop any staged composer images too — the candidate never became a goal, so
+            // its pending-att folder would otherwise leak.
+            if !item.images.isEmpty, let pdir = IssuePaths.pendingAttachmentsDir(id: item.id) {
+                try? FileManager.default.removeItem(at: pdir)
+            }
             // Closing a 검색(찾기만) result card is not a decision — keep it out of history.
             if !item.findOnly { logQueueDecision(action: "skip", item: item) }
         }
@@ -959,6 +1089,23 @@ final class ReviewStore {
     }
 
     // Set/clear a goal's parent anytime. Enforces a clean 1-level hierarchy.
+    // Resolve a goal id to its top-level ancestor's id by walking `.parent` up (cycle-safe).
+    // The board enforces a flat 1-level tree, so a subtask can never itself be a parent. When
+    // the user types a subtask's #seq into another goal's 부모# field, the UI layer maps it
+    // through here first so the goal attaches under that subtask's top-level GROUP instead of
+    // silently reverting (setParent would reject the 2-level attach). Returns `id` unchanged
+    // for a top-level goal or an unknown id. Does NOT touch setParent's own guard — the queue
+    // resolve path still relies on setParent rejecting deep attaches.
+    func topLevelAncestorId(of id: String) -> String {
+        var curId = id
+        var seen = Set<String>()
+        while let g = goals.first(where: { $0.id == curId }), !g.parent.isEmpty, !seen.contains(curId) {
+            seen.insert(curId)
+            curId = g.parent
+        }
+        return curId
+    }
+
     func setParent(id: String, parent: String) {
         guard let idx = goals.firstIndex(where: { $0.id == id }), id != parent else { return }
         if parent.isEmpty {

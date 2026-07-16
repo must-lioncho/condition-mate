@@ -13,7 +13,7 @@ const dragEnd = SRC.indexOf('function setParentByNumber');
 const dragJs = SRC.slice(dragStart, dragEnd);
 // 2) goalRow() definition (returns the row markup incl. the .grip handle).
 const rowStart = SRC.indexOf('function goalRow(');
-const rowEnd = SRC.indexOf('function renderStages');
+const rowEnd = SRC.indexOf('function aiWorkRow');
 const rowJs = SRC.slice(rowStart, rowEnd);
 
 if (dragStart < 0 || dragEnd < 0 || rowStart < 0 || rowEnd < 0) {
@@ -26,8 +26,24 @@ const helpers = `
   function $(id){return document.getElementById(id);}
   function num2(i){return (i<9?'0':'')+(i+1);}
   function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-  function gnote(r,id){return '';}
-  function statBtn(g,s,label){return '<button onclick="setStatus(\\''+g.id+'\\',\\''+s+'\\')">'+label+'</button>';}
+  function derivedStatus(goals,g){return null;}
+  function statLabel(s){return s;}
+  function statSel(g){return '';}
+  function gpill(g){return '';}
+  function linkDot(g){return '';}
+  function slinkBtn(g){return '';}
+  function spBadge(g){return '';}
+  function ttimeHTML(g){return '';}
+  function wbadgeHTML(g){return '';}
+  function noteBtn(g,r){return '';}
+  function evCount(g){return 0;}
+  function notePanel(g,r){return '';}
+  function evidencePanel(g){return '';}
+  function aiWorkRow(g,r){return '';}
+  function goalCtx(){}
+  function startTitleEdit(){}
+  function removeGoal(){}
+  function toggleEv(){}
   function fmtDur(sec){return String(Math.floor(sec||0))+'s';}
   function effTracked(g){return g.trackedSeconds||0;}
   function setStatus(){}

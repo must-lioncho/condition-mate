@@ -7,8 +7,8 @@ import Darwin
 // write(_:) and pulls new output via read(since:); output is buffered with a
 // monotonic byte offset so the client resumes cleanly after each poll. This is
 // what lets the CLI run inside the web page instead of a native Terminal window.
-final class PtySession {
-    let token = UUID().uuidString
+public final class PtySession {
+    public let token = UUID().uuidString
     private let master: Int32
     private let process = Process()
     private let lock = NSLock()
@@ -16,18 +16,18 @@ final class PtySession {
     private var baseOffset = 0        // bytes dropped off the front (sliding window)
     private var readSource: DispatchSourceRead?
     private var aliveFlag = true
-    private(set) var lastTouched = Date()
+    public private(set) var lastTouched = Date()
 
     // Keep the live tail bounded; a long session would otherwise grow without limit.
     private static let maxBuffer = 4 * 1024 * 1024
 
     // Spawn `command` (a full shell command line, e.g. a quoted claude + flags) inside a
     // fresh PTY sized cols×rows, running in `cwd`. Returns nil if the PTY or process fails.
-    init?(command: String, cwd: String, cols: UInt16, rows: UInt16) {
+    public init?(command: String, cwd: String, cols: UInt16, rows: UInt16) {
         var m: Int32 = 0, s: Int32 = 0
         var win = winsize(ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0)
         guard openpty(&m, &s, nil, nil, &win) == 0 else {
-            AppLog.log("cli pty openpty failed errno=\(errno) cwd=\(cwd)")
+            WebCLILog.log("cli pty openpty failed errno=\(errno) cwd=\(cwd)")
             return nil
         }
         master = m
@@ -55,7 +55,7 @@ final class PtySession {
             // Most commonly the cwd no longer exists (e.g. a resumed session whose recorded
             // working directory was removed by a data-store move) — log it so the otherwise
             // silent "pty-failed" the dashboard shows can be traced.
-            AppLog.log("cli pty run failed cwd=\(cwd) err=\(error.localizedDescription)")
+            WebCLILog.log("cli pty run failed cwd=\(cwd) err=\(error.localizedDescription)")
             close(m); close(s); return nil
         }
         close(s)   // the child holds the slave; the parent only needs the master
@@ -77,7 +77,7 @@ final class PtySession {
         readSource = src
     }
 
-    var alive: Bool { lock.lock(); defer { lock.unlock() }; return aliveFlag }
+    public var alive: Bool { lock.lock(); defer { lock.unlock() }; return aliveFlag }
 
     private func append(_ d: Data) {
         lock.lock(); defer { lock.unlock() }
@@ -91,7 +91,7 @@ final class PtySession {
 
     // New output since the client's last offset, plus the new end offset. If `since` is
     // behind the sliding window, resumes from the window start (older scrollback is lost).
-    func read(since: Int) -> (data: Data, offset: Int) {
+    public func read(since: Int) -> (data: Data, offset: Int) {
         lock.lock(); defer { lock.unlock() }
         lastTouched = Date()
         let end = baseOffset + buffer.count
@@ -101,7 +101,7 @@ final class PtySession {
         return (Data(buffer[lo...]), end)
     }
 
-    func write(_ d: Data) {
+    public func write(_ d: Data) {
         guard !d.isEmpty else { return }
         lock.lock(); lastTouched = Date(); lock.unlock()
         d.withUnsafeBytes { raw in
@@ -110,12 +110,12 @@ final class PtySession {
         }
     }
 
-    func resize(cols: UInt16, rows: UInt16) {
+    public func resize(cols: UInt16, rows: UInt16) {
         var win = winsize(ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0)
         _ = ioctl(master, TIOCSWINSZ, &win)
     }
 
-    func terminate() {
+    public func terminate() {
         if process.isRunning { process.terminate() }
         readSource?.cancel()
         close(master)

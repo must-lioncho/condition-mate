@@ -40,8 +40,9 @@ DEV_ENV=(--env CM_DEV=1)
 APP="$PWD/.dev/ConditionManager.app"
 BIN="$PWD/.build/debug/ConditionManager"
 # Watch only our own Swift sources + the plist (skip the vendored node_modules under Plugins).
+# All targets: Sources/ConditionManager + the library modules (Sources/GUI, Sources/WebCLI).
 find_sources() {
-    find Sources/ConditionManager -name '*.swift' -not -path '*/node_modules/*'
+    find Sources -name '*.swift' -not -path '*/node_modules/*'
     echo "Info.plist"
 }
 newest_mtime() { find_sources | tr '\n' '\0' | xargs -0 stat -f '%m' 2>/dev/null | sort -n | tail -1; }
@@ -73,15 +74,19 @@ build_and_run() {
     fi
     pkill -f "$APP/Contents/MacOS/ConditionManager" 2>/dev/null || true
     sleep 0.4
-    open "${DEV_ENV[@]}" "$APP"
+    # `open` forwards this shell's environment to the app. A stale CM_DATA_DIR inherited from
+    # the shell that started dev-watch (e.g. an old Claude session with the pre-unification
+    # .localdata override) would silently flip the dev app to an isolated store — the exact
+    # dev/prod data divergence the 2026-07-09 unification removed. Strip it, same as build-app.sh.
+    env -u CM_DATA_DIR open "${DEV_ENV[@]}" "$APP"
     echo "==> relaunched $(date +%H:%M:%S) — id=$DEV_BUNDLE_ID data=\$HOME/.condition-manager (shared with prod)"
     echo "    (coexists with the installed app; window stays in the menu bar — click 'Condition Manager (Dev)' to open)"
 }
 
 build_and_run
-echo "watching Sources/ConditionManager … (Ctrl-C to stop)"
+echo "watching Sources (ConditionManager + GUI + WebCLI) … (Ctrl-C to stop)"
 if command -v fswatch >/dev/null 2>&1; then
-    fswatch -o -l 0.5 Sources/ConditionManager Info.plist 2>/dev/null | while read -r _; do
+    fswatch -o -l 0.5 Sources Info.plist 2>/dev/null | while read -r _; do
         # ignore churn inside vendored deps
         build_and_run
     done

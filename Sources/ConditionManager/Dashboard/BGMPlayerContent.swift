@@ -269,6 +269,19 @@ enum BGMPlayerContent {
     #todayBlocks .card{min-width:calc(50% - 4px);flex:0 0 calc(50% - 4px)}
     #todayBlocks .bar .name{width:auto;max-width:38vw}
   }
+  /* 히스토리 (대시보드에서 이동) — #histPanel 스코프로 다른 곳의 .card 와 충돌 방지, #todayBlocks 와 동일 스타일 */
+  #histPanel h2{font-size:14px;margin:16px 0 6px;color:var(--txt)}
+  #histPanel .cards{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+  #histPanel .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-top:0;box-shadow:none;flex:1;min-width:150px}
+  #histPanel .card .k{color:var(--dim);font-size:12px}
+  #histPanel .card .v{font-size:22px;font-weight:700;margin-top:4px}
+  #histPanel .card .cap{color:var(--dim);font-size:11px;margin-top:3px}
+  #histPanel .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  #histPanel canvas{width:100%;display:block}
+  @media(max-width:560px){
+    #histPanel .cards{gap:8px}
+    #histPanel .card{min-width:calc(50% - 4px);flex:0 0 calc(50% - 4px)}
+  }
 </style>
 </head>
 <body>
@@ -287,8 +300,12 @@ enum BGMPlayerContent {
   <div class="subtabs" id="subtabs">
     <button class="subtab on" data-m="map" onclick="setMode('map')">컨디션맵</button>
     <button class="subtab" data-m="activity" onclick="setMode('activity')">액티비티</button>
+    <button class="subtab" data-m="history" onclick="setMode('history')" title="날짜별 집중도·초집중 세션·시간대 분석">히스토리</button>
     <button class="subtab" data-m="actions" onclick="setMode('actions')">액션로그</button>
+    <button class="subtab" data-m="diag" onclick="setMode('diag')">네트워크 진단</button>
     <button class="subtab" data-m="debug" onclick="setMode('debug')">디버그</button>
+    <button class="subtab" data-m="syslog" onclick="setMode('syslog')" title="프로덕트 퀄리티 개선 전용 — 유저가 매 순간 보던 화면(0.5초)과 창 라이프사이클">시스템 로그</button>
+    <button class="subtab" data-m="screens" onclick="setMode('screens')" title="UX/UI 개선 전용 — 앱이 실제로 그린 모든 화면 상태를 자동 스크린샷(SCR-ID)으로 수집·관리">화면 카탈로그</button>
   </div>
 
   <!-- 컨디션맵: 업무 시작(8h 무활동 뒤 첫 활동)을 기준으로 24시간 컨디션 흐름을 가로 띠로 -->
@@ -354,6 +371,40 @@ enum BGMPlayerContent {
     </div>
   </div>
 
+  <!-- 히스토리 (대시보드에서 이동): 날짜별 집중도 + 초집중 세션 + 시간대 분석. 컨디션맵과 같은
+       /history.json(분 단위 샘플)을 재사용하고, 오늘 활동과 동일한 withCarryForward+timeBuckets 로
+       총/책상/집중을 구한 뒤 '지속 시간 기준'의 초집중 세션을 잡는다. 요소 id는 대시보드와 동일. -->
+  <div class="card" id="histPanel" style="display:none">
+    <div class="row" style="margin:0 0 8px;gap:6px;align-items:center;flex-wrap:wrap">
+      <span class="muted" style="font-size:12px">기간</span>
+      <button class="btn" id="hr_today" onclick="setHistRange('today')" title="오늘 하루">오늘</button>
+      <button class="btn" id="hr_yesterday" onclick="setHistRange('yesterday')" title="어제 하루">어제</button>
+      <button class="btn" id="hr_7d" onclick="setHistRange('7d')" title="최근 7일">1주일</button>
+      <button class="btn" id="hr_1m" onclick="setHistRange('1m')" title="최근 한 달">한달</button>
+      <button class="btn" id="hr_30d" onclick="setHistRange('30d')" title="최근 30일">30일</button>
+      <button class="btn" id="hr_3m" onclick="setHistRange('3m')" title="최근 3달">3달</button>
+      <input type="date" id="histFrom" class="btn" onchange="onHistDate()" style="color-scheme:dark;padding:5px 8px" title="시작 날짜">
+      <span class="muted" style="font-size:12px">~</span>
+      <input type="date" id="histTo" class="btn" onchange="onHistDate()" style="color-scheme:dark;padding:5px 8px" title="끝 날짜">
+      <button class="btn" onclick="loadHistory(true)" style="margin-left:auto" title="히스토리 새로고침">↻ 새로고침</button>
+    </div>
+    <div class="row" style="margin:0 0 10px;gap:6px;align-items:center;flex-wrap:wrap">
+      <span class="muted" style="font-size:12px">초집중 기준 (끊김 없이 이어진 집중)</span>
+      <button class="btn" id="df15" onclick="setDeepMin(15)" title="15분 이상 이어진 집중을 초집중으로">15분+</button>
+      <button class="btn" id="df25" onclick="setDeepMin(25)" title="25분 이상 이어진 집중을 초집중으로">25분+</button>
+      <button class="btn" id="df45" onclick="setDeepMin(45)" title="45분 이상 이어진 집중을 초집중으로">45분+</button>
+      <span class="muted" id="histRange" style="font-size:12px;margin-left:auto">불러오는 중…</span>
+    </div>
+    <div id="histSummary" class="cards" style="margin:0 0 12px"></div>
+    <h2 style="margin:16px 0 6px">초집중 시간대 · 언제 몰입하나</h2>
+    <div class="panel" style="margin:0 0 14px">
+      <canvas id="dfHours" style="height:120px"></canvas>
+      <div class="muted" style="font-size:11px;margin-top:6px" id="dfHoursCap">시간대별 초집중 누적 — 막대가 높을수록 그 시간에 자주 몰입합니다.</div>
+    </div>
+    <h2 style="margin:16px 0 6px">날짜별 기록 (최신순)</h2>
+    <div id="histDays"><div class="empty">불러오는 중…</div></div>
+  </div>
+
   <!-- 액션로그 (대시보드에서 이동): 모든 유저 액션 + 그때 나온 BGM 반응 타임라인.
        데이터는 /api/actions(+SSE /api/actions/stream), 기간 필터는 컨디션맵과 같은
        CMTimeFilter 공유. 컨디션맵의 띠를 클릭하면 그 업무일로 필터되어 열린다(mapDrill). -->
@@ -388,6 +439,38 @@ enum BGMPlayerContent {
     <div id="actList"></div>
   </div>
 
+  <!-- 네트워크 진단: 유저가 "사이트가 안 열린다"고 할 때, 그 순간 VPN 상태·머신 네트워크·
+       대상 호스트 도달성(DNS→HTTPS)을 앱이 직접 프로브해 스냅샷 1건으로 기록한다. 항상 켜두지
+       않고 버튼을 누를 때만 실행(부하 0). 결과는 CSV로 내려받아 티켓에 첨부할 수 있다. -->
+  <div class="card" id="diagPanel" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <p class="lbl" style="margin:0">네트워크 진단 · VPN · 호스트 도달성</p>
+      <div style="display:flex;gap:8px">
+        <button class="btn" id="diagCsv" onclick="downloadDiagCsv()" title="기록된 모든 진단을 CSV로 내려받기">⭳ CSV 다운로드</button>
+        <button class="btn" onclick="loadDiagList(true)" title="기록 새로고침">↻ 새로고침</button>
+      </div>
+    </div>
+    <p class="actnote" style="margin:0 0 12px">"사이트가 안 열린다"고 할 때 <b>그 순간</b> VPN이 실제로 올라와 있는지, DNS·라우트가 정상인지, 대상 호스트에 <b>DNS→HTTPS</b> 어느 단계에서 막히는지를 앱이 직접 확인합니다. 브라우저 세션(쿠키·로그인)은 보지 않고, 같은 네트워크에서 같은 호스트에 붙어보는 방식입니다.</p>
+
+    <!-- 대상 호스트 편집 -->
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px">
+      <span style="font-size:12px;color:var(--dim)">대상 호스트</span>
+      <input type="text" id="diagHostsInput" placeholder="hris.must.company, intranet.must.company"
+        style="flex:1;min-width:220px;background:#161c28;border:1px solid #2f3a54;color:#e7ecf4;border-radius:8px;padding:7px 10px;font-size:13px"
+        onkeydown="if(event.key==='Enter')saveDiagHosts()">
+      <button class="btn" onclick="saveDiagHosts()" title="쉼표로 구분해 저장">저장</button>
+    </div>
+
+    <div style="text-align:center;margin:6px 0 14px">
+      <button id="diagRun" onclick="runDiag()"
+        style="background:var(--accent);border:none;color:#0b0f18;border-radius:10px;padding:11px 26px;font-size:14px;font-weight:700;cursor:pointer">▶ 진단 실행</button>
+      <div id="diagRunNote" class="muted" style="font-size:12px;margin-top:8px">최근 결과는 아래에 쌓입니다. 실행에는 몇 초 걸릴 수 있습니다.</div>
+    </div>
+
+    <div id="diagLatest"></div>
+    <div id="diagList" style="margin-top:8px"></div>
+  </div>
+
   <!-- 디버그: 라이브러리에서 곡을 골라 공간감 이펙트를 테스트 (음원 검증 전용) -->
   <div class="card" id="dbgPanel" style="display:none">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
@@ -396,6 +479,60 @@ enum BGMPlayerContent {
     </div>
     <p class="actnote" style="margin:0 0 12px">곡을 골라 공간감을 입혔을 때 이상하지 않은지 확인하는 용도입니다. 여기 재생은 앱 BGM을 켜지 않습니다.</p>
     <div id="tracks" class="tracklist"><div class="tkempty">불러오는 중…</div></div>
+  </div>
+
+  <!-- 시스템 로그: 일반 사용자용 화면이 아니다 — 프로덕트 퀄리티 개선 전용. 유저가 매 순간
+       어떤 화면을 보고 있었는지(0.5초 view-trace)와 네이티브 창 라이프사이클(실행→창 표시→
+       첫 페인트)을 그대로 보여줘, 재현이 어려운 화면 버그(예: 업데이트 후 실행 시 흰 화면)를
+       스크린샷 없이 정확한 구간(ms)으로 리포트할 수 있게 한다. 데이터: events/view-trace.jsonl. -->
+  <div class="card" id="vtPanel" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <p class="lbl" style="margin:0">시스템 로그 · 화면 추적 (0.5초)</p>
+      <div style="display:flex;gap:10px;align-items:center">
+        <label style="font-size:12px;color:var(--dim);display:flex;align-items:center;gap:5px;cursor:pointer" title="꺼짐: 같은 화면을 계속 보던 구간을 한 줄로 묶어 보여줍니다">
+          <input type="checkbox" id="vtTicks" onchange="renderViewTrace()"> 0.5초 틱 펼치기
+        </label>
+        <button class="btn" onclick="loadViewTrace()" title="기록 새로고침">↻ 새로고침</button>
+      </div>
+    </div>
+    <p class="actnote" style="margin:0 0 12px">일반 사용 화면이 아닙니다 — <b>프로덕트 퀄리티 개선 전용</b>입니다. 유저가 매 순간 어떤 화면을 보고 있었는지(0.5초 단위)와 앱 창 라이프사이클을 기록해, "실행하니 잠깐 흰 화면이 떴다" 같은 재현 어려운 버그를 스크린샷 없이 정확한 구간으로 잡아냅니다.</p>
+    <div id="vtLaunch"></div>
+    <div id="vtList" style="margin-top:8px"></div>
+  </div>
+
+  <!-- 화면 카탈로그: 앱이 실제로 그린 모든 "화면 상태"를 자동 수집한다 (UX/UI 개선 전용).
+       상태 키 = 모드|경로?쿼리키|뷰|플래그 — 쿼리 VALUE는 버려서 문서(goal #12, #34)가 아니라
+       화면 레이아웃 단위로 dedupe된다. 상태마다 스크린샷 1장(SCR-ID 고정, 24h 지나면 최신
+       모습으로 재촬영)과 목격 횟수·기간, 그리고 관리용 메모·상태 필드를 가진다.
+       기본 뷰는 사이트맵(깃북식 트리): UXUI 관리 워커가 main 갱신 시 코드에서 재생성하는
+       페이지→서브페이지→상태 계층에 캡처된 SCR 스크린샷을 붙이고 커버리지를 보여준다.
+       데이터: <data>/screens/catalog.json + PNG + sitemap.json · API: /api/debug/screens/*. -->
+  <div class="card" id="scPanel" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <p class="lbl" style="margin:0">화면 카탈로그 · 사이트맵 + 화면 상태 전수 기록 (UX/UI)</p>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="cmf-btn on" id="scv_map" onclick="setScView('map')" title="깃북식 페이지 트리 — 코드에서 재생성되는 사이트맵에 스크린샷·커버리지를 붙여 봅니다">사이트맵</button>
+        <button class="cmf-btn" id="scv_grid" onclick="setScView('grid')" title="수집된 모든 화면 상태를 최근순 그리드로 봅니다">전체 그리드</button>
+        <button class="btn" onclick="loadScreens()" title="카탈로그·사이트맵 새로고침">↻ 새로고침</button>
+      </div>
+    </div>
+    <p class="actnote" style="margin:0 0 12px">일반 사용 화면이 아닙니다 — <b>UX/UI 개선 전용</b>입니다. 앱 창이 열려 있는 동안 2초마다 지금 보이는 화면의 상태(페이지·탭·젠/수확/모달 같은 UI 국면)를 식별하고, <b>처음 보는 상태면 자동으로 스크린샷</b>을 남깁니다. 각 화면은 고정 <b>SCR-ID</b>를 가지므로 개선 티켓·리뷰에서 "SCR-0012 화면"처럼 정확히 참조할 수 있습니다. 사이트맵은 <b>UXUI 관리</b> 워커가 main에 새 코드가 올라올 때마다 소스에서 다시 만듭니다.</p>
+    <div id="scMapWrap" style="display:flex;gap:14px;align-items:flex-start">
+      <div id="scTree" style="flex:0 0 300px;max-width:340px;border:1px solid var(--line);border-radius:12px;padding:10px;font-size:12.5px;line-height:1.5;max-height:70vh;overflow:auto"></div>
+      <div id="scNode" style="flex:1;min-width:0"></div>
+    </div>
+    <div id="scGridWrap" style="display:none">
+      <div class="cmf-row" style="margin:0 0 10px">
+        <span style="font-size:12px;color:var(--dim)">상태</span>
+        <button class="cmf-btn on" id="scf_all" onclick="setScFilter('all')">전체</button>
+        <button class="cmf-btn" id="scf_" onclick="setScFilter('')">미검토</button>
+        <button class="cmf-btn" id="scf_review" onclick="setScFilter('review')">검토중</button>
+        <button class="cmf-btn" id="scf_fix" onclick="setScFilter('fix')">개선필요</button>
+        <button class="cmf-btn" id="scf_done" onclick="setScFilter('done')">개선완료</button>
+        <span class="muted" id="scSummary" style="font-size:12px;margin-left:auto">불러오는 중…</span>
+      </div>
+      <div id="scGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px"></div>
+    </div>
   </div>
 
   <!-- 재생 카드 (shared). 액티비티에선 '지금 활동에 맞는 BGM' 상태가 이 카드 안에 합쳐진다. -->
@@ -535,6 +672,74 @@ enum BGMPlayerContent {
       모든 처리는 브라우저 안에서 실시간으로 이뤄지고, 원본 파일은 전혀 바뀌지 않습니다. (.wav 저장은 곡만 담기고 환경음은 빠집니다.)
     </div>
   </div>
+
+  <!-- main-music level: music only — deliberately its own card, apart from the ambient
+       effect layers (비 소리/배기음/환경음) it does not touch -->
+  <div class="card" data-bgmcard>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+      <p class="lbl" style="margin:0">메인 음원</p>
+    </div>
+    <div class="fld"><label>메인 음원 볼륨 <span class="v" id="musicV">100%</span></label>
+      <input type="range" id="music" min="0" max="100" value="100"></div>
+    <div class="foot">
+      <b>곡(음악)</b> 크기만 낮춥니다 — 비 소리·배기음·환경음 같은 <b>사운드 이펙트는 그대로</b> 둔 채,
+      카페에서 음악만 줄이듯. (전체 볼륨과 달리 음악에만 적용되고, .wav 저장 결과에는 영향을 주지 않습니다.)
+    </div>
+  </div>
+
+  <!-- rain ambience (shared) -->
+  <div class="card" data-bgmcard>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+      <p class="lbl" style="margin:0">비 소리</p>
+      <div class="subtabs" id="rainSeg">
+        <button class="subtab on" data-rain="none">없음</button>
+        <button class="subtab" data-rain="calm">🌧️ 잔잔한 비</button>
+        <button class="subtab" data-rain="shower">🌩️ 소나기·천둥</button>
+        <button class="subtab" data-rain="storm">⛈️ 폭우</button>
+      </div>
+    </div>
+    <div class="fld"><label>빗소리 세기 <span class="v" id="rainV">50%</span></label>
+      <input type="range" id="rain" min="0" max="100" value="50"></div>
+    <div class="foot">
+      브라우저에서 실시간 합성한 <b>빗소리</b>를 곡 아래에 깔아줍니다. <b>잔잔한 비</b>는 또렷한 빗방울과 부드러운 쉬 소리,
+      <b>폭우</b>는 굵고 세찬 쏟아짐과 거센 빗줄기 소리입니다. <b>소나기·천둥</b>은 지나가는 소나기에 <b>천둥</b>을 얹어, 재생 기준 <b>1시간 중 약 10분은 천둥이 치고 나머지 50분은 소나기만</b> 흐르도록 반복합니다.
+      공간 프리셋의 잔향을 함께 타므로 무대와 멀수록 더 넓게 퍼집니다.
+      재생 중일 때만 들리고, 원본 파일과 .wav 저장에는 영향을 주지 않습니다.
+    </div>
+  </div>
+
+  <!-- sports-car exhaust ambience (shared) -->
+  <div class="card" data-bgmcard>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+      <p class="lbl" style="margin:0">배기음</p>
+      <div class="subtabs" id="exhSeg">
+        <button class="subtab on" data-exh="none">없음</button>
+        <button class="subtab" data-exh="lambo">🐂 람보르기니</button>
+        <button class="subtab" data-exh="porsche">🏁 포르쉐 911</button>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+      <div class="subtabs" id="drvSeg">
+        <button class="subtab" data-drv="idle">아이들링</button>
+        <button class="subtab on" data-drv="city">시내주행</button>
+      </div>
+    </div>
+    <div class="fld"><label>배기음 세기 <span class="v" id="exhV">40%</span></label>
+      <input type="range" id="exh" min="0" max="100" value="40"></div>
+    <div class="foot">
+      실제 <b>배기음 녹음</b>(심리스 루프 가공)을 곡 아래에 깔아줍니다. <b>람보르기니</b>는 V12 특유의 굵고 건조한 배기 폭발음,
+      <b>포르쉐 911</b>은 수평대향(복서) 6기통 특유의 촘촘하고 부글거리는 회전음입니다.
+      <b>아이들링</b>은 낮게 웅웅대는 공회전, <b>시내주행</b>은 가속·변속이 섞인 주행 흐름입니다.
+      공간 프리셋의 잔향을 함께 타므로 무대와 멀수록 더 넓게 퍼집니다.
+      <b>비 소리와 함께</b> 켤 수 있고, 재생 중일 때만 들리며 원본 파일과 .wav 저장에는 영향을 주지 않습니다.
+    </div>
+  </div>
+</div>
+
+<!-- 화면 카탈로그 lightbox: 스크린샷 클릭 → 원본 크기 확대 (배경 클릭으로 닫기) -->
+<div id="scLightbox" onclick="this.style.display='none'"
+  style="display:none;position:fixed;inset:0;background:rgba(5,8,14,.9);z-index:300;align-items:center;justify-content:center;cursor:zoom-out">
+  <img id="scLightImg" alt="화면 스크린샷 확대" style="max-width:94%;max-height:92%;border:1px solid var(--line);border-radius:10px">
 </div>
 
 <!-- 플랜 맵 modal: iframe src is set on open / cleared on close so the plan page's
@@ -583,6 +788,36 @@ let current = "hall";
 let fxEnabled = true;
 let ambEnabled = true;
 
+// ---------- rain profiles (procedural, independent of the venue preset) ----------
+// Two layers combine per type: a wideband "sheet/roar" bed (band+low-passed noise) and a
+// "droplet" crackle (decaying resonant impulses). The 세기 slider scales the whole thing; the
+// venue reverb is shared, so far seats spread the rain wider. calm = distinct drops + soft hiss;
+// storm = dense fast patter under a loud, bright roar.
+//   bed=bed level · drop=droplet level · bp/bpQ=roar band · lp=air lowpass (bright=near/heavy)
+//   gust=bed surge depth · dropHP=droplet highpass · dropRate=droplet playback speed (density/pitch)
+// shower = passing 소나기: denser/brighter than calm, pairs with thunder claps (see scheduleThunder).
+const RAIN = {
+  none:  { name:"없음",       bed:0,    drop:0,    bp:1200, bpQ:0.5, lp:6000,  gust:0,     dropHP:1500, dropRate:1.0  },
+  calm:  { name:"잔잔한 비",   bed:0.18, drop:0.16, bp:1300, bpQ:0.6, lp:4200,  gust:0.035, dropHP:2500, dropRate:0.70 },
+  shower:{ name:"소나기·천둥", bed:0.52, drop:0.46, bp:1100, bpQ:0.5, lp:8000,  gust:0.16,  dropHP:1500, dropRate:1.05 },
+  storm: { name:"폭우",       bed:0.70, drop:0.52, bp:1000, bpQ:0.4, lp:10000, gust:0.24,  dropHP:1300, dropRate:1.18 },
+};
+let rainType = "none";
+
+// ---------- exhaust profiles (real recorded loops, independent of the venue preset) ----------
+// Recorded exhaust clips made seamless offline (tail crossfaded into the head) and installed under
+// <data>/sound/exhaust/ — deliberately outside bgm/, the director's selection pool. Each brand ×
+// drive mode maps to one loop served same-origin via GET /exhaust-audio/<key> (whitelisted),
+// decoded once and looped sample-accurately with a BufferSource into the gated exhaust bus.
+// lambo = V12, porsche = flat-6 boxer. (v1 synthesized the engine in Web Audio — replaced
+// 2026-07-16 by real recordings; the bus/gate/persistence/export contract is unchanged.)
+const EXHAUST = {
+  lambo:  { name:"람보르기니", files:{ idle:"lambo-idle",   city:"lambo-city"   } },
+  porsche:{ name:"포르쉐 911", files:{ idle:"porsche-idle", city:"porsche-city" } },
+};
+const EXH_DRIVE = { idle:{}, city:{} };   // valid drive modes (state restore validates against this)
+let exhType = "none", exhDrive = "city";
+
 // ---------- mode (activity | debug) ----------
 let mode = "activity";
 let engaged = false;     // has the user pressed play once (Web Audio gesture unlock)?
@@ -608,13 +843,21 @@ function setMode(m){
   mode=m;
   [...document.querySelectorAll('.subtab')].forEach(b=>b.classList.toggle('on', b.dataset.m===m));
   $("mapPanel").style.display=(m==='map')?'':'none';
+  $("histPanel").style.display=(m==='history')?'':'none';
   $("actPanel").style.display=(m==='actions')?'':'none';
   $("actStatus").style.display=(m==='activity')?'':'none';   // 액티비티: 상태가 재생 카드에 합쳐진다
+  $("diagPanel").style.display=(m==='diag')?'':'none';
   $("dbgPanel").style.display=(m==='debug')?'':'none';
-  // 컨디션맵·액션로그 모드에선 BGM 재생/디버그 카드를 모두 숨겨 분석에 집중한다.
-  document.querySelectorAll('[data-bgmcard]').forEach(el=>{ el.style.display=(m==='map'||m==='actions')?'none':''; });
+  $("vtPanel").style.display=(m==='syslog')?'':'none';
+  $("scPanel").style.display=(m==='screens')?'':'none';
+  // 컨디션맵·히스토리·액션로그·진단·시스템로그·화면카탈로그 모드에선 BGM 재생/디버그 카드를 모두 숨겨 분석에 집중한다.
+  document.querySelectorAll('[data-bgmcard]').forEach(el=>{ el.style.display=(m==='map'||m==='history'||m==='actions'||m==='diag'||m==='syslog'||m==='screens')?'none':''; });
   if(m==='map'){ initMap(); if(typeof loadBGMAnalytics==='function') loadBGMAnalytics(); }  // 맵 탭 진입 시 오늘 활동 블록 즉시 갱신(캔버스 폭이 이제 유효)
+  if(m==='history') initHistory();
   if(m==='actions') initActions();
+  if(m==='diag') initDiag();
+  if(m==='syslog') loadViewTrace();
+  if(m==='screens') loadScreens();
   if(m==='debug'){
     if(!TRACKS.length) loadTracks();
     if(!curTrack || audioEl.paused) $("status").textContent="라이브러리에서 곡을 골라 공간감을 테스트하세요.";
@@ -836,6 +1079,14 @@ let crowdSrc, crowdBP, crowdHP, crowdGain, crowdMod;
 let windSrc, windLP, windGain, windMod;
 let roomSrc, roomLP, roomGain;
 let cheerSrc, cheerBP, cheerGain;
+let rainBus, rainLevel, rainDry, rainWet;
+let rainSrc, rainBP, rainLP, rainBed, rainGustMod;
+let dropSrc, dropHP, dropGain;
+let thunderBus, thunderBuf;
+let thunderTimer = null, thunderAnchor = -1;   // anchor = ctx time when 소나기·천둥 began (storm-cycle phase)
+let exhBus, exhLevel, exhDry, exhWet;
+let exhSrc = null, exhSrcKey = null, exhLoadSeq = 0;
+const exhBufCache = {};   // key -> decoded AudioBuffer (4 × ~10s loops — small enough to keep)
 let ambLFOs = [];
 let cheerTimer = null;
 let cheerTarget = 0;
@@ -854,6 +1105,29 @@ function makeNoise(context, sec){
       d[i]=(b0+b1+b2+b3+b4+b5+b6+w*0.5362)*0.11;
       b6=w*0.115926;
     }
+  }
+  return buf;
+}
+// A long, seamlessly-looping bed of individual rain droplets: many short, exponentially-decaying
+// noise bursts scattered at random positions (decorrelated L/R for a natural stereo patter). The
+// looped result reads as steady droplet crackle; playbackRate/highpass/gain then shape it per type.
+function makeDroplets(context, sec){
+  const sr = context.sampleRate, len = Math.floor(sec*sr);
+  const buf = context.createBuffer(2, len, sr);
+  const count = Math.floor(sec*14);            // ~14 baked drops/sec (density trimmed per type later)
+  for(let ch=0; ch<2; ch++){
+    const d = buf.getChannelData(ch);
+    for(let n=0;n<count;n++){
+      const pos = Math.floor(Math.random()*len);
+      const dur = Math.floor((0.004+Math.random()*0.018)*sr);   // 4–22 ms tick
+      const amp = 0.45+Math.random()*0.55;
+      const decay = 3+Math.random()*4;
+      for(let k=0;k<dur && pos+k<len;k++){
+        d[pos+k] += (Math.random()*2-1)*Math.exp(-decay*k/dur)*amp;
+      }
+    }
+    let peak=1e-6; for(let i=0;i<len;i++) peak=Math.max(peak,Math.abs(d[i]));
+    const g=0.8/peak; for(let i=0;i<len;i++) d[i]*=g;
   }
   return buf;
 }
@@ -969,6 +1243,8 @@ function ensureGraph(){
   outMute.connect(ctx.destination);
 
   buildAmbience();
+  buildRain();
+  buildExhaust();
   applyAll();
 }
 
@@ -1018,6 +1294,82 @@ function buildAmbience(){
   scheduleCheer();
 }
 
+// Synthesize the rain bed (roar + droplets) on its own gated bus, mixed dry (enveloping) and wet
+// (through the venue reverb) just like the ambience. Silent until applyRain() opens the gate.
+function buildRain(){
+  rainBus   = ctx.createGain(); rainBus.gain.value=1;
+  rainLevel = ctx.createGain(); rainLevel.gain.value=0;    // gated: 0 until a rain type is playing
+  rainDry   = ctx.createGain(); rainDry.gain.value=0.85;
+  rainWet   = ctx.createGain(); rainWet.gain.value=0.5;
+
+  // Sheet/roar bed: looped noise → bandpass (rain "shhh") → lowpass (air) → gain, with a slow gust.
+  rainSrc = ctx.createBufferSource(); rainSrc.buffer=makeNoise(ctx,4.0); rainSrc.loop=true;
+  rainBP  = ctx.createBiquadFilter(); rainBP.type="bandpass"; rainBP.frequency.value=1200; rainBP.Q.value=0.5;
+  rainLP  = ctx.createBiquadFilter(); rainLP.type="lowpass";  rainLP.frequency.value=6000; rainLP.Q.value=0.5;
+  rainBed = ctx.createGain(); rainBed.gain.value=0;
+  rainSrc.connect(rainBP); rainBP.connect(rainLP); rainLP.connect(rainBed); rainBed.connect(rainBus);
+  rainGustMod = attachLFO(ctx, rainBed.gain, 0, 0, 0.06, 0.083);   // base+depth set per rain type
+
+  // Droplet crackle: looped droplet buffer → highpass (keep the ticks) → gain.
+  dropSrc  = ctx.createBufferSource(); dropSrc.buffer=makeDroplets(ctx,8.0); dropSrc.loop=true;
+  dropHP   = ctx.createBiquadFilter(); dropHP.type="highpass"; dropHP.frequency.value=1500; dropHP.Q.value=0.5;
+  dropGain = ctx.createGain(); dropGain.gain.value=0;
+  dropSrc.connect(dropHP); dropHP.connect(dropGain); dropGain.connect(rainBus);
+
+  // Thunder claps route through the rain bus, so they obey 빗소리 세기 and sit in the venue reverb.
+  thunderBus = ctx.createGain(); thunderBus.gain.value=1;
+  thunderBus.connect(rainBus);
+  thunderBuf = makeNoise(ctx, 3.0);
+
+  rainBus.connect(rainLevel);
+  rainLevel.connect(rainDry); rainDry.connect(masterGain);   // enveloping, obeys 전체 볼륨
+  rainLevel.connect(rainWet); rainWet.connect(convolver);    // shares the venue reverb
+
+  rainSrc.start(); dropSrc.start();
+  scheduleThunder();
+}
+
+// The exhaust bus: recorded loops join dry (enveloping) and wet (through the venue reverb)
+// exactly like rain/ambience. Silent until applyExhaust() opens the gate.
+function buildExhaust(){
+  exhBus   = ctx.createGain(); exhBus.gain.value=1;
+  exhLevel = ctx.createGain(); exhLevel.gain.value=0;    // gated: 0 until a car is selected + playing
+  exhDry   = ctx.createGain(); exhDry.gain.value=0.8;
+  exhWet   = ctx.createGain(); exhWet.gain.value=0.35;
+  exhBus.connect(exhLevel);
+  exhLevel.connect(exhDry); exhDry.connect(masterGain);   // enveloping, obeys 전체 볼륨 + mute
+  exhLevel.connect(exhWet); exhWet.connect(convolver);    // shares the venue reverb
+}
+
+function exhKey(){ const e=EXHAUST[exhType]; return e ? e.files[exhDrive] : null; }
+function exhStopVoice(){
+  if(exhSrc){ try{ exhSrc.stop(); }catch(e){} try{ exhSrc.disconnect(); }catch(e){} }
+  exhSrc=null; exhSrcKey=null;
+}
+// Make sure the right loop is feeding the gated bus. Each file is fetched + decoded once (cached);
+// a load that finishes after the selection changed is dropped, not started. Failures are silent —
+// the gate simply sits over silence and the next selection retries (no user-facing failure).
+async function exhEnsureVoice(){
+  const key=exhKey(); if(!key || !ctx) return;
+  if(exhSrc && exhSrcKey===key) return;                  // already looping the right file
+  const seq=++exhLoadSeq;
+  let buf=exhBufCache[key];
+  if(!buf){
+    try{
+      const r=await fetch("/exhaust-audio/"+key);
+      if(!r.ok) return;
+      buf=await ctx.decodeAudioData(await r.arrayBuffer());
+      exhBufCache[key]=buf;
+    }catch(e){ return; }
+  }
+  if(seq!==exhLoadSeq || exhKey()!==key) return;         // superseded while loading
+  exhStopVoice();
+  exhSrc=ctx.createBufferSource(); exhSrc.buffer=buf; exhSrc.loop=true;
+  exhSrc.connect(exhBus);
+  exhSrc.start(0, Math.random()*buf.duration);           // random phase so re-entries don't repeat
+  exhSrcKey=key;
+}
+
 // Occasional cheer/applause swell. Recursive random timer; only fires while the preset
 // wants cheers, ambience is on, and something is actually playing.
 function scheduleCheer(){
@@ -1031,6 +1383,46 @@ function scheduleCheer(){
       cheerGain.gain.linearRampToValueAtTime(0, t+0.45+tail);
     }
     scheduleCheer();
+  }, wait);
+}
+
+// One thunder strike: a bright crack collapsing into a rolling low rumble, synthesized from a
+// fresh short-lived noise voice. Routes into the rain bus, so it obeys 빗소리 세기 + venue reverb.
+function fireThunder(){
+  if(!ctx || !thunderBus) return;
+  const t = ctx.currentTime;
+  const src = ctx.createBufferSource(); src.buffer=thunderBuf; src.loop=true;
+  src.playbackRate.value = 0.7 + Math.random()*0.5;
+  const hp = ctx.createBiquadFilter(); hp.type="highpass"; hp.frequency.value=28;
+  const lp = ctx.createBiquadFilter(); lp.type="lowpass";
+  const g  = ctx.createGain(); g.gain.value=0.0001;
+  src.connect(hp); hp.connect(lp); lp.connect(g); g.connect(thunderBus);
+
+  const peak = 1.6 + Math.random()*1.6;                 // loud transient (rainLevel scales it back)
+  const dur  = 3.0 + Math.random()*3.5;
+  lp.frequency.setValueAtTime(2200, t);                 // crack …
+  lp.frequency.exponentialRampToValueAtTime(240, t+0.5);
+  lp.frequency.exponentialRampToValueAtTime(80,  t+dur);// … into a low rumble
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(peak, t+0.035);   // sharp attack
+  g.gain.exponentialRampToValueAtTime(peak*0.35, t+0.6);
+  g.gain.exponentialRampToValueAtTime(peak*0.55, t+0.9+Math.random()*0.7);  // a rolling swell
+  g.gain.exponentialRampToValueAtTime(0.0001, t+dur);   // long decay
+  src.start(t); src.stop(t+dur+0.1);                    // voice is GC'd after it stops
+}
+
+// Storm cycle for 소나기·천둥: ~10 min of thunder, then ~50 min shower-only, repeating each hour.
+// Phase is measured from thunderAnchor in ctx time — which pauses when the context suspends, so the
+// cycle tracks actual listening time and starts thundering right when the mode is selected.
+function scheduleThunder(){
+  clearTimeout(thunderTimer);
+  const wait = 9000 + Math.random()*18000;              // 9–27s between strikes while active
+  thunderTimer = setTimeout(()=>{
+    if(ctx && rainType==="shower" && thunderAnchor>=0 && !audioEl.paused
+       && ((ctx.currentTime - thunderAnchor) % 3600) < 600){
+      fireThunder();
+    }
+    scheduleThunder();
   }, wait);
 }
 
@@ -1054,6 +1446,49 @@ function applyAmbience(){
   const t = ctx.currentTime;
   ambLevel.gain.cancelScheduledValues(t);
   ambLevel.gain.setTargetAtTime(on?master:0, t, 0.4);       // smooth fade in/out
+}
+
+// Tune the rain layer from the selected type + 세기 slider, and gate it to playback.
+function applyRain(){
+  if(!ctx || !rainBus) return;
+  const r = RAIN[rainType] || RAIN.none;
+  const pct = +$("rain").value/100;
+  // Storm-cycle phase: start the 10-min thunder window when 소나기·천둥 begins; reset when it leaves.
+  if(rainType==="shower"){ if(thunderAnchor<0) thunderAnchor = ctx.currentTime; }
+  else thunderAnchor = -1;
+  rainBP.frequency.value = r.bp; rainBP.Q.value = r.bpQ;
+  rainLP.frequency.value = r.lp;
+  rainGustMod.setBase(r.bed); rainGustMod.setDepth(r.bed*r.gust);
+  dropGain.gain.value = r.drop;
+  dropHP.frequency.value = r.dropHP;
+  dropSrc.playbackRate.value = r.dropRate;
+
+  const on = rainType!=="none" && pct>0 && !audioEl.paused;
+  const t = ctx.currentTime;
+  rainLevel.gain.cancelScheduledValues(t);
+  rainLevel.gain.setTargetAtTime(on?pct:0, t, 0.4);         // smooth fade in/out
+}
+
+// Gate the exhaust loop to the selection + 세기 slider + playback, swapping the loop file when
+// the car or drive mode changes (the voice keeps looping muted through a pause, like rain).
+function applyExhaust(){
+  if(!ctx || !exhBus) return;
+  const e = EXHAUST[exhType];
+  const pct = +$("exh").value/100;
+  if(e){ exhEnsureVoice(); }
+  else { exhLoadSeq++; exhStopVoice(); }                    // 없음: stop the voice, drop stale loads
+  const on = !!e && pct>0 && !audioEl.paused;
+  const t = ctx.currentTime;
+  exhLevel.gain.cancelScheduledValues(t);
+  exhLevel.gain.setTargetAtTime(on?pct:0, t, 0.4);          // smooth fade in/out
+}
+
+// Main music (곡) volume — scales the track alone via inGain (the only node the music passes
+// through; rain/환경음 join downstream at masterGain/convolver). Lets you turn the music down
+// while keeping rain/ambience up — the "카페에서 음악만 줄이기" effect. 전체 볼륨(masterGain)과 별개.
+function applyMusic(){
+  if(!ctx || !inGain) return;
+  inGain.gain.value = +$("music").value/100;
 }
 
 function applyAll(){
@@ -1085,7 +1520,10 @@ function applyAll(){
   scDepth.gain.value = fxEnabled ? -Math.min(duckPct, 0.95) * wetEff : 0;
   sideWidth.gain.value = fxEnabled ? widPct : 1;
   masterGain.gain.value = vol;
+  applyMusic();
   applyAmbience();
+  applyRain();
+  applyExhaust();
 }
 
 // ---------- UI wiring ----------
@@ -1132,7 +1570,9 @@ function saveState(){
   try{ localStorage.setItem(STORE_KEY, JSON.stringify({
     preset: current,
     custom: PRESETS.custom || null,
-    level: { amb:+$("amb").value, vol:+$("vol").value }
+    level: { amb:+$("amb").value, vol:+$("vol").value, music:+$("music").value },
+    rain: { type: rainType, level: +$("rain").value },
+    exhaust: { type: exhType, drive: exhDrive, level: +$("exh").value }
   })); }catch(e){}
 }
 function fmt(s){ s=Math.max(0,s|0); return (s/60|0)+":"+String(s%60).padStart(2,"0"); }
@@ -1146,7 +1586,10 @@ function syncLabels(){
   $("duckV").textContent = $("duck").value+"%";
   $("ambV").textContent  = $("amb").value+"%";
   $("volV").textContent  = $("vol").value+"%";
-  ["dist","wet","wid","hc","lc","shp","duck","amb","vol","seek"].forEach(id=>{
+  $("rainV").textContent = $("rain").value+"%";
+  $("musicV").textContent = $("music").value+"%";
+  $("exhV").textContent  = $("exh").value+"%";
+  ["dist","wet","wid","hc","lc","shp","duck","amb","vol","rain","music","exh","seek"].forEach(id=>{
     const el=$(id); const pct=(el.value-el.min)/(el.max-el.min)*100;
     el.style.setProperty("--fill", pct+"%");
   });
@@ -1167,6 +1610,27 @@ $("ambToggle").onclick=()=>{
   $("ambToggle").classList.toggle("on",ambEnabled);
   applyAmbience();
 };
+// 비 소리 type selector + 세기 slider (independent of venue preset / 환경음 toggle).
+function reflectRain(){
+  [...$("rainSeg").querySelectorAll('.subtab')].forEach(b=>b.classList.toggle('on', b.dataset.rain===rainType));
+}
+[...$("rainSeg").querySelectorAll('.subtab')].forEach(b=>{
+  b.onclick=()=>{ rainType=b.dataset.rain; reflectRain(); applyRain(); saveState(); };
+});
+$("rain").addEventListener("input",()=>{ syncLabels(); applyRain(); saveState(); });
+$("music").addEventListener("input",()=>{ syncLabels(); applyMusic(); saveState(); });
+// 배기음 car + drive-mode selectors + 세기 slider (independent of venue preset / 비 소리).
+function reflectExhaust(){
+  [...$("exhSeg").querySelectorAll('.subtab')].forEach(b=>b.classList.toggle('on', b.dataset.exh===exhType));
+  [...$("drvSeg").querySelectorAll('.subtab')].forEach(b=>b.classList.toggle('on', b.dataset.drv===exhDrive));
+}
+[...$("exhSeg").querySelectorAll('.subtab')].forEach(b=>{
+  b.onclick=()=>{ exhType=b.dataset.exh; reflectExhaust(); applyExhaust(); saveState(); };
+});
+[...$("drvSeg").querySelectorAll('.subtab')].forEach(b=>{
+  b.onclick=()=>{ exhDrive=b.dataset.drv; reflectExhaust(); applyExhaust(); saveState(); };
+});
+$("exh").addEventListener("input",()=>{ syncLabels(); applyExhaust(); saveState(); });
 $("reload").onclick=loadTracks;
 
 // ---------- play-time ranking ----------
@@ -1650,10 +2114,10 @@ muteBtn.onclick=()=>{ muted=!muted; applyMute(); sessionMute(muted); };
 // back to the server — AppWindowController.setWebMute calls this. No-op if already in that state.
 window.__setMute = function(m){ m=!!m; if(muted!==m){ muted=m; applyMute(); } };
 applyMute();
-audioEl.addEventListener("play", ()=>{ nativeMute(true); updatePlayIcon(); applyAmbience(); stopAutoStart();
+audioEl.addEventListener("play", ()=>{ nativeMute(true); updatePlayIcon(); applyAmbience(); applyRain(); applyExhaust(); stopAutoStart();
   $("status").textContent="재생 중 · "+(curTrack?curTrack.title:"")+" · "+PRESETS[current].name; });
-audioEl.addEventListener("pause",()=>{ nativeMute(false); updatePlayIcon(); applyAmbience(); });
-audioEl.addEventListener("ended",()=>{ nativeMute(false); updatePlayIcon(); applyAmbience(); });
+audioEl.addEventListener("pause",()=>{ nativeMute(false); updatePlayIcon(); applyAmbience(); applyRain(); applyExhaust(); });
+audioEl.addEventListener("ended",()=>{ nativeMute(false); updatePlayIcon(); applyAmbience(); applyRain(); applyExhaust(); });
 // If the media errors mid-play it may not fire pause — unmute so native BGM isn't left silent.
 audioEl.addEventListener("error",()=>{ nativeMute(false); updatePlayIcon(); });
 audioEl.addEventListener("stalled",()=>{ if(audioEl.paused) nativeMute(false); });
@@ -1787,9 +2251,21 @@ try{
     if(st.level){                                                 // global levels are preset-independent
       if(st.level.amb!=null) $("amb").value = st.level.amb;
       if(st.level.vol!=null) $("vol").value = st.level.vol;
+      if(st.level.music!=null) $("music").value = st.level.music;
+    }
+    if(st.rain){                                                  // rain is preset-independent too
+      if(st.rain.type && RAIN[st.rain.type]) rainType = st.rain.type;
+      if(st.rain.level!=null) $("rain").value = st.rain.level;
+    }
+    if(st.exhaust){                                               // exhaust is preset-independent too
+      if(st.exhaust.type && EXHAUST[st.exhaust.type]) exhType = st.exhaust.type;
+      if(st.exhaust.drive && EXH_DRIVE[st.exhaust.drive]) exhDrive = st.exhaust.drive;
+      if(st.exhaust.level!=null) $("exh").value = st.exhaust.level;
     }
   } else { setPresetControls(current); }
 }catch(e){ setPresetControls(current); }
+reflectRain();
+reflectExhaust();
 // ======================= 컨디션 맵 =======================
 // 업무 시작(8h 무활동 뒤 첫 활동)을 기준으로 24시간 컨디션 흐름을 가로 띠로 그린다.
 // 데이터는 대시보드와 동일한 /history.json (분 단위 샘플: t, active(초), tier, meeting)을 재사용.
@@ -1971,6 +2447,7 @@ const ACT_LABEL={ sessionStart:'세션 시작', sessionStop:'세션 중지', mod
   mute:'음소거 켬', unmute:'음소거 해제', bgmOn:'BGM 켬', bgmOff:'BGM 끔',
   profileShift:'프로필 전환', rainSummon:'폭우 소환', rainStart:'폭우 시작',
   rainEnd:'폭우 종료', dislike:'싫어요', trackChange:'곡 전환', opener:'오프너 재생',
+  startContext:'시작 컨텍스트',
   // 대시보드 POST 자동 로깅(경로 유도 이름) — 미등록 이름은 원문 그대로 표시된다
   'pomodoro.complete':'포모도로 완주', 'pomodoro.harvest':'포모도로 수확',
   'goal.add':'목표 추가', 'goal.queue.add':'나중에 검토', 'goal.queue.enqueue':'AI 목표 추가',
@@ -2009,6 +2486,468 @@ function reflectActKind(){ [['ak_all',''],['ak_user','user'],['ak_bgm','bgm'],['
 function setActCat(c){ _actCat=c; reflectActCat(); renderActions(); }
 function reflectActCat(){ [['ac_all',''],['ac_pomodoro','pomodoro'],['ac_goal','goal'],['ac_bgm','bgm'],['ac_equipment','equipment'],['ac_settings','settings']]
   .forEach(p=>{ const b=$(p[0]); if(b) b.classList.toggle('on', _actCat===p[1]); }); }
+// ---------- 네트워크 진단 (on-demand VPN/host reachability probe) ----------
+let _diagInited=false;
+function diagTime(t){ try{ const p=CMTimeFilter.parts(t*1000); return p.y+'-'+p.mo+'-'+p.d+' '+p.h+':'+p.mi+':'+p.s; }catch(e){ return ''+t; } }
+function initDiag(){
+  if(_diagInited){ loadDiagList(); return; }
+  _diagInited=true;
+  loadDiagHosts();
+  loadDiagList();
+}
+function loadDiagHosts(){
+  fetch('/api/settings/diag-hosts').then(r=>r.json()).then(function(j){
+    $("diagHostsInput").value=(j.hosts||[]).join(', ');
+  }).catch(function(){});
+}
+function saveDiagHosts(){
+  const hosts=$("diagHostsInput").value.split(',').map(s=>s.trim()).filter(Boolean);
+  fetch('/api/settings/diag-hosts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hosts:hosts})})
+    .then(r=>r.json()).then(function(j){ $("diagHostsInput").value=(j.hosts||[]).join(', ');
+      $("diagRunNote").textContent='대상 호스트를 저장했습니다.'; }).catch(function(){});
+}
+function runDiag(){
+  const btn=$("diagRun"); btn.disabled=true; const old=btn.textContent; btn.textContent='진단 중…';
+  $("diagRunNote").textContent='VPN·네트워크·호스트 도달성을 확인하는 중입니다…';
+  fetch('/api/debug/diag/run',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    .then(r=>r.json()).then(function(snap){
+      $("diagLatest").innerHTML='<div class="lbl" style="margin:0 0 8px">방금 실행</div>'+renderDiagSnapshot(snap,true);
+      $("diagRunNote").textContent='완료. 아래 기록에도 저장되었습니다.';
+      loadDiagList(true);
+    }).catch(function(){ $("diagRunNote").textContent='진단 실행에 실패했습니다.'; })
+    .finally(function(){ btn.disabled=false; btn.textContent=old; });
+}
+function loadDiagList(force){
+  fetch('/api/debug/diag/list').then(r=>r.json()).then(function(j){
+    const arr=j.snapshots||[];
+    if(!arr.length){ $("diagList").innerHTML='<div class="muted" style="font-size:12px;padding:8px 0">아직 진단 기록이 없습니다. 위 버튼으로 실행해 보세요.</div>'; return; }
+    $("diagList").innerHTML='<div class="lbl" style="margin:14px 0 8px">기록 ('+arr.length+')</div>'+arr.map(s=>renderDiagSnapshot(s,false)).join('');
+  }).catch(function(){});
+}
+function diagStepBadge(ok,label){ const c=ok?'#36c08a':'#e05a5a'; return '<span style="display:inline-block;font-size:11px;font-weight:700;color:'+c+';border:1px solid '+c+';border-radius:6px;padding:1px 7px">'+esc(label)+'</span>'; }
+function renderDiagSnapshot(s,open){
+  const vpn=s.vpnActive;
+  const vpnChip='<span style="font-weight:700;color:'+(vpn?'#36c08a':'#e0a13a')+'">'+(vpn?'VPN 감지됨':'VPN 미감지')+'</span>';
+  const hosts=(s.hosts||[]).map(function(h){
+    const dns=diagStepBadge(h.dnsOk,'DNS '+(h.dnsOk?(h.dnsMs+'ms'):'실패'));
+    const httpLabel=h.httpOk?('HTTP '+h.status+' · '+h.httpMs+'ms'):(h.dnsOk?'HTTP 실패':'—');
+    const http=h.dnsOk?diagStepBadge(h.httpOk,httpLabel):'<span class="muted" style="font-size:11px">HTTP 건너뜀</span>';
+    const ips=(h.ips&&h.ips.length)?'<div class="muted" style="font-size:11px;margin-top:3px">'+esc(h.ips.join(', '))+'</div>':'';
+    const err=h.error?'<div style="font-size:11px;color:#e0a13a;margin-top:3px">'+esc(h.error)+'</div>':'';
+    return '<div style="padding:8px 10px;border:1px solid var(--line);border-radius:9px;margin:6px 0">'
+      +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b style="font-size:13px">'+esc(h.host)+'</b>'+dns+http+'</div>'+ips+err+'</div>';
+  }).join('');
+  const net='<div class="muted" style="font-size:12px;margin:6px 0 2px">인터페이스 <b>'+esc(s.iface||'-')+'</b> · 게이트웨이 <b>'+esc(s.gateway||'-')+'</b> · DNS '+esc((s.dnsServers||[]).join(', ')||'-')+'</div>';
+  const vpnDetail=s.vpnDetail?'<div class="muted" style="font-size:12px;margin:2px 0">'+esc(s.vpnDetail)+'</div>':'';
+  return '<div style="border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin:8px 0;background:'+(open?'#141b28':'transparent')+'">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><span style="font-size:12px;color:var(--dim)">'+esc(diagTime(s.t))+'</span>'+vpnChip+'</div>'
+    +vpnDetail+net+hosts+'</div>';
+}
+// WKWebView has no download delegate here, so a plain navigation to an attachment URL does
+// nothing — fetch the CSV as a blob and trigger a same-page <a download> (the app's convention).
+function downloadDiagCsv(){
+  fetch('/api/debug/diag/export').then(function(r){
+    if(!r.ok) throw new Error('no data'); return r.blob();
+  }).then(function(blob){
+    const cd=/* filename from server */ 'diag.csv';
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download=cd;
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 1000);
+  }).catch(function(){ $("diagRunNote").textContent='내려받을 진단 기록이 없습니다.'; });
+}
+
+// ===== 시스템 로그 (view-trace) — 프로덕트 퀄리티 개선 전용, 일반 유저 대상 아님 =====
+// 0.5초 하트비트(어떤 페이지·탭을 보고 있었나) + 네이티브 창 라이프사이클을 타임라인으로 렌더.
+// 기본은 같은 화면을 계속 보던 tick 구간을 한 줄로 압축("보는 중" 세그먼트)하고, 체크박스로
+// 0.5초 틱을 원본 그대로 펼칠 수 있다. 최상단 카드는 마지막 실행의 흰 화면 구간(창 표시→첫
+// 페인트)을 ms로 요약 — "업데이트 후 3초 흰 화면" 리포트가 스크린샷 없이 숫자로 나온다.
+let _vtEvents=null;
+function loadViewTrace(){
+  fetch('/api/debug/view-trace/list?limit=4000').then(r=>r.json()).then(function(j){
+    _vtEvents=j.events||[]; renderViewTrace();
+  }).catch(function(){ const h=$("vtList"); if(h&&!_vtEvents) h.innerHTML='<div class="empty">불러오지 못했습니다</div>'; });
+}
+function vtTime(t){ const p=CMTimeFilter.parts(t); return actPad(p.h)+':'+actPad(p.mi)+':'+actPad(p.s)+'.'+String(t%1000).padStart(3,'0'); }
+function vtPage(pg){
+  const path=(pg||'').split('?')[0];
+  const m={'/':'대시보드','/bgm-player':'컨디션 관리','/goal-add':'목표 추가','/goal':'목표 상세',
+           '/equipment':'장비','/cron':'크론','/worker-log':'워커 로그','/transcript':'트랜스크립트','/breakdown':'브레이크다운'};
+  return m[path]||path||'?';
+}
+function vtBadge(txt,color){ return '<span style="display:inline-block;font-size:11px;font-weight:700;color:'+color+';border:1px solid '+color+';border-radius:6px;padding:1px 7px">'+esc(txt)+'</span>'; }
+// 마지막 실행 요약: appLaunch → windowOpen(창 표시) → firstPaint(첫 페인트) 오프셋과
+// 그 사이의 빈 화면 구간. 800ms를 넘으면 앰버로 강조(신호등 빨강/녹색은 쓰지 않는다).
+function vtLaunchSummary(evs){
+  let li=-1;
+  for(let i=evs.length-1;i>=0;i--){ const e=evs[i]; if(e.src==='native'&&e.note==='appLaunch'){ li=i; break; } }
+  if(li<0) return '';
+  const t0=evs[li].t; let open=null,paint=null;
+  for(let i=li+1;i<evs.length;i++){ const e=evs[i];
+    if(e.src==='native'&&e.note==='appLaunch') break;   // 다음 실행까지만
+    if(open===null&&e.src==='native'&&e.note==='windowOpen') open=e.t;
+    if(paint===null&&e.src==='js'&&(e.note||'').indexOf('firstPaint')===0) paint=e.t;
+    if(open!==null&&paint!==null) break; }
+  const p=CMTimeFilter.parts(t0);
+  const when=p.y+'-'+actPad(p.mo)+'-'+actPad(p.d)+' '+actPad(p.h)+':'+actPad(p.mi)+':'+actPad(p.s);
+  const gap=(open!==null&&paint!==null)?(paint-open):null;
+  let bits='<b>실행</b> '+esc(when);
+  if(open!==null) bits+=' · 창 표시 <b>+'+(open-t0)+'ms</b>';
+  if(paint!==null) bits+=' · 첫 페인트 <b>+'+(paint-t0)+'ms</b>';
+  if(gap!==null){
+    const warn=gap>800, c=warn?'#e0a13a':'var(--dim)';
+    bits+=' · <span style="color:'+c+';font-weight:700">빈 화면 구간 '+gap+'ms</span>';
+  } else if(paint===null){
+    bits+=' · <span style="color:#e0a13a;font-weight:700">첫 페인트 기록 없음</span>';
+  }
+  return '<div style="border:1px solid var(--line);border-radius:11px;padding:10px 14px;margin:2px 0 6px;background:#141b28;font-size:12.5px;color:var(--txt)">'+bits
+    +'<div class="muted" style="font-size:11.5px;margin-top:4px">빈 화면 구간 = 창이 화면에 뜬 순간부터 페이지가 실제 픽셀을 그린 순간까지 — 실행 직후 흰 화면이 보였다면 이 숫자가 그 길이입니다.</div></div>';
+}
+function renderViewTrace(){
+  const host=$("vtList"); if(!host) return;
+  const evs=_vtEvents||[];
+  const lc=$("vtLaunch"); if(lc) lc.innerHTML=vtLaunchSummary(evs);
+  if(!evs.length){ host.innerHTML='<div class="empty">아직 기록이 없습니다 — 앱 창이 열려 있는 동안 0.5초 단위로 쌓입니다.</div>'; return; }
+  const showTicks=$("vtTicks")&&$("vtTicks").checked;
+  // 같은 화면(페이지+뷰+painted+hidden)을 연속으로 보던 tick 구간을 세그먼트 한 줄로 압축.
+  const rows=[]; let seg=null;
+  function flushSeg(){ if(seg){ rows.push(seg); seg=null; } }
+  evs.forEach(function(e){
+    if(e.k==='tick'&&!showTicks){
+      const key=(e.page||'')+'|'+(e.view||'')+'|'+(e.painted?1:0)+'|'+(e.hidden?1:0);
+      if(seg&&seg.key===key){ seg.t1=e.t; seg.n++; return; }
+      flushSeg();
+      seg={key:key,segment:true,t0:e.t,t1:e.t,n:1,page:e.page,view:e.view,painted:e.painted,hidden:e.hidden};
+      return;
+    }
+    flushSeg(); rows.push(e);
+  });
+  flushSeg();
+  const total=rows.length, recent=rows.slice(-400).reverse();
+  let h='<div class="lbl" style="margin:14px 0 8px">타임라인 (최신순'+(total>400?', 최근 400줄':'')+')</div>';
+  h+=recent.map(function(r){
+    if(r.segment){
+      const dur=((r.t1-r.t0)/1000+0.5).toFixed(1);
+      const state=(r.hidden?' · 숨김':'')+(r.painted?'':' · 미페인트');
+      return '<div style="display:flex;gap:10px;align-items:baseline;padding:4px 10px;border-left:2px solid #2a3146;margin:2px 0;font-size:12px;color:var(--dim)">'
+        +'<span style="font-variant-numeric:tabular-nums">'+vtTime(r.t0)+'</span>'
+        +'<span>보는 중 <b style="color:var(--txt)">'+esc(vtPage(r.page))+(r.view?(' · '+esc(r.view)):'')+'</b>'
+        +esc(state)+' — '+dur+'s ('+r.n+'틱)</span></div>';
+    }
+    const isNative=r.src==='native';
+    const note=r.note||'';
+    // AI 턴 중단(사용자 중단/비정상 종료/오류)도 경고색 — "중단 여부"가 타임라인에서 눈에 띄게.
+    const warn=note.indexOf('jsError')===0||note.indexOf('rejection')===0||note==='navFail'
+      ||note==='aiTurnStopped'||note==='aiTurnDied'||note==='aiTurnError';
+    const color=warn?'#e0a13a':(isNative?'#8f7ff0':'#48b8d0');
+    const extra=(r.detail?(' '+esc(r.detail)):'')+(r.page?(' <span class="muted">'+esc(vtPage(r.page))+(r.view?(' · '+esc(r.view)):'')+'</span>'):'');
+    return '<div style="display:flex;gap:10px;align-items:baseline;padding:5px 10px;border-left:2px solid '+color+';margin:2px 0;font-size:12.5px;color:var(--txt)">'
+      +'<span class="muted" style="font-variant-numeric:tabular-nums">'+vtTime(r.t)+'</span>'
+      +vtBadge(isNative?'네이티브':'페이지',color)
+      +'<span><b>'+esc(note)+'</b>'+extra+'</span></div>';
+  }).join('');
+  host.innerHTML=h;
+}
+
+// ===== 화면 카탈로그 — 사이트맵(깃북식 트리) + 화면 상태 스크린샷 아카이브 (UX/UI 전용) =====
+// 수집은 네이티브(AppWindowController.screenCatalogTick → ScreenCatalog)가 하고, 사이트맵은
+// UXUI 관리 워커(Scripts/uxui-sitemap.sh)가 main 갱신 시 코드에서 재생성해 설치한다. 이 탭은
+// 둘을 클라이언트에서 조인한다: 카탈로그 상태 키(모드|경로?쿼리키|뷰|플래그)를 사이트맵 노드의
+// match 어휘(mode/path/view/flag)와 맞춰 노드마다 스크린샷·커버리지를 붙인다. 시간 표시는
+// 표시 타임존 규칙(CMTimeFilter.parts)을 따른다.
+let _scList=null, _scFilter='all', _scMap=null, _scView='map', _scSel=null;
+const SC_FLAG_KO={zen:'젠(보드 접힘)',reward:'수확 대기',run:'세션 중',counting:'카운트다운',done:'한 판 더?',modal:'모달',railoff:'레일 접힘'};
+const SC_STATUS_KO={'':'미검토',review:'검토중',fix:'개선필요',done:'개선완료',ignore:'무시'};
+function loadScreens(){
+  fetch('/api/debug/screens/list').then(r=>r.json()).then(function(j){
+    _scList=j.screens||[];
+    return fetch('/api/debug/screens/sitemap').then(r=>r.json());
+  }).then(function(m){
+    if(m&&m.pages) _scMap=m;
+    renderScreens();
+  }).catch(function(){ const h=$("scGrid"); if(h&&!_scList) h.innerHTML='<div class="empty">불러오지 못했습니다</div>'; });
+}
+window.setScView=function(v){ _scView=v;
+  ['map','grid'].forEach(function(k){ const b=$("scv_"+k); if(b) b.classList.toggle('on', k===v); });
+  renderScreens(); };
+window.setScFilter=function(f){ _scFilter=f;
+  ['all','','review','fix','done'].forEach(function(k){ const b=$("scf_"+k); if(b) b.classList.toggle('on', k===f); });
+  renderScreens(); };
+function scWhen(t){ if(!t) return '-'; const p=CMTimeFilter.parts(t);
+  return (p.y%100)+'. '+p.mo+'. '+p.d+'. '+actPad(p.h)+':'+actPad(p.mi); }
+function scChips(flags){
+  if(!flags) return '';
+  return flags.split(',').filter(Boolean).map(function(f){
+    return '<span style="display:inline-block;font-size:10.5px;color:#a78bfa;border:1px solid #4c3f78;border-radius:6px;padding:0 6px;margin-right:4px">'+esc(SC_FLAG_KO[f]||f)+'</span>';
+  }).join('');
+}
+// 한 화면 상태 카드 (그리드·사이트맵 상세 공용).
+function scCard(s){
+  const img=s.file
+    ? '<img loading="lazy" src="/api/debug/screens/img?id='+encodeURIComponent(s.id)+'&t='+(s.shotAt||0)+'" onclick="scZoom(this.src)" style="width:100%;display:block;border-radius:8px;border:1px solid var(--line);cursor:zoom-in;background:#0b0f18">'
+    : '<div style="height:110px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--line);border-radius:8px;color:var(--dim);font-size:12px">스크린샷 대기 중… (그 화면이 다시 뜨면 촬영)</div>';
+  const stOpts=Object.keys(SC_STATUS_KO).map(function(k){
+    return '<option value="'+k+'"'+((s.status||'')===k?' selected':'')+'>'+SC_STATUS_KO[k]+'</option>'; }).join('');
+  return '<div class="panel" style="padding:10px;border:1px solid var(--line);border-radius:12px">'
+    +img
+    +'<div style="display:flex;align-items:baseline;gap:8px;margin:8px 0 2px">'
+    +'<b style="font-size:12.5px;font-variant-numeric:tabular-nums;color:#8fd3ff">'+esc(s.id)+'</b>'
+    +'<span style="font-size:12px;color:var(--txt)">'+esc(vtPage(s.page))+(s.view?(' · '+esc(s.view)):'')+'</span>'
+    +'<span class="muted" style="font-size:11px;margin-left:auto" title="'+esc(s.key)+'">'+esc(s.page)+'</span></div>'
+    +'<div style="margin:2px 0 6px">'+scChips(s.flags)
+    +'<span class="muted" style="font-size:11px">'+s.count+'회 · 처음 '+scWhen(s.firstSeen)+' · 최근 '+scWhen(s.lastSeen)+(s.shotAt?(' · 촬영 '+scWhen(s.shotAt)):'')+'</span></div>'
+    +'<div style="display:flex;gap:6px;align-items:center">'
+    +'<select id="scStatus-'+esc(s.id)+'" style="background:#161c28;border:1px solid #2f3a54;color:#e7ecf4;border-radius:7px;padding:4px 6px;font-size:12px">'+stOpts+'</select>'
+    +'<input id="scNote-'+esc(s.id)+'" value="'+esc(s.note||'')+'" placeholder="UX/UI 메모 — 무엇을 개선할까"'
+    +' style="flex:1;background:#161c28;border:1px solid #2f3a54;color:#e7ecf4;border-radius:7px;padding:4px 8px;font-size:12px"'
+    +' onkeydown="if(event.key===\'Enter\')scSave(\''+esc(s.id)+'\')">'
+    +'<button class="btn" onclick="scSave(\''+esc(s.id)+'\')" title="메모·상태 저장">저장</button>'
+    +'</div></div>';
+}
+// ---- 사이트맵 노드 ↔ 카탈로그 매칭 (카탈로그 키의 어휘를 그대로 사용) ----
+function scPagePath(e){ return (e.page||'').split('?')[0]; }
+function scNodeMatches(node){
+  return (_scList||[]).filter(function(e){
+    if(node.mode&&e.mode!==node.mode) return false;
+    if(scPagePath(e)!==node.path) return false;
+    if(node.view!=null&&(e.view||'')!==node.view) return false;
+    if(node.flag&&(','+(e.flags||'')+',').indexOf(','+node.flag+',')<0) return false;
+    return true;
+  });
+}
+// 사이트맵을 평탄한 노드 목록으로 (트리 렌더 + id 선택용). kind: page|view|state.
+function scFlatNodes(){
+  const out=[];
+  ((_scMap&&_scMap.pages)||[]).forEach(function(p){
+    out.push({id:p.id,kind:'page',title:p.title,path:p.path,mode:p.mode,desc:p.desc,src:p.src,page:p});
+    (p.children||[]).forEach(function(c){
+      out.push({id:c.id,kind:'view',title:c.title,path:p.path,mode:p.mode,view:c.view,page:p});
+    });
+    (p.states||[]).forEach(function(f){
+      out.push({id:p.id+'~'+f,kind:'state',title:(_scMap.flagLabels||{})[f]||SC_FLAG_KO[f]||f,
+                path:p.path,mode:p.mode,flag:f,page:p});
+    });
+  });
+  return out;
+}
+function scCovBadge(matches){
+  const shot=matches.filter(function(e){ return e.file; }).length;
+  if(!matches.length) return '<span style="font-size:10.5px;color:#5a6377">·미수집</span>';
+  return '<span style="font-size:10.5px;color:'+(shot?'#8fd3ff':'#e0a13a')+'">'+shot+'/'+matches.length+'장</span>';
+}
+window.scSelect=function(id){ _scSel=id; renderScreens(); };
+function renderScSitemap(){
+  const tree=$("scTree"), detail=$("scNode"); if(!tree||!detail) return;
+  if(!_scMap||!(_scMap.pages||[]).length){
+    tree.innerHTML='<div class="empty">사이트맵이 아직 없습니다 — UXUI 관리 워커가 main 갱신 시 생성합니다.<br><span class="muted" style="font-size:11px">수동 생성: Scripts/uxui-sitemap.sh --force</span></div>';
+    detail.innerHTML='';
+    return;
+  }
+  const nodes=scFlatNodes();
+  if(!_scSel||!nodes.some(function(n){ return n.id===_scSel; })) _scSel=nodes.length?nodes[0].id:null;
+  // 좌측 트리: 페이지 → (서브페이지, 상태). 깃북처럼 페이지가 큰 항목.
+  let covered=0, total=0;
+  const byPage={};
+  nodes.forEach(function(n){ (byPage[n.path+n.mode]=byPage[n.path+n.mode]||[]).push(n);
+    total++; if(scNodeMatches(n).some(function(e){ return e.file; })) covered++; });
+  let h='<div class="muted" style="font-size:11px;margin:0 0 8px">커버리지 <b style="color:var(--txt)">'+covered+'/'+total+'</b> 노드'
+    +(_scMap.generatedAt?(' · 생성 '+esc(String(_scMap.generatedAt).slice(0,16).replace('T',' '))):'')
+    +(_scMap.commit?(' · <span style="font-variant-numeric:tabular-nums">'+esc(String(_scMap.commit).slice(0,8))+'</span>'):'')+'</div>';
+  (_scMap.pages||[]).forEach(function(p){
+    const pageNode=nodes.find(function(n){ return n.kind==='page'&&n.id===p.id; });
+    function row(n,depth,icon){
+      const on=n.id===_scSel;
+      return '<div onclick="scSelect(\''+esc(n.id)+'\')" style="cursor:pointer;padding:3px 8px;margin-left:'+(depth*14)+'px;border-radius:7px;display:flex;gap:6px;align-items:baseline'
+        +(on?';background:#1d2740;border:1px solid #2f3a54':'')+'">'
+        +'<span style="opacity:.6;font-size:10.5px">'+icon+'</span>'
+        +'<span style="'+(n.kind==='page'?'font-weight:700;color:var(--txt)':'color:var(--dim)')+'">'+esc(n.title)+'</span>'
+        +'<span style="margin-left:auto">'+scCovBadge(scNodeMatches(n))+'</span></div>';
+    }
+    h+=row(pageNode,0,'📄');
+    (p.children||[]).forEach(function(c){
+      h+=row(nodes.find(function(n){ return n.id===c.id; }),1,'▸');
+    });
+    (p.states||[]).forEach(function(f){
+      h+=row(nodes.find(function(n){ return n.id===p.id+'~'+f; }),1,'◦');
+    });
+  });
+  tree.innerHTML=h;
+  // 우측 상세: 선택 노드 설명 + 매칭 스크린샷.
+  const sel=nodes.find(function(n){ return n.id===_scSel; });
+  if(!sel){ detail.innerHTML=''; return; }
+  const matches=scNodeMatches(sel);
+  let d='<div style="border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:0 0 12px">'
+    +'<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">'
+    +'<b style="font-size:14px">'+esc(sel.title)+'</b>'
+    +'<span class="muted" style="font-size:12px;font-variant-numeric:tabular-nums">'+esc(sel.mode)+' · '+esc(sel.path)
+    +(sel.view!=null?(' · 뷰 '+esc(sel.view)):'')+(sel.flag?(' · 상태 '+esc(sel.flag)):'')+'</span>'
+    +'<span style="margin-left:auto">'+scCovBadge(matches)+'</span></div>'
+    +(sel.desc?('<div class="muted" style="font-size:12px;margin-top:5px">'+esc(sel.desc)+'</div>'):'')
+    +(sel.src?('<div class="muted" style="font-size:11px;margin-top:3px">src: '+esc(sel.src)+'</div>'):'')
+    +'</div>';
+  if(!matches.length){
+    d+='<div class="empty">아직 캡처된 화면이 없습니다 — 앱에서 이 화면을 열면 자동으로 수집됩니다.</div>';
+  }else{
+    d+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px">'
+      +matches.map(scCard).join('')+'</div>';
+  }
+  detail.innerHTML=d;
+}
+function renderScreens(){
+  const mapWrap=$("scMapWrap"), gridWrap=$("scGridWrap");
+  if(mapWrap) mapWrap.style.display=(_scView==='map')?'flex':'none';
+  if(gridWrap) gridWrap.style.display=(_scView==='grid')?'':'none';
+  if(_scView==='map'){ renderScSitemap(); return; }
+  const host=$("scGrid"); if(!host) return;
+  const all=_scList||[];
+  const shot=all.filter(s=>s.file).length, fix=all.filter(s=>s.status==='fix').length;
+  const sm=$("scSummary"); if(sm) sm.textContent='화면 상태 '+all.length+'개 · 스크린샷 '+shot+'장 · 개선필요 '+fix+'개';
+  const list=(_scFilter==='all')?all:all.filter(s=>(s.status||'')===_scFilter);
+  if(!list.length){
+    host.innerHTML='<div class="empty">'+(all.length?'이 상태의 화면이 없습니다.':'아직 수집된 화면이 없습니다 — 앱 창이 열려 있는 동안 자동으로 쌓입니다.')+'</div>';
+    return;
+  }
+  host.innerHTML=list.map(scCard).join('');
+}
+window.scZoom=function(src){ const lb=$("scLightbox"), im=$("scLightImg"); if(!lb||!im) return;
+  im.src=src; lb.style.display='flex'; };
+window.scSave=function(id){
+  const note=(document.getElementById('scNote-'+id)||{}).value||'';
+  const status=(document.getElementById('scStatus-'+id)||{}).value||'';
+  fetch('/api/debug/screens/note',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:id,note:note,status:status})})
+    .then(function(){ const s=(_scList||[]).find(function(x){ return x.id===id; });
+      if(s){ s.note=note; s.status=status; } renderScreens(); })
+    .catch(function(){});
+};
+
+// ===== 히스토리 (대시보드에서 이동: 날짜별 집중도 + 초집중 세션 + 시간대 분석) =====
+// 서버 /history.json 은 날짜별 압축 샘플({t,active,tier,meeting,mult,app})을 준다.
+// 컨디션맵/오늘 활동과 '똑같은' withCarryForward + timeBuckets 로 총/책상/집중을 구하고(단일
+// 진실 공급원), 그 위에서 '지속 시간 기준' 초집중 세션을 잡는다. fmtH/hhmm/esc/CMTimeFilter/
+// withCarryForward/timeBuckets 는 이미 이 페이지에 있으므로 재사용한다.
+let _histData=null, _histLoading=false, _histRendered=false, _dfMin=25;
+let _histStart='', _histEnd='', _histPreset='3m', _histFetchedDays=0, _histRangeSig='';
+function histDayStr(d){ return CMTimeFilter.dayStr(d); }
+function daysBetween(a,b){ return CMTimeFilter.daysBetween(a,b); }
+function histPresetStart(preset){ return CMTimeFilter.presetRange(preset).start; }   // 'today'면 오늘 그대로
+function tzLabel(){ return CMTimeFilter.tzLabel(); }
+function syncHistInputs(){ const a=$('histFrom'),b=$('histTo'); if(a)a.value=_histStart; if(b)b.value=_histEnd; }
+function reflectRangeBtn(){ ['today','yesterday','7d','1m','30d','3m'].forEach(k=>{ const b=$('hr_'+k); if(b) b.classList.toggle('primary', k===_histPreset); }); }
+function setHistRange(preset){
+  _histPreset=preset;
+  _histStart=histPresetStart(preset);
+  _histEnd=(preset==='yesterday') ? _histStart : histDayStr(new Date());   // '어제'는 끝도 어제로 고정, 나머지는 오늘까지
+  syncHistInputs(); loadHistory();
+}
+function onHistDate(){
+  const a=$('histFrom'),b=$('histTo'); if(!a||!b) return;
+  if(a.value) _histStart=a.value; if(b.value) _histEnd=b.value;
+  if(_histStart>_histEnd){ const t=_histStart; _histStart=_histEnd; _histEnd=t; syncHistInputs(); }
+  _histPreset='';                  // 직접 입력하면 퀵버튼 선택 해제
+  loadHistory();
+}
+function setDeepMin(m){ _dfMin=m; reflectDeepBtn(); if(_histData) renderHistory(); }
+function reflectDeepBtn(){ [15,25,45].forEach(k=>{ const b=$('df'+k); if(b) b.classList.toggle('primary', k===_dfMin); }); }
+function loadHistory(force){
+  if(!_histStart){ _histPreset='3m'; _histEnd=histDayStr(new Date()); _histStart=histPresetStart('3m'); syncHistInputs(); }  // 최초 진입 기본값: 3달
+  reflectDeepBtn(); reflectRangeBtn();
+  if(_histLoading) return;
+  const todayStr=histDayStr(new Date());
+  const need=Math.max(1, daysBetween(_histStart, todayStr)+1);   // 시작~오늘을 덮을 일수(서버는 최신 N일을 준다)
+  const sig=_histStart+'_'+_histEnd;
+  if(_histData && !force && need<=_histFetchedDays){ if(!_histRendered || _histRangeSig!==sig) renderHistory(); return; }   // 캐시 우선 — 범위 안 바뀌면 재호출은 무비용
+  _histLoading=true;
+  const r=$('histRange'); if(r) r.textContent='불러오는 중…';
+  fetch('/history.json?days='+need).then(x=>x.json()).then(j=>{
+    _histData=(j&&j.days)||[]; _histFetchedDays=need; _histLoading=false; renderHistory();
+  }).catch(()=>{ _histLoading=false; const e=$('histDays'); if(e) e.innerHTML='<div class="empty">불러오지 못했습니다</div>'; });
+}
+// 지속 시간 기준 초집중: carry-forward 후 _cat==='focus'가 끊김 없이(샘플 간 <=2분) 이어진
+// 구간의 길이가 기준(_dfMin) 이상이면 한 세션. carry-forward가 이미 <=10분 짧은 끊김을
+// 집중으로 메우므로, 잠깐의 딴짓(설정 확인 등)은 세션을 깨지 않는다.
+function deepFocusSessions(ss){
+  const runs=[]; let cur=null;
+  ss.forEach(s=>{
+    if(s._cat==='focus'){
+      if(cur && (s.t-cur.endT)<=120){ cur.endT=s.t; cur.mins++; cur.apps[s.app||'-']=(cur.apps[s.app||'-']||0)+1; }
+      else { if(cur) runs.push(cur); cur={startT:s.t,endT:s.t,mins:1,apps:{}}; cur.apps[s.app||'-']=1; }
+    } else if(cur){ runs.push(cur); cur=null; }
+  });
+  if(cur) runs.push(cur);
+  return runs.filter(x=>x.mins>=_dfMin).map(x=>({startT:x.startT,endT:x.endT,mins:x.mins,
+    app:Object.entries(x.apps).sort((a,b)=>b[1]-a[1])[0][0]}));
+}
+function histCard(k,v,cap){ return '<div class="card"><div class="k">'+esc(k)+'</div><div class="v">'+esc(v)+'</div>'+(cap?'<div class="cap">'+esc(cap)+'</div>':'')+'</div>'; }
+function renderHistory(){
+  _histRendered=true; _histRangeSig=_histStart+'_'+_histEnd; reflectDeepBtn(); reflectRangeBtn();
+  // 캐시된 전체에서 선택 범위(_histStart~_histEnd)만 골라 렌더. 날짜 문자열(YYYY-MM-DD)은 사전순=시간순.
+  const data=(_histData||[]).filter(d=> d.day>=_histStart && d.day<=_histEnd);
+  const r=$('histRange'); if(r) r.textContent=(data.length? (data.length+'일 기록') : '기간 내 기록 없음')+' · 시각 '+tzLabel()+' 기준';
+  const rows=[]; const hourMin=new Array(24).fill(0);
+  let totFocus=0, totSessions=0, focusDays=0;
+  data.forEach(d=>{
+    const ss=withCarryForward(d.samples||[]);
+    const b=timeBuckets(ss);
+    const sess=deepFocusSessions(ss);
+    if(b.focus>0) focusDays++;
+    totFocus+=b.focus; totSessions+=sess.length;
+    sess.forEach(x=>{ for(let t=x.startT;t<=x.endT;t+=60){ hourMin[CMTimeFilter.hourOf(t)]++; } });
+    rows.push({day:d.day,b,sess});
+  });
+  // 최신순(내림차순)으로 보여준다 — 라벨이 '최신순'이므로.
+  rows.sort((a,b)=>a.day<b.day?1:-1);
+  const sumH=$('histSummary');
+  if(sumH) sumH.innerHTML=
+     histCard('기록 일수', data.length+'일')
+    +histCard('총 집중', fmtH(totFocus))
+    +histCard('총 초집중', totSessions+'회', _dfMin+'분+ 몰입 세션')
+    +histCard('집중일 평균', focusDays? fmtH(Math.round(totFocus/focusDays)) : '–', '집중한 날 하루 평균');
+  drawDfHours(hourMin);
+  const host=$('histDays');
+  if(!rows.length){ if(host) host.innerHTML='<div class="empty">선택한 기간('+_histStart+' ~ '+_histEnd+')에 기록이 없습니다</div>'; return; }
+  host.innerHTML=rows.map(dayRowHtml).join('');
+}
+function dayRowHtml(r){
+  const b=r.b, mx=Math.max(b.total,1);
+  // 중첩 막대: 책상(주황) 위에 집중(초록). 책상은 집중을 포함하므로 집중을 겹쳐 그린다.
+  const w=v=>Math.round(100*v/mx);
+  const bar='<div style="position:relative;background:#2a2f3a;border-radius:4px;height:9px;width:160px;flex:0 0 auto">'
+    +'<div style="position:absolute;left:0;top:0;height:9px;border-radius:4px;width:'+w(b.desk)+'%;background:#e8a13a"></div>'
+    +'<div style="position:absolute;left:0;top:0;height:9px;border-radius:4px;width:'+w(b.focus)+'%;background:#36c08a"></div></div>';
+  const chips=r.sess.length? r.sess.map(x=>'<span class="chip" style="margin:0;border-color:#36c08a;color:#36c08a">'
+      +hhmm(x.startT)+'–'+hhmm(x.endT)+' · '+fmtH(x.mins)+' · '+esc(x.app)+'</span>').join(' ')
+    : '<span class="muted" style="font-size:11px">초집중 없음</span>';
+  const wd=['일','월','화','수','목','금','토'][new Date(r.day+'T00:00:00').getDay()];
+  return '<div class="panel" style="margin:0 0 8px;padding:10px 14px">'
+    +'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+    +'<b style="font-variant-numeric:tabular-nums;min-width:118px">'+esc(r.day)+' ('+wd+')</b>'
+    +'<span class="muted" style="font-size:12px;min-width:180px">총 '+fmtH(b.total)+' · 책상 '+fmtH(b.desk)+' · 집중 '+fmtH(b.focus)+'</span>'
+    +bar
+    +'<span class="chip" style="margin:0;border-color:#36c08a;color:#36c08a">초집중 '+r.sess.length+'회</span>'
+    +'</div>'
+    +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'+chips+'</div>'
+    +'</div>';
+}
+function drawDfHours(hourMin){
+  const c=$('dfHours'); if(!c) return;
+  const dpr=window.devicePixelRatio||1, W=c.clientWidth||600, H=120;
+  c.width=W*dpr; c.height=H*dpr; const g=c.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const max=Math.max(1,...hourMin), pad=16, bw=(W-pad)/24;
+  for(let h=0;h<24;h++){
+    const bh=(H-pad)*(hourMin[h]/max);
+    g.fillStyle = hourMin[h]>0 ? '#36c08a' : '#222834';
+    g.fillRect(pad+h*bw+1, (H-pad)-bh, Math.max(1,bw-2), bh);
+    if(h%3===0){ g.fillStyle='#6b7688'; g.font='9px -apple-system,sans-serif'; g.fillText((h<10?'0':'')+h, pad+h*bw, H-3); }
+  }
+  const cap=$('dfHoursCap');
+  if(cap) cap.textContent = (max>0 ? ('시간대별 초집중 누적 — 가장 자주 몰입하는 시간대: '+(hourMin.indexOf(max)<10?'0':'')+hourMin.indexOf(max)+'시 전후')
+                                  : '아직 초집중 기록이 없습니다. 집중(에디터·개발) 상태가 '+_dfMin+'분 이상 이어지면 여기 쌓입니다.')
+                            + ' · 시각 '+tzLabel()+' 기준';
+}
+// 서브탭 진입 시 로드(캐시되어 재진입은 무비용, 그때 캔버스 폭이 유효하므로 히스토그램도 다시 그린다).
+function initHistory(){ loadHistory(); }
+
 function initActions(){
   if(_actInited){ loadActions(); return; }
   _actInited=true;
@@ -2088,6 +3027,11 @@ function renderActions(){
     if(e.pool) l2+='<span class="pill" style="color:#8fd9ea;border-color:#1e5563" title="이 곡을 고른 규칙 (폭우 &gt; 플랜 슬롯 &gt; 모드)">'+esc(e.pool)+'</span>';
     if(e.bpm) l2+='<span class="pill">'+e.bpm+' BPM</span>';
     if(e.mode&&e.mode!=='-') l2+='<span class="pill">모드 '+esc(ACT_MODE[e.mode]||e.mode)+'</span>';
+    // 업무 경과(workMin): 업무 시작(6h 갭 블록) 후 몇 분 시점의 행동인지 — 전략6
+    // 시작 컨텍스트 선곡의 근거 축. 옛 라인(-1/없음)은 표시하지 않는다.
+    if(e.workMin!=null&&e.workMin>=0)
+      l2+='<span class="pill" style="color:#c9a4ff;border-color:#4a3670" title="업무 시작 후 경과 (6h 갭 블록 기준)">업무 '
+        +(e.workMin<60?e.workMin+'분':(e.workMin/60).toFixed(1)+'h')+'</span>';
     if(e.phase&&e.phase!=='-') l2+='<span class="pill">'+esc(e.phase)+'</span>';
     if(e.app) l2+='<span class="pill">'+esc(e.app)+'</span>';
     h+='<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);align-items:flex-start">'

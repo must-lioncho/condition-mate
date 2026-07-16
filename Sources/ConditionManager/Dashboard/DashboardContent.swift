@@ -11,8 +11,8 @@ import Foundation
 enum DashboardContent {
     static func html(lastView: String = "input", doneCutoff: Double? = nil, uiPrefs: String? = nil) -> String {
         // Clamp to a known view key so the injected JS literal can never be malformed.
-        // "actions"(액션로그)는 컨디션 관리 페이지(/bgm-player)로 이동 — 저장돼 있던 옛 값은 input으로 클램프된다.
-        let valid: Set<String> = ["input", "group", "table", "token", "queue", "schedule", "preview", "sprint", "archived", "history"]
+        // "actions"(액션로그)·"history"(히스토리)는 컨디션 관리 페이지(/bgm-player)로 이동 — 저장돼 있던 옛 값은 input으로 클램프된다.
+        let valid: Set<String> = ["input", "group", "table", "token", "queue", "schedule", "preview", "sprint", "archived"]
         let view = valid.contains(lastView) ? lastView : "input"
         // Server-persisted 완료 컷오프 as a JS literal: an integer epoch (0 = 해제) when the
         // user has set one, else "DC_DEFAULT" so the client keeps its built-in default.
@@ -48,6 +48,15 @@ enum DashboardContent {
   h1{font-size:18px;margin:0 0 4px}
   h2{font-size:14px;margin:22px 0 10px;color:var(--fg)}
   .sub{color:var(--mut);font-size:13px;margin-bottom:20px}
+  /* 헤더 타임존 셀렉터 — 모든 시각의 기준이라 눈에 잘 띄게(강조 테두리) 상시 노출. */
+  .hdrtz{display:inline-flex;align-items:center;gap:7px;padding:5px 9px;border:1px solid var(--accent);
+         border-radius:10px;background:rgba(91,140,255,.12);white-space:nowrap}
+  .hdrtz-ic{font-size:13px;line-height:1}
+  .hdrtz-lbl{font-size:11px;color:var(--mut);font-weight:600;letter-spacing:.2px}
+  .hdrtz-sel{appearance:auto;background:#0e1320;color:var(--fg);border:1px solid var(--line);
+             border-radius:7px;padding:3px 6px;font-size:12px;font-weight:600;cursor:pointer;
+             font-variant-numeric:tabular-nums}
+  .hdrtz-sel:hover{border-color:var(--accent)}
   .cards{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;flex:1;min-width:150px}
   .card .k{color:var(--mut);font-size:12px}
@@ -521,6 +530,8 @@ enum DashboardContent {
   .compmodel{background:#0e1320;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12px}
   .comphint{color:var(--mut);font-size:11px}
   .chatdrop{outline:2px dashed var(--accent);outline-offset:-6px}
+  /* (목표 추가 컴포저는 전용 페이지 /goal-add 로 이주 — GoalAddContent.swift. 여기 있던
+     모달·컴포저 CSS(.gacomp·.fchip·.ga-* 계열)는 그 페이지가 가진다.) */
   /* Conversation thread inside the AI 중복 확인 다이얼로그. */
   .dupconv{display:flex;flex-direction:column;gap:10px;max-height:38vh;overflow-y:auto;padding:2px}
   .dupconv:empty{display:none}
@@ -567,6 +578,28 @@ enum DashboardContent {
   .qovr select,.qovr input.qpin{background:#0d1016;color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:5px 8px;font:12px inherit;outline:none}
   .qovr input.qpin{width:70px;font-variant-numeric:tabular-nums}
   .qovr input.qpin:focus,.qovr select:focus{border-color:var(--accent)}
+
+  /* ===== Zen (시작/휴식 화면) =====
+     body.cm-zen hides the entire right-hand board so only the rail's challenge dial shows —
+     a clean slate lowers the barrier to starting, where a board full of in-progress work
+     feels like resuming a heavy game. SessionRail owns the class: armed on the app session's
+     FIRST dashboard load (same launch test as the auto-start countdown: sessionStorage
+     cmChArmed), revealed when the challenge actually starts (cmChRender → cmZenReveal), and
+     RE-ENTERED when the 음원/챌린지 stops (running→stopped transition → cmZenEnter — 메모리를
+     걷어내는 효과) AND when the 포모도로 완주 수확 오브 appears (cmChRenderReward — the finished
+     session's board is leftover working memory; 수확 단계는 그걸 걷어내고 다시 집중하게 한다).
+     The native window mirrors the class at rail width via the cmzen message
+     channel (AppWindow). The dim 둘러보기 escape below reveals the board for browsing without
+     starting. Idle navigations/reloads (no transition) keep the board. */
+  body.cm-zen{ overflow:hidden }
+  .wrap{ transition:opacity .7s ease }
+  body.cm-zen .wrap{ opacity:0; visibility:hidden }
+  .cmzen-peek{ display:none }
+  body.cm-zen .cmzen-peek{ display:flex; position:fixed; left:var(--cmrail-w,240px); right:0; bottom:22px;
+    justify-content:center; z-index:5 }
+  .cmzen-peek button{ background:none; border:0; color:#39415a; font-size:12px; font-family:inherit;
+    cursor:pointer; padding:6px 12px; border-radius:8px }
+  .cmzen-peek button:hover{ color:#8b93a7; background:rgba(255,255,255,.04) }
 
   /* ===== Responsive (narrow-width) layout =====
      The rail (SessionRail.swift) is a fixed 240px strip that reserves space via
@@ -630,13 +663,23 @@ enum DashboardContent {
 </head>
 <body>
 \#(SessionRail.html())
+<!-- Zen-start escape: browse the board without starting a challenge (body.cm-zen CSS above). -->
+<div class="cmzen-peek"><button onclick="if(window.cmZenReveal)cmZenReveal()" title="챌린지를 시작하지 않고 보드만 봅니다">그냥 둘러보기 →</button></div>
 <div class="wrap">
   <div class="hdr">
     <div>
       <h1>오늘 활동 · BGM 디버그 <span id="devBadge" class="devbadge" style="display:none"></span></h1>
       <div class="sub" id="date">불러오는 중…</div>
     </div>
-    <div style="display:flex;align-items:center;gap:10px">
+    <!-- 표시 타임존: 모든 시각의 기준이라 헤더 우상단에 상시 노출 — 성능 정보 위에 둔다.
+         저장·계산은 항상 UTC(epoch), 이 값은 화면 표기 기준만 바꾼다. 변경 즉시 페이지 전체를
+         새 tz로 다시 그린다(window.cmCondSetTz는 레일 설정과 공용). -->
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
+      <div class="hdrtz" id="hdrTz" title="시간 표기 기준 — 저장·계산은 항상 UTC, 화면 표기만 이 타임존을 따릅니다. 모든 시각의 기준입니다.">
+        <span class="hdrtz-ic" aria-hidden="true">🕓</span>
+        <span class="hdrtz-lbl">타임존</span>
+        <select class="hdrtz-sel" id="hdrTzSel" onchange="cmCondSetTz(event,this.value)" aria-label="표시 타임존"><option>불러오는 중…</option></select>
+      </div>
       <span id="perf" title="이 대시보드 페이지의 자원 사용량 (메모리=JS 힙, CPU=프레임 타이밍 근사치)"
             style="font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap">측정 중…</span>
     </div>
@@ -783,37 +826,8 @@ enum DashboardContent {
     <!-- 액션로그 뷰는 컨디션 관리 페이지(/bgm-player)의 액션로그 탭으로 이동했다 —
          컨디션맵 띠 클릭 드릴다운과 함께 분석 (BGMPlayerContent 참고). 대시보드에선 제거. -->
 
-    <!-- HISTORY VIEW (히스토리 — 날짜별 집중도 + 초집중 세션 + 시간대 분석) -->
-    <div id="historyView" style="display:none">
-      <div class="row" style="margin:0 0 8px;gap:6px;align-items:center;flex-wrap:wrap">
-        <span class="muted" style="font-size:12px">기간</span>
-        <button class="btn" id="hr_today" onclick="setHistRange('today')" title="오늘 하루">오늘</button>
-        <button class="btn" id="hr_yesterday" onclick="setHistRange('yesterday')" title="어제 하루">어제</button>
-        <button class="btn" id="hr_7d" onclick="setHistRange('7d')" title="최근 7일">1주일</button>
-        <button class="btn" id="hr_1m" onclick="setHistRange('1m')" title="최근 한 달">한달</button>
-        <button class="btn" id="hr_30d" onclick="setHistRange('30d')" title="최근 30일">30일</button>
-        <button class="btn" id="hr_3m" onclick="setHistRange('3m')" title="최근 3달">3달</button>
-        <input type="date" id="histFrom" class="btn" onchange="onHistDate()" style="color-scheme:dark;padding:5px 8px" title="시작 날짜">
-        <span class="muted" style="font-size:12px">~</span>
-        <input type="date" id="histTo" class="btn" onchange="onHistDate()" style="color-scheme:dark;padding:5px 8px" title="끝 날짜">
-        <button class="btn" onclick="loadHistory(true)" style="margin-left:auto" title="히스토리 새로고침">새로고침</button>
-      </div>
-      <div class="row" style="margin:0 0 10px;gap:6px;align-items:center;flex-wrap:wrap">
-        <span class="muted" style="font-size:12px">초집중 기준 (끊김 없이 이어진 집중)</span>
-        <button class="btn" id="df15" onclick="setDeepMin(15)" title="15분 이상 이어진 집중을 초집중으로">15분+</button>
-        <button class="btn" id="df25" onclick="setDeepMin(25)" title="25분 이상 이어진 집중을 초집중으로">25분+</button>
-        <button class="btn" id="df45" onclick="setDeepMin(45)" title="45분 이상 이어진 집중을 초집중으로">45분+</button>
-        <span class="muted" id="histRange" style="font-size:12px;margin-left:auto">불러오는 중…</span>
-      </div>
-      <div id="histSummary" class="cards" style="margin:0 0 12px"></div>
-      <h2 style="margin:16px 0 6px">초집중 시간대 · 언제 몰입하나</h2>
-      <div class="panel" style="margin:0 0 14px">
-        <canvas id="dfHours" style="height:120px"></canvas>
-        <div class="muted" style="font-size:11px;margin-top:6px" id="dfHoursCap">시간대별 초집중 누적 — 막대가 높을수록 그 시간에 자주 몰입합니다.</div>
-      </div>
-      <h2 style="margin:16px 0 6px">날짜별 기록 (최신순)</h2>
-      <div id="histDays"><div class="empty">불러오는 중…</div></div>
-    </div>
+    <!-- 히스토리(날짜별 집중도·초집중 세션·시간대 분석)는 대시보드에서 분리되어 컨디션 관리
+         페이지(/bgm-player)의 '히스토리' 서브탭으로 이동했다 — BGMPlayerContent.swift 참고. -->
 
     <!-- 워커(백그라운드/주기 작업) 상태는 대시보드에서 분리되어 독립 /cron 페이지로 이동했다.
          (레일의 '크론' 메뉴 → AppDelegate.cronPage) -->
@@ -876,23 +890,10 @@ enum DashboardContent {
   </div>
 </div>
 
-<!-- 재사용 목표 추가 모듈: 스프린트 보드(Backlog·각 스프린트)에서 같은 입력·AI추가·추가 UI를
-     공유한다. 상단 항상 보이는 입력바와 동일한 add 흐름(goalAddSubmit/goalAddAi)을 쓴다. -->
-<div class="overlay" id="gaModal">
-  <div class="modal" style="max-width:560px">
-    <div class="hdr"><h1 style="margin:0;font-size:16px"><span id="gaEditIcon" style="display:none" title="작성 중이던 초안을 이어서 편집 중">✎ </span><span id="gaTitle">목표 추가</span> <span class="muted" id="gaWhere" style="font-size:13px;font-weight:400"></span></h1>
-      <button class="btn" onclick="closeGoalAdd()" title="ESC 로도 닫힙니다 — 입력한 내용은 기억됩니다. 내용이 있을 땐 바깥을 눌러도 닫히지 않으니 이 버튼으로 닫으세요">닫기</button></div>
-    <div class="row">
-      <input type="text" id="gaText" placeholder="목표/디테일 입력 후 Enter (AI추가로 계속 추가)" style="flex:1;min-width:200px">
-      <button class="btn primary" id="gaAiBtn" onclick="gaAi()" title="추가 전에 AI가 비슷한 목표가 있는지 먼저 검사합니다">AI추가</button>
-      <button class="btn" id="gaSearchBtn" onclick="gaSearch()" title="번호 또는 제목으로 즉시 찾습니다 — 완료·릴리즈·보관·취소된 목표도 찾아줍니다">검색</button>
-      <button class="btn" id="gaAddBtn" onclick="gaAdd()">추가</button>
-    </div>
-    <div class="muted" id="gaHint" style="font-size:12px;margin-top:8px"><b>Enter</b>를 누르면 <b>AI추가</b>로 담깁니다 — 비슷한 목표가 있는지 먼저 확인하며, 창은 열린 채 계속 추가할 수 있습니다. <b>검색</b>은 추가하지 않고 비슷한 목표만 찾아줍니다. 바로 추가하려면 <b>추가</b> 버튼을 누르세요.</div>
-    <div id="gaResults" style="margin-top:4px;max-height:340px;overflow:auto"></div>
-  </div>
-</div>
-<!-- 작성 중이던 목표 초안 이어쓰기 칩: 모달을 ESC/닫기로 닫아도 입력이 남아 있으면 표시된다. -->
+<!-- 목표 추가는 전용 페이지(/goal-add, GoalAddContent.swift)로 이주 — 모든 추가 진입점이
+     openGoalAdd()를 통해 그 페이지로 이동한다(모달 없음, 깨끗한 새 문서에서 집중). -->
+<!-- 작성 중이던 목표 초안 이어쓰기 칩: /goal-add 페이지에서 담지 않고 나온 입력(cm.gaDraft)이
+     남아 있으면 표시된다. 클릭하면 마지막 대상 그대로 페이지를 다시 연다. -->
 <button class="gadraft-chip" id="gaDraftChip" onclick="resumeGoalDraft()"><span class="pen">✎</span><span>작성 중인 목표</span></button>
 <script>
 \#(CMTimeFilter.js)
@@ -939,6 +940,22 @@ function perfFrame(t){
 // Frame loop: drives only the page resource meter now (the header gauge is gone).
 function perfLoop(t){ perfFrame(t); requestAnimationFrame(perfLoop); }
 requestAnimationFrame(perfLoop);
+
+// 헤더 타임존 셀렉터 채우기 — /api/settings/timezone(레일 설정과 동일 소스)에서 현재 tz를 읽어
+// 옵션을 그린다. 변경은 window.cmCondSetTz(레일 JS의 전역, 저장 후 페이지 리로드)가 처리한다.
+(function initHdrTz(){
+  var sel=$('hdrTzSel'); if(!sel) return;
+  fetch('/api/settings/timezone',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(tz){
+    if(!tz){ return; }
+    var cur=tz.tz||'system';
+    var opts=[['system','시스템 (맥 설정)'],['Asia/Seoul','KST (UTC+9)'],['UTC','UTC (+0)']];
+    var seen=false, html=opts.map(function(x){ if(x[0]===cur) seen=true;
+      return '<option value="'+x[0]+'"'+(x[0]===cur?' selected':'')+'>'+x[1]+'</option>'; }).join('');
+    if(!seen) html+='<option value="'+cur+'" selected>'+(tz.label||cur)+'</option>';
+    sel.innerHTML=html;
+    var host=$('hdrTz'); if(host&&tz.label) host.title='시간 표기 기준 — 저장·계산은 항상 UTC, 화면 표기만 이 타임존을 따릅니다. 현재: '+tz.label;
+  }).catch(function(){});
+})();
 
 async function load(){
   let d;
@@ -1120,135 +1137,15 @@ function timeBuckets(ss){
 // 티어 바 렌더(drawTiers)·티어 색/배지(tierColor/tierBadge)는
 // 컨디션 관리 페이지(/bgm-player)로 이동했다 — 대시보드에선 제거.
 
-// ===== 히스토리 (날짜별 집중도 + 초집중 세션 + 시간대 분석) =====
-// 서버 /history.json 은 날짜별 압축 샘플({t,active,tier,meeting,mult,app})을 준다.
-// 오늘 화면과 '똑같은' withCarryForward + timeBuckets 를 날짜마다 돌려 총/책상/집중을
-// 구하고(단일 진실 공급원), 그 위에서 '지속 시간 기준' 초집중 세션을 잡는다.
-let _histData=null, _histLoading=false, _histRendered=false, _dfMin=25;
-// 기간 필터: 시작~끝 날짜(로컬 YYYY-MM-DD). 퀵버튼(1일/3일/7일/한달/3달)과 직접 입력 모두 지원.
-// 데이터는 하루 단위라 서버 재요청 없이 클라이언트에서 날짜 범위로 걸러 렌더한다.
-let _histStart='', _histEnd='', _histPreset='3m', _histFetchedDays=0, _histRangeSig='';
+// 히스토리 뷰(날짜별 집중도·초집중 세션·시간대 분석)는 컨디션 관리 페이지(/bgm-player)의
+// '히스토리' 서브탭으로 이동했다 — BGMPlayerContent.swift 참고. 아래 histDayStr/daysBetween/
+// histPresetStart/tzLabel 은 토큰 뷰(tk*)도 쓰는 공통 헬퍼라 대시보드에 그대로 남긴다.
 // 날짜 계산·프리셋·타임존은 공통 모듈(CMTimeFilter)에 위임 — 컨디션맵과 한 소스.
 function histDayStr(d){ return CMTimeFilter.dayStr(d); }
 function daysBetween(a,b){ return CMTimeFilter.daysBetween(a,b); }
 function histPresetStart(preset){ return CMTimeFilter.presetRange(preset).start; }   // 'today'면 오늘 그대로
-function syncHistInputs(){ const a=$('histFrom'),b=$('histTo'); if(a)a.value=_histStart; if(b)b.value=_histEnd; }
-function reflectRangeBtn(){ ['today','yesterday','7d','1m','30d','3m'].forEach(k=>{ const b=$('hr_'+k); if(b) b.classList.toggle('primary', k===_histPreset); }); }
-function setHistRange(preset){
-  _histPreset=preset;
-  _histStart=histPresetStart(preset);
-  // '어제'는 끝도 어제로 고정, 나머지는 오늘까지.
-  _histEnd=(preset==='yesterday') ? _histStart : histDayStr(new Date());
-  syncHistInputs(); loadHistory();
-}
-function onHistDate(){
-  const a=$('histFrom'),b=$('histTo'); if(!a||!b) return;
-  if(a.value) _histStart=a.value; if(b.value) _histEnd=b.value;
-  if(_histStart>_histEnd){ const t=_histStart; _histStart=_histEnd; _histEnd=t; syncHistInputs(); }
-  _histPreset='';                  // 직접 입력하면 퀵버튼 선택 해제
-  loadHistory();
-}
-// 모든 시각은 이 기기의 로컬 타임존 기준(오늘 화면과 동일). 혼동 없게 화면에 명시한다.
-// 하드코딩이 아니라 감지: Asia/Seoul이면 KST, 아니면 그 지역 이름 + UTC 오프셋.
+// 모든 시각은 이 기기의 로컬 타임존 기준. 하드코딩이 아니라 감지: Asia/Seoul이면 KST, 아니면 지역명 + UTC 오프셋.
 function tzLabel(){ return CMTimeFilter.tzLabel(); }
-function setDeepMin(m){ _dfMin=m; reflectDeepBtn(); if(_histData) renderHistory(); }
-function reflectDeepBtn(){ [15,25,45].forEach(k=>{ const b=$('df'+k); if(b) b.classList.toggle('primary', k===_dfMin); }); }
-// 액션로그 뷰(ACT_LABEL/loadActions/renderActions/SSE)는 컨디션 관리 페이지로 이동 —
-// BGMPlayerContent.swift 의 액션로그 섹션 참고 (.e2e/actioncat.test.js 도 그 파일에서 추출).
-function loadHistory(force){
-  if(!_histStart){ _histPreset='3m'; _histEnd=histDayStr(new Date()); _histStart=histPresetStart('3m'); syncHistInputs(); }  // 최초 진입 기본값: 3달
-  reflectDeepBtn(); reflectRangeBtn();
-  if(_histLoading) return;
-  const todayStr=histDayStr(new Date());
-  const need=Math.max(1, daysBetween(_histStart, todayStr)+1);   // 시작~오늘을 덮을 일수(서버는 최신 N일을 준다)
-  const sig=_histStart+'_'+_histEnd;
-  if(_histData && !force && need<=_histFetchedDays){ if(!_histRendered || _histRangeSig!==sig) renderHistory(); return; }   // 캐시 우선 — 범위 안 바뀌면 폴링 재호출은 무비용
-  _histLoading=true;
-  const r=$('histRange'); if(r) r.textContent='불러오는 중…';
-  fetch('/history.json?days='+need).then(x=>x.json()).then(j=>{
-    _histData=(j&&j.days)||[]; _histFetchedDays=need; _histLoading=false; renderHistory();
-  }).catch(()=>{ _histLoading=false; const e=$('histDays'); if(e) e.innerHTML='<div class="empty">불러오지 못했습니다</div>'; });
-}
-// 지속 시간 기준 초집중: carry-forward 후 _cat==='focus'가 끊김 없이(샘플 간 <=2분) 이어진
-// 구간의 길이가 기준(_dfMin) 이상이면 한 세션. carry-forward가 이미 <=10분 짧은 끊김을
-// 집중으로 메우므로, 잠깐의 딴짓(설정 확인 등)은 세션을 깨지 않는다.
-function deepFocusSessions(ss){
-  const runs=[]; let cur=null;
-  ss.forEach(s=>{
-    if(s._cat==='focus'){
-      if(cur && (s.t-cur.endT)<=120){ cur.endT=s.t; cur.mins++; cur.apps[s.app||'-']=(cur.apps[s.app||'-']||0)+1; }
-      else { if(cur) runs.push(cur); cur={startT:s.t,endT:s.t,mins:1,apps:{}}; cur.apps[s.app||'-']=1; }
-    } else if(cur){ runs.push(cur); cur=null; }
-  });
-  if(cur) runs.push(cur);
-  return runs.filter(x=>x.mins>=_dfMin).map(x=>({startT:x.startT,endT:x.endT,mins:x.mins,
-    app:Object.entries(x.apps).sort((a,b)=>b[1]-a[1])[0][0]}));
-}
-function histCard(k,v,cap){ return '<div class="card"><div class="k">'+esc(k)+'</div><div class="v">'+esc(v)+'</div>'+(cap?'<div class="cap">'+esc(cap)+'</div>':'')+'</div>'; }
-function renderHistory(){
-  _histRendered=true; _histRangeSig=_histStart+'_'+_histEnd; reflectDeepBtn(); reflectRangeBtn();
-  // 캐시된 전체에서 선택 범위(_histStart~_histEnd)만 골라 렌더. 날짜 문자열(YYYY-MM-DD)은 사전순=시간순.
-  const data=(_histData||[]).filter(d=> d.day>=_histStart && d.day<=_histEnd);
-  const r=$('histRange'); if(r) r.textContent=(data.length? (data.length+'일 기록') : '기간 내 기록 없음')+' · 시각 '+tzLabel()+' 기준';
-  const rows=[]; const hourMin=new Array(24).fill(0);
-  let totFocus=0, totSessions=0, focusDays=0;
-  data.forEach(d=>{
-    const ss=withCarryForward(d.samples||[]);
-    const b=timeBuckets(ss);
-    const sess=deepFocusSessions(ss);
-    if(b.focus>0) focusDays++;
-    totFocus+=b.focus; totSessions+=sess.length;
-    sess.forEach(x=>{ for(let t=x.startT;t<=x.endT;t+=60){ hourMin[CMTimeFilter.hourOf(t)]++; } });
-    rows.push({day:d.day,b,sess});
-  });
-  const sumH=$('histSummary');
-  if(sumH) sumH.innerHTML=
-     histCard('기록 일수', data.length+'일')
-    +histCard('총 집중', fmtH(totFocus))
-    +histCard('총 초집중', totSessions+'회', _dfMin+'분+ 몰입 세션')
-    +histCard('집중일 평균', focusDays? fmtH(Math.round(totFocus/focusDays)) : '–', '집중한 날 하루 평균');
-  drawDfHours(hourMin);
-  const host=$('histDays');
-  if(!rows.length){ if(host) host.innerHTML='<div class="empty">선택한 기간('+_histStart+' ~ '+_histEnd+')에 기록이 없습니다</div>'; return; }
-  host.innerHTML=rows.map(dayRowHtml).join('');
-}
-function dayRowHtml(r){
-  const b=r.b, mx=Math.max(b.total,1);
-  // 중첩 막대: 책상(주황) 위에 집중(초록). 책상은 집중을 포함하므로 집중을 겹쳐 그린다.
-  const w=v=>Math.round(100*v/mx);
-  const bar='<div style="position:relative;background:#2a2f3a;border-radius:4px;height:9px;width:160px;flex:0 0 auto">'
-    +'<div style="position:absolute;left:0;top:0;height:9px;border-radius:4px;width:'+w(b.desk)+'%;background:#e8a13a"></div>'
-    +'<div style="position:absolute;left:0;top:0;height:9px;border-radius:4px;width:'+w(b.focus)+'%;background:#36c08a"></div></div>';
-  const chips=r.sess.length? r.sess.map(x=>'<span class="chip" style="margin:0;border-color:#36c08a;color:#36c08a">'
-      +hhmm(x.startT)+'–'+hhmm(x.endT)+' · '+fmtH(x.mins)+' · '+esc(x.app)+'</span>').join(' ')
-    : '<span class="muted" style="font-size:11px">초집중 없음</span>';
-  const wd=['일','월','화','수','목','금','토'][new Date(r.day+'T00:00:00').getDay()];
-  return '<div class="panel" style="margin:0 0 8px;padding:10px 14px">'
-    +'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
-    +'<b style="font-variant-numeric:tabular-nums;min-width:118px">'+esc(r.day)+' ('+wd+')</b>'
-    +'<span class="muted" style="font-size:12px;min-width:180px">총 '+fmtH(b.total)+' · 책상 '+fmtH(b.desk)+' · 집중 '+fmtH(b.focus)+'</span>'
-    +bar
-    +'<span class="chip" style="margin:0;border-color:#36c08a;color:#36c08a">초집중 '+r.sess.length+'회</span>'
-    +'</div>'
-    +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'+chips+'</div>'
-    +'</div>';
-}
-function drawDfHours(hourMin){
-  const c=$('dfHours'); if(!c) return;
-  const dpr=window.devicePixelRatio||1, W=c.clientWidth||600, H=120;
-  c.width=W*dpr; c.height=H*dpr; const g=c.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
-  const max=Math.max(1,...hourMin), pad=16, bw=(W-pad)/24;
-  for(let h=0;h<24;h++){
-    const bh=(H-pad)*(hourMin[h]/max);
-    g.fillStyle = hourMin[h]>0 ? '#36c08a' : '#222834';
-    g.fillRect(pad+h*bw+1, (H-pad)-bh, Math.max(1,bw-2), bh);
-    if(h%3===0){ g.fillStyle='#6b7688'; g.font='9px -apple-system,sans-serif'; g.fillText((h<10?'0':'')+h, pad+h*bw, H-3); }
-  }
-  const cap=$('dfHoursCap');
-  if(cap) cap.textContent = (max>0 ? ('시간대별 초집중 누적 — 가장 자주 몰입하는 시간대: '+(hourMin.indexOf(max)<10?'0':'')+hourMin.indexOf(max)+'시 전후')
-                                  : '아직 초집중 기록이 없습니다. 집중(에디터·개발) 상태가 '+_dfMin+'분 이상 이어지면 여기 쌓입니다.')
-                            + ' · 시각 '+tzLabel()+' 기준';
-}
 
 // --- Value-confirmation pipeline + report ---
 function provisionalHours(samples){ return samples.reduce((a,s)=>a+(s.active||0)*(s.mult||1),0)/3600; }
@@ -1265,206 +1162,43 @@ function goalKey(e){ if(e.key!=='Enter')return; if(_composing){_pendingAdd=true;
 })();
 // Group-mode top add bar: same IME-safe Enter (bindImeEnter is hoisted).
 (function(){ bindImeEnter(document.getElementById('gAddText'), function(){ gAdd(); }); })();
-// Reusable goal-add modal input: Enter routes to AI추가 (queue) so a bare Enter runs the
-// dup-check pipeline. Keep the modal open (clear + refocus) to preserve "계속 추가".
-(function(){
-  const gt=document.getElementById('gaText');
-  bindImeEnter(gt, function(){
-    // 검색 모드면 Enter → 검색(찾기만), 아니면 Enter → AI추가(찾고+만들기).
-    if(_gaSearchMode){ gaSearch(); return; }
-    const inp=$('gaText'); goalAddAi(inp.value,_gaCtx,$('gaAiBtn'),()=>{ inp.value=''; gaClearDraft(); inp.focus(); },()=>{ inp.value=''; gaClearDraft(); inp.focus(); });
-  });
-  // ESC 로 모달을 닫는다(입력은 초안으로 보존). 조합(IME) 중 ESC 는 후보만 취소되도록 통과시킨다.
-  if(gt) gt.addEventListener('keydown',function(e){ if(e.key==='Escape' && !e.isComposing){ e.preventDefault(); closeGoalAdd(); } });
-  // 배경(모달 바깥) 클릭: 입력이 비어 있으면 닫고, 글자가 있으면 실수 방지를 위해 무시한다
-  // (내용이 있을 땐 반드시 '닫기' 버튼으로 닫아야 한다). 클릭이 오버레이 자체일 때만 반응.
-  const gm=document.getElementById('gaModal');
-  if(gm) gm.addEventListener('mousedown',function(e){
-    if(e.target!==gm) return;                       // .modal 안쪽 클릭은 무시(오버레이 자체만)
-    const inp=$('gaText'); const has=inp&&String(inp.value||'').trim();
-    if(!has){ closeGoalAdd(); return; }
-    // 글자가 있으면: 닫히지 않는다. '닫기' 버튼을 눌러야 함을 살짝 강조해 알린다.
-    const cb=gm.querySelector('.hdr .btn');
-    if(cb){ cb.classList.add('nudge'); setTimeout(()=>cb.classList.remove('nudge'),400); }
-  });
-})();
-// --- 재사용 목표 추가 모달 — 스프린트 보드의 모든 추가 진입점이 이 모달 하나를 연다. ---
-let _gaCtx={sprint:0,parent:'',bump:false};   // 현재 추가 대상 (0/''=Backlog 최상위, bump=Bump out 인박스)
-// ESC/닫기 시 남은 미제출 입력(초안) — 재오픈/이어쓰기 칩에서 복원한다.
-// localStorage 에 영속화하여 새로고침·재접속 후에도 "마지막 글씨"를 기억한다.
-let _gaDraft=(function(){ try{ return localStorage.getItem('cm.gaDraft')||''; }catch(e){ return ''; } })();
-// 초안을 localStorage 에 저장/삭제한다(비어 있으면 지운다).
-function gaPersistDraft(){ try{ if(_gaDraft&&_gaDraft.trim()) localStorage.setItem('cm.gaDraft',_gaDraft); else localStorage.removeItem('cm.gaDraft'); }catch(e){} }
-let _gaLastOpts=null;   // 마지막으로 모달을 연 opts — 이어쓰기 칩이 같은 맥락으로 다시 연다.
-let _gaSearchMode=false;// 검색(찾기만) 모드로 열렸는지 — Enter 라우팅을 검색/AI추가로 가른다.
+// (목표 추가 모달의 입력 배선은 전용 페이지 /goal-add 로 이주 — GoalAddContent.swift.)
+// --- 목표 추가/검색은 전용 페이지(/goal-add)로 이주 — GoalAddContent.swift. ---
+// 스프린트 보드의 모든 추가 진입점·레일의 목표 만들기/검색이 openGoalAdd()를 거쳐 그 페이지로
+// 이동한다. 모달을 없앤 이유: 완전히 새 문서(깨끗한 JS 힙·최소 DOM)에서 목표 생성에 집중.
+// 페이지가 초안(cm.gaDraft)과 마지막 대상(cm.gaCtx)을 localStorage 에 남기므로, 담지 않고
+// 나온 입력은 아래 이어쓰기 칩이 같은 맥락으로 다시 연다.
 function openGoalAdd(opts){
   opts=opts||{};
-  _gaLastOpts=opts;
-  _gaCtx={sprint:opts.sprint||0,parent:opts.parent||'',bump:!!opts.bump};
-  const where=$('gaWhere'); if(where) where.textContent=opts.label?('· '+opts.label):'';
-  // 검색 모드(opts.search): 같은 모달을 '목표 검색'으로 표시하고 검색을 주 액션으로 강조한다.
-  // 입력·큐 흐름은 동일하고 결과만 찾기만 한다. 일반(추가) 모드면 원래대로 되돌린다.
-  _gaSearchMode=!!opts.search;
-  const ttl=$('gaTitle'), inp0=$('gaText'), aiB=$('gaAiBtn'), seB=$('gaSearchBtn'), adB=$('gaAddBtn'), hint=$('gaHint');
-  if(opts.search){
-    if(ttl) ttl.textContent='목표 검색';
-    if(inp0) inp0.placeholder='goal 번호(예: 346) 또는 제목 일부 — Enter로 즉시 조회';
-    // 검색 모드의 AI추가 버튼은 AI검색으로 바뀐다: 같은 findOnly 큐 파이프라인, 목표 생성 없음.
-    if(aiB){ aiB.classList.remove('primary'); aiB.textContent='AI검색';
-      aiB.title='표현이 달라도 의미가 비슷한 목표를 AI가 찾습니다 — 큐에 담겨 비동기로 분석, 결과는 큐 탭'; }
-    if(seB) seB.classList.add('primary');
-    if(adB) adB.style.display='none';   // 검색 모드에서 '추가'는 혼란만 준다
-    if(hint) hint.innerHTML='<b>검색</b>은 번호를 넣으면 그 목표를 <b>상태와 무관하게</b>(완료·릴리즈·보관·취소 포함) 즉시 찾고, 텍스트면 제목 부분일치로 찾습니다. 표현이 달라 못 찾으면 <b>AI검색</b> — AI가 의미가 비슷한 목표를 찾아 큐 탭에 결과를 남깁니다.';
-  } else {
-    if(ttl) ttl.textContent='목표 추가';
-    if(inp0) inp0.placeholder='목표/디테일 입력 후 Enter (AI추가로 계속 추가)';
-    if(aiB){ aiB.classList.add('primary'); aiB.textContent='AI추가';
-      aiB.title='추가 전에 AI가 비슷한 목표가 있는지 먼저 검사합니다'; }
-    if(seB) seB.classList.remove('primary');
-    if(adB) adB.style.display='';
-    if(hint) hint.innerHTML='<b>Enter</b>를 누르면 <b>AI추가</b>로 담깁니다 — 비슷한 목표가 있는지 먼저 확인하며, 창은 열린 채 계속 추가할 수 있습니다. <b>검색</b>은 추가하지 않고 비슷한 목표만 찾아줍니다. 바로 추가하려면 <b>추가</b> 버튼을 누르세요.';
-  }
-  const res=$('gaResults'); if(res) res.innerHTML='';   // 지난 검색 결과는 열 때 비운다
-  _gsQuery='';
-  // 초안이 남아 있으면 복원(내용 유지) — 없으면 빈칸으로 시작.
-  const inp=$('gaText'); if(inp) inp.value=_gaDraft||'';
-  const ei=$('gaEditIcon'); if(ei) ei.style.display=(_gaDraft&&_gaDraft.trim())?'':'none';
-  const m=$('gaModal'); if(m) m.classList.add('on');
-  updateGaDraftChip();
-  setTimeout(()=>{ const t=$('gaText'); if(t){ t.focus(); const n=t.value.length; try{t.setSelectionRange(n,n);}catch(_){} } },50);
+  if(opts.search){ location.href='/goal-add?search=1'; return; }
+  const q=[];
+  if(opts.sprint) q.push('sprint='+opts.sprint);
+  if(opts.bump) q.push('bump=1');
+  if(opts.parent) q.push('parent='+encodeURIComponent(opts.parent));
+  if(opts.label) q.push('label='+encodeURIComponent(opts.label));
+  location.href='/goal-add'+(q.length?('?'+q.join('&')):'');
 }
-// 닫을 때(ESC/닫기 버튼) 입력이 남아 있으면 초안으로 보존한다 — 비어 있으면 초안을 비운다.
-function closeGoalAdd(){
-  const inp=$('gaText'); _gaDraft = inp ? String(inp.value||'').trim() : '';
-  gaPersistDraft();
-  const m=$('gaModal'); if(m) m.classList.remove('on');
-  updateGaDraftChip();
-}
-// 초안이 있으면 이어쓰기 칩을 보여주고, 없거나 모달이 열려 있으면 숨긴다.
+// 초안이 남아 있으면 이어쓰기 칩을 보여준다 (load 마다 재확인 — 페이지에서 돌아오면 갱신됨).
 function updateGaDraftChip(){
   const c=$('gaDraftChip'); if(!c) return;
-  const m=$('gaModal'); const open=!!(m&&m.classList.contains('on'));
-  c.style.display=(_gaDraft&&_gaDraft.trim()&&!open)?'inline-flex':'none';
+  let d=''; try{ d=localStorage.getItem('cm.gaDraft')||''; }catch(e){}
+  c.style.display=d.trim()?'inline-flex':'none';
 }
-// 이어쓰기 칩 클릭 → 마지막 맥락 그대로 다시 열어 초안을 복원한다.
-function resumeGoalDraft(){ openGoalAdd(_gaLastOpts||{}); }
-// 성공적으로 담긴 뒤에는 초안을 확실히 비운다(칩·아이콘도 정리).
-function gaClearDraft(){ _gaDraft=''; gaPersistDraft(); updateGaDraftChip(); const ei=$('gaEditIcon'); if(ei) ei.style.display='none'; }
-// 추가 후 모달은 열어둔다(placeholder의 "계속 추가"). 닫기는 사용자가 직접.
-function gaAdd(){ const inp=$('gaText'); if(goalAddSubmit(inp.value,_gaCtx)){ inp.value=''; gaClearDraft(); inp.focus(); } }
-function gaAi(){ const inp=$('gaText');
-  // 검색 모드의 [AI검색]: findOnly 큐 파이프라인(search:true) — 목표 생성 없이 유사도 분석만.
-  // 모달은 열어두고 결과가 큐 탭에 쌓인다는 안내를 결과 영역에 남긴다.
-  if(_gaSearchMode){
-    if(goalSearchFind(inp.value)){ inp.value=''; gaClearDraft();
-      const res=$('gaResults'); if(res) res.innerHTML='<div class="muted" style="font-size:12.5px;border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin-top:6px">큐에 담겼습니다 — AI가 의미가 비슷한 목표를 분석 중입니다. 결과는 <b>큐</b> 탭에 \'검색 결과\' 카드로 표시됩니다.</div>'; }
-    return;
-  }
-  goalAddAi(inp.value,_gaCtx,$('gaAiBtn'),()=>{ inp.value=''; gaClearDraft(); closeGoalAdd(); },()=>{ inp.value=''; gaClearDraft(); closeGoalAdd(); }); }
-// ── 검색(즉시 조회): 큐를 거치지 않는 로컬 검색. 숫자 입력 → seq 정확 일치, 텍스트 입력 →
-// 제목 부분일치. /data.json 의 goals 는 릴리즈·보관 포함 전부 내려오므로 상태와 무관하게
-// 찾는다 — 완료·릴리즈됨·보관·취소된 목표도 결과 카드로 보여주고, 상태에 맞는 '다시 열기'
-// 액션을 함께 제공한다. AI 유사도 검색은 검색 모드의 [AI검색](gaAi→goalSearchFind)이 담당.
-let _gsQuery='';   // 마지막 검색어 — 카드 액션 반영(load 완료) 후 같은 검색을 다시 그린다
-function gaSearch(){ const inp=$('gaText'); const t=String(inp.value||'').trim(); if(!t) return;
-  _gsQuery=t; gsRender(); }
-function gsRefresh(){ if(_gsQuery) gsRender(); }
-function gsRender(){
-  const host=$('gaResults'); if(!host) return;
-  const all=(_review&&_review.goals)||_goals||[];
-  const t=_gsQuery;
-  if(/^\d+$/.test(t)){
-    const n=parseInt(t,10);
-    const g=all.find(x=>(x.seq||0)===n && n>0);
-    host.innerHTML=g?gsCard(g,all):gsMiss(n,all);
-  } else {
-    const q=t.toLowerCase();
-    const hits=all.filter(x=>String(x.text||'').toLowerCase().includes(q)).slice(0,8);
-    const qhits=((_review&&_review.aiQueue)||[]).filter(x=>!x.jobKind&&String(x.text||'').toLowerCase().includes(q)).slice(0,3);
-    host.innerHTML=(hits.length||qhits.length)
-      ? hits.map(g=>gsCard(g,all)).join('')+qhits.map(gsQueueRow).join('')
-      : '<div class="muted" style="font-size:12.5px;padding:8px 2px">"'+esc(t)+'" 제목 일치 없음 — 표현이 다를 수 있으면 <b>AI검색</b>을 눌러보세요.</div>';
-  }
-}
-// 목표가 속한 릴리즈: releaseId 우선, 레거시 레코드는 goalIds 로 역산.
-function gsRelOf(g){ const rels=(_review&&_review.releases)||[];
-  return rels.find(r=>r.id===g.releaseId)||rels.find(r=>(r.goalIds||[]).includes(g.id))||null; }
-// 현재 위치 설명: 보드 어디에도 안 보이는 상태(릴리즈·보관·취소)를 사람이 읽게 풀어준다.
-function gsWhere(g){
-  if(g.archived) return '보관함';
-  if(g.released){ const rel=gsRelOf(g);
-    return '릴리즈 '+((rel&&rel.code)?esc(rel.code):'')+((rel&&rel.releasedAt)?(' · '+fmtDate(rel.releasedAt)):''); }
-  if(g.status==='cancelled') return '취소됨';
-  if(g.sprint>0) return '스프린트 '+esc(sprintCode(g.sprint));
-  return g.bump?'Bump out 인박스':'백로그';
-}
-function gsBadge(g){
-  if(g.archived) return '<span class="pill" style="color:var(--mut)">보관</span>';
-  if(g.released) return '<span class="pill" style="color:#5eead4;border-color:#134e4a">릴리즈됨</span>';
-  const lab=(STATUS_OPTS.find(o=>o[0]===(g.status||'backlog'))||[])[1]||g.status;
-  return '<span class="pill">'+esc(lab)+'</span>';
-}
-function gsCard(g,all){
-  const kids=(all||[]).filter(x=>x.parent===g.id);
-  const meta=['위치: '+gsWhere(g)];
-  if(g.completedAt) meta.push('완료 '+fmtDate(g.completedAt));
-  if(g.trackedSeconds>0) meta.push('누적 '+fmtDur(g.trackedSeconds));
-  const kidRows=kids.length?('<div class="muted" style="font-size:12px;margin-top:6px;padding-left:10px;border-left:2px solid var(--line)">'
-    +kids.slice(0,5).map(k=>'goal-'+pad2(k.seq||0)+' '+esc(k.text)).join('<br>')
-    +(kids.length>5?('<br>… 외 '+(kids.length-5)+'개'):'')+'</div>'):'';
-  return '<div style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px">'
-    +'<div class="row" style="gap:8px;flex-wrap:wrap">'+gpill(g)+gsBadge(g)
-      +'<span style="font-weight:600">'+esc(g.text)+'</span></div>'
-    +'<div class="muted" style="font-size:12px;margin-top:4px">'+meta.join(' · ')+'</div>'
-    +kidRows
-    +'<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">'+gsActions(g)+'</div></div>';
-}
-// 상태 → 액션 매핑 (기획 핵심): 활성=보기만, 완료·취소=다시 열기, 릴리즈=개별/전체 복원, 보관=해제.
-function gsActions(g){
-  const view='<a class="btn" href="/goal?n='+(g.seq||0)+'" style="text-decoration:none" title="골 페이지 — 정의·첨부 보기">상세 보기 →</a>';
-  if(g.archived)
-    return view+'<button class="btn primary" onclick="gsAct(\'unarchive\',\''+g.id+'\')" title="보관을 해제해 활성 목록으로 되돌립니다">보관 해제</button>';
-  if(g.released){
-    const rel=gsRelOf(g);
-    return view
-      +'<button class="btn primary" onclick="gsAct(\'reopen\',\''+g.id+'\')" title="이 목표만 릴리즈에서 꺼내 백로그로 되돌립니다 — 릴리즈 기록은 그대로 남고 재오픈 표시가 붙습니다">이 목표만 다시 열기</button>'
-      +(rel?('<button class="btn" onclick="gsAct(\'restore\',\''+rel.id+'\')" title="릴리즈 전체를 복원합니다 — 소속 목표 모두 활성으로, 스프린트도 다시 열립니다">릴리즈 전체 복원</button>'):'');
-  }
-  if(g.status==='done'||g.status==='cancelled')
-    return view+'<button class="btn primary" onclick="gsAct(\'reopen\',\''+g.id+'\')" title="백로그로 되돌립니다 (번호 유지)">다시 열기</button>';
-  return view;   // 활성(대기·진행·응답 대기·중지): 이미 보드에 있다 — 보기만 제공
-}
-// 카드 액션 실행 — post()가 load()까지 끝낸 뒤(_review 갱신) 같은 검색을 다시 그린다.
-function gsAct(kind,id){
-  const p = kind==='unarchive' ? post('/api/goal/archive',{id:id,archived:false})
-        : kind==='restore'    ? post('/api/release/restore',{id:id})
-        :                       post('/api/goal/reopen',{id:id});
-  p.then(gsRefresh);
-}
-function gsMiss(n,all){
-  const near=all.filter(g=>(g.seq||0)>0).map(g=>g.seq)
-    .sort((a,b)=>Math.abs(a-n)-Math.abs(b-n)).slice(0,3);
-  return '<div class="muted" style="font-size:12.5px;padding:8px 2px">goal-'+n+' — 없는 번호입니다. 큐 후보는 승급 전이라 번호가 없습니다.'
-    +(near.length?('<div class="row" style="gap:6px;margin-top:6px;align-items:center">근접: '
-      +near.map(s=>'<button class="btn" onclick="gsGo('+s+')">goal-'+pad2(s)+'</button>').join('')+'</div>'):'')
-    +'</div>';
-}
-function gsGo(n){ const i=$('gaText'); if(i) i.value=String(n); gaSearch(); }
-function gsQueueRow(q){
-  return '<div style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px;opacity:.85">'
-    +'<div class="row" style="gap:8px;flex-wrap:wrap"><span class="pill">큐 후보</span><span>'+esc(q.text)+'</span></div>'
-    +'<div class="muted" style="font-size:12px;margin-top:4px">아직 번호가 없습니다 — 추가/스킵 확정은 큐 탭에서.</div></div>';
-}
-function goalSearchFind(text){ const t=String(text||'').trim(); if(!t) return false;
-  post('/api/goal/queue/enqueue',{text:t,search:true}); return true; }
+// 이어쓰기 칩 클릭 → 마지막 대상(cm.gaCtx) 그대로 /goal-add 를 다시 열어 초안을 복원한다.
+function resumeGoalDraft(){ location.href='/goal-add?resume=1'; }
 // ===== 재사용 목표 추가 모듈 (single source of truth) =====
 // 입력창(상단 항상 보이는 바)·스프린트 보드(Backlog·각 스프린트)의 모든 "목표 추가"가
 // 이 두 코어 함수를 통해서만 추가한다. 진입점마다 미세하게 다른 add 로직을 두지 않는다.
 // ctx: {sprint, parent} — 비어 있으면(0/'') 그 필드는 보내지 않아 기존 Backlog 추가와 동일.
-function goalAddSubmit(text, ctx){
+// exec: 컴포저 실행 설정 {effort,mode,cwd,images} — 있으면 payload에 실어 goal에 영속화된다.
+function gaMergeExec(o, exec){ if(!exec) return o;
+  if(exec.effort) o.effort=exec.effort; if(exec.mode) o.mode=exec.mode; if(exec.cwd) o.cwd=exec.cwd;
+  if(exec.images && exec.images.length) o.images=exec.images.slice(0,5); return o; }
+function goalAddSubmit(text, ctx, exec){
   const t=String(text||'').trim(); if(!t) return false;
   const o={text:t};
   if(ctx){ if(ctx.sprint) o.sprint=ctx.sprint; if(ctx.parent) o.parent=ctx.parent; if(ctx.bump) o.bump=true; }
+  gaMergeExec(o, exec);
   post('/api/goal/add',o);
   return true;
 }
@@ -1472,10 +1206,11 @@ function goalAddSubmit(text, ctx){
 // 곧장 돌려준다 — 유저는 머릿속을 계속 비우면 된다. 서버 백그라운드 워커가 중복을 분석해
 // '검토 대기(ready)'로 바꾸면, 아래 큐 목록에서 원탭(추가/수정/스킵)으로 확정한다.
 // btn/onDup은 옛 시그니처 호환용으로 남겨두며 더는 쓰지 않는다.
-function goalAddAi(text, ctx, btn, onAdded, onDup){
+function goalAddAi(text, ctx, btn, onAdded, onDup, exec){
   const t=String(text||'').trim(); if(!t) return;
   const o={text:t};
   if(ctx){ if(ctx.sprint) o.sprint=ctx.sprint; if(ctx.parent) o.parent=ctx.parent; }
+  gaMergeExec(o, exec);               // 실행 설정은 큐 후보에 실려 승급(추가) 시 goal로 이어진다
   post('/api/goal/queue/enqueue',o);   // post()가 이어서 load()까지 호출 → 큐에 즉시 반영 (AI 큐는 그 자체가 bump out 파이프라인)
   if(onAdded) onAdded();               // 입력창 비우기/모달 닫기는 즉시 (대기 0초)
 }
@@ -1739,23 +1474,31 @@ function aiQueueBoxHTML(items,withConfirm){
           +'<div style="display:flex;gap:4px;flex-shrink:0">'+closeBtn+'</div></div>';
       }
       const hits=(it.matches||[]).filter(m=>(m.seq||0)>0);
-      let list;
-      if(hits.length){
-        list=hits.map(m=>{ const n=m.seq;
-          const why=m.why?'<div class="qopt-desc">'+esc(m.why)+'</div>':'';
-          return '<div class="qopt" onclick="location.href=\'/goal?n='+n+'\'" style="cursor:pointer">'
-            +'<div class="qopt-body"><div class="qopt-label"><a href="/goal?n='+n+'" onclick="event.stopPropagation()" style="color:var(--accent);text-decoration:none">#'+n+'</a> '+esc(m.text||'')+'</div>'+why+'</div></div>';
-        }).join('');
-      } else {
-        list='<div class="muted" style="font-size:12px;margin-top:4px">비슷한 기존 목표를 찾지 못했습니다.</div>';
-      }
       const cnt=hits.length?('비슷한 목표 '+hits.length+'건'):'결과 없음';
       const note=it.note?'<div class="muted" style="font-size:12px;margin-top:2px">'+esc(it.note)+'</div>':'';
-      return '<div class="qrow" style="flex-direction:column;align-items:stretch">'
-        +'<div style="display:flex;align-items:flex-start;gap:8px">'
+      const head='<div style="display:flex;align-items:flex-start;gap:8px">'
         +'<div style="flex:1;min-width:0">'+q+'<div class="muted" style="font-size:12px">'+cnt+'</div>'+note+'</div>'
-        +'<div style="flex-shrink:0">'+closeBtn+'</div></div>'
-        +'<div class="qchoice" style="margin-top:6px">'+list+'</div></div>';
+        +'<div style="flex-shrink:0">'+closeBtn+'</div></div>';
+      let body;
+      const sel=_qFind[it.id];
+      if(hits.length && sel && sel.parentSeq>0){
+        // 번호를 고른 뒤: 그 목표를 대상으로 다음 액션(끝내기·task 추가·그만두기)을 판단·추천.
+        body=qFindActionHTML(it,hits,sel);
+      } else if(hits.length){
+        // 매치 목록: 번호를 누르면 그 목표를 대상으로 '다음 액션'을 고른다(바로 이동이 아님).
+        const list=hits.map(function(m){ const n=m.seq;
+          const why=m.why?'<div class="qopt-desc">'+esc(m.why)+'</div>':'';
+          return '<div class="qopt" onclick="queueFindPick(\''+it.id+'\','+n+')" style="cursor:pointer">'
+            +'<div class="qnum">→</div>'
+            +'<div class="qopt-body"><div class="qopt-label"><a href="/goal?n='+n+'" onclick="event.stopPropagation()" style="color:var(--accent);text-decoration:none">#'+n+'</a> '+esc(m.text||'')+'</div>'+why+'</div></div>';
+        }).join('');
+        body='<div class="qhint" style="margin:6px 0 2px">번호를 누르면 다음 액션(끝내기 · task 추가 · 그만두기)을 고릅니다</div>'
+          +'<div class="qchoice">'+list+'</div>';
+      } else {
+        body='<div class="muted" style="font-size:12px;margin-top:4px">비슷한 기존 목표를 찾지 못했습니다.</div>';
+      }
+      return '<div class="qrow" style="flex-direction:column;align-items:stretch">'+head
+        +'<div style="margin-top:6px">'+body+'</div></div>';
     }
     // 매치의 번호(#seq)는 클릭하면 골 페이지(/goal?n=NN)로 이동해 그 목표 내용을 확인한다.
     // why가 있으면 링크 title(툴팁)로 붙인다. stopPropagation으로 행/버튼 핸들러와 충돌 방지.
@@ -1819,14 +1562,20 @@ function aiQueueBoxHTML(items,withConfirm){
       const kind=it.kind||(it.duplicate?'duplicate':'new');
       let opts;
       if(kind==='recurring' && pN>0){
-        // 반복 작업: 기존 목표의 또 다른 회차 → 그 목표의 task(부분과제 폴더)로 붙이는 것을 추천.
-        // 예전 1번(아래에 추가)은 새 goal 번호를 채번해 서브 목표를 만들었는데(예: goal325),
-        // "task로 추가"라는 기대와 달랐다 — 이제 진짜 tasks/taskN 폴더로 들어간다.
-        const why=(note?note+' ':'')+'#'+pN+' '+pTitle+'의 반복 작업이라, 새 목표 번호 없이 그 목표의 task로 추가하는 것을 추천합니다.';
-        opts=[{a:'task',arg:pN,label:'#'+pN+'의 task로 이번 회차 추가',rec:true,desc:why},
-              {a:'under',arg:pN,label:'#'+pN+' 아래 서브 목표로 추가',desc:'새 번호를 받는 별도 목표를 만들어 #'+pN+' 아래에 둡니다.'},
+        // 관계에 따라 추천 액션이 다르다(DASH-9):
+        //   relation==='recurring-execution' → 그 목표의 task(부분과제)로 이번 회차 추가.
+        //   relation==='sub-problem'/'improvement' → 그 목표 아래 '서브 목표'로 추가(별개 하위 문제).
+        // 백엔드 rationale(관리형 다음 단계 제안)이 있으면 추천 옵션 설명으로 그대로 노출한다.
+        const relAct=({'recurring-execution':'task','sub-problem':'under','improvement':'under'})[it.relation]||'task';
+        const backWhy=it.rationale?esc(it.rationale):'';
+        const taskWhy=backWhy||((note?note+' ':'')+'#'+pN+' '+pTitle+'의 반복 작업이라, 새 목표 번호 없이 그 목표의 task로 추가하는 것을 추천합니다.');
+        const underWhy=backWhy||('#'+pN+' '+pTitle+'와 같은 계열의 하위 문제라, 그 목표 아래 서브 목표로 추가하는 것을 추천합니다.');
+        opts=[{a:'task',arg:pN,label:'#'+pN+'의 task로 이번 회차 추가',rec:(relAct==='task'),desc:(relAct==='task'?taskWhy:'기존 목표의 또 다른 회차로, 그 목표의 task(부분과제) 폴더에 붙입니다.')},
+              {a:'under',arg:pN,label:'#'+pN+' 아래 서브 목표로 추가',rec:(relAct==='under'),desc:(relAct==='under'?underWhy:'새 번호를 받는 별도 목표를 만들어 #'+pN+' 아래에 둡니다.')},
               {a:'add',label:'별도 새 목표로 추가',desc:'#'+pN+'와 무관하게 최상위 목표로 추가합니다.'},
               {a:'skip',label:'스킵',desc:'이번 회차는 추적하지 않고 버립니다.'}];
+        // 추천(rec) 옵션을 1번으로: "1번=추천" 넘버링 규칙을 지킨다.
+        const ri=opts.findIndex(o=>o.rec); if(ri>0){ opts.unshift(opts.splice(ri,1)[0]); }
       } else if(kind==='duplicate'){
         // 진짜 중복: 같은 목표가 이미 있어 새로 추가할 실익이 없음 → 스킵 추천.
         const why=(seqs.length?'유사 목표 '+seqs.join(', ')+'가 이미 같은 목표를 담고 있습니다. ':'')+(note?note+' ':'')+'새로 추가해도 얻는 게 없어 스킵을 추천합니다.';
@@ -1897,6 +1646,10 @@ let _qUI=null, _qJustRefined='', _lastAiQueue=[];
 // _qOther: 기타(직접 지시) 입력칸에 친 값을 항목 id별로 보관 → 5초 폴링 재렌더가 innerHTML을
 // 갈아끼워도 value로 다시 그려 넣어 입력이 사라지지 않게 한다(프롬프트 textarea의 _qUI.prompt와 동일 취지).
 let _qOther={};
+// _qFind: 검색(findOnly) 카드에서 '번호를 눌러 대상 목표를 고른 뒤 → 다음 액션(끝내기·task 추가·
+// 그만두기)' 흐름의 항목별 상태. id → {parentSeq, phase:'menu'|'suggesting'|'edit', name}.
+// phase 'edit'의 name(추천 task 폴더명)은 폴링 재렌더에도 유지되도록 여기 보관한다.
+let _qFind={};
 // _qConfirm: 추가(1번 등)로 목표가 생긴 직후의 클라이언트 전용 확인 카드. 서버는 이미 큐에서
 // 항목을 지웠으므로, 새로 만든 목표의 #seq로 '열기' 링크와 5초 카운트다운을 이 상태로 그린다.
 // id → {seq, parentSeq, text, sec}. 0이 되면 카드를 지워 큐를 완전히 사라지게 한다.
@@ -1908,7 +1661,8 @@ let _qConfirm={}, _qConfirmTimers={};
 function renderAiQueue(items){ _lastAiQueue=items||[]; const host=$('queueHost'); if(!host) return;
   // 재렌더 전에 기타 입력칸의 포커스/캐럿 위치를 기억 → 폴링 재렌더에도 타이핑이 끊기지 않게 복원.
   const af=document.activeElement;
-  const qo=(af&&af.classList&&af.classList.contains('qother-input'))?{id:af.getAttribute('data-qid'),pos:af.selectionStart}:null;
+  const qo=(af&&af.classList&&(af.classList.contains('qother-input')||af.classList.contains('qfind-input')))
+    ?{id:af.getAttribute('data-qid'),pos:af.selectionStart,cls:(af.classList.contains('qfind-input')?'qfind':'qother')}:null;
   const all=items||[];
   const dedup=all.filter(it=>(it.jobKind||'dedup')==='dedup');   // 레거시/디코더 기본값 → dedup
   const jobs=all.filter(it=>(it.jobKind||'dedup')!=='dedup');
@@ -1929,7 +1683,7 @@ function renderAiQueue(items){ _lastAiQueue=items||[]; const host=$('queueHost')
   host.innerHTML=html;
   // 프롬프트 입력 중이면 재렌더 후 텍스트박스에 포커스를 되돌린다(캐럿 끝으로).
   if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } }
-  if(qo&&qo.id){ const t=$('qother_'+qo.id); if(t){ t.focus(); try{ const p=(qo.pos==null?t.value.length:qo.pos); t.setSelectionRange(p,p); }catch(e){} } } }
+  if(qo&&qo.id){ const t=(qo.cls==='qfind')?$('qfind_'+qo.id):$('qother_'+qo.id); if(t){ t.focus(); try{ const p=(qo.pos==null?t.value.length:qo.pos); t.setSelectionRange(p,p); }catch(e){} } } }
 // 큐 탭 진입점: 최신 review의 aiQueue + 처리 히스토리로 큐 탭을 그린다. fillActiveView에서 호출.
 function renderQueueTab(r){ _qHist=(r&&r.queueHistory)||_qHist||[]; renderAiQueue((r&&r.aiQueue)||_lastAiQueue||[]); }
 // === 큐 처리 히스토리 (감사 + 번복) ===
@@ -2075,16 +1829,91 @@ function queueAdd(id,parentSeq,priority){
 }
 // task로 추가: 새 goal을 채번하지 않고 기존 goal #seq의 부분과제(tasks/taskN 폴더)로 붙인다.
 // 응답의 task 폴더명을 확인 카드에 실어 "무엇이 어디에 생겼는지" 바로 검증할 수 있게 한다.
-function queueAddTask(id,seq){
+function queueAddTask(id,seq,taskName){
   _qJustRefined='';
   const it=((_review&&_review.aiQueue)||_lastAiQueue||[]).find(x=>x.id===id);
   const label=it?it.text:'';
+  const body={id:id,action:'task',parentSeq:seq};
+  if(taskName) body.taskName=taskName;   // 검색→task 추가: 추천/수정된 폴더명을 그대로 사용
   fetch('/api/goal/queue/resolve',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({id:id,action:'task',parentSeq:seq})})
+    body:JSON.stringify(body)})
     .then(r=>r.json()).then(res=>{
       if(res&&res.ok&&res.seq) startQueueConfirm(id,res.seq,0,label,false,res.task||'');
       load();
     }).catch(()=>load());
+}
+// === 검색(findOnly) → 다음 액션 흐름 ===
+// 추천 액션: AI가 붙인 relation/kind로 결정한다. 반복 실행/하위문제면 'task 추가'를, 그 외엔
+// '끝내기(열기)'를 추천한다. rationale/note는 추천 사유로 그대로 노출한다.
+function qFindRec(it){ const rel=it.relation||'', k=it.kind||'';
+  return (rel==='recurring-execution'||rel==='sub-problem'||k==='recurring')?'task':'finish'; }
+// 번호를 골라 대상 목표를 정한다 → 다음 액션 메뉴로.
+function queueFindPick(id,seq){ _qFind[id]={parentSeq:seq,phase:'menu'}; rerenderAiQueue(); }
+// 대상 선택 취소 → 매치 목록으로 되돌린다.
+function queueFindBack(id){ delete _qFind[id]; rerenderAiQueue(); }
+// 액션 실행: finish=목표 열기(끝내기), stop=아무것도 안 하고 검색 닫기(skip),
+// task=이름 추천(서버)을 받아 수정 가능한 입력으로 넘어간다.
+function queueFindAct(id,action,pN){
+  if(action==='finish'){ location.href='/goal?n='+pN; return; }
+  if(action==='stop'){ delete _qFind[id]; queueSkip(id); return; }
+  if(action==='task'){
+    _qFind[id]={parentSeq:pN,phase:'suggesting'}; rerenderAiQueue();
+    fetch('/api/goal/queue/suggest-task-name',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:id,parentSeq:pN})})
+      .then(function(r){return r.json();}).then(function(res){
+        if(res&&res.ok&&res.name){ _qFind[id]={parentSeq:pN,phase:'edit',name:res.name}; }
+        else { alert('이름 추천에 실패했습니다 (claude 미설치/오류). 다시 시도하세요.'); _qFind[id]={parentSeq:pN,phase:'menu'}; }
+        rerenderAiQueue();
+      }).catch(function(){ _qFind[id]={parentSeq:pN,phase:'menu'}; rerenderAiQueue(); });
+  }
+}
+// 생성: (수정된) 추천 이름으로 #parentSeq 아래 task를 만든다.
+function queueFindCreate(id){ const sel=_qFind[id]; if(!sel) return;
+  const inp=$('qfind_'+id); const name=((inp?inp.value:sel.name)||'').trim();
+  if(!name){ if(inp) inp.focus(); return; }
+  const pN=sel.parentSeq; delete _qFind[id];
+  queueAddTask(id,pN,name);
+}
+// 검색 카드의 다음 액션 패널 HTML(대상 목표 pN 기준). phase: menu→suggesting→edit.
+function qFindActionHTML(it,hits,sel){
+  const pN=sel.parentSeq;
+  const m0=hits.find(function(m){return m.seq===pN;})||hits[0];
+  const pT=m0?esc(m0.text||''):'';
+  const back='<div class="qhint" style="margin:2px 0 6px">대상: <a href="/goal?n='+pN+'" style="color:var(--accent);text-decoration:none">#'+pN+'</a> '+pT
+    +' · <a href="#" onclick="queueFindBack(\''+it.id+'\');return false" style="color:var(--mut)">다른 목표 선택</a></div>';
+  if(sel.phase==='suggesting'){
+    return back+'<div style="border:1px dashed #33406a;border-radius:8px;padding:8px 10px;background:#101627">'
+      +'<span style="color:var(--green);font-size:13px"><span class="qspin">🔄</span> task 이름 만드는 중…</span></div>';
+  }
+  if(sel.phase==='edit'){
+    const nv=(sel.name||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return back+'<div style="border:1px dashed #33406a;border-radius:8px;padding:8px 10px;background:#101627">'
+      +'<div style="font-size:11px;color:#9db4ff;margin-bottom:5px">추가할 task 이름 — 수정 가능 (Enter 생성)</div>'
+      +'<input id="qfind_'+it.id+'" data-qid="'+it.id+'" class="qfind-input" value="'+nv+'" '
+      +'onkeydown="if(event.key===\'Enter\'){event.preventDefault();queueFindCreate(\''+it.id+'\');}" '
+      +'oninput="if(_qFind[\''+it.id+'\'])_qFind[\''+it.id+'\'].name=this.value" '
+      +'style="width:100%;background:#0f131b;color:var(--fg);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;outline:none">'
+      +'<div style="display:flex;gap:6px;margin-top:6px"><button class="btn primary" onclick="queueFindCreate(\''+it.id+'\')">생성</button>'
+      +'<button class="btn" onclick="queueFindBack(\''+it.id+'\')">취소</button></div>'
+      +'<div class="qhint" style="margin-top:4px">#'+pN+' 아래 tasks/ 폴더로 이번 회차가 생성됩니다</div></div>';
+  }
+  // phase 'menu': 3 액션(추천 1번).
+  const rec=qFindRec(it);
+  const recWhy=it.rationale?esc(it.rationale):(it.note?esc(it.note):'#'+pN+' '+pT+'의 반복 회차로 보여, 그 목표의 task로 이번 실행을 추가합니다.');
+  let opts=[
+    {a:'task',label:'#'+pN+'에 task 추가',rec:(rec==='task'),desc:(rec==='task'?recWhy:'이번 실행을 #'+pN+'의 task(부분과제)로 추가합니다. 이름은 AI가 추천합니다.')},
+    {a:'finish',label:'#'+pN+' 열기 — 여기서 끝내기',rec:(rec==='finish'),desc:(rec==='finish'?'찾던 목표가 이미 있고 이번엔 새 작업이 없어, 그 목표를 열어 확인만 하고 마칩니다.':'새로 만들지 않고 찾은 목표를 열어 확인합니다.')},
+    {a:'stop',label:'그만두기',desc:'아무것도 하지 않고 이 검색 결과를 닫습니다.'}
+  ];
+  const ri=opts.findIndex(function(o){return o.rec;}); if(ri>0){ opts.unshift(opts.splice(ri,1)[0]); }
+  let n=0;
+  const rows=opts.map(function(o){ n++;
+    return '<div class="qopt'+(o.rec?' rec':'')+'" onclick="queueFindAct(\''+it.id+'\',\''+o.a+'\','+pN+')">'
+      +'<div class="qnum">'+n+'</div>'
+      +'<div class="qopt-body"><div class="qopt-label">'+o.label+(o.rec?'<span class="qrec-tag">추천</span>':'')+'</div>'
+      +'<div class="qopt-desc">'+o.desc+'</div></div></div>';
+  }).join('');
+  return back+'<div class="qchoice">'+rows+'</div>';
 }
 function queueSkip(id){ _qJustRefined=''; post('/api/goal/queue/resolve',{id:id,action:'skip'}); }
 // --- 오버라이드 패널: 배치/우선순위를 직접 지정해 승격 ---
@@ -2641,9 +2470,9 @@ function restoreFromURL(){
   // 명시적 URL 해시 뷰가 없으면, 사용자가 지정한 기본 보기(Set as default)로 연다.
   // 기본 보기가 없으면 서버가 주입한 마지막 보기(lastView)를 그대로 쓴다.
   if(!hashHasView && _defaultView) _view=_defaultView;
-  // 'skills'·'agents'(레일 독립 오버레이)·'actions'(컨디션 관리 페이지로 이동)는 더 이상
+  // 'skills'·'agents'(레일 독립 오버레이)·'actions'·'history'(컨디션 관리 페이지로 이동)는 더 이상
   // 대시보드 탭이 아니다. 오래된 해시/저장값이 오면 기본 작업뷰로 보정.
-  if(_view==='skills'||_view==='agents'||_view==='actions') _view='input';
+  if(_view==='skills'||_view==='agents'||_view==='actions'||_view==='history') _view='input';
   renderTabs();
   const ds=$('flt_donesince'); if(ds) ds.value=_doneSince?localInput(_doneSince):'';
   _urlReady=true;
@@ -2777,7 +2606,13 @@ function goalKids(goals,g){ return (goals||[]).filter(c=>c.parent===g.id); }
 // (a child in progress, or some child done) reads as On Track; otherwise 대기.
 function derivedStatus(goals,g){
   const kids=goalKids(goals,g); if(!kids.length) return null;
-  if((g.status||'')==='done') return 'done';
+  // 수동 완료(done) 부모라도 아직 안 끝난(대기/진행/응답대기/중지) 자식이 남아 있으면 On Track
+  // 으로 부활한다 — 완료된 부모 아래에 새 과제를 붙이면 다시 진행 상태로 보드에 나오게(위 주석의
+  // 의도). 자식이 전부 종료(완료/취소)면 done 유지.
+  if((g.status||'')==='done'){
+    const live=kids.some(c=>{ const s=c.status||'backlog'; return s!=='done'&&s!=='cancelled'; });
+    return live?'on_track':'done';
+  }
   if(kids.some(c=>(c.status||'backlog')==='in_progress')) return 'on_track';
   const dn=kids.filter(c=>(c.status||'backlog')==='done').length;
   const term=kids.filter(c=>{ const s=c.status||'backlog'; return s==='done'||s==='cancelled'; }).length;
@@ -2823,8 +2658,14 @@ function setParentByNumber(id,numStr){
   const s=(numStr||'').trim();
   if(!s){ post('/api/goal/parent',{id:id,parent:''}); return; }
   const n=parseInt(s.replace(/[^0-9]/g,''),10);   // accept "goal-01", "01", or "1"
-  const tgt=_goals.find(g=>g.seq===n)||null;   // match by stable seq, not position
-  if(!tgt||tgt.id===id){ load(); return; }   // invalid -> revert display
+  let tgt=_goals.find(g=>g.seq===n)||null;   // match by stable seq, not position
+  if(!tgt){ load(); return; }   // 없는 번호 -> 표시 되돌림
+  // 하위 과제 번호(예: 완료된 #240이 goal-1의 하위)를 입력하면 그 최상위 조상 아래로 붙인다.
+  // 앱은 1단계 트리만 허용하므로 서브를 부모로 쓰면 되돌아가 버린다 — 조상까지 걸어 올라가
+  // 그룹(최상위)에 부착한다. 순환은 seen 으로 막고, 부모가 목록에 없으면 거기서 멈춘다.
+  const seen=new Set();
+  while(tgt&&tgt.parent&&!seen.has(tgt.id)){ seen.add(tgt.id); const up=byId(_goals,tgt.parent); if(!up) break; tgt=up; }
+  if(!tgt||tgt.id===id){ load(); return; }   // 자기 자신/해석 불가 -> 되돌림
   post('/api/goal/parent',{id:id,parent:tgt.id});
 }
 function num2(i){ return (i<9?'0':'')+(i+1); }
@@ -2879,9 +2720,9 @@ function pad2(n){ return (n<10?'0':'')+n; }
 const VIEW_DEFS=[
   {k:'input',t:'목록'},{k:'group',t:'그룹'},{k:'table',t:'테이블'},
   {k:'token',t:'토큰'},{k:'queue',t:'큐'},{k:'schedule',t:'일정'},{k:'preview',t:'리포트'},
-  {k:'sprint',t:'스프린트'},{k:'archived',t:'아카이브'},{k:'history',t:'히스토리'}
-  // 액션로그는 더 이상 대시보드 탭이 아니다 — 컨디션 관리 페이지(/bgm-player)의 액션로그 탭으로 이동
-  // (컨디션맵 띠 클릭 드릴다운과 함께 분석). normTabOrder가 저장된 옛 'actions' 키를 걸러낸다.
+  {k:'sprint',t:'스프린트'},{k:'archived',t:'아카이브'}
+  // 액션로그·히스토리는 더 이상 대시보드 탭이 아니다 — 컨디션 관리 페이지(/bgm-player)의 서브탭으로 이동
+  // (컨디션맵·오늘 활동과 한곳에서 분석). normTabOrder가 저장된 옛 'actions'·'history' 키를 걸러낸다.
   // 에이전트는 더 이상 대시보드 탭이 아니다 — 레일의 '위임' 메뉴가 소유하는 독립 오버레이(SessionRail cmNav('delegate')).
   // 워커(백그라운드/주기 작업)도 대시보드에서 분리됐다 — 레일의 '크론' 메뉴가 독립 페이지 /cron 을 연다.
 ];
@@ -2975,11 +2816,6 @@ function applyView(){
   av.style.display =(_view==='archived')?'':'none';
   pv.style.display =(_view==='preview')?'':'none';
   if(_view==='preview') initReportFilter();   // 리포트 기간 필터를 최초 진입 시 마운트
-  const hv=$('historyView'); if(hv) hv.style.display=(_view==='history')?'':'none';
-  // 히스토리 탭에선 목표와 무관하므로 목표 필터 바를 숨겨 화면을 비운다.
-  // 벗어나면 인라인 display를 지워 CSS(스포츠 모드 등)가 다시 관장하게 둔다.
-  const hideFilters=(_view==='history');
-  const gf=$('goalFilters'); if(gf) gf.style.display=hideFilters?'none':'';
   // Page view (컨디션): in-flow panel below the tab bar instead of the goal panel.
   // 스킬·에이전트는 더 이상 대시보드 탭이 아니라 레일이 소유하는 독립 오버레이다
   // (SessionRail cmNav('skills') / cmNav('delegate') 참고).
@@ -3002,7 +2838,6 @@ function fillActiveView(r){
   else if(_view==='queue'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderQueueTab(r); }
   else if(_view==='sprint'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderSprintView(r); }
   else if(_view==='archived'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderArchivedView(r); }
-  else if(_view==='history'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; loadHistory(); }   // 자체 엔드포인트(/history.json)에서 로드 — 캐시되어 재호출은 무비용
   else { $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; }   // preview: report only
 }
 // ===== Group-mode input: sticky add bar (active parent) + collapsible parent sections =====
@@ -3999,7 +3834,7 @@ function bumpHTML(shown,allLive){
   const col=_spCollapsed.has('bump');
   return '<div class="spgrp bump'+(col?' collapsed':'')+'" ondragover="spOver(event)" ondragleave="spLeave(event)" ondrop="spDropBump(event)">'
     +'<div class="spgrp-hd"><span class="spchev" onclick="toggleSpCollapse(\'bump\')" title="펼치기/접기">▾</span>'
-      +'<b>Bump out</b><span class="muted" style="font-size:12px">아이디어</span>'
+      +'<b>Dump out</b><span class="muted" style="font-size:12px">아이디어</span>'
       +'<span style="flex:1"></span>'+countsHTML(members)
       +'<button class="btn" onclick="addGoalToBump()" title="머릿속 아이디어를 인박스에 담기 (정리 전)">＋ 목표</button></div>'
     +'<div class="spgrp-body">'+body+'</div>'
@@ -4276,7 +4111,7 @@ function goalCtx(e,id){ e.preventDefault(); e.stopPropagation();
     +'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToSprint(\''+id+'\','+bg+')">Backlog'+((g&&g.parent)?' (부모와 분리)':'')+'</button>';
   html+=sprints.map(s=>'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToSprint(\''+id+'\','+s.number+')">'+esc(s.code||('#'+s.number))+(s.goalText?(' · '+esc(s.goalText)):'')+'</button>').join('');
   // 정리 전 아이디어로 내리기 — 이미 Bump out에 있으면 숨긴다.
-  if(!(g&&g.bump)) html+='<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToBump(\''+id+'\')">Bump out (아이디어로 내리기)</button>';
+  if(!(g&&g.bump)) html+='<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToBump(\''+id+'\')">Dump out (아이디어로 내리기)</button>';
   html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">부모(계층)</div>'
     +'<button class="popitem" onmousedown="event.stopPropagation();openParentPicker(\''+id+'\')">부모 설정 / 해제 ▸</button>';
   // 링크: 이 목표를 다른 목표로 링크한다. 링크하면 이 목표가 최상위로 승격되고(parent="")
@@ -4449,12 +4284,12 @@ function setRelDate(id,val){
   post('/api/release/update',{id:id,releasedAt:ep});
 }
 
-// 이 스프린트에 목표 바로 추가 — 재사용 목표 추가 모듈을 연다 (입력·AI추가·추가 공유).
+// 이 스프린트에 목표 바로 추가 — 전용 페이지(/goal-add)로 이동한다 (대상=이 스프린트).
 function addGoalToSprint(n){ const s=((_review&&_review.sprints)||[]).find(x=>x.number===n); openGoalAdd({sprint:n,label:(s&&s.code)||('#'+n)}); }
-// Backlog(미배정)에 목표 추가 — 같은 재사용 모듈, 대상만 Backlog.
+// Backlog(미배정)에 목표 추가 — 같은 페이지, 대상만 Backlog.
 function addGoalToBacklog(){ openGoalAdd({sprint:0,label:'Backlog'}); }
-// Bump out(아이디어 인박스)에 담기 — 같은 재사용 모듈, 대상만 Bump out.
-function addGoalToBump(){ openGoalAdd({bump:true,label:'Bump out'}); }
+// Bump out(아이디어 인박스)에 담기 — 같은 페이지, 대상만 Bump out.
+function addGoalToBump(){ openGoalAdd({bump:true,label:'Dump out'}); }
 function createSprintNow(){ post('/api/sprint/create',{goalText:'',durationKind:'1d'}); }   // 자동 코드(26-N), Backlog 비움
 // 열린 빈 스프린트(목표 0·예상 결과 없음)를 정리한다. 다른 작업 중 스프린트가 있으면 전부,
 // 없으면 최신 1개만 남기고 삭제 (서버 cleanupSprints 규칙).
