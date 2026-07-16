@@ -164,7 +164,7 @@ The app source is available under these added directories (use Read / Grep / Glo
 Key files: Sources/ConditionManager/Dashboard/DashboardContent.swift (the dashboard
 HTML/CSS/JS as Swift string literals — filter logic lives here), AppDelegate.swift
 (serialization + HTTP endpoints), Core/ReviewStore.swift, Core/WorkerRegistry.swift,
-Core/ActivityLog.swift, Core/IssuePaths.swift, UI/Formatting.swift.
+Core/ActivityLog.swift, Core/IssuePaths.swift, Sources/GUI/Formatting.swift.
 
 FOCUS THIS ROUND:
 $focus

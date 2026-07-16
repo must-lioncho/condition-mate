@@ -51,7 +51,11 @@ AI는 명확화 질문을 낼 때, 본문 마크다운으로 풀어쓰지 말고
 
 ## 렌더링 동작 (프론트엔드)
 
-구현 위치는 AppDelegate.swift 의 골 메신저 스크립트다.
+구현 위치는 두 곳이며 같은 규약과 카드 모양을 쓴다.
+
+- 골 페이지 우측 메신저: AppDelegate.swift (extractQ / renderAssistant / buildQcard)
+- 목표 추가 페이지의 인라인 세션 뷰: GoalAddContent.swift (gsExtractQ / gsRenderAssistant /
+  gsBuildQcard) — 전송만 세션 뷰의 gsUser / gsPost 경로를 쓴다.
 
 - extractQ: 어시스턴트 텍스트에서 cm-question 블록을 떼어내 JSON으로 파싱한다.
   파싱에 실패하면 질문 카드 없이 원문을 그대로 마크다운으로 렌더한다(안전한 폴백).

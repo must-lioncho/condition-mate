@@ -158,10 +158,11 @@ final class WorkerRegistry {
                 nextSec = -1
             }
             let errJSON = w.lastError.map { Self.j($0) } ?? "null"
-            // The QA automation workers are user-toggleable; core/plugin workers aren't.
+            // The launchd-driven automations are user-toggleable; core/plugin workers aren't.
+            // "qa" = the QA/UXUI 자동화 family; "sut" = the daily NSS 리포트 (Supertrust) worker.
             // "즉시 실행" only applies to the periodic inspection worker — the fix worker
             // is event-driven (fired when a goal is filed), so it's toggleable but not runnable.
-            let toggleable = (w.owner == "qa")
+            let toggleable = (w.owner == "qa" || w.owner == "sut")
             let runnable = (w.id == "qa-agent")
             // bug-hunt is launched BY HAND at end of day (Scripts/bug-hunt.sh), not by a
             // scheduler. Its `interval` is the per-round cadence inside one multi-hour run,

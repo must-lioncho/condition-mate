@@ -17,7 +17,7 @@ import AppKit
 /// and played back by mapping wall-clock time to a frame index on the existing
 /// ~20 Hz status-title refresh — no extra timer. Bolts are full colour (not
 /// templates) so the stage colour survives on both light and dark menu bars.
-final class LightningGauge {
+public final class LightningGauge {
 
     // Frames and loop period (seconds) per stage. More frames = smoother.
     private static let spec: [Int: (frames: Int, period: Double)] = [
@@ -39,7 +39,7 @@ final class LightningGauge {
     private let apply: (NSImage) -> Void
 
     /// `apply` installs an image onto the status item button (main thread).
-    init(apply: @escaping (NSImage) -> Void) {
+    public init(apply: @escaping (NSImage) -> Void) {
         self.apply = apply
         idleImage = LightningGauge.render(level: 0, u: 0)
         for (lv, s) in LightningGauge.spec {
@@ -52,7 +52,7 @@ final class LightningGauge {
     /// Drive the gauge from the live condition signal. Cheap to call at ~20 Hz:
     /// it only swaps the button image when the stage or master-loop frame changes.
     /// When not working it shows the dim idle bolt.
-    func update(norm: Double, working: Bool) {
+    public func update(norm: Double, working: Bool) {
         guard working else { showIdle(); return }
         let lv = level(for: norm)
         guard let frames = strips[lv], let period = periods[lv], !frames.isEmpty else { return }
@@ -66,7 +66,7 @@ final class LightningGauge {
     }
 
     /// Return to the paused/idle bolt (session stopped).
-    func showIdle() {
+    public func showIdle() {
         if !showingIdle {
             showingIdle = true; currentLevel = 0; currentFrame = -1
             apply(idleImage)

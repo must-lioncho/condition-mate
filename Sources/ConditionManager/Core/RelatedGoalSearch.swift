@@ -24,7 +24,17 @@ enum RelatedGoalSearch {
     struct Signals { var keywords: [String]; var windowDays: Int? }
 
     // One discovered existing goal + the matched evidence, ready to feed the judge.
-    struct Hit { var seq: Int; var snippet: String; var source: String }
+    //   artifactHits / transcriptHits - raw keyword occurrences found in this goal's own
+    //     issue-folder files vs. its session transcript. Kept SEPARATE so the "artifact
+    //     owner" (the goal whose folder actually holds the work) can be told apart from a
+    //     transcript-heavy but unrelated goal that merely mentions the keywords a lot.
+    //   hollow - structural substance flag (see isHollow): true when the goal has NO real
+    //     transcript AND an empty/near-empty issue folder — a "껍데기" that a title match
+    //     must never be accepted on.
+    struct Hit {
+        var seq: Int; var snippet: String; var source: String
+        var artifactHits: Int = 0; var transcriptHits: Int = 0; var hollow: Bool = false
+    }
 
     // Just enough of an existing goal to map its transcript/artifacts back to it. The
     // transcriptPath is the RELIABLE link (recorded when the goal's session ran); the
@@ -69,7 +79,9 @@ enum RelatedGoalSearch {
             // generic verbs/actions — too common to be a retrieval signal
             "사용해서", "사용해", "사용", "만들거야", "만들어", "만들었는데", "만들었었고", "만들기", "만들",
             "하려고해", "하려고", "했던것", "했던", "동일하게", "동일한", "동일", "작성해", "작성을", "작성",
-            "하기", "해야", "해서", "하는", "진행", "확인", "정리", "준비", "일일"
+            "하기", "해야", "해서", "하는", "진행", "확인", "정리", "준비"
+            // NOTE: "일일" is intentionally NOT a stopword — it is load-bearing for daily-report
+            // routines ("일일리포트"), where dropping it silently loses the tail keyword.
         ]
         let particle1: Set<Character> = ["를", "을", "이", "가", "은", "는", "에", "의", "도", "로", "와", "과", "만", "랑", "께"]
         let particle2 = ["으로", "에서", "까지", "부터", "에게", "한테", "이나", "라도"]
@@ -88,13 +100,38 @@ enum RelatedGoalSearch {
         }
         for t in tokens where !t.isEmpty {
             add(t)
+            // A token that GLUES scripts together ("nss일일리포트", written with no separator)
+            // survives tokenization as one blob that matches nothing in the corpus. Split it at
+            // every ASCII↔Hangul boundary and also emit each piece ("nss", "일일리포트"), so the
+            // real terms are recoverable. Only fires for genuinely mixed tokens.
+            for piece in scriptRuns(t) where piece != t { add(piece) }
             if t.count >= 4, let p = particle2.first(where: { t.hasSuffix($0) }) {
                 add(String(t.dropLast(p.count)))
             } else if t.count >= 3, let last = t.last, particle1.contains(last) {
                 add(String(t.dropLast()))
             }
         }
-        return Array(out.prefix(12))
+        // Cap raised from 12 → 24: a long "step → step → step (…)" routine buries its most
+        // distinctive tail keyword ("일일리포트") past position 12, so a 12-cap silently drops it.
+        return Array(out.prefix(24))
+    }
+
+    // Break a token into maximal same-script runs (Hangul vs ASCII-alnum), so a glued
+    // mixed-script token yields its component words. "nss일일리포트" → ["nss", "일일리포트"].
+    // A single-script token returns just itself.
+    private static func scriptRuns(_ t: String) -> [String] {
+        func isHangul(_ c: Character) -> Bool { c.unicodeScalars.allSatisfy { (0xAC00...0xD7A3).contains($0.value) || (0x3130...0x318F).contains($0.value) } }
+        var runs: [String] = []
+        var cur = ""
+        var curHangul: Bool? = nil
+        for c in t {
+            let h = isHangul(c)
+            if curHangul == nil || h == curHangul { cur.append(c) }
+            else { if !cur.isEmpty { runs.append(cur) }; cur = String(c) }
+            curHangul = h
+        }
+        if !cur.isEmpty { runs.append(cur) }
+        return runs.count > 1 ? runs : [t]
     }
 
     // MARK: Discovery
@@ -105,14 +142,33 @@ enum RelatedGoalSearch {
         let cutoffDate = signals.windowDays.map { now.addingTimeInterval(-Double($0 + 2) * 86_400) }
 
         // Exact pass: score every goal by keyword density across its own files.
-        var ranked = rank(score(corpus, keywords: signals.keywords, cutoffDate: cutoffDate, fuzzy: false),
-                          keywordCount: signals.keywords.count)
+        var scored = score(corpus, keywords: signals.keywords, cutoffDate: cutoffDate, fuzzy: false)
+        var ranked = rank(scored, keywordCount: signals.keywords.count)
         // Typo-tolerant fallback only when nothing exact turned up (honors "오타 고려").
         if ranked.isEmpty {
-            ranked = rank(score(corpus, keywords: signals.keywords, cutoffDate: cutoffDate, fuzzy: true),
-                          keywordCount: signals.keywords.count)
+            scored = score(corpus, keywords: signals.keywords, cutoffDate: cutoffDate, fuzzy: true)
+            ranked = rank(scored, keywordCount: signals.keywords.count)
         }
-        return ranked
+
+        // RESERVED SLOT — the goal whose OWN issue folder holds the most keyword hits is the
+        // "artifact owner": it literally contains the work. A transcript-heavy but unrelated
+        // goal can out-count it on raw numbers and push it past topN/cutoff, so force the
+        // artifact owner into the candidate set even if ranking dropped it. This is the recall
+        // guarantee that surfaces the goal that actually owns the matching artifacts.
+        if let owner = scored.filter({ $0.value.fileHits > 0 }).max(by: { $0.value.fileHits < $1.value.fileHits })?.key,
+           !ranked.contains(where: { $0.seq == owner }), let a = scored[owner] {
+            ranked.append(Hit(seq: owner, snippet: a.snippet ?? "", source: a.source.isEmpty ? "file" : a.source))
+        }
+
+        // Annotate each hit with its artifact/transcript split + structural hollow flag, so the
+        // judge and the post-merge reconciliation can prefer content-substantive goals.
+        let hollow = hollowSeqs(goals: goals, issueRoot: issueRoot)
+        return ranked.map { h in
+            var out = h
+            if let a = scored[h.seq] { out.artifactHits = a.fileHits; out.transcriptHits = a.sessionHits }
+            out.hollow = hollow.contains(h.seq)
+            return out
+        }
     }
 
     private struct Entry { var url: URL; var seq: Int; var source: String }
@@ -152,7 +208,12 @@ enum RelatedGoalSearch {
         return out
     }
 
-    private struct Acc { var hits: [String: Double] = [:]; var snippet: String?; var source = "" }
+    private struct Acc {
+        var hits: [String: Double] = [:]
+        var fileHits = 0        // raw keyword occurrences found in this goal's issue-folder files
+        var sessionHits = 0     // raw keyword occurrences found in this goal's session transcript
+        var snippet: String?; var source = ""
+    }
     private static let countCap = 300   // enough to rank; avoids counting thousands of hits
 
     // Per-goal, per-keyword occurrence counts across the goal's own files, with a gentle
@@ -170,6 +231,8 @@ enum RelatedGoalSearch {
             if let cut = cutoffDate, let m = vals?.contentModificationDate, m >= cut { boost = recencyBoost }
             var a = acc[e.seq] ?? Acc()
             for (kw, n) in counts { a.hits[kw, default: 0] += Double(n) * boost }
+            let total = counts.values.reduce(0, +)
+            if e.source == "file" { a.fileHits += total } else { a.sessionHits += total }
             if a.snippet == nil, let snip = snip { a.snippet = snip; a.source = e.source }
             acc[e.seq] = a
         }
@@ -188,7 +251,12 @@ enum RelatedGoalSearch {
             let df = Double(acc.values.filter { ($0.hits[kw] ?? 0) > 0 }.count)
             idf[kw] = log(1 + docs / max(1, df))
         }
-        func weighted(_ a: Acc) -> Double { a.hits.reduce(0) { $0 + $1.value * (idf[$1.key] ?? 0) } }
+        // Normalize raw counts with a sqrt (sub-linear) transform before IDF weighting: a
+        // transcript that repeats "nss" 191 times must not linearly bury a goal whose folder
+        // holds the artifact with 90 hits across several distinct terms. sqrt is monotonic, so a
+        // true single-owner still ranks on top, but the gap a transcript wins purely on volume is
+        // compressed — the transcript-vs-artifact normalization the recall fix calls for.
+        func weighted(_ a: Acc) -> Double { a.hits.reduce(0) { $0 + sqrt($1.value) * (idf[$1.key] ?? 0) } }
         let floorDistinct = min(2, keywordCount)
         let sorted = acc.filter { $0.value.hits.count >= floorDistinct }
             .map { (seq: $0.key, acc: $0.value, w: weighted($0.value)) }
@@ -282,6 +350,238 @@ enum RelatedGoalSearch {
               let m = re.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)),
               let r = Range(m.range(at: 1), in: name) else { return nil }
         return Int(name[r])
+    }
+
+    // MARK: Content substance ("껍데기" detection)
+
+    // Minimum bytes of real content for a transcript/folder to count as "substance".
+    private static let substanceMinBytes = 48
+
+    // A goal is HOLLOW when it has neither a real session transcript NOR a non-empty issue
+    // folder — i.e. nothing but a title. A hollow goal must never be accepted as a match on
+    // the strength of a title echo alone (DASH-9). Structural (keyword-independent) on purpose:
+    // "content 근거가 없다" is about whether the goal owns ANY substance, not about this query.
+    static func isHollow(goal: GoalRef, issueRoot: URL) -> Bool {
+        return !hasTranscriptSubstance(goal) && !hasFolderSubstance(seq: goal.seq, issueRoot: issueRoot)
+    }
+
+    static func hollowSeqs(goals: [GoalRef], issueRoot: URL) -> Set<Int> {
+        var out = Set<Int>()
+        for g in goals where isHollow(goal: g, issueRoot: issueRoot) { out.insert(g.seq) }
+        return out
+    }
+
+    private static func hasTranscriptSubstance(_ g: GoalRef) -> Bool {
+        let p = g.transcriptPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !p.isEmpty else { return false }
+        let url = URL(fileURLWithPath: p)
+        guard let vals = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+              vals.isRegularFile == true, let size = vals.fileSize else { return false }
+        return size >= substanceMinBytes
+    }
+
+    private static func hasFolderSubstance(seq: Int, issueRoot: URL) -> Bool {
+        guard seq > 0 else { return false }
+        let name = "goal-" + (seq < 10 ? "0" : "") + String(seq)
+        let dir = issueRoot.appendingPathComponent(name, isDirectory: true)
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else { return false }
+        let exts: Set<String> = ["md", "txt", "py", "json", "html", "csv"]
+        var bytes = 0
+        if let en = fm.enumerator(at: dir, includingPropertiesForKeys: [.fileSizeKey]) {
+            for case let f as URL in en where exts.contains(f.pathExtension.lowercased()) {
+                bytes += (try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                if bytes >= substanceMinBytes { return true }
+            }
+        }
+        return bytes >= substanceMinBytes
+    }
+
+    // MARK: Explicit goal-number references (a SECONDARY clue)
+
+    // Korean unit characters: a digit glued to one of these is a measurement/time, NOT a goal
+    // number ("11시", "7월4일", "30%", "3개"). Used to reject bare-number false positives.
+    private static let unitChars: Set<UInt16> = Set("시원월일분초%개년명".utf16)
+
+    // Goal numbers the routine text explicitly names ("#240", "240번", "goal 240", or a bare
+    // "240"), restricted to numbers that actually map to an EXISTING goal seq and are not glued
+    // to a unit char. This is a clue to SURFACE a candidate — never the sole auto-recommendation.
+    static func referencedSeqs(from raw: String, existing: Set<Int>) -> [Int] {
+        let ns = raw as NSString
+        guard let re = try? NSRegularExpression(pattern: "[0-9]+") else { return [] }
+        var found: [Int] = []
+        var seen = Set<Int>()
+        re.enumerateMatches(in: raw, range: NSRange(location: 0, length: ns.length)) { m, _, _ in
+            guard let m = m else { return }
+            let r = m.range
+            let after = r.location + r.length
+            if after < ns.length, unitChars.contains(ns.character(at: after)) { return }  // "11시" → skip
+            guard let n = Int(ns.substring(with: r)), existing.contains(n) else { return }
+            if seen.insert(n).inserted { found.append(n) }
+        }
+        return found.sorted()
+    }
+
+    // MARK: Judge prompt assembly (extracted so it is deterministically testable)
+
+    struct GoalInfo { var seq: Int; var title: String; var status: String
+        init(seq: Int, title: String, status: String) { self.seq = seq; self.title = title; self.status = status } }
+
+    // Builds the two dynamic pieces of the dedup-judge prompt:
+    //  - existingList: "#<seq> <title>" per live goal, HOLLOW goals tagged so the judge can
+    //    see a title is backed by no content.
+    //  - evidenceBlock: the ALREADY-EXISTS EVIDENCE section (content hits + user-referenced
+    //    goals), or "" when there is nothing to surface.
+    static func judgeEvidence(goals: [GoalInfo], hits: [Hit], referenced: [Int],
+                              hollow: Set<Int>) -> (existingList: String, evidenceBlock: String) {
+        let titleBySeq = Dictionary(goals.map { ($0.seq, $0.title) }, uniquingKeysWith: { a, _ in a })
+        func title(_ seq: Int) -> String {
+            let t = (titleBySeq[seq] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.isEmpty ? "(제목 없음)" : t
+        }
+        let cancelled = Set(goals.filter { $0.status == "cancelled" }.map { $0.seq })
+
+        let existingList = goals.filter { $0.status != "cancelled" }.map { g -> String in
+            let tag = hollow.contains(g.seq) ? "  [내용근거 없음(껍데기)]" : ""
+            return "#\(g.seq) \(g.title)\(tag)"
+        }.joined(separator: "\n")
+
+        var lines: [String] = []
+        var shownSeqs = Set<Int>()
+        for h in hits where !cancelled.contains(h.seq) {
+            shownSeqs.insert(h.seq)
+            let tag = h.hollow ? " [껍데기: 내용 근거 없음]" : ""
+            lines.append("#\(h.seq) \(title(h.seq)) — [\(h.source)] \"\(h.snippet)\"\(tag)")
+        }
+        // Force-surface user-referenced goals the search itself may have missed, clearly labeled.
+        for seq in referenced where !cancelled.contains(seq) && !shownSeqs.contains(seq) {
+            shownSeqs.insert(seq)
+            let tag = hollow.contains(seq) ? " [껍데기: 내용 근거 없음]" : ""
+            lines.append("#\(seq) \(title(seq)) — [사용자 지목] 루틴 텍스트가 이 목표 번호를 명시함\(tag)")
+        }
+        let evidenceBlock = lines.isEmpty ? "" : """
+
+
+        ALREADY-EXISTS EVIDENCE — a keyword/time search over the user's own session transcripts \
+        and goal files found that the EXISTING goal(s) below ALREADY CONTAIN the prior work (the \
+        script, earlier reports, or subtasks) that this NEW goal refers to. When the new goal is \
+        phrased as repeating or reusing earlier work ("일일/매일/주간", "N일전에 만든 스크립트로 다시", \
+        "동일하게", "그때 만든 것으로"), it is NOT a genuinely new goal — but it is also NOT a \
+        pointless duplicate: it is a RECURRING run/subtask of that existing goal's work and is \
+        worth tracking.
+        SUBSTANCE RULE: a goal whose TITLE merely echoes a phrase in the new routine but has NO \
+        content evidence (empty transcript/folder, marked [껍데기]) is a HOLLOW match — do NOT \
+        pick it. Prefer a goal with real content overlap (an ALREADY-EXISTS EVIDENCE line) or a \
+        [사용자 지목] goal. When the closest title match is hollow, choose the content-substantive \
+        goal instead.
+        \(lines.joined(separator: "\n"))
+        """
+        return (existingList, evidenceBlock)
+    }
+
+    // MARK: Relationship-aware reconciliation (deterministic post-merge guarantee)
+
+    // The recommended next action shown to the user, derived from the relationship kind.
+    //   task  → "#N의 task로 이번 회차 추가"  (a recurring EXECUTION of that goal's work)
+    //   under → "#N 아래 서브 목표로 추가"     (a distinct SUB-PROBLEM/improvement of that goal)
+    //   add   → "별도 새 목표로 추가"          (unrelated / no substantive parent)
+    //   skip  → "스킵"                        (true duplicate)
+    static func recAction(for relation: String) -> String {
+        switch relation {
+        case "recurring-execution": return "task"
+        case "sub-problem", "improvement": return "under"
+        case "duplicate": return "skip"
+        default: return "add"
+        }
+    }
+
+    struct Recommendation {
+        var kind: String            // new | recurring | duplicate (unchanged axis for the UI/flags)
+        var relation: String        // recurring-execution | sub-problem | unrelated | duplicate
+        var action: String          // task | under | add | skip (recAction(for: relation))
+        var matches: [Int]          // ordered; matches[0] is the goal the recommended action targets
+        var suggestedParentSeq: Int
+        var placement: String       // top | sub
+        var rationale: String
+    }
+
+    // Reconcile a raw LLM verdict against the deterministic content signals so the user always
+    // SEES (and is recommended) the content-substantive / referenced goal instead of a hollow
+    // title echo. Pure and side-effect-free → unit-testable without invoking `claude -p`.
+    static func reconcile(kind: String, relation rawRelation: String, llmMatches: [Int],
+                          suggestedParentSeq: Int, placement: String, rationale rawRationale: String,
+                          nextStep: String, hits: [Hit], hollow: Set<Int>, referenced: [Int],
+                          titles: [Int: String]) -> Recommendation {
+        func title(_ s: Int) -> String { (titles[s] ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        func nonHollow(_ s: Int) -> Bool { !hollow.contains(s) }
+
+        // The content-substantive goal to prefer: a user-referenced non-hollow goal wins, else
+        // the artifact owner (goal whose folder holds the most keyword hits), else any non-hollow
+        // hit. This is the goal that actually CONTAINS the work.
+        let refSub = referenced.first(where: nonHollow)
+        let artifactOwner = hits.filter { $0.artifactHits > 0 && nonHollow($0.seq) }
+            .max(by: { $0.artifactHits < $1.artifactHits })?.seq
+        let firstContent = hits.first(where: { nonHollow($0.seq) })?.seq
+        let corrected = refSub ?? artifactOwner ?? firstContent
+
+        var kind = kind
+        var relation = normalizeRelation(rawRelation, kind: kind)
+        var matches = llmMatches
+        var parent = suggestedParentSeq > 0 ? suggestedParentSeq : (matches.first ?? 0)
+        var placement = placement
+        var rationale = rawRationale.trimmingCharacters(in: .whitespacesAndNewlines)
+        let step = nextStep.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if kind == "duplicate" {
+            relation = "duplicate"
+        } else if relation == "recurring-execution" || relation == "sub-problem" {
+            let parentHollow = parent > 0 && hollow.contains(parent)
+            if parentHollow || parent == 0 {
+                if let c = corrected {
+                    parent = c
+                } else {
+                    // No substantive parent anywhere → do NOT recommend filing under a hollow
+                    // goal; fall back to a stand-alone new goal.
+                    kind = "new"; relation = "unrelated"; parent = 0; placement = "top"
+                }
+            }
+            if relation != "unrelated" {
+                kind = "recurring"     // both execution & sub-problem nest under a parent
+                placement = "sub"
+                if !matches.contains(parent) { matches.insert(parent, at: 0) }
+                else { matches.removeAll { $0 == parent }; matches.insert(parent, at: 0) }
+                // Rebuild a parent-naming rationale (mirrors the UI's recommended-option style),
+                // keeping the LLM's managed next-step note when it supplied one.
+                let t = title(parent)
+                let head = relation == "recurring-execution"
+                    ? "#\(parent) \(t)의 반복 작업이라, 이번 회차를 그 목표의 task로 추가하는 것이 좋겠습니다."
+                    : "#\(parent) \(t)와 같은 계열의 하위 문제라, 그 목표 아래 서브 목표로 추가하는 것이 좋겠습니다."
+                rationale = step.isEmpty ? head : "\(head) \(step)"
+            }
+        } else {
+            relation = "unrelated"
+        }
+
+        // Union referenced + the substantive content goal into matches so the user SEES them
+        // even when the LLM omitted them (additive; ordinary no-signal cases stay unchanged).
+        for s in referenced where !matches.contains(s) { matches.append(s) }
+        if let c = corrected, !matches.contains(c) { matches.append(c) }
+
+        if relation == "unrelated" && rationale.isEmpty && !step.isEmpty { rationale = step }
+        return Recommendation(kind: kind, relation: relation, action: recAction(for: relation),
+                              matches: matches, suggestedParentSeq: (relation == "unrelated" || relation == "duplicate") ? 0 : parent,
+                              placement: placement, rationale: rationale)
+    }
+
+    private static func normalizeRelation(_ r: String, kind: String) -> String {
+        switch r.lowercased() {
+        case "recurring-execution", "recurring_execution", "recurring": return "recurring-execution"
+        case "sub-problem", "sub_problem", "subproblem", "improvement", "sub": return "sub-problem"
+        case "duplicate": return "duplicate"
+        case "unrelated", "new", "": return kind == "recurring" ? "recurring-execution" : "unrelated"
+        default: return kind == "recurring" ? "recurring-execution" : "unrelated"
+        }
     }
 
     private static func levenshtein(_ a: String, _ b: String) -> Int {

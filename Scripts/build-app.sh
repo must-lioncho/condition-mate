@@ -6,6 +6,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 APP="ConditionManager.app"
 BIN_NAME="ConditionManager"
+# Captured BEFORE the (multi-minute) compile: sources saved while the build runs are
+# NOT in this binary, so /api/update/check must treat them as a pending update. The
+# executable's own mtime is stamped at the END of the build and would hide them.
+BUILD_START=$(date +%s)
 
 echo "==> Building release binary"
 swift build -c release
@@ -43,6 +47,8 @@ cp "Assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 # pressing it re-runs this script from CMSourceRoot (POST /api/update/run).
 /usr/libexec/PlistBuddy -c "Delete :CMSourceRoot" "$APP/Contents/Info.plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :CMSourceRoot string $PWD" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Delete :CMBuildStart" "$APP/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :CMBuildStart string $BUILD_START" "$APP/Contents/Info.plist"
 
 IDENTITY="ConditionManager Dev"
 if security find-identity -p codesigning | grep -q "$IDENTITY"; then

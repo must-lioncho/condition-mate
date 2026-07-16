@@ -24,8 +24,8 @@ KO: **manager-qa** 회귀 테스트의 기준 문서이며 manager-qa가 소유�
 
 | Page | id prefix | Source |
 |---|---|---|
-| P1. Menu-bar widget (status item + menu) | `WIDGET-` | `UI/MenuController.swift` |
-| P2. App window lifecycle (shared across both modes) | `WINLIFE-` | `UI/AppWindow.swift`, `AppDelegate.swift` |
+| P1. Menu-bar widget (status item + menu) | `WIDGET-` | `GUI/MenuController.swift` (+ `ConditionManager/UI/GUIBridge.swift`) |
+| P2. App window lifecycle (shared across both modes) | `WINLIFE-` | `GUI/AppWindowController.swift`, `AppDelegate.swift` |
 | P3. App window — BGM mode / 액티비티 sub-tab | `BGMACT-` | `Dashboard/BGMPlayerContent.swift` |
 | P4. App window — BGM mode / 디버그 sub-tab | `BGMDBG-` | `Dashboard/BGMPlayerContent.swift` |
 | P5. App window — 대시보드 mode | `DASH-` | `Dashboard/DashboardContent.swift` |
@@ -205,7 +205,7 @@ Note (KO): SPEC.html의 P1 섹션은 실제 스크린샷이 아니라 라벨이 
   `setMode`'s `segmented?.selectedSegment = ...` stays a harmless no-op), but it is never attached
   via `addTitlebarAccessoryViewController` — no such call exists in the current file, only a
   leftover comment mentioning the pattern. Navigation is now via the rail's condition popup
-  ("컨디션 전체 보기") and the BGM page's "← 대시보드" button, both calling
+  ("시스템관리", 2026-07-12 renamed from "컨디션 전체 보기") and the BGM page's "← 대시보드" button, both calling
   `POST /api/window/mode {mode}` — see WINLIFE-10. This item's Verify recipe below (real coordinate
   clicks on a titlebar segmented control) can no longer be exercised because the control is not on
   screen; kept for history only, do not re-run as written.
@@ -214,7 +214,7 @@ Note (KO): SPEC.html의 P1 섹션은 실제 스크린샷이 아니라 라벨이 
   (`AppWindow.swift` ~354-358): `NSSegmentedControl`은 여전히 생성되고 연결되어 있지만(그래서
   `setMode`의 `segmented?.selectedSegment = ...`가 무해한 no-op으로 남음), `addTitlebarAccessoryViewController`로
   붙는 곳은 더 이상 없다 — 현재 파일엔 그런 호출이 없고 예전 패턴을 언급하는 주석만 남아 있다.
-  내비게이션은 이제 레일의 컨디션 팝업("컨디션 전체 보기")과 BGM 페이지의 "← 대시보드" 버튼이
+  내비게이션은 이제 레일의 컨디션 팝업("시스템관리", 2026-07-12에 "컨디션 전체 보기"에서 개명)과 BGM 페이지의 "← 대시보드" 버튼이
   각각 `POST /api/window/mode {mode}`를 호출하는 방식이다 — WINLIFE-10 참고. 아래 Verify 레시피
   (타이틀바 세그먼트 컨트롤 실좌표 클릭)는 화면에 컨트롤이 없으므로 더 이상 재현 불가 — 기록
   목적으로만 남기며 그대로 재실행하지 말 것.
@@ -315,13 +315,15 @@ Note (KO): SPEC.html의 P1 섹션은 실제 스크린샷이 아니라 라벨이 
   titlebar toggle (supersedes WINLIFE-7).**
   EN: The titlebar segmented toggle (WINLIFE-7, RETIRED) was removed. Switching between the
   dashboard and the full condition (BGM) surface is now driven by: (a) the sidebar rail's condition
-  popup button "컨디션 전체 보기", which POSTs `{mode:"condition"}`; (b) the BGM page's "← 대시보드"
+  popup button "시스템관리" (2026-07-12 renamed from "컨디션 전체 보기"), which POSTs
+  `{mode:"condition"}`; (b) the BGM page's "← 대시보드"
   button, which POSTs `{mode:"dashboard"}`. Both call the SAME underlying mechanism as before
   (`AppWindowController.setMode` via `openBGMWindow()`/`openDashboard()`) — only the trigger UI
   changed, not the two-webview seamless-switch architecture (WINLIFE-3 still applies unchanged: the
   BGM webview is never reloaded on switch, native stays muted the whole time the window is open).
   KO: 타이틀바 세그먼트 토글(WINLIFE-7, 폐기됨)이 제거됐다. 대시보드와 전체 컨디션(BGM) 화면 사이
-  전환은 이제 (a) 사이드바 레일의 컨디션 팝업 버튼 "컨디션 전체 보기"(`{mode:"condition"}` POST)와
+  전환은 이제 (a) 사이드바 레일의 컨디션 팝업 버튼 "시스템관리"(2026-07-12에 "컨디션 전체 보기"에서
+  개명, `{mode:"condition"}` POST)와
   (b) BGM 페이지의 "← 대시보드" 버튼(`{mode:"dashboard"}` POST)이 담당한다. 둘 다 이전과 동일한
   내부 메커니즘(`openBGMWindow()`/`openDashboard()`를 통한 `AppWindowController.setMode`)을
   호출한다 — 트리거 UI만 바뀌었을 뿐, 두-webview 무중단 전환 구조는 그대로다(WINLIFE-3는 변경 없이
@@ -513,6 +515,41 @@ Note (KO): SPEC.html의 P1 섹션은 실제 스크린샷이 아니라 라벨이 
   `id>=0` alone (as this client used to) will reproduce the same class of bug. Not treated as an
   open question — the fix as implemented is verified correct for this page; future work should keep
   this asymmetry in mind rather than re-deriving it from scratch.
+- **BGMACT-7 — client-side ambient layers (비 소리 · 배기음): gated, export-clean.**
+  EN: The 비 소리 (rain, synthesized in-browser) and 배기음 (sports-car exhaust, recorded loops)
+  cards each run on an independent gated bus that joins the shared chain
+  (dry → masterGain, wet → convolver → … → outMute) so 전체 볼륨 / mute / venue reverb are inherited
+  and the 메인 음원 볼륨 (music-only) slider does NOT affect them. Both layers are audible only while
+  the `<audio>` element is playing, may be active simultaneously, persist as
+  `localStorage cm.bgm.state` (`rain:{type,level}`, `exhaust:{type,drive,level}`), and are absent
+  from the `.wav` offline render (the offline graph never builds ambient nodes). They emit no
+  actions, so strategy-4 slot scoring is unaffected. Exhaust assets: Suno-generated recordings made
+  seamless offline (tail crossfaded into head, seam verified) in `<data>/sound/exhaust/` — outside
+  the `bgm/` selection pool — served same-origin via `GET /exhaust-audio/<key>` with a whitelist
+  (`lambo-idle|lambo-city|porsche-idle|porsche-city`; anything else 404, no traversal). The client
+  fetch+decodes each loop once (cached), plays it via a looping BufferSource with a random start
+  phase, swaps the voice on brand/drive change, and drops loads that finish after the selection
+  changed. Brands 람보르기니(V12)·포르쉐 911(flat-6) × drive modes 아이들링·시내주행. (v1 synthesized
+  the engine in Web Audio; replaced 2026-07-16 with recordings — old persisted `drive:"highway"`
+  values are rejected by restore validation.)
+  KO: 비 소리(브라우저 합성)·배기음(녹음 루프) 카드는 각각 독립 게이트 버스로 공용
+  체인(dry→masterGain, wet→convolver→…→outMute)에 합류해 전체 볼륨·뮤트·공간 리버브를
+  상속한다(메인 음원 볼륨 슬라이더는 곡에만 적용, 앰비언트 무관). 두 레이어는 재생 중일 때만
+  들리고 동시에 켤 수 있으며 `localStorage cm.bgm.state`에 영속, `.wav` 오프라인 렌더에는 포함되지
+  않는다(오프라인 그래프가 앰비언트 노드를 아예 만들지 않음). 액션을 emit하지 않으므로 전략4 슬롯
+  채점과 격리된다. 배기음 에셋: Suno 생성 녹음을 오프라인에서 심리스 루프로 가공(꼬리→머리
+  크로스페이드, 심 검증 완료)해 `<data>/sound/exhaust/`에 두고(bgm/ 선곡 풀 밖),
+  `GET /exhaust-audio/<key>` 화이트리스트(4개 키, 그 외 404·경로 탈출 불가)로 same-origin 서빙.
+  클라이언트는 키당 1회 fetch+decode(캐시), 루핑 BufferSource(랜덤 시작 위상)로 재생, 차종/주행
+  전환 시 보이스 교체, 선택 변경 뒤 도착한 로드는 폐기. 차종 람보르기니(V12)·포르쉐 911(수평대향
+  6기통) × 주행 모드 아이들링·시내주행. (v1 Web Audio 합성은 2026-07-16 녹음으로 교체 — 구
+  `drive:"highway"` 저장값은 복원 검증에서 거부.)
+  Verify: `.e2e/exhaust.test.js` — extracts the real blocks from `BGMPlayerContent.swift` and runs
+  them under a stub Web Audio graph + stub fetch (21 asserts: profile→key mapping, bus wiring,
+  playback gating, voice fetch/cache/swap, stale-load drop, saveState/restore round-trip incl.
+  highway/unknown-type rejection). Export cleanliness is structural: the `$("render")` offline
+  graph builds music nodes only.
+  **STATUS: PASS — node stub suite 21/21 (2026-07-16, recorded-loop replacement).**
 
 ### Intent audit — P3
 EN: BGMACT-2..5 — code matches intent, PASS as previously recorded. `_pollFails>=1` confirmed by
@@ -810,6 +847,52 @@ BGMDBG-2는 이번 실행에서 라이브로 검증하지 않음 — 이전 회�
   `links`; DASH-7 `lastView` clamp missing `"queue"`) — both fixed same day and RE-VERIFIED PASS by
   manager-qa in fix-loop round 2 (see RESOLVED notes above).
 
+- **DASH-9 — AI 큐 연관성 검색은 콘텐츠 실체(transcript/issue 폴더 근거)를 제목 유사도보다 우선한다.**
+  KO: AI 큐 연관성 검색은 콘텐츠 실체(transcript/issue 폴더 근거)를 제목 유사도보다 우선한다. 제목만
+  일치하고 내용 근거가 없는 '껍데기' 목표는 추천하지 않는다. 루틴이 명시한 목표 번호가 실제 목표에
+  매핑되면 유사 후보로 노출한다. 나아가 판정은 부모를 찾는 데 그치지 않고 **관계 종류**를 분류한다:
+  (a) 기존 목표 작업의 **반복 실행(recurring-execution)** → "#N의 task로 이번 회차 추가"를 추천,
+  (b) 기존 목표 영역의 **하위 문제/개선(sub-problem)** → "#N 아래 서브 목표로 추가"를 추천,
+  (c) **무관(unrelated)** → "별도 새 목표로 추가"를 추천. 추천 옵션 밑에는 항목 자체의 의도에서
+  도출한 **관리형 다음 단계** 한 줄(예: 리포트 공유 자동화)을 함께 노출한다.
+  EN: The AI-queue relatedness search ranks CONTENT substance (a real session transcript and/or a
+  non-empty `issue/goal-NN/` folder with keyword hits) ABOVE title similarity. A "hollow" goal —
+  a title with no content evidence (empty transcript AND empty folder) — is never recommended on the
+  strength of a title echo. A goal number the routine text explicitly names, when it maps to a live
+  goal, is surfaced as a similar candidate (a SECONDARY clue, never the sole auto-recommendation).
+  The judge classifies the RELATIONSHIP, not just the parent: recurring-execution → recommend adding
+  as a `task` under #N; sub-problem/improvement → recommend adding as a `sub-goal` under #N;
+  unrelated → recommend a stand-alone new goal. A one-line managed NEXT STEP (inferred from the
+  item's own intent) is surfaced under the recommended option.
+  Mechanism: `RelatedGoalSearch` (retrieval) exposes per-candidate artifact/transcript hit counts and
+  a structural `hollow` flag (`isHollow`/`hollowSeqs`), reserves a candidate slot for the top
+  artifact-owner goal so it bypasses topN/cutoff, sqrt-normalizes transcript-vs-artifact raw counts,
+  and no longer loses the routine tail (removed `"일일"` stopword, script-boundary splitting for glued
+  `NSS일일리포트`, keyword cap 12→24). `referencedSeqs(from:existing:)` parses `#240`/`240번`/`goal 240`
+  and a bare `240` only when it maps to an existing seq and is NOT glued to a unit char in
+  `[시원월일분초%개년명]` (so `11시`, `7월4일` yield none). The judge prompt (`AppDelegate.aiDedupVerdict`)
+  gets a hollow-annotated goal list + an ALREADY-EXISTS EVIDENCE block with a SUBSTANCE RULE and both
+  worked examples, and `RelatedGoalSearch.reconcile(...)` deterministically post-merges the verdict:
+  a hollow title echo is flipped to the content-substantive / user-referenced goal, the recommended
+  action is derived from the relationship, and referenced + top-content goals are unioned into
+  `matches` so the user always SEES them. The 큐 card (`DashboardContent.swift`) binds the 추천 badge to
+  the reconciled `relation`/`matches[0]`.
+  Regression anchors (deterministic level — the final LLM pick is nondeterministic, so tests assert
+  retrieval + reconciliation only, never invoking `claude -p`):
+  A) Routine `"…NSS 일일리포트 공유 (240 주정산지급 루틴)"` — the string is verbatim #291's TITLE, but
+  `issue/goal-291/` is EMPTY (hollow). #240 (folder saturated: nss/주정산/입금/리포트) MUST surface and
+  be the recommended parent as a `task`; #291 MUST be flagged hollow and MUST NOT be forced as the
+  sole parent.
+  B) `goal-507` (`"NSS 일일 리포트 … 로그인 형태로 외부에서 접속 … 공유 문제해결"`) — same NSS-daily-report
+  family as #240 but a distinct sub-problem, MUST be classified sub-problem → recommended as a
+  `sub-goal` under #240 with a report-sharing-automation next-step note.
+  Verify: `Scripts/run-unit-tests.sh --filter RelatedGoalSearchTests` → 10/10 PASS
+  (`tests/RelatedGoalSearchTests/`): keyword mining keeps `일일리포트`; `discover` returns #240; #291
+  flagged hollow; `referencedSeqs` → `[240]` with `11시`/`7월4일`→none; judge evidence contains a #240
+  line and marks #291 껍데기; reconcile rebinds hollow #291→#240 task (anchor A) and files goal-507
+  under #240 as a sub-goal with the next-step surfaced (anchor B); ordinary no-signal cases unchanged.
+  History: DASH-9 added 2026-07-13 (content-substance cascade + relationship-aware next action).
+
 ### Intent audit — P5
 EN: **REGRESSION-CLASS FINDING (spec drift, confirmed):** the old A1 item's documented "third audio
 source" — the dashboard's own in-page "BGM 관리" tab as a lazy-loaded `<iframe id="bgmFrame">` of
@@ -1091,6 +1174,211 @@ PASS로 재검증함(라이브 근거는 위 DASH-6/DASH-7의 RESOLVED 메모 �
   reached `pomoToday:2` with `pomodoro.complete`/`sessionStop`/`pomodoro.harvest` in order,
   `pomodoro-stats.json` persisted both, harvest cleared `reward`, and a start with an untapped orb
   auto-claimed it; rail contract locked by `.e2e/pomodoro.test.js` (8/8).
+- **EP-14 — Mode energy: challenge mode reconnects to track selection within the SAME plan pool
+  (added 2026-07-10, 전략5 · 모드 에너지).**
+  EN: Strategy 4 left a gap: whichever challenge mode (25분 포모도로 / 스프린트 / 트래커=unlimited)
+  the user picked, the SAME music played, because the 전략3 plan slot's theme pool fully owned
+  selection and the mode playlists were only a fallback for plan gaps. Strategy 5 keeps the plan
+  pool and slot-score gate (`inActivePool`) unchanged, but derives a per-mode EFFECTIVE BPM band
+  from the base band (`Settings.minBPM`/`maxBPM`, default 70-150) via `ConditionDirector.
+  applyModeEnergy()`: pomodoro -> 86-134 BPM (mid-band, ramp x1.0), sprint -> 114-150 BPM (upper
+  band, ramp x1.6, faster warmup climb), unlimited -> 70-106 BPM (lower band, ramp x0.5, slower
+  climb). The band is re-applied on `start()`, `setSessionMode()`, and `applyProfile()`, and every
+  `trackChange` action-log line appends " · 모드밴드 <mode> <min>-<max>BPM" to its detail so the
+  action log audits which band picked the track. `poolLabel` (플랜 · <slot> / 모드 · <mode>) is
+  UNCHANGED by this strategy — the plan gate still owns which folder pool is eligible; mode energy
+  only re-ranks nearest-BPM selection inside that pool. A mode switch while a session is live
+  (`setSessionMode`) immediately re-seats the target into the new band and plays the mode's opener
+  (or forces a gated nearest-BPM pick if the opener isn't in the active pool) — no silence: the
+  switch never calls `pauseSession()`/`stop()`, only `audio.play()` via `AudioEngine`'s built-in
+  crossfade.
+  KO: 전략4는 공백을 남겼다 — 어떤 챌린지 모드(25분 포모도로/스프린트/트래커=무제한)를 골라도 같은
+  음악이 나왔다. 전략3 플랜 슬롯의 테마 풀이 선곡을 완전히 소유했고 모드 플레이리스트는 플랜 공백일
+  때의 폴백일 뿐이었기 때문이다. 전략5는 플랜 pool과 슬롯 채점 게이트(`inActivePool`)를 그대로 둔
+  채, 기본 밴드(`Settings.minBPM`/`maxBPM`, 기본 70-150) 위에서 `ConditionDirector.
+  applyModeEnergy()`로 모드별 유효 BPM 밴드를 도출한다: 포모도로 → 86-134 BPM(중앙·ramp x1.0),
+  스프린트 → 114-150 BPM(상단·ramp x1.6, 빠른 웜업), 트래커(unlimited) → 70-106 BPM(하단·ramp
+  x0.5, 느린 웜업). 밴드는 `start()`/`setSessionMode()`/`applyProfile()`에서 재적용되고, 모든
+  `trackChange` 액션로그 detail 끝에 " · 모드밴드 <mode> <min>-<max>BPM"이 붙어 어느 밴드가 곡을
+  골랐는지 감사할 수 있다. `poolLabel`(플랜 · <슬롯> / 모드 · <mode>)은 이 전략으로 바뀌지 않는다 —
+  플랜 게이트가 여전히 어느 폴더 풀이 유효한지 결정하고, 모드 에너지는 그 풀 안에서 최근접-BPM
+  순위만 재조정한다. 세션이 살아있는 중 모드를 전환하면(`setSessionMode`) 즉시 새 밴드로 타깃을
+  재조정하고 모드의 오프너를 재생한다(오프너가 활성 풀 밖이면 게이트된 최근접-BPM 강제 선곡) —
+  무음 구간 없음: 전환은 `pauseSession()`/`stop()`을 호출하지 않고 `AudioEngine`의 내장 크로스페이드로
+  `audio.play()`만 호출한다.
+  Verify (isolated bundle instance, unique bundle id, `CM_SCAN_DIR` -> a real `office/` pool copied
+  from the repo's `bgm/office` folder spanning 82-172 BPM, custom `bgm-plan.json` pinning an
+  "all-day" slot to that pool, `bgmWindowEnabled=false` to avoid an on-screen window, 2026-07-10):
+  the `CM_DEBUG` heartbeat line's `[min-max]` showed the band change instantly on each mode switch
+  (`[86-134]` -> `[114-150]` -> `[70-106]`), matching the formula exactly. `POST /api/session/control
+  {"action":"start","mode":"sprint"}` played the sprint opener `[133] Glass Horizon` (133 BPM,
+  inside 114-150); re-posting the SAME `bgm-plan.json` (forces `planDidChange()` ->
+  `applyTrack(force:true)`) produced `trackChange` with detail `"강제 전환 (...) · 모드밴드 sprint
+  114-150BPM"`, track `[120] Midnight Monitor Grid` (120 BPM), `pool":"플랜 · QA 오피스 슬롯"`
+  (unchanged). Switching to `mode=unlimited` (same live session) played opener `[082] 창가의 바람`
+  (82 BPM) then the same forced-replan trick produced `trackChange` detail `"... · 모드밴드
+  unlimited 70-106BPM"`, track `[089] Neural Ops Room (1)` (89 BPM) — a clearly different, much
+  lower BPM pick than sprint's, from the exact SAME plan pool (`pool` unchanged). Switching back to
+  `pomodoro` produced `"... · 모드밴드 pomodoro 86-134BPM"`, track `[096] 유리문 속 세계` (96 BPM,
+  mid-band). No app.log errors/crashes across the run; process stayed alive and responsive
+  throughout. `activeStrategy` confirmed `5` and the catalog's id-5 retro/summary text present in
+  `track-playstats.json`.
+  Note: the forced-replan trick (re-POSTing the unchanged plan) was used INSTEAD OF waiting out the
+  real 20s decision tick + 90s min-dwell gate, because this headless environment's background
+  process is subject to real interference (the window-enabled first attempt had its window closed
+  by something external at ~44s; a second window-disabled attempt had the whole process quit via
+  the real `quit()` menu path at ~10s with no CM_QUIT_AFTER set and no code path that should have
+  called it) — both are ENVIRONMENT flakiness (a shared desktop and/or App Nap throttling a
+  windowless background process), not app defects, but they make a multi-minute unattended
+  wall-clock wait for an organic tick-driven trackChange unreliable in this environment. The forced
+  trigger exercises the identical `applyTrack()` code path (the modeBand suffix is appended
+  unconditionally, whether `force` is true or false) so the evidence is equally valid for whether
+  the mode band is applied; it does not by itself prove the ORGANIC (tick-driven, non-forced)
+  warmup climb reaches the new band within a live session — that remains INFERRED from the code
+  (`tick()`'s `targetBPM = min(maxBPM, targetBPM + warmupStep * modeRamp)` uses the mode-scoped
+  `activeMaxBPM`/`modeRamp` already confirmed live via the `CM_DEBUG` band line) rather than
+  directly observed via a real un-forced trackChange in this pass.
+- **EP-15 — Start-context selection: the session-start MOMENT (timer mode × daypart × hours into
+  the work block) picks the opening mood (added 2026-07-12, 전략6 · 시작 컨텍스트).**
+  EN: Strategy 5 made modes sound different through BPM bands, but every session still OPENED the
+  same way — at night the plan slot (no opener, calm themes) simply resumed the previous track for
+  pomodoro/sprint/tracker alike. Strategy 6 evaluates, at each session-start seam (`start()`,
+  live `setSessionMode()`, `resumeSession()` with a re-armed opener), a start CONTEXT: session
+  mode × daypart in the display timezone (아침 05-11 / 낮 11-17 / 저녁 17-23 / 심야 23-05) ×
+  minutes since 업무 시작. Work start is detected Swift-side by `AppDelegate.workStart(anchors:
+  gap:now:)` — the 6h-gap block walk over yesterday+today per-minute activity anchors (input or
+  meeting), same rule as the condition map; 0 anchors or a 6h+ stale tail = fresh start (elapsed
+  0). The pure rule table `ConditionDirector.startTierKey(mode:daypart:elapsedMin:)` maps the
+  triple to a tier: <1h = 아침→가볍게(gentle) · 낮→집중(focus) · 저녁/심야→라운지(lounge, the
+  "walked into a club" welcome for a tired evening arrival); 1-2h = 집중; ≥2h = 초집중(hyper,
+  competition mode — 아침 only stays 집중). Sprint bumps the tier one step up (it IS the user
+  choosing speed), tracker one step down. Each tier seats `targetBPM` at its `startFrac` of the
+  전략5 mode band and scales the warmup climb (`contextRamp`, multiplied with `modeRamp`); lounge
+  (themes `lounge`) and hyper (themes `challenge`/`steel`/`last_goal`) additionally OVERLAY the
+  candidate pool for 20 minutes — gate precedence is now 폭우 > 시작 컨텍스트 > 플랜 슬롯 > 모드
+  리스트 — with the opener picked from the overlay pool (recency-rotated, so consecutive starts
+  differ), after which selection drifts back to the plan pool organically (no forced switch).
+  Every evaluation logs a `startContext` system event ("시작 컨텍스트 심야 · 업무 3.0h → 초집중 ·
+  시작 119BPM · 테마 challenge·steel·last_goal 20분"), and — the audit axis — EVERY actions.jsonl
+  line now carries `workMin` (minutes into the work block, -1 = provider unwired), stamped
+  centrally in `ActionLog.append` via a thread-safe 60s-cached provider; the 액션로그 UI renders
+  it as an "업무 N분/N.Nh" pill.
+  KO: 전략5로 모드별 밴드는 갈렸지만 세션의 "시작"은 여전히 같았다 — 심야엔 플랜 슬롯에 오프너가
+  없어 포모도로/스프린트/트래커 모두 직전 곡이 그대로 이어졌다. 전략6은 세션이 시작되는 순간마다
+  (`start()` · 라이브 `setSessionMode()` · 오프너 재장전된 `resumeSession()`) 시작 컨텍스트 —
+  모드 × 표시 타임존 시간대(아침 05-11/낮 11-17/저녁 17-23/심야 23-05) × 업무 시작 후 경과 — 를
+  평가한다. 업무 시작은 컨디션맵과 같은 6h-갭 규칙을 Swift쪽에서 재현(`AppDelegate.workStart`,
+  어제+오늘 분단위 앵커 블록 워크; 앵커 없음/6h+ 공백 후는 경과 0 = 새 시작). 순수 규칙표
+  `startTierKey`: 1시간 미만 = 아침→가볍게 · 낮→집중 · 저녁/심야→라운지(지쳐서 온 저녁 시작을
+  클럽 라운지처럼 맞이해 휴식 기분으로); 1~2h = 집중; 2h+ = 초집중(이제 휴식이 아니라 경쟁 —
+  아침만 집중 유지). 스프린트는 한 단계 위(스스로 고속을 골랐으니), 트래커는 한 단계 아래.
+  티어는 전략5 모드 밴드 안의 시작점(`startFrac`)과 웜업 배율(`contextRamp`×`modeRamp`)을 정하고,
+  라운지(`lounge`)와 초집중(`challenge`/`steel`/`last_goal`)은 20분간 선곡 풀 자체를 오버레이한다
+  (게이트 우선순위: 폭우 > 시작 컨텍스트 > 플랜 슬롯 > 모드 리스트; 오프너도 이 풀에서
+  recency 회전으로 선곡 — 연속 시작이 같은 곡으로 반복되지 않는다). 만료되면 강제 전환 없이
+  회전 dwell로 플랜 풀에 자연 복귀. 평가마다 `startContext` 시스템 이벤트를 남기고, 감사 축으로
+  actions.jsonl 모든 라인에 `workMin`(업무 경과 분, -1=미배선)을 `ActionLog.append`에서 중앙
+  스탬프(스레드 안전 60s 캐시 공급자), 액션로그 UI는 "업무 N분/N.Nh" 필로 표시한다.
+  Verify: isolated instances (`CM_DATA_DIR`, repo `bgm/` as music root, 2026-07-12 00:35 KST =
+  주말 심야, plan slot "주말 심야 · 밤의 여운" opener-less). Scenario A (fresh data dir, workMin
+  0): launch auto-start pomodoro → `startContext "심야 · 업무 0분 → 라운지 · 시작 93BPM · 테마
+  lounge 20분"` + opener `Golden Hour (1)` (lounge); live switch to sprint → 집중 (lounge bumped
+  up), no overlay, forced pick `The Last General` at 126BPM from the plan pool; stop + start
+  unlimited → 라운지 75BPM opener `Break Room` — a DIFFERENT lounge track than pomodoro's
+  (recency rotation), three timers audibly distinct at the same wall-clock moment. Scenario B
+  (seeded `activity-<today>.jsonl`, anchors 3h ago→5min ago): every event stamped `workMin:180`;
+  pomodoro start → `"심야 · 업무 3.0h → 초집중 · 시작 119BPM · 테마 challenge·steel·last_goal
+  20분"` opener `The Last Dawn`; sprint switch → 139BPM opener `Rise of the New Era`. JS contract
+  `.e2e/actioncat.test.js` 14/14 after the UI pill/label additions.
+- **EP-16 — Harvest-stage memory clear: the 🍅 reward orb folds the board (added 2026-07-12).**
+  EN: When the pomodoro completes and the server raises the reward orb (EP-13), the rail's reward
+  render now ENTERS zen instead of revealing the board: the right-hand content folds away (window
+  narrows to the rail; on a non-dashboard rail page it leaves for `/?zen=1`) so the finished
+  session's board — leftover human working memory — is cleared and the user faces only the
+  harvest, then re-engages deliberately. Edge-triggered off `cmZenWasRun` (true only when THIS
+  page just watched the session run), so (a) a fresh page load while an orb is pending never
+  folds/redirects (navigating around with an unharvested orb stays free), and (b) a deliberate
+  둘러보기 reveal during a pending harvest is respected — the fold fires exactly once, on the live
+  completion transition. This inverts the previous rule ("a pending harvest never hides the
+  board") on purpose: 수확 단계의 목적이 메모리 클리어이기 때문.
+  KO: 포모도로 완주로 서버가 수확 오브를 올리는 순간(EP-13), 레일의 reward 렌더가 보드를 드러내는
+  대신 젠으로 접는다: 오른쪽 콘텐츠가 사라지고(창은 레일 폭으로, 대시보드가 아닌 레일 페이지에선
+  `/?zen=1`로 이동) 끝난 세션의 보드 = 남은 인간 작업기억을 걷어내, 유저는 수확만 마주한 뒤
+  의도적으로 다시 집중한다. `cmZenWasRun` 엣지 트리거(이 페이지가 방금 세션이 도는 걸 봤을 때만
+  true)라서 (a) 오브가 대기 중인 상태의 새 페이지 로드는 접거나 리다이렉트하지 않고(미수확 오브를
+  둔 채 자유롭게 탐색 가능), (b) 수확 대기 중 둘러보기로 드러낸 보드는 다시 접히지 않는다 — 접힘은
+  라이브 완주 전환에서 정확히 한 번. 기존 규칙("수확 대기는 보드를 가리지 않는다")의 의도적 반전.
+  Verify: `.e2e/harvest.test.js` (source-bound, 4/4 2026-07-12) — live transition folds exactly
+  once, re-renders don't re-fold, fresh load mid-reward never folds; `.e2e/zen.test.js` 11/11
+  unchanged.
+- **EP-17 — 화면 카탈로그: every distinct screen state auto-captured under a stable SCR-ID
+  (added 2026-07-12, UX/UI 개선 전용).**
+  EN: `Core/ScreenCatalog.swift` + a 2s probe in `AppWindowController` (`screenCatalogTick`)
+  identify the VISIBLE webview's screen state — key = `mode|path?queryKEYS|view|flags` where query
+  values are dropped (goal #12/#34 are the same SCREEN) and flags capture layout-changing UI
+  phases the path can't see (`zen`,`reward`,`run`,`counting`,`done`,`modal` via a geometric
+  full-viewport-overlay scan that excludes the rail, `railoff`). A state must hold two consecutive
+  ticks (settled, `readyState=complete`) before `WKWebView.takeSnapshot` stores ONE PNG per state
+  (`<data>/screens/SCR-XXXX.png`, ≤1200px wide, re-shot when >24h old so each entry shows the
+  screen's CURRENT look); the index (`screens/catalog.json`) tracks first/last seen, ENTER count,
+  viewport, plus management fields (note, status: 미검토/검토중/개선필요/개선완료/무시). Endpoints
+  (all under `/api/debug/` → action-log exempt): `GET /api/debug/screens/list`,
+  `GET /api/debug/screens/img?id=SCR-NNNN` (strict id-regex + in-memory index lookup — no
+  caller-supplied paths), `POST /api/debug/screens/note {id,note,status}`. UI: the condition
+  page's 7th tab "화면 카탈로그" — filterable grid (status), thumbnail lightbox, per-screen memo
+  editing. Hard caps: 600 distinct states, capture only while the window is open+visible.
+  KO: `Core/ScreenCatalog.swift` + `AppWindowController`의 2초 프로브(`screenCatalogTick`)가 지금
+  보이는 웹뷰의 화면 상태를 식별한다 — 키 = `모드|경로?쿼리키|뷰|플래그`, 쿼리 VALUE는 버려서
+  문서가 아니라 화면 레이아웃 단위로 dedupe되고, 플래그는 경로가 못 보는 UI 국면(젠/수확/세션 중/
+  카운트다운/한 판 더?/모달(레일 제외 기하 스캔)/레일 접힘)을 잡는다. 같은 상태가 두 틱 연속
+  유지(안정)되면 상태당 PNG 1장을 저장(`<data>/screens/SCR-XXXX.png`, 최대 1200px 폭, 24h 지나면
+  최신 모습으로 재촬영), 인덱스(`screens/catalog.json`)에 처음/최근 목격·진입 횟수·뷰포트와 관리
+  필드(메모, 상태: 미검토/검토중/개선필요/개선완료/무시)를 기록한다. 엔드포인트(모두 `/api/debug/`
+  하위 → 액션로그 제외): `GET /api/debug/screens/list`, `GET /api/debug/screens/img?id=SCR-NNNN`
+  (엄격한 id 정규식 + 인메모리 인덱스 조회 — 호출자 경로 미사용), `POST /api/debug/screens/note`.
+  UI: 컨디션 페이지 7번째 탭 "화면 카탈로그" — 상태 필터 그리드, 썸네일 라이트박스, 화면별 메모.
+  상한: 상태 600개, 캡처는 창이 열려 있고 보일 때만.
+  Verify: live dev instance 2026-07-12 — opening the window auto-recorded `SCR-0001`
+  (`dashboard|/|sprint|zen,counting`) with its PNG within seconds and `SCR-0002` on the state
+  transition; `GET …/img?id=SCR-0001` served the PNG inline; `.e2e/screens.test.js` (source-bound,
+  9/9) locks the tab's rendering/filter/save contract.
+- **EP-18 — UXUI sitemap + "UXUI 관리" worker: the screen hierarchy derived from SOURCE, kept in
+  sync with main (added 2026-07-12).**
+  EN: `Scripts/uxui-sitemap.py` deterministically parses the sources into a GitBook-style sitemap
+  (big pages -> sub-pages -> UI states): routes from AppDelegate's `page:` closure
+  (`path.hasPrefix`), dashboard sub-pages from DashboardContent's `VIEW_DEFS`, 시스템관리 sub-pages
+  from BGMPlayerContent's `.subtab` buttons, and the state vocabulary from AppWindow's
+  screen-catalog probe (`flags.push(...)`). Routes/flags present in code but not curated still land
+  in the map as auto entries ("신규 라우트/상태 — 미작성"), so new code surfaces instead of
+  drifting. Output `docs/uxui/sitemap.json` (repo) is installed to `<data>/screens/sitemap.json`
+  by the "UXUI 관리" worker (`Scripts/uxui-sitemap.sh`, launchd
+  `com.condition-manager.uxui-agent.plist`, 300s base tick): a commit gate (best-effort
+  `git fetch origin main`, stamp `<data>/uxui-sitemap-last-commit`) makes ticks free until main
+  actually moves; each real run reports via `POST /api/worker/ping` (id `uxui-sitemap`, registered
+  in WorkerRegistry as "UXUI 관리", owner qa, toggleable via `uxui-sitemap-disabled`). Served by
+  `GET /api/debug/screens/sitemap`; the 화면 카탈로그 tab's DEFAULT view is now the sitemap tree
+  (left: pages/subpages/states with per-node coverage badges; right: node desc + the SCR-*
+  screenshots matched by the catalog key vocabulary — mode/path(query keys stripped)/view/flag),
+  with the previous grid behind a 전체 그리드 toggle. EP-6's QA snapshot `tab` hook now accepts
+  every condition sub-tab (`map|activity|actions|diag|debug|syslog|screens`).
+  KO: `Scripts/uxui-sitemap.py`가 소스를 결정적으로 파싱해 깃북식 사이트맵(큰 페이지 → 서브페이지
+  → UI 상태)을 만든다: 라우트=AppDelegate `page:` 클로저의 `hasPrefix`, 대시보드 서브페이지=
+  `VIEW_DEFS`, 시스템관리 서브페이지=`.subtab` 버튼, 상태 어휘=AppWindow 화면 카탈로그 프로브의
+  `flags.push`. 코드에 있는데 큐레이션 표에 없는 라우트/상태도 자동 항목("신규 — 미작성")으로
+  실려 새 코드가 드러난다. 산출물 `docs/uxui/sitemap.json`(레포)은 "UXUI 관리" 워커
+  (`Scripts/uxui-sitemap.sh` + launchd 300초 베이스 틱)가 `<data>/screens/sitemap.json`으로
+  설치한다: 커밋 게이트(`git fetch origin main` 베스트에포트, `<data>/uxui-sitemap-last-commit`
+  스탬프)로 main이 실제로 움직일 때만 일하고, 실행마다 `POST /api/worker/ping`(id
+  `uxui-sitemap`, WorkerRegistry "UXUI 관리", owner qa, `uxui-sitemap-disabled` 토글)으로 보고한다.
+  `GET /api/debug/screens/sitemap`으로 서빙되며, 화면 카탈로그 탭의 기본 뷰가 사이트맵 트리
+  (좌: 페이지/서브페이지/상태 + 노드별 커버리지 배지, 우: 설명 + 카탈로그 키 어휘(mode/경로
+  (쿼리키 제거)/뷰/플래그)로 매칭된 SCR 스크린샷)가 됐고, 기존 그리드는 전체 그리드 토글 뒤로.
+  EP-6 QA 스냅샷 `tab` 훅은 이제 컨디션 서브탭 전체를 받는다.
+  Verify: generator run 2026-07-12 — 14 pages / 17 subpages / 7 flags from live source (including
+  the 화면 카탈로그 tab itself); worker `--force` run installed the sitemap and pinged (워커 row
+  `uxui-sitemap` runs:1, active); launchd agent loaded (RunAtLoad installed the prod copy);
+  `GET /api/debug/screens/sitemap` returned the 14-page doc on the live dev instance;
+  `.e2e/screens.test.js` 16/16 locks tree/coverage/match/grid/save contracts.
 
 ### Intent audit — P6
 EN: Code matches intent — PASS on EP-1..EP-6 and EP-7..EP-9 (added 2026-07-06), live-verified this

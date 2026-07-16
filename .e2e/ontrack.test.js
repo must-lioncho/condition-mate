@@ -24,12 +24,12 @@ const child2 = G('c2', 'backlog', 'p1');
 const goals = [parent, leafTop, child1, child2];
 
 check('parent with in_progress child -> on_track', derivedStatus(goals, parent) === 'on_track', derivedStatus(goals, parent));
-check('on_track label is "on track"', statLabel('on_track') === 'on track');
+check('on_track label is "On Track"', statLabel('on_track') === 'On Track');
 check('top-level leaf -> null (manual buttons)', derivedStatus(goals, leafTop) === null);
 check('child (leaf) -> null (manual buttons)', derivedStatus(goals, child1) === null);
 
 // [2] child going in_progress flips parent automatically (derive again, no sync)
-const g2 = [G('p1', 'done'), G('c1', 'backlog', 'p1')];
+const g2 = [G('p1', 'backlog'), G('c1', 'backlog', 'p1')];
 check('parent backlog when no child in progress', derivedStatus(g2, g2[0]) === 'backlog', derivedStatus(g2, g2[0]));
 g2[1].status = 'in_progress';
 check('flip to on_track after child -> 진행', derivedStatus(g2, g2[0]) === 'on_track');
@@ -42,9 +42,20 @@ check('all children done -> parent done', derivedStatus(g3, g3[0]) === 'done', d
 const g4 = [G('p', 'backlog'), G('a', 'done', 'p'), G('b', 'in_progress', 'p')];
 check('in_progress child wins over done sibling', derivedStatus(g4, g4[0]) === 'on_track');
 
-// parent's OWN stored status is ignored for display (rollup overrides)
+// parent's own in_progress is ignored for display (rollup overrides) — but a
+// manually-done parent stays done regardless of children.
 const g5 = [G('p', 'in_progress'), G('a', 'backlog', 'p')];
 check('parent own status ignored; backlog children -> backlog', derivedStatus(g5, g5[0]) === 'backlog');
+const g6 = [G('p', 'done'), G('a', 'in_progress', 'p')];
+check('manually-done parent stays done', derivedStatus(g6, g6[0]) === 'done', derivedStatus(g6, g6[0]));
+
+// partial progress: some done + rest backlog -> on_track (work has started)
+const g7 = [G('p', 'backlog'), G('a', 'done', 'p'), G('b', 'backlog', 'p')];
+check('done child among backlog -> on_track', derivedStatus(g7, g7[0]) === 'on_track', derivedStatus(g7, g7[0]));
+
+// done + cancelled leaves no remaining task -> auto done
+const g8 = [G('p', 'backlog'), G('a', 'done', 'p'), G('b', 'cancelled', 'p')];
+check('done+cancelled children -> parent done', derivedStatus(g8, g8[0]) === 'done', derivedStatus(g8, g8[0]));
 
 // statLabel mapping
 check('statLabel done/backlog', statLabel('done') === '완료' && statLabel('backlog') === '대기');

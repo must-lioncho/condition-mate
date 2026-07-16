@@ -206,6 +206,23 @@ final class DashboardServer {
                 send(conn, status: "404 Not Found", contentType: "text/plain; charset=utf-8",
                      body: Data("not found".utf8), extra: "")
             }
+        } else if method == "GET" && path.hasPrefix("/api/debug/diag/export") {
+            // 네트워크 진단 CSV export — forced download (attachment) like /evidence/.
+            if let (bytes, ctype, name) = self.file(path) {
+                let extra = "Content-Disposition: attachment; filename=\"\(Self.sanitizeHeader(name))\"\r\n"
+                send(conn, status: "200 OK", contentType: ctype, body: bytes, extra: extra)
+            } else {
+                send(conn, status: "404 Not Found", contentType: "text/plain; charset=utf-8",
+                     body: Data("no diagnostics recorded".utf8), extra: "")
+            }
+        } else if method == "GET" && path.hasPrefix("/api/debug/screens/img") {
+            // 화면 카탈로그 screenshot: inline (not a download) so the catalog grid can render it.
+            if let (bytes, ctype, _) = self.file(path) {
+                send(conn, status: "200 OK", contentType: ctype, body: bytes, extra: "")
+            } else {
+                send(conn, status: "404 Not Found", contentType: "text/plain; charset=utf-8",
+                     body: Data("not found".utf8), extra: "")
+            }
         } else if method == "GET" && path.hasPrefix("/api/debug/snapshot") {
             // QA-only: PNG snapshot of the app window's WKWebView, for SPEC.html screenshots.
             // Synchronous like every other GET here — the app blocks this thread on a semaphore
@@ -215,6 +232,15 @@ final class DashboardServer {
             } else {
                 send(conn, status: "404 Not Found", contentType: "text/plain; charset=utf-8",
                      body: Data("snapshot unavailable (window not open, or webview not loaded)".utf8), extra: "")
+            }
+        } else if method == "GET" && path.hasPrefix("/exhaust-audio/") {
+            // Exhaust ambient loop (배기음 카드): whole-file inline audio, fetched + decoded by the
+            // BGM view's Web Audio graph (no <audio> streaming, so no Range handling needed).
+            if let (bytes, ctype, _) = self.file(path) {
+                send(conn, status: "200 OK", contentType: ctype, body: bytes, extra: "")
+            } else {
+                send(conn, status: "404 Not Found", contentType: "text/plain; charset=utf-8",
+                     body: Data("not found".utf8), extra: "")
             }
         } else if method == "GET" && path.hasPrefix("/bgm-audio/") {
             // BGM library track: inline audio so the BGM view's player streams it same-origin.
@@ -233,6 +259,7 @@ final class DashboardServer {
                      body: Data("not found".utf8), extra: "")
             }
         } else if method == "GET" && (path.hasPrefix("/api/goal/chat") || path.hasPrefix("/api/goal/definition")
+                                      || path.hasPrefix("/api/goal/session/history")
                                       || path.hasPrefix("/api/goal/sessions") || path.hasPrefix("/api/sessions/recent")
                                       || path.hasPrefix("/api/cli/sessions") || path.hasPrefix("/api/skills")
                                       || path.hasPrefix("/api/agents")
@@ -244,7 +271,14 @@ final class DashboardServer {
                                       || path.hasPrefix("/api/session/state") || path.hasPrefix("/api/equipment")
                                       || path.hasPrefix("/api/settings/paths")
                                       || path.hasPrefix("/api/settings/timezone")
+                                      || path.hasPrefix("/api/settings/diag-hosts")
+                                      || path.hasPrefix("/api/debug/diag/list")
+                                      || path.hasPrefix("/api/debug/view-trace/list")
+                                      || path.hasPrefix("/api/debug/ime-log/list")
+                                      || path.hasPrefix("/api/debug/screens/list")
+                                      || path.hasPrefix("/api/debug/screens/sitemap")
                                       || path.hasPrefix("/api/update/check")
+                                      || path.hasPrefix("/api/folders")
                                       || path.hasPrefix("/api/actions")) {
             // Per-goal chat, the raw core/detail definition text, the goal's linked-session
             // list, the recent-session picker feed (all keyed by ?seq=), and the 히스토리

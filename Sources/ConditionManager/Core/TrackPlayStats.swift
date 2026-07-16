@@ -71,7 +71,7 @@ final class TrackPlayStatsStore {
     private(set) var stats: [String: TrackPlayStat] = [:]
     // The strategy new playback time accrues under. Stored in the JSON (seeded, never
     // hardcoded at the accrual sites) so a future strategy switch is a data change.
-    private(set) var activeStrategy = 4
+    private(set) var activeStrategy = 5
     private(set) var strategies: [BGMStrategy] = []
 
     private let fileURL: URL
@@ -81,11 +81,19 @@ final class TrackPlayStatsStore {
     private static let strategy3RetroSeed =
         "요일×시간대 사전 계획은 실제로 잘 맞았지만(2026-07-10 00:00 '금 심야·애프터 라운지' 슬롯이 '딱 적절한 타이밍'으로 첫 적중), 계획이 맞는지/틀리는지 검증할 피드백 루프가 없었다 — actions.jsonl 기반 슬롯별 hit/miss 관측·교정 레이어(전략4)로 확장. 플랜 맵은 대체되지 않고 전략4의 실행 가설로 유지."
 
+    // 전략4's retrospective, seeded when the 4→5 migration closes it (and on fresh
+    // installs). Same drift-guard role as strategy3RetroSeed.
+    private static let strategy4RetroSeed =
+        "슬롯별 hit/miss 관측 레이어는 자리를 잡았지만 Phase1이 관측·표시만 하고 선곡을 바꾸지 않아, 챌린지 모드(25분/스프린트/트래커)를 무엇을 골라도 같은 음악이 나오는 문제(플랜 슬롯이 선곡을 독점, 모드 선택이 무의미)가 남았다 — 모드를 BPM 밴드로 선곡에 재연결(전략5). 플랜 pool과 슬롯 hit/miss 채점은 전략5의 실행 가설로 유지."
+
     // The known strategies, seeded on migration and on fresh installs. 전략2 began
     // 2026-07-08 (the per-mode playlist change); 전략1 is everything before it. 전략3
     // (플랜 맵) superseded 전략2 the same day — the mode lists remain as its fallback.
     // 전략4 (상태 인지형) opened 2026-07-10: the plan map keeps executing while the app
     // scores each slot's hit/miss from actions.jsonl (Phase 1: observe/display only).
+    // 전략5 (모드 에너지) opened the same day: it reconnects the challenge mode to
+    // selection by targeting a mode-specific BPM region of the same plan pool — the
+    // plan pool and slot scoring stay untouched as its hypothesis.
     private static let seedStrategies: [BGMStrategy] = [
         BGMStrategy(id: 1, name: "액티비티 적응형", startedAt: "", endedAt: "2026-07-08",
                     summary: "활동 강도만 반영한 적응형 선곡",
@@ -96,8 +104,11 @@ final class TrackPlayStatsStore {
         BGMStrategy(id: 3, name: "플랜 맵", startedAt: "2026-07-08", endedAt: "2026-07-10",
                     summary: "요일(평일/주말)×시간대 사전 계획 맵(bgm-plan.json)이 테마 폴더 풀을 지정, 액티비티 적응 선곡은 풀 내부로 제한. 계획은 고급 모델이 미리, 실행은 앱이 즉시",
                     retro: strategy3RetroSeed),
-        BGMStrategy(id: 4, name: "상태 인지형", startedAt: "2026-07-10", endedAt: "",
+        BGMStrategy(id: 4, name: "상태 인지형", startedAt: "2026-07-10", endedAt: "2026-07-10",
                     summary: "전략3 플랜 맵을 가설로 유지하고, 컨디션맵 업무시작(8h 갭)·세션 진행/유휴·심야 활동과 actions.jsonl 피드백(싫어요·뮤트·완주)을 슬롯별 hit/miss로 채점하는 폐루프. 계획을 실행하며 동시에 검증·교정. Phase1은 관측·표시만(선곡·플랜 무변경).",
+                    retro: strategy4RetroSeed),
+        BGMStrategy(id: 5, name: "모드 에너지", startedAt: "2026-07-10", endedAt: "",
+                    summary: "전략3 플랜 pool과 전략4 슬롯 관측을 그대로 유지한 채, 챌린지 모드(25분/스프린트/트래커)를 선곡에 재연결. Phase1: 모드마다 플랜 밴드의 다른 BPM 구간(포모도로=집중 중속, 스프린트=고속 상승, 트래커=저속 앰비언트)을 타깃. Phase2: BPM 태그 없는 평탄 풀에서도 파일명 해시 버킷 소프트 페널티로 모드별 선곡을 분리. 게이트(inActivePool)·플랜 맵은 불변.",
                     retro: ""),
     ]
 
@@ -198,7 +209,7 @@ final class TrackPlayStatsStore {
             s.strategy = 1
             return (Self.statKey(strategy: 1, key: s.key), s)
         }, uniquingKeysWith: { a, _ in a })
-        activeStrategy = 4
+        activeStrategy = 5
         strategies = Self.seedStrategies
         save()
     }
@@ -244,6 +255,20 @@ final class TrackPlayStatsStore {
                 strategies.append(entry)
             }
             activeStrategy = 4
+            changed = true
+        }
+        // 4 → 5 (2026-07-10, 모드 에너지): close 전략4, seed its 4→5 transition retro,
+        // append 전략5, and accrue new playback time under mode-energy selection. 전략4's
+        // slot scoring keeps running (it replays actions.jsonl, independent of activeStrategy).
+        if !strategies.contains(where: { $0.id == 5 }) {
+            if let i = strategies.firstIndex(where: { $0.id == 4 }) {
+                if strategies[i].endedAt.isEmpty { strategies[i].endedAt = "2026-07-10" }
+                if strategies[i].retro.isEmpty { strategies[i].retro = Self.strategy4RetroSeed }
+            }
+            if let entry = Self.seedStrategies.first(where: { $0.id == 5 }) {
+                strategies.append(entry)
+            }
+            activeStrategy = 5
             changed = true
         }
         if changed { save() }

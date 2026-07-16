@@ -145,7 +145,14 @@ final class ActivityLog {
 
     // Today's samples parsed as dictionaries (for the abuse filter).
     func todaySamplesParsed() -> [[String: Any]] {
-        let json = todaySamplesJSON()
+        samplesParsed(for: Date())
+    }
+
+    // Samples of an arbitrary day parsed as dictionaries. The 6h-gap work-start
+    // detector reads yesterday+today so an overnight block keeps its true start.
+    func samplesParsed(for date: Date) -> [[String: Any]] {
+        guard let raw = try? String(contentsOf: fileURL(for: date), encoding: .utf8) else { return [] }
+        let json = "[" + raw.split(separator: "\n").filter { !$0.isEmpty }.joined(separator: ",") + "]"
         guard let data = json.data(using: .utf8),
               let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
         return arr

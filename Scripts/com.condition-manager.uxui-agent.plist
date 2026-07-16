@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent: UXUI 관리 — keeps the UXUI sitemap in sync with main.
+
+  Install (copy into LaunchAgents, then load):
+    cp Scripts/com.condition-manager.uxui-agent.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.condition-manager.uxui-agent.plist
+
+  Stop / uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.condition-manager.uxui-agent.plist
+    rm ~/Library/LaunchAgents/com.condition-manager.uxui-agent.plist
+
+  Run once now (without waiting for the timer):
+    launchctl start com.condition-manager.uxui-agent
+
+  The script no-ops quietly unless the main branch actually moved (commit gate
+  inside uxui-sitemap.sh), so the 300s base tick costs nothing between merges.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.condition-manager.uxui-agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/lioncho/Work/departtment_service/projects/condition-manager/Scripts/uxui-sitemap.sh</string>
+    </array>
+
+    <!-- BASE tick: wake every 5 minutes. The actual regeneration only happens when
+         main moved (commit gate in uxui-sitemap.sh). -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/cm-uxui-agent.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/cm-uxui-agent.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

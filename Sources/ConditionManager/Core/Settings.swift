@@ -41,6 +41,12 @@ final class Settings {
         static let skillsRoot     = "cm.skillsRoot"
         static let bgmWindow      = "cm.bgmWindowEnabled"
         static let timeZone       = "cm.timeZone"
+        static let activeGoalSeq  = "cm.activeGoalSeq"
+        static let activeGoalAt   = "cm.activeGoalAt"
+        static let recentTasks    = "cm.recentTasks"
+        static let pinnedGoals    = "cm.pinnedGoalSeqs"
+        static let diagHosts      = "cm.diagHosts"
+        static let gaComposer     = "cm.gaComposer"
     }
 
     // Defaults for values the user has not touched. Mirrors the old register(defaults:).
@@ -253,6 +259,87 @@ final class Settings {
         set { set(newValue, K.lastView) }
     }
 
+    // The goal/task page the user most recently opened. Surfaced in the left rail as
+    // "보는 중" so "what I'm working on right now" survives an app quit/relaunch — the
+    // live-PTY session list (cliSessions) is in-memory only and vanishes on quit, which is
+    // why a page you were reading disappeared from the rail after closing the app. Stamped
+    // on every /goal GET; `activeGoalAt` is the epoch of that open so the marker can age out.
+    // Subtask pages stamp their PARENT goal seq (the rail is a goal-level worklist).
+    var activeGoalSeq: Int? {
+        get { (get(K.activeGoalSeq) as? NSNumber)?.intValue }
+        set { set(newValue.map { NSNumber(value: $0) }, K.activeGoalSeq) }
+    }
+    var activeGoalAt: Double? {
+        get { (get(K.activeGoalAt) as? NSNumber)?.doubleValue }
+        set { set(newValue.map { NSNumber(value: $0) }, K.activeGoalAt) }
+    }
+    // Record that goal `seq` was just opened. Called from the /goal page handler.
+    func markActiveGoal(_ seq: Int, at epoch: Double) {
+        activeGoalSeq = seq
+        activeGoalAt = epoch
+    }
+
+    // Recently-VIEWED subtask pages, newest-first. Each entry is (parent goal seq, task
+    // folder name, epoch of the view). This is the task-level twin of activeGoalSeq: a
+    // subtask page stamps itself here so the left rail can show real "task-NN 보는 중" rows
+    // — several of them, in recency order — instead of collapsing every task into its
+    // parent goal. Persisted (survives an app quit/relaunch) and aged out like the goal
+    // marker (see cliSessionsJSON's 12h window).
+    struct RecentTask { let seq: Int; let task: String; let at: Double }
+    var recentTasks: [RecentTask] {
+        get {
+            let arr = (get(K.recentTasks) as? [[String: Any]]) ?? []
+            return arr.compactMap { d in
+                guard let seq = (d["seq"] as? NSNumber)?.intValue,
+                      let task = d["task"] as? String, !task.isEmpty else { return nil }
+                let at = (d["at"] as? NSNumber)?.doubleValue ?? 0
+                return RecentTask(seq: seq, task: task, at: at)
+            }
+        }
+        set {
+            set(newValue.map { ["seq": NSNumber(value: $0.seq), "task": $0.task,
+                                "at": NSNumber(value: $0.at)] as [String: Any] }, K.recentTasks)
+        }
+    }
+    // Record that a subtask page (goal `seq` / `task` folder) was just opened. Upserts the
+    // entry to the front (most-recent first), dedupes the same task, and caps the list so a
+    // long browsing history can't grow the rail without bound.
+    func markActiveTask(_ seq: Int, _ task: String, at epoch: Double) {
+        var list = recentTasks.filter { !($0.seq == seq && $0.task == task) }
+        list.insert(RecentTask(seq: seq, task: task, at: epoch), at: 0)
+        if list.count > 6 { list = Array(list.prefix(6)) }
+        recentTasks = list
+    }
+    // Drop every recently-viewed task under `seq` (used when the parent goal is archived so
+    // its tasks don't linger in the rail as 보는 중).
+    func clearRecentTasks(seq: Int) {
+        let filtered = recentTasks.filter { $0.seq != seq }
+        if filtered.count != recentTasks.count { recentTasks = filtered }
+    }
+
+    // Goals the user has PINNED (고정됨) in the left rail. Persisted so a pinned goal always
+    // surfaces at the top of the rail — even when it has no live terminal, is not in_progress,
+    // and is not the page being viewed — and survives an app quit/relaunch. Stored newest-pin-
+    // first (the toggle prepends), which is the order the "고정됨" section renders in.
+    var pinnedGoalSeqs: [Int] {
+        get { ((get(K.pinnedGoals) as? [Any]) ?? []).compactMap { ($0 as? NSNumber)?.intValue } }
+        set { set(newValue.map { NSNumber(value: $0) }, K.pinnedGoals) }
+    }
+    func isPinned(_ seq: Int) -> Bool { pinnedGoalSeqs.contains(seq) }
+    // Toggle (or force) a goal's pinned state; returns the resulting pinned flag. A new pin
+    // goes to the front so the most recently pinned sits at the top of the 고정됨 section.
+    @discardableResult
+    func setPinnedGoal(_ seq: Int, pinned: Bool? = nil) -> Bool {
+        var list = pinnedGoalSeqs
+        let currentlyPinned = list.contains(seq)
+        let target = pinned ?? !currentlyPinned
+        guard target != currentlyPinned else { return currentlyPinned }
+        if target { list.removeAll { $0 == seq }; list.insert(seq, at: 0) }
+        else { list.removeAll { $0 == seq } }
+        pinnedGoalSeqs = list
+        return target
+    }
+
     // Dashboard "완료 컷오프" — completion-time cutoff for hiding old 완료 goals.
     // Persisted server-side for the same reason as lastView: the dynamic port resets
     // any browser-side store (URL hash / localStorage) on every launch.
@@ -289,6 +376,84 @@ final class Settings {
     var timeZoneID: String {
         get { string(K.timeZone) ?? "system" }
         set { set(newValue, K.timeZone) }
+    }
+
+    // Target hosts probed by the 네트워크 진단 (DiagProbe) — the sites whose reachability we
+    // check when a user reports "the page won't load". Defaults to the HRIS host that triggered
+    // this feature; editable from the 진단 tab so new internal hosts can be added without a build.
+    // Stored as a plain string array; entries may be bare hosts or pasted URLs (normalized at probe time).
+    var diagHosts: [String] {
+        get {
+            let arr = (get(K.diagHosts) as? [String])?.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? []
+            return arr.isEmpty ? ["hris.must.company"] : arr
+        }
+        set { set(newValue.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }, K.diagHosts) }
+    }
+
+    // 목표 추가(/goal-add) 컴포저의 마지막 실행 컨텍스트 — 고른 작업 폴더(cwd·표시이름·브랜치),
+    // 작업량(effort)·모드(mode), 그리고 최근 사용 폴더 MRU(recents, 최신 우선·최대 8).
+    // Persisted server-side for the same reason as lastView/doneCutoff/uiPrefs: the dynamic
+    // server port resets any browser-side store (localStorage) on every launch, so a folder
+    // the user picked would revert to "기본" after each rebuild/relaunch. Stored as a plain
+    // JSON-native dict/array so it round-trips through JSONSerialization untouched; the page
+    // reads it (injected at render as window._gaServerCtx) and writes it back on every change.
+    struct FolderRef { let cwd: String; let name: String; let branch: String }
+    struct ComposerContext {
+        var cwd: String; var name: String; var branch: String
+        var effort: String; var mode: String; var model: String
+        var recents: [FolderRef]
+    }
+    var gaComposer: ComposerContext {
+        get {
+            let d = (get(K.gaComposer) as? [String: Any]) ?? [:]
+            let recents = ((d["recents"] as? [[String: Any]]) ?? []).compactMap { r -> FolderRef? in
+                guard let cwd = r["cwd"] as? String, !cwd.isEmpty else { return nil }
+                return FolderRef(cwd: cwd, name: (r["name"] as? String) ?? cwd,
+                                 branch: (r["branch"] as? String) ?? "")
+            }
+            return ComposerContext(cwd: (d["cwd"] as? String) ?? "",
+                                   name: (d["name"] as? String) ?? "",
+                                   branch: (d["branch"] as? String) ?? "",
+                                   effort: (d["effort"] as? String) ?? "",
+                                   mode: (d["mode"] as? String) ?? "",
+                                   model: (d["model"] as? String) ?? "",
+                                   recents: recents)
+        }
+        set {
+            let recents = newValue.recents.prefix(8).map {
+                ["cwd": $0.cwd, "name": $0.name, "branch": $0.branch] as [String: Any]
+            }
+            set(["cwd": newValue.cwd, "name": newValue.name, "branch": newValue.branch,
+                 "effort": newValue.effort, "mode": newValue.mode, "model": newValue.model,
+                 "recents": recents] as [String: Any], K.gaComposer)
+        }
+    }
+    // Upsert the composer's execution context from one change on the page. When `cwd` is a
+    // real folder it is also promoted to the front of the recents MRU (deduped, capped at 8),
+    // so the server owns the MRU bookkeeping and the client stays a thin writer.
+    func markComposer(cwd: String, name: String, branch: String, effort: String, mode: String, model: String) {
+        var ctx = gaComposer
+        ctx.cwd = cwd; ctx.name = name; ctx.branch = branch
+        ctx.effort = effort; ctx.mode = mode; ctx.model = model
+        if !cwd.isEmpty {
+            var list = ctx.recents.filter { $0.cwd != cwd }
+            list.insert(FolderRef(cwd: cwd, name: name.isEmpty ? cwd : name, branch: branch), at: 0)
+            ctx.recents = Array(list.prefix(8))
+        }
+        gaComposer = ctx
+    }
+    // The composer context serialized as the exact JSON the page injects as window._gaServerCtx.
+    func gaComposerJSON() -> String {
+        let c = gaComposer
+        let recents = c.recents.map {
+            ["cwd": $0.cwd, "name": $0.name, "branch": $0.branch] as [String: Any]
+        }
+        let dict: [String: Any] = ["cwd": c.cwd, "name": c.name, "branch": c.branch,
+                                   "effort": c.effort, "mode": c.mode, "model": c.model,
+                                   "recents": recents]
+        guard let data = try? JSONSerialization.data(withJSONObject: dict),
+              let s = String(data: data, encoding: .utf8) else { return "{}" }
+        return s
     }
 
     // The setting resolved to an actual TimeZone; invalid identifiers fall back to local

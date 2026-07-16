@@ -49,6 +49,17 @@ enum IssuePaths {
         goalDir(seq: seq)?.appendingPathComponent("attachments", isDirectory: true)
     }
 
+    // Staging folder for images attached to an AI 큐 candidate (which has no goal number yet).
+    // Keyed by the queue item id; the files are moved into goal-NN/attachments when the
+    // candidate is promoted to a real goal (resolveQueueItem "add"). Lives under the issue
+    // root's _pending-att/ so it never collides with a numbered goal folder.
+    static func pendingAttachmentsDir(id: String) -> URL? {
+        let t = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, !t.contains("/"), t != "..", !t.hasPrefix(".") else { return nil }
+        return root.appendingPathComponent("_pending-att", isDirectory: true)
+            .appendingPathComponent(t, isDirectory: true)
+    }
+
     // tasks/ subfolder holding this goal's subtasks. Each child folder is one subtask
     // (Jira-style), optionally carrying a _task.md anchor with frontmatter. Surfaced on
     // the goal page as the 부분과제 section. nil for seq <= 0.

@@ -8,6 +8,7 @@ ConditionManager.app/
 # Audio assets (not part of Swift build; kept local to keep repo lean)
 temp/
 bgm/
+downloads/
 
 # MoAI local runtime state (session logs / memory)
 .moai/logs/

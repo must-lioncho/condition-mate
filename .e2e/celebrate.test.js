@@ -21,6 +21,7 @@ const html = `<!doctype html><meta charset=utf-8>
 <button id="done" onclick="setStatus('uuid-1','done',event)">완료</button></div>
 <script>
 window.__posts=[]; window.__notes=[]; window.__src=0; window.__fetch=[];
+var _evOpen=new Set();   // evidence-panel open set (celebrateDone opens the finished goal's panel)
 function post(path,obj){ window.__posts.push({path,obj,t:Date.now()}); return Promise.resolve(); }
 window.fetch=function(u){ window.__fetch.push(u); return Promise.resolve({ok:true}); };
 // Stub Web Audio to capture the ka-ching structure without real output.
