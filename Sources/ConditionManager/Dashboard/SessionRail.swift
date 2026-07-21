@@ -35,11 +35,18 @@ enum SessionRail {
              sitting on the same row as (to the right of) the native traffic-light window buttons.
              The traffic lights occupy ~78px at top-left, so pad the left to clear them. */
           .cmrail-brand{ display:flex; align-items:center; gap:2px; padding:2px 10px 6px 84px; min-height:30px }
-          /* Top-of-rail mode navigation (chat/스킬/크론/위임/팀위임/작업) — a horizontal segmented
-             switcher like the Claude-Code shell's Chat/Cowork/Code control. Six items won't fit in
-             one row at 240px, so they wrap into a 3-column × 2-row grid of vertical mini-tabs (icon
-             over label). chat/스킬/크론/작업 route to real surfaces (크론 → 워커 뷰); 위임 opens the
-             rail-owned agents overlay; 팀위임 opens the team-discussion composer (see #cmTeamOverlay). */
+          /* Top-of-rail mode navigation (대화/스킬/크론/위임/팀위임/작업/메모장 + 미정×2) — a horizontal
+             segmented switcher like the Claude-Code shell's Chat/Cowork/Code control. Nine items form
+             a 3-column × 3-row grid of vertical mini-tabs (icon over label), ordered by the intended
+             work flow: 대화로 목표를 만들고(대화) → 실행한다. 대화/스킬/크론/작업 route to real
+             surfaces (크론 → 워커 뷰); 위임 opens the rail-owned agents overlay; 팀위임 opens the
+             team-discussion composer (#cmTeamOverlay). The 계획 menu (planning composer overlay)
+             was removed 2026-07-19 — planning now happens inside a goal session itself; the server
+             side (/api/plan/delegate, preset:'plan') stays for legacy "계획:" goals. 메모장 is a
+             focus shortcut: it opens /goal-add with the rail collapsed for THAT load only (a
+             one-shot sessionStorage hint, NOT the persisted cmRailCollapsed), so the composer
+             fills the screen for brain-dumping. The two remaining 미정 slots are reserved
+             placeholders (disabled). */
           .cmrail-nav{ display:grid; grid-template-columns:repeat(3,1fr); gap:4px; padding:6px;
             margin:0 8px 6px; background:#0f141d; border:1px solid #1c2230; border-radius:12px }
           .cmrail-item{ position:relative; display:flex; flex-direction:column; align-items:center;
@@ -57,6 +64,8 @@ enum SessionRail {
           .cmrail-item.on .cmr-lbl{ color:#7db0ff }
           .cmrail-item.on .cmr-ico svg{ color:#5b8cff }
           .cmrail-item .cmr-lbl{ max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+          /* 미정(reserved) slots: visible so the 3×3 grid reads complete, but clearly inert. */
+          .cmrail-item.off{ opacity:.35; pointer-events:none }
           .cmrail-item .cmr-cap{ flex:none; font-size:8.5px; line-height:1; color:#5d6678; background:#141a26;
             border:1px solid #222c3e; border-radius:999px; padding:2px 5px }
           .cmrail-seclabel{ padding:10px 16px 6px; font-size:11px; letter-spacing:.04em; color:#5d6678; text-transform:uppercase }
@@ -348,7 +357,7 @@ enum SessionRail {
           <div class="cmrail-work" id="cmRailWork">
             <nav class="cmrail-nav" id="cmRailNav">
               <a class="cmrail-item" data-nav="chat" onclick="cmNav('chat')" title="대화를 통해 목표를 만듭니다">
-                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7.5c0-2.2 2.3-4 5.5-4s5.5 1.8 5.5 4-2.3 4-5.5 4c-.7 0-1.4-.08-2-.23L3.2 12.7l.7-2.1C3 9.85 2.5 8.73 2.5 7.5Z"/></svg></span><span class="cmr-lbl">chat</span></a>
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7.5c0-2.2 2.3-4 5.5-4s5.5 1.8 5.5 4-2.3 4-5.5 4c-.7 0-1.4-.08-2-.23L3.2 12.7l.7-2.1C3 9.85 2.5 8.73 2.5 7.5Z"/></svg></span><span class="cmr-lbl">대화</span></a>
               <a class="cmrail-item" data-nav="skills" onclick="cmNav('skills')" title="반복적인 업무를 스킬로 실행합니다">
                 <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6.3 2.6h3.4v1.5a1.1 1.1 0 1 0 2.2 0V2.6h1.5v3.4h-1.5a1.1 1.1 0 1 0 0 2.2h1.5v3.4h-3.4v-1.5a1.1 1.1 0 1 0-2.2 0v1.5H3.9V10.2h1.5a1.1 1.1 0 1 0 0-2.2H3.9V4.6" transform="translate(-.4 .2)"/></svg></span><span class="cmr-lbl">스킬</span></a>
               <a class="cmrail-item" data-nav="cron" onclick="cmNav('cron')" title="주기적으로 실행해야 하는 업무(워커)를 등록·관리합니다">
@@ -359,6 +368,12 @@ enum SessionRail {
                 <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5.8" r="2"/><path d="M2.6 12.4c0-1.9 1.5-3.1 3.4-3.1s3.4 1.2 3.4 3.1"/><circle cx="11" cy="6.3" r="1.6"/><path d="M10.4 9.4c1.7 0 3 1 3 2.8"/></svg></span><span class="cmr-lbl">팀위임</span></a>
               <a class="cmrail-item" data-nav="work" onclick="cmNav('work')" title="현재 대시보드(작업 목록)를 봅니다">
                 <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 5.2c0-.6.5-1.1 1.1-1.1h2.1l1.1 1.3h4.4c.6 0 1.1.5 1.1 1.1v4.9c0 .6-.5 1.1-1.1 1.1H3.7c-.6 0-1.1-.5-1.1-1.1V5.2Z"/></svg></span><span class="cmr-lbl">작업</span></a>
+              <a class="cmrail-item" data-nav="memo" onclick="cmNav('memo')" title="머릿속 비워내기 — 목표 추가 화면만 크게(레일 접힘) 엽니다">
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 4.1c0-.8.6-1.4 1.4-1.4h6.8c.8 0 1.4.6 1.4 1.4v7.8c0 .8-.6 1.4-1.4 1.4H4.6c-.8 0-1.4-.6-1.4-1.4V4.1Z"/><path d="M5.6 6.2h4.8M5.6 8.4h4.8M5.6 10.6h2.6"/></svg></span><span class="cmr-lbl">메모장</span></a>
+              <a class="cmrail-item off" data-nav="tbd2" title="준비 중입니다">
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 8.2h.01M8 8.2h.01M12.4 8.2h.01"/></svg></span><span class="cmr-lbl">미정</span></a>
+              <a class="cmrail-item off" data-nav="tbd3" title="준비 중입니다">
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 8.2h.01M8 8.2h.01M12.4 8.2h.01"/></svg></span><span class="cmr-lbl">미정</span></a>
             </nav>
             <div class="cmrail-seclabel">세션</div>
             <div class="cmrail-sessions" id="cmRailSessions"><span class="cmrail-empty">불러오는 중…</span></div>
@@ -485,6 +500,12 @@ enum SessionRail {
             try{ localStorage.setItem('cmRailCollapsed', on?'1':''); }catch(e){}
           };
           try{ if(localStorage.getItem('cmRailCollapsed')==='1') document.body.classList.add('cmrail-collapsed'); }catch(e){}
+          // 메모장(집중 담기) one-shot: the rail's 메모장 item stashes cmGaFocus before
+          // navigating to /goal-add — collapse the rail for THIS load only, then consume
+          // the flag so a reload (or the next visit) shows the rail again. Deliberately
+          // does NOT touch the persisted cmRailCollapsed preference.
+          try{ if(sessionStorage.getItem('cmGaFocus')==='1' && location.pathname.indexOf('/goal-add')===0){
+            sessionStorage.removeItem('cmGaFocus'); document.body.classList.add('cmrail-collapsed'); } }catch(e){}
 
           // 목표 만들기 (AI추가): navigate to the dedicated goal-add PAGE (/goal-add,
           // GoalAddContent.swift) — a fresh document with a clean heap, from any page.
@@ -1655,7 +1676,7 @@ enum SessionRail {
         })();
         </script>
 
-        <!-- ===== 레일 모드 내비게이션 라우팅 (chat/스킬/크론/위임/팀위임/작업) ===== -->
+        <!-- ===== 레일 모드 내비게이션 라우팅 (대화/스킬/크론/위임/팀위임/작업/메모장) ===== -->
         <script>
         (function(){
           // Views that are "pages" (not the goal work panel) in the dashboard tab system.
@@ -1699,6 +1720,14 @@ enum SessionRail {
             // 다른 목적지로 이동하면 열려 있던 팀위임 오버레이는 닫는다(cmTeamHide는 순수 함수).
             if(typeof window.cmTeamHide==='function') window.cmTeamHide();
             setActive(kind);
+            // 메모장(집중 담기): 목표 추가 화면만 크게 — 레일을 접은 채 /goal-add 를 연다.
+            // 접힘은 이번 로드에만 적용되는 일회성 힌트(cmGaFocus)라, 다른 페이지로 가면
+            // 레일은 평소대로 돌아온다(persisted cmRailCollapsed 는 건드리지 않음).
+            // 이미 /goal-add 에 있으면(대화로 들어온 상태에서 다시 누르면) 즉시 접어 크게 본다.
+            if(kind==='memo'){
+              if(location.pathname.indexOf('/goal-add')===0){ document.body.classList.add('cmrail-collapsed'); return; }
+              try{ sessionStorage.setItem('cmGaFocus','1'); }catch(e){}
+              location.href='/goal-add'; return; }
             // 위임: 대시보드 탭이 아니라 레일이 소유하는 독립 에이전트 오버레이를 직접 연다(의존성 분리).
             if(kind==='delegate'){ if(typeof cmAgentsOpen==='function') cmAgentsOpen(); return; }
             // 다른 목적지로 이동하면 열려 있던 에이전트 오버레이는 닫는다.
@@ -1793,6 +1822,11 @@ enum SessionRail {
             if(o&&o.style.display!=='none') cmTeamClose(); } });
         })();
         </script>
+
+        <!-- (계획 오버레이는 2026-07-19 계획 메뉴 삭제와 함께 제거 — 계획 수립은 목표 세션
+             안(작업 모드 '계획')에서 한다. 서버의 /api/plan/delegate·preset:'plan' 경로는
+             기존 "계획:" goal 세션 호환용으로 남아 있다.) -->
+
         """#
     }
 }

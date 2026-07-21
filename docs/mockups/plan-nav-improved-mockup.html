@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>목업 · 헤더 개선 — 담기|검토 + 컨텍스트 링크</title>
+<style>
+  :root{
+    --bg:#0a0d12; --panel:#0f141d; --panel2:#161c2a; --line:#1c2230; --line2:#263143;
+    --fg:#e7ecf4; --txt:#c8cfdb; --mut:#5d6678; --mut2:#8b93a7;
+    --accent:#5b8cff; --acc2:#7db0ff; --blue:#2563eb; --purple:#a78bfa;
+    --green:#36c08a; --greenline:#2a5a3c; --sub:#9db4ff; --subline:#33406a;
+  }
+  *{ box-sizing:border-box }
+  html,body{ height:100% }
+  body{ margin:0; background:var(--bg); color:var(--txt);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,system-ui,sans-serif }
+
+  .mocknote{ display:flex; align-items:center; gap:10px; padding:7px 14px; font-size:12px;
+    color:#c9a86a; background:#171307; border-bottom:1px solid #2c2410; flex-wrap:wrap }
+  .mocknote b{ color:#e6c983 }
+  .mocknote .sp{ margin-left:auto }
+  .mocknote button{ background:none; border:1px solid #3a3016; color:#c9a86a;
+    border-radius:7px; padding:3px 10px; font:inherit; font-size:12px; cursor:pointer }
+  .mocknote button:hover{ background:#221b09 }
+  .mocknote button.act{ background:#221b09; color:#e6c983 }
+
+  .stage{ display:flex; height:calc(100vh - 33px) }
+
+  /* ── 레일 ── */
+  .rail{ width:200px; flex:none; background:var(--panel); border-right:1px solid var(--line);
+    display:flex; flex-direction:column; padding:14px 8px }
+  .rail .nav{ display:grid; grid-template-columns:repeat(3,1fr); gap:4px; padding:6px;
+    background:#0f141d; border:1px solid var(--line); border-radius:12px; margin-bottom:12px }
+  .rail .it{ display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 2px;
+    border-radius:8px; font-size:11px; color:var(--txt) }
+  .rail .it.on{ background:#152036 } .rail .it.on span{ color:var(--acc2) }
+  .rail .it.off{ opacity:.35 }
+  .rail .ico{ width:16px; height:16px; display:block; stroke:var(--mut2); fill:none;
+    stroke-width:1.4; stroke-linecap:round; stroke-linejoin:round }
+  .rail .it.on .ico{ stroke:var(--accent) }
+  .rail .sec{ padding:8px 8px 4px; font-size:10.5px; letter-spacing:.04em; color:var(--mut); text-transform:uppercase }
+  .rail .sess{ display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:8px; font-size:12.5px }
+  .rail .dot{ width:8px; height:8px; border-radius:50%; background:var(--mut2); flex:none }
+  .rail .dot.pulse{ animation:qpulse 1.4s ease-in-out infinite }
+  @keyframes qpulse{ 0%,100%{opacity:1} 50%{opacity:.3} }
+  .rail .ttl{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#dbe2ee }
+
+  /* ── 페이지 ── */
+  .page{ flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden }
+  header.ga{ display:flex; align-items:flex-start; gap:14px; padding:18px 22px 12px }
+  header.ga h1{ margin:0; font-size:16px; color:var(--fg); font-weight:650 }
+  header.ga .sub{ color:var(--mut); font-size:12.5px; margin-top:3px }
+  header.ga .segs{ margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end }
+  .ga-seg{ display:inline-flex; border:1px solid var(--line); border-radius:9px; overflow:hidden }
+  .ga-seg button{ background:none; border:0; color:var(--mut2); font:inherit; font-size:12px;
+    padding:5px 13px; cursor:pointer; display:inline-flex; align-items:center; gap:6px }
+  .ga-seg button.on{ background:#152036; color:var(--acc2) }
+  .ga-seg button:disabled{ opacity:.4; cursor:default }
+  /* 검토 대기 건수 배지 */
+  .qbdg{ min-width:16px; height:16px; border-radius:999px; background:#123024; border:1px solid var(--greenline);
+    color:var(--green); font-size:10px; font-weight:700; display:inline-flex; align-items:center;
+    justify-content:center; padding:0 4px }
+  /* 컨텍스트 링크: 목표가 생기면 나타남 (disabled 버튼 대신 숨김/등장) */
+  .goal-link{ display:none; font-size:12px; color:var(--acc2); text-decoration:none; cursor:pointer;
+    border:1px solid #274067; background:#13233c; border-radius:9px; padding:5px 12px; white-space:nowrap }
+  .goal-link:hover{ border-color:var(--accent) }
+  body.hasgoal .goal-link{ display:inline-flex }
+  /* 세션 뷰에서는 세그 숨김 — "죽은 버튼이 보이는" 버그를 노출 규칙으로 해결 */
+  body.sess .qseg{ display:none }
+
+  /* 기존 4버튼 헤더 (비교용 — mocknote 토글). #hdrNew의 표시는 인라인 style이 아니라
+     여기서만 정의해야 body.oldhdr 규칙이 이길 수 있다. */
+  #hdrNew{ display:flex; gap:8px; align-items:center }
+  #hdrOld{ display:none }
+  body.oldhdr #hdrOld{ display:flex; gap:8px }
+  body.oldhdr #hdrNew{ display:none }
+
+  main.ga{ flex:1; min-height:0; overflow-y:auto; padding:4px 22px 20px }
+  main.ga .inner{ max-width:860px; margin:0 auto }
+  .panel{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px 18px }
+
+  .ga-folder{ display:flex; align-items:center; gap:9px; margin-bottom:10px }
+  .ga-folder .flab{ font-size:12px; color:var(--mut) }
+  .fchip{ display:inline-flex; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line2);
+    color:var(--txt); border-radius:8px; padding:5px 11px; font:inherit; font-size:12.5px; cursor:pointer }
+  .fchip .cv{ color:var(--mut); font-size:10px }
+  .compbox{ background:#0d1016; border:1px solid var(--line2); border-radius:11px; padding:10px 12px }
+  .compbox:focus-within{ border-color:#3b82f6 }
+  .compbox textarea{ width:100%; background:none; border:0; outline:none; resize:vertical;
+    min-height:84px; color:var(--fg); font:inherit; line-height:1.55 }
+  .ga-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:12px 0 2px }
+  .ga-field{ display:flex; align-items:center; gap:8px }
+  .ga-field .lab{ font-size:12px; color:var(--mut) }
+  .ga-tbright{ display:flex; align-items:center; gap:16px; flex-wrap:wrap }
+  .ga-effort{ display:flex; align-items:center; gap:7px }
+  .ga-effort .cap{ font-size:11px; color:var(--mut) }
+  .ga-effort input{ width:110px; accent-color:var(--accent) }
+  .actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:12px }
+  .btn{ background:var(--panel2); border:1px solid var(--line2); color:var(--txt); border-radius:9px;
+    padding:8px 16px; font:inherit; font-size:13px; cursor:pointer }
+  .btn:hover{ border-color:#33507e }
+  .btn.primary{ background:#15233f; border-color:#274067; color:var(--acc2); font-weight:600 }
+  .btn.start{ background:var(--blue); border-color:var(--blue); color:#fff; font-weight:700 }
+  .btn.start:hover{ background:#1d4ed8 }
+  .hintline{ font-size:12px; color:var(--mut); margin-top:10px; line-height:1.6 }
+  .hintline b{ color:var(--mut2) }
+
+  .tally{ margin-top:14px; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:13px 16px }
+  .t-head{ display:flex; align-items:center; gap:8px; font-size:12px; color:var(--mut) }
+  .t-head b{ color:var(--fg) }
+  .t-head a{ color:var(--accent); text-decoration:none; cursor:pointer }
+  .t-head a:hover{ text-decoration:underline }
+  .t-clear{ margin-left:auto; background:none; border:0; color:var(--mut); font:inherit; font-size:11.5px; cursor:pointer }
+  .trow{ display:flex; gap:9px; align-items:flex-start; padding:7px 2px; border-top:1px solid var(--line); font-size:13px }
+  .trow:first-of-type{ border-top:0; margin-top:6px }
+  .trow .tx{ flex:1; min-width:0; white-space:pre-wrap; word-break:break-word }
+  .tst{ flex:none; font-size:10.5px; font-weight:600; border-radius:999px; padding:2px 9px; border:1px solid; white-space:nowrap }
+  .tst.run{ color:var(--purple); border-color:#3b3357; background:#1a1730 }
+  .tst.run .sp{ display:inline-block; animation:cpd 1.2s infinite }
+  @keyframes cpd{0%,60%,100%{opacity:.25}30%{opacity:1}}
+  .tst.done{ color:var(--acc2); border-color:#274067; background:#13233c; cursor:pointer }
+  .tst.added{ color:var(--green); border-color:var(--greenline); background:rgba(54,192,138,.08) }
+  .tst.skip{ color:var(--mut); border-color:var(--line2); background:var(--panel) }
+  .t-empty{ color:var(--mut); font-size:12.5px; padding:8px 2px 2px }
+
+  /* 검토 패널 (구 detail-큐 — 표면·로직 그대로, 이름만 '검토') */
+  #qDetail{ display:none }
+  body.qdetail #qDetail{ display:block }
+  body.qdetail .gacomp, body.qdetail .tally{ display:none }
+  .qcardm{ border:1px solid var(--line2); border-radius:11px; background:var(--panel); padding:12px 14px; margin:10px 0 }
+  .qcardm .raw{ font-size:11.5px; color:var(--mut); margin-bottom:6px }
+  .qcardm .qttl{ font-size:13.5px; font-weight:600; color:var(--fg); margin-bottom:7px }
+  .qplace{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:7px }
+  .qbadge{ display:inline-flex; font-size:11px; font-weight:600; border-radius:999px; padding:2px 9px;
+    border:1px solid var(--line); background:#1d2230 }
+  .qbadge.top{ border-color:var(--greenline); background:rgba(54,192,138,.08); color:var(--green) }
+  .qbadge.sub{ border-color:var(--subline); background:rgba(91,140,255,.10); color:var(--sub) }
+  .qbadge.dup{ border-color:#5a4a2a; background:rgba(233,196,106,.08); color:#e9c46a }
+  .qpri{ display:inline-flex; font-size:11px; font-weight:600; border-radius:999px; padding:2px 9px;
+    border:1px solid var(--line); background:#0f131b }
+  .pri-high{ color:#ff8a4c } .pri-medium{ color:#e9c46a } .pri-low{ color:#9aa3ad }
+  .qwhy{ font-size:12px; color:var(--mut2); margin-bottom:9px }
+  .qopt{ display:flex; gap:10px; align-items:center; border:1px solid var(--line); border-radius:8px;
+    padding:7px 11px; cursor:pointer; background:#0f131b; margin:5px 0; font-size:12.5px }
+  .qopt:hover{ border-color:var(--accent); background:#131a28 }
+  .qopt.rec{ border-color:var(--greenline); background:rgba(54,192,138,.06) }
+  .qnum{ flex:none; width:20px; height:20px; border-radius:6px; background:#1d2230; border:1px solid var(--line);
+    color:var(--mut); font-size:12px; font-weight:600; display:flex; align-items:center; justify-content:center }
+  .qopt.rec .qnum{ background:#123024; border-color:var(--greenline); color:var(--green) }
+  .qrec-tag{ margin-left:auto; font-size:10px; font-weight:600; color:var(--green);
+    border:1px solid var(--greenline); border-radius:20px; padding:1px 7px }
+  .q-empty{ color:var(--mut); font-size:12.5px; padding:12px 2px }
+
+  /* 세션 뷰(대화) */
+  #gaSess{ display:none }
+  body.sess .gacomp, body.sess .tally, body.sess #qDetail{ display:none }
+  body.sess #gaSess{ display:block }
+  body.sess main.ga{ padding-bottom:130px }
+  .u{ display:flex; justify-content:flex-end; margin:14px 0 }
+  .u .b{ max-width:78%; background:#1c2c4a; border:1px solid #2a3f68; color:#e2e9f5;
+    border-radius:14px 14px 4px 14px; padding:9px 13px; white-space:pre-wrap }
+  .a{ margin:14px 0; color:var(--txt); white-space:pre-wrap }
+  .cursor{ display:inline-block; width:7px; height:15px; background:var(--mut2); vertical-align:-2px;
+    animation:qpulse 1s ease-in-out infinite }
+  .tool{ margin:8px 0; border:1px solid var(--line); border-radius:9px; background:var(--panel); overflow:hidden }
+  .tool .sum{ display:flex; align-items:center; gap:9px; padding:7px 12px; cursor:pointer; font-size:12.5px; color:var(--mut2) }
+  .tool .sum .k{ color:var(--acc2); font-weight:600 }
+  .tool .sum .chev{ margin-left:auto; transition:transform .15s }
+  .tool.open .sum .chev{ transform:rotate(90deg) }
+  .tool .det{ display:none; border-top:1px solid var(--line); padding:9px 12px;
+    font:11.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--mut2); white-space:pre-wrap }
+  .tool.open .det{ display:block }
+  .gs-stat{ display:flex; align-items:center; gap:8px; margin:10px 0; font-size:12px; color:var(--mut2) }
+  .gs-stat .gstar{ color:var(--purple); animation:qpulse 1.2s infinite }
+  .gs-bar{ position:fixed; left:200px; right:0; bottom:0; display:none;
+    background:linear-gradient(transparent, var(--bg) 26%); padding:18px 22px 16px }
+  body.sess .gs-bar{ display:block }
+  .gs-bar .inner{ max-width:860px; margin:0 auto }
+  .gs-ctx{ font-size:11px; color:var(--mut); margin-bottom:6px }
+  .gs-box{ display:flex; gap:10px; align-items:flex-end; background:var(--panel);
+    border:1px solid var(--line2); border-radius:12px; padding:10px 12px }
+  .gs-box:focus-within{ border-color:#3b82f6 }
+  .gs-box textarea{ flex:1; background:none; border:0; outline:none; resize:none; color:var(--fg);
+    font:inherit; line-height:1.5; max-height:110px }
+  .gs-box .send{ flex:none; background:var(--blue); border:0; color:#fff; border-radius:8px;
+    padding:7px 14px; font:inherit; font-size:12.5px; font-weight:600; cursor:pointer }
+</style>
+</head>
+<body>
+
+<div class="mocknote">
+  <span><b>목업</b> — 헤더 개선안: 4버튼(simple-큐|detail-큐|CHAT|DETAIL) → <b>담기|검토 N</b> 2버튼 + 목표가 생기면 나타나는 <b>goal-NN 페이지 →</b> 링크. 세션 중엔 세그가 숨습니다.</span>
+  <span class="sp"></span>
+  <button id="cmpBtn" onclick="toggleOld()">기존 4버튼 헤더와 비교</button>
+  <button onclick="location.reload()">처음부터 다시</button>
+</div>
+
+<div class="stage">
+  <aside class="rail">
+    <nav class="nav">
+      <div class="it on"><svg class="ico" viewBox="0 0 16 16"><path d="M6 3.1h4"/><path d="M10 2.3h1.9c.6 0 1 .5 1 1v8.9c0 .6-.4 1-1 1H4.1c-.6 0-1-.4-1-1V3.3c0-.5.4-1 1-1H6"/><path d="M5.4 6.6h5.2M5.4 9.2h3.6"/></svg><span>계획</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><path d="M2.5 7.5c0-2.2 2.3-4 5.5-4s5.5 1.8 5.5 4-2.3 4-5.5 4c-.7 0-1.4-.08-2-.23L3.2 12.7l.7-2.1C3 9.85 2.5 8.73 2.5 7.5Z"/></svg><span>대화</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><path d="M6.3 2.8h3.4v1.5a1.1 1.1 0 1 0 2.2 0V2.8h1.5v3.4h-1.5a1.1 1.1 0 1 0 0 2.2h1.5v3.4h-3.4v-1.5a1.1 1.1 0 1 0-2.2 0v1.5H3.9V10.4h1.5a1.1 1.1 0 1 0 0-2.2H3.9V4.8"/></svg><span>스킬</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8.4" r="5"/><path d="M8 5.6V8.4l1.9 1.2"/></svg><span>크론</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><circle cx="5.6" cy="5.4" r="2.1"/><path d="M2.4 12.8c0-1.9 1.5-3.2 3.2-3.2 1.1 0 2 .5 2.6 1.2"/><path d="M9.4 8.4h4M11.7 6.5l1.9 1.9-1.9 1.9"/></svg><span>위임</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><circle cx="6" cy="5.8" r="2"/><path d="M2.6 12.4c0-1.9 1.5-3.1 3.4-3.1s3.4 1.2 3.4 3.1"/><circle cx="11" cy="6.3" r="1.6"/><path d="M10.4 9.4c1.7 0 3 1 3 2.8"/></svg><span>팀위임</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><path d="M2.6 5.2c0-.6.5-1.1 1.1-1.1h2.1l1.1 1.3h4.4c.6 0 1.1.5 1.1 1.1v4.9c0 .6-.5 1.1-1.1 1.1H3.7c-.6 0-1.1-.5-1.1-1.1V5.2Z"/></svg><span>작업</span></div>
+      <div class="it off"><svg class="ico" viewBox="0 0 16 16" stroke-width="2.2"><path d="M3.6 8.2h.01M8 8.2h.01M12.4 8.2h.01"/></svg><span>미정</span></div>
+      <div class="it off"><svg class="ico" viewBox="0 0 16 16" stroke-width="2.2"><path d="M3.6 8.2h.01M8 8.2h.01M12.4 8.2h.01"/></svg><span>미정</span></div>
+    </nav>
+    <div class="sec">세션</div>
+    <div class="sess" id="railRow" style="display:none"><span class="dot pulse"></span><span class="ttl" id="railTtl"></span></div>
+  </aside>
+
+  <div class="page">
+    <header class="ga">
+      <div><h1><span id="gaTitle">계획</span> <span style="color:var(--mut);font-size:13px;font-weight:400" id="gaWhere"></span></h1>
+        <div class="sub" id="gaSub">머릿속을 끄집어내 목표로 담습니다 — 담고, 검토·확정하고, GUI시작으로 바로 대화를 시작하세요</div></div>
+      <div class="segs">
+        <!-- 개선 헤더: 담기|검토(배지) + 목표 생기면 나타나는 컨텍스트 링크 -->
+        <div id="hdrNew">
+          <div class="ga-seg qseg">
+            <button type="button" id="segDump" class="on" onclick="qGo('simple')" title="담기 — 머리속 내용을 연달아 꺼내 목표로 담습니다">담기</button>
+            <button type="button" id="segReview" onclick="qGo('detail')" title="검토 — 담긴 항목을 검토·확정합니다 (승급 시에만 번호가 매겨집니다)">검토 <span class="qbdg" id="qBdg" style="display:none">0</span></button>
+          </div>
+          <a class="goal-link" id="goalLink" onclick="alert('목업 — 실제 앱에서는 goal 페이지(DETAIL)로 이동합니다')">goal-<span id="glNo">00</span> 페이지 →</a>
+        </div>
+        <!-- 기존 헤더 (비교용) -->
+        <div id="hdrOld">
+          <div class="ga-seg">
+            <button type="button" class="on">simple-큐</button><button type="button">detail-큐</button>
+          </div>
+          <div class="ga-seg">
+            <button type="button" class="on">CHAT</button><button type="button" disabled>DETAIL</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="ga"><div class="inner">
+      <div class="panel gacomp">
+        <div class="ga-folder">
+          <span class="flab">작업 폴더</span>
+          <button class="fchip">📁 <span>기본 (목표 폴더)</span> <span class="cv">▾</span></button>
+        </div>
+        <div class="compbox">
+          <textarea id="gaText" placeholder="목표/디테일 입력 후 Enter (AI추가로 계속 추가) · Shift+Enter 줄바꿈 · 이미지 붙여넣기/끌어놓기 가능"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();gaAi();}"></textarea>
+        </div>
+        <div class="ga-toolbar">
+          <div class="ga-field"><span class="lab">작업 모드</span>
+            <button class="fchip"><span>자동</span> <span class="cv">▾</span></button></div>
+          <div class="ga-tbright">
+            <div class="ga-field"><span class="lab">모델</span>
+              <div class="ga-seg"><button class="on">자동</button><button>Fable</button><button>Opus</button></div></div>
+            <div class="ga-field"><span class="lab">작업량 · <span style="color:var(--fg)">기본</span></span>
+              <div class="ga-effort"><span class="cap">더 빠름</span><input type="range" min="0" max="5" value="0"><span class="cap">더 스마트함</span></div></div>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn primary" onclick="gaAi()">AI추가</button>
+          <button class="btn" onclick="gaAi()">추가</button>
+          <button class="btn">검색</button>
+          <button class="btn start" onclick="gaStart()">GUI시작</button>
+        </div>
+        <div class="hintline"><b>Enter</b>를 누르면 <b>AI추가</b>로 담깁니다 — 계속 추가할 수 있습니다. 담긴 항목의 검토·확정은 <b>검토</b>에서. <b>GUI시작</b>은 입력한 목표를 바로 추가하고 <b>대화(세션 뷰)</b>로 전환해 AI 세션을 시작합니다.</div>
+      </div>
+
+      <div class="tally">
+        <div class="t-head"><b>담김 <span id="tallyN">0</span>건</b>
+          <span>— 담은 기록은 히스토리로 남습니다 · 검토·확정은 <a onclick="qGo('detail')">검토</a>에서</span>
+          <button class="t-clear" onclick="tallyClear()">비우기</button></div>
+        <div id="tallyList"><div class="t-empty">아직 담긴 게 없습니다 — 생각나는 대로 적고 Enter.</div></div>
+      </div>
+
+      <div id="qDetail">
+        <div class="panel">
+          <div style="font-size:13px;color:var(--fg);font-weight:600;margin-bottom:4px">검토 — 담긴 항목의 확정</div>
+          <div style="font-size:12px;color:var(--mut);margin-bottom:8px">AI 배치 제안을 보고 번호를 누르면 목표로 승급됩니다 (승급 시에만 번호가 매겨집니다)</div>
+          <div id="qList"><div class="q-empty">검토할 항목이 없습니다 — 담기에서 먼저 담아주세요.</div></div>
+        </div>
+      </div>
+
+      <div id="gaSess">
+        <div id="gsLive"></div>
+        <div class="gs-stat" id="gsStat" style="display:none"><span class="gstar">✳</span><span id="gsStxt">대기 중</span></div>
+      </div>
+    </div></main>
+
+    <div class="gs-bar">
+      <div class="inner">
+        <div class="gs-ctx">📁 기본 (목표 폴더) · 작업 모드 자동 · 모델 자동</div>
+        <div class="gs-box">
+          <textarea id="gsIn" rows="1" placeholder="이어서 지시하세요… (Enter 전송)"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();gsSend();}"></textarea>
+          <button class="send" onclick="gsSend()">보내기</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+// 팀 합의 헤더 규칙:
+//  평시      = [담기 | 검토 N] 2버튼 (내부 용어 큐/detail 제거, ready 건수 배지)
+//  목표 생김  = + [goal-NN 페이지 →] 링크 등장 (disabled 버튼 대신 숨김→등장)
+//  세션 중    = 세그 숨김(body.sess .qseg), 링크만 남음 — 죽은 버튼 노출 제거
+// 담기/검토/세션의 데이터 계약(분석중→완료→확정 시 seq 채번)은 기존 목업과 동일.
+// ─────────────────────────────────────────────────────────────
+var items=[]; var nId=0; var nextSeq=92; var goalSeq=0;
+var CANNED=[
+  {ttl:'주간 리포트에 포모도로 합계 표시', place:'sub', parent:'goal-84 주간 리포트 탭', pri:'medium',
+   why:'주간 리포트 탭(goal-84)의 화면 확장이므로 하위 과제 추천'},
+  {ttl:'레일 세션 드래그 순서 변경', place:'top', pri:'high',
+   why:'기존 목표와 겹치지 않는 독립 기능 — 새 목표 추천'},
+  {ttl:'BGM 슬롯 점수 이상 확인', place:'dup', parent:'goal-77 슬롯 채점 개선', pri:'low',
+   why:'열려 있는 goal-77과 사실상 같은 내용 — 스킵 추천'}
+];
+function $(id){ return document.getElementById(id); }
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+function toggleOld(){ document.body.classList.toggle('oldhdr');
+  $('cmpBtn').classList.toggle('act', document.body.classList.contains('oldhdr')); }
+
+function gaAi(){
+  var t=$('gaText'); var v=t.value.trim(); if(!v) return;
+  t.value=''; t.focus();
+  var it={id:++nId, raw:v, st:'run'};
+  var c=CANNED[(nId-1)%CANNED.length];
+  it.ttl=(nId<=CANNED.length)?c.ttl:(v.length>26?v.slice(0,26)+'…':v);
+  it.place=c.place; it.parent=c.parent||''; it.pri=c.pri; it.why=c.why;
+  items.push(it); renderTally();
+  setTimeout(function(){ it.st='ready'; renderTally(); renderQ(); }, 1100+Math.random()*900);
+}
+function tallyClear(){ items=items.filter(function(x){return x.st==='run'||x.st==='ready';}); renderTally(); }
+
+function renderTally(){
+  $('tallyN').textContent=items.length;
+  var wait=items.filter(function(x){return x.st==='ready';}).length;
+  var b=$('qBdg'); b.style.display=wait?'inline-flex':'none'; b.textContent=wait;
+  var l=$('tallyList'); l.innerHTML='';
+  if(!items.length){ l.innerHTML='<div class="t-empty">아직 담긴 게 없습니다 — 생각나는 대로 적고 Enter.</div>'; return; }
+  items.slice().reverse().forEach(function(x){
+    var st;
+    if(x.st==='run') st='<span class="tst run"><span class="sp">●</span> 분석중</span>';
+    else if(x.st==='ready') st='<span class="tst done" onclick="qGo(\'detail\')" title="검토로 이동">완료 — 검토 대기</span>';
+    else if(x.st==='added') st='<span class="tst added">추가됨 #'+x.seq+'</span>';
+    else st='<span class="tst skip">스킵됨</span>';
+    l.insertAdjacentHTML('beforeend','<div class="trow"><div class="tx">'+esc(x.raw)+'</div>'+st+'</div>');
+  });
+}
+
+function qGo(s){
+  document.body.classList.toggle('qdetail', s==='detail');
+  $('segDump').classList.toggle('on', s==='simple');
+  $('segReview').classList.toggle('on', s==='detail');
+  $('gaTitle').textContent = (s==='detail') ? '계획 · 검토' : '계획';
+  if(s==='detail') renderQ(); else setTimeout(function(){ $('gaText').focus(); },50);
+}
+
+function renderQ(){
+  var r=$('qList'); r.innerHTML='';
+  var wait=items.filter(function(x){return x.st==='ready';});
+  if(!wait.length){ r.innerHTML='<div class="q-empty">검토할 항목이 없습니다 — 담기에서 먼저 담아주세요.</div>'; return; }
+  wait.forEach(function(x){
+    var badge, opt1;
+    if(x.place==='sub'){ badge='<span class="qbadge sub">서브 · '+esc(x.parent)+' 아래</span>'; opt1='제안대로 하위 과제로 확정'; }
+    else if(x.place==='dup'){ badge='<span class="qbadge dup">중복 의심 · '+esc(x.parent)+'</span>'; opt1='스킵 (기존 목표로 충분)'; }
+    else { badge='<span class="qbadge top">독립 · 새 목표</span>'; opt1='제안대로 새 목표로 확정'; }
+    var pc = x.pri==='high'?'pri-high':(x.pri==='medium'?'pri-medium':'pri-low');
+    r.insertAdjacentHTML('beforeend',
+      '<div class="qcardm"><div class="raw">원문 — '+esc(x.raw)+'</div>'
+      +'<div class="qttl">'+esc(x.ttl)+'</div>'
+      +'<div class="qplace">'+badge+'<span class="qpri '+pc+'">'+x.pri+'</span></div>'
+      +'<div class="qwhy">'+esc(x.why)+'</div>'
+      +'<div class="qopt rec" onclick="qResolve('+x.id+',1)"><span class="qnum">1</span><span>'+opt1+'</span><span class="qrec-tag">추천</span></div>'
+      +'<div class="qopt" onclick="qResolve('+x.id+',2)"><span class="qnum">2</span><span>최상위 독립 목표로</span></div>'
+      +'<div class="qopt" onclick="qResolve('+x.id+',3)"><span class="qnum">3</span><span>스킵 (지금은 아님)</span></div></div>');
+  });
+}
+function qResolve(id,opt){
+  var x=items.find(function(i){return i.id===id;}); if(!x) return;
+  var skip=(opt===3)||(opt===1&&x.place==='dup');
+  if(skip) x.st='skip';
+  else { x.st='added'; x.seq=nextSeq++; goalBorn(x.seq); }
+  renderTally(); renderQ();
+}
+// 목표가 생기는 순간 컨텍스트 링크 등장 (실제 앱의 gaGoalBorn 대응)
+function goalBorn(seq){
+  goalSeq=seq; document.body.classList.add('hasgoal');
+  $('glNo').textContent=seq;
+}
+
+function gaStart(){
+  var t=$('gaText'); var v=t.value.trim();
+  if(!v){
+    var g=items.find(function(x){return x.st==='added';});
+    v = g ? g.ttl : '레일에서 세션을 드래그로 순서 바꾸고 싶음';
+  }
+  var seq=nextSeq++; goalBorn(seq);
+  document.body.classList.remove('qdetail');
+  document.body.classList.add('sess');
+  $('gaTitle').textContent='goal-'+seq;
+  $('gaWhere').textContent=(v.length>30?v.slice(0,30)+'…':v);
+  $('gaSub').textContent='대화(세션 뷰) — AI 출력이 이 화면에 흐르고, 하단 입력창으로 이어서 지시합니다';
+  var rr=$('railRow'); rr.style.display='flex'; $('railTtl').textContent=v;
+  $('gsLive').innerHTML='<div class="u"><div class="b">'+esc(v)+'</div></div>';
+  $('gsStat').style.display='flex'; $('gsStxt').textContent='작업 중 — 첫 턴 진행';
+  setTimeout(function(){
+    aiSay('목표를 확인했습니다 — goal-'+seq+'로 추가했고, 바로 시작합니다.\n\n먼저 관련 코드를 파악하겠습니다.', function(){
+      toolCard('Read','Sources/ConditionManager/Dashboard/SessionRail.swift','레일 세션 목록 렌더러와 정렬 규칙 확인 (…)');
+      setTimeout(function(){
+        toolCard('Edit','SessionRail.swift — 드래그 핸들 +24줄','+ row.draggable=true\n+ row.addEventListener(\'dragstart\', …)');
+        setTimeout(function(){
+          toolCard('Bash','swift build','Build complete! (4.8s)');
+          setTimeout(function(){
+            aiSay('1차 구현 완료. (목업 종료 — 헤더를 보세요: 세그는 숨고 goal-'+seq+' 페이지 링크만 남았습니다. 하단 입력창으로 이어서 지시할 수 있습니다.)');
+            $('gsStxt').textContent='턴 완료';
+          }, 700);
+        }, 900);
+      }, 1000);
+    });
+  }, 500);
+  setTimeout(function(){ $('gsIn').focus(); },300);
+}
+
+function scrollDown(){ var m=document.querySelector('main.ga'); m.scrollTop=m.scrollHeight; }
+function aiSay(text, done){
+  var live=$('gsLive'); var a=document.createElement('div'); a.className='a'; live.appendChild(a);
+  var cur=document.createElement('span'); cur.className='cursor'; a.appendChild(cur);
+  var i=0;
+  (function tick(){
+    if(i<text.length){ var ch=text.slice(i,i+3); i+=3;
+      cur.insertAdjacentHTML('beforebegin', esc(ch).replace(/\n/g,'<br>'));
+      scrollDown(); setTimeout(tick,18);
+    } else { cur.remove(); if(done) setTimeout(done,350); }
+  })();
+}
+function toolCard(kind,summary,detail){
+  var live=$('gsLive'); var t=document.createElement('div'); t.className='tool';
+  t.innerHTML='<div class="sum"><span class="k">'+kind+'</span><span>'+esc(summary)+'</span><span class="chev">›</span></div><div class="det">'+esc(detail)+'</div>';
+  t.querySelector('.sum').onclick=function(){ t.classList.toggle('open'); };
+  live.appendChild(t); scrollDown();
+}
+function gsSend(){
+  var g=$('gsIn'); var v=g.value.trim(); if(!v) return; g.value='';
+  $('gsLive').insertAdjacentHTML('beforeend','<div class="u"><div class="b">'+esc(v)+'</div></div>');
+  $('gsStxt').textContent='작업 중 — 지시 반영'; scrollDown();
+  setTimeout(function(){ aiSay('지시를 반영해 계속 진행합니다. (목업 응답)', function(){ $('gsStxt').textContent='턴 완료'; }); },400);
+}
+</script>
+</body>
+</html>

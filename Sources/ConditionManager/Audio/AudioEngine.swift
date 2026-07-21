@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import AppKit
 
 // Minimal looping player with a short crossfade between tracks.
 // Uses AVAudioPlayer (not AVAudioEngine) — lower memory and zero graph setup
@@ -25,6 +26,34 @@ final class AudioEngine {
     private var segKey: String?
     private var segTitle: String?
     private var segStart: Date?
+    private var sleepObservers: [NSObjectProtocol] = []
+
+    // Wall-clock deltas are only trustworthy while the machine is awake: system sleep
+    // suspends the process with the segment still open, so an overnight sleep used to
+    // land verbatim in a track's cumulative seconds ("2회인데 23시간"). Close the
+    // segment right before sleep and reopen it on wake; maxSegmentSeconds below is the
+    // backstop for any path where the sleep notification never fires.
+    init() {
+        let nc = NSWorkspace.shared.notificationCenter
+        sleepObservers.append(nc.addObserver(forName: NSWorkspace.willSleepNotification,
+                                             object: nil, queue: .main) { [weak self] _ in
+            self?.endSegment()
+        })
+        sleepObservers.append(nc.addObserver(forName: NSWorkspace.didWakeNotification,
+                                             object: nil, queue: .main) { [weak self] _ in
+            guard let self = self, let url = self.currentURL, !self.isPaused else { return }
+            self.beginSegment(url.lastPathComponent, self.currentTitle ?? url.lastPathComponent)
+        })
+    }
+    deinit {
+        let nc = NSWorkspace.shared.notificationCenter
+        sleepObservers.forEach { nc.removeObserver($0) }
+    }
+
+    // No single uninterrupted audible segment is plausibly this long (the director
+    // switches tracks with activity, and an idle machine sleeps well before this), so
+    // any longer delta is clock leakage — count only the cap, not the gap.
+    private let maxSegmentSeconds: TimeInterval = 4 * 3600
 
     private func beginSegment(_ key: String, _ title: String) {
         endSegment()
@@ -33,13 +62,13 @@ final class AudioEngine {
     private func endSegment() {
         guard let k = segKey, let t = segTitle, let s = segStart else { return }
         segKey = nil; segTitle = nil; segStart = nil
-        onSegmentEnd?(k, t, Date().timeIntervalSince(s))
+        onSegmentEnd?(k, t, min(Date().timeIntervalSince(s), maxSegmentSeconds))
     }
     // The still-open segment's elapsed seconds, folded into the ranking at read time so
     // a long-playing track shows fresh totals without writing on every tick.
     func currentSegment() -> (key: String, title: String, seconds: Double)? {
         guard let k = segKey, let t = segTitle, let s = segStart else { return nil }
-        return (k, t, Date().timeIntervalSince(s))
+        return (k, t, min(Date().timeIntervalSince(s), maxSegmentSeconds))
     }
 
     // One-shot CoreAudio warm-up. The very first AVAudioPlayer in the process can

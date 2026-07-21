@@ -1,10 +1,8 @@
-// E2E for the 목표 추가 page's 세션시작 button + 작업 폴더/브랜치 UX, bound to the REAL
-// sources (GoalAddContent.swift, AppDelegate.swift). Asserts:
-//   1) gaStart (GUI 토글) posts /api/goal/add and enters the INLINE session view (gsEnter)
-//      with the new seq — 세션시작 = 추가 + 같은 화면에서 AI 첫 턴 (페이지 이동 없음)
-//   1a) gaStart (CLI 토글, 기본) posts add then enters the IN-PAGE CLI terminal view
-//      (gaCliEnter → /api/goal/cli/start with the goal text as seed). 헤더 토글 클릭 =
-//      디폴트 변경 (cm.gaUiMode 영속)
+// E2E for the 목표 추가 page's GUI시작/GUI열기 + merged header (세그 토글 제거) + 작업
+// 폴더/브랜치 UX, bound to the REAL sources (GoalAddContent.swift, AppDelegate.swift). Asserts:
+//   1) gaStart() (GUI시작 버튼) posts /api/goal/add and enters the INLINE session
+//      view (gsEnter) with the new seq — 추가 + 같은 화면에서 AI 첫 턴 (페이지 이동 없음).
+//      CLI 시작 경로는 제거됨 (2026-07-19, CLI 미사용)
 //   1b) session-view turns post /api/goal/chat2/say with the goal seq, composer mode, the
 //      session allowlist, per-turn images, and modeOverride only when forcing a mode
 //   2) a failed add (ok:false / no seq) re-enables the button and never enters the session
@@ -50,6 +48,7 @@ function stubEl() {
 function bootGA() {
   const env = { els: {}, posts: [], fetches: [], local: {}, session: {}, href: '' };
   const el = id => (env.els[id] = env.els[id] || stubEl());
+  global.window = global;   // gaRecents reads window._gaServerCtx (server-injected recents)
   global.$ = el;
   global.document = { getElementById: el, addEventListener() {}, removeEventListener() {} };
   global.localStorage = { setItem: (k, v) => { env.local[k] = v; },
@@ -65,6 +64,7 @@ function bootGA() {
   global._gaFolders = null;
   global._gaBranchInfo = null; global._gaBranchQ = '';
   global.gaClearDraft = () => { env.draftCleared = true; };
+  global.gaComposerPersist = () => {};   // server-persisted composer ctx — not under test
   global.gaTallyAdd = () => {};
   global.gaAfterSubmit = () => {};
   env.reply = { ok: true, seq: 0 };
@@ -73,9 +73,8 @@ function bootGA() {
     return Promise.resolve({ json: () => Promise.resolve(env.reply) }); };
   global.fetch = url => { env.fetches.push(url);
     return Promise.resolve({ json: () => Promise.resolve(env.branchReply) }); };
-  global._gaUi = 'cli';   // 헤더 CLI/GUI 토글 상태 — 페이지 기본값과 동일
-  global._gaSessSeq = 0;  // 세션 뷰가 열린 목표 seq (0=세션 없음) — gaUiSet 라이브 전환이 참조
-  for (const n of ['gaExec', 'gaPayload', 'gaStart', 'gaUiSet', 'gaUiSync',
+  global._gaSessSeq = 0;  // 세션 뷰가 열린 목표 seq (0=세션 없음)
+  for (const n of ['gaExec', 'gaPayload', 'gaStart',
                    'gaFolderBtnSync', 'gaFolderGo',
                    'gaFolderBrowse', 'gaFolderSet', 'gaFolderPersist', 'gaFolderCustom',
                    'gaFolderRender', 'gaRecents', 'gaRecentsPut',
@@ -86,44 +85,19 @@ function bootGA() {
 const tick = () => new Promise(r => setTimeout(r, 0));
 
 async function run() {
-  // 1) 세션시작(GUI 토글): add → seq → 페이지 이동 없이 인라인 세션 뷰 진입 (gsEnter).
+  // 1) GUI시작 버튼: add → seq → 페이지 이동 없이 인라인 세션 뷰 진입 (gsEnter).
   let env = bootGA();
   env.els.gaText = stubEl(); env.els.gaText.value = '  결제 모듈 리팩터링\n디테일 포함  ';
   global._gaComp.mode = 'plan';
-  global._gaUi = 'gui';
   env.reply = { ok: true, seq: 42 };
   global.gsEnter = (seq, text) => { env.gsEntered = { seq, text }; };
   global.gaStart();
   await tick();
-  check('세션시작 posts /api/goal/add', env.posts.map(p => p.path), ['/api/goal/add']);
+  check('GUI시작 posts /api/goal/add', env.posts.map(p => p.path), ['/api/goal/add']);
   check('enters the inline session view with the new seq', env.gsEntered,
         { seq: 42, text: '결제 모듈 리팩터링\n디테일 포함' });
   check('no page navigation (stays on goal-add)', env.href, '');
   check('draft cleared on session start', env.draftCleared, true);
-
-  // 1a) 세션시작(CLI 토글, 기본값): add → 페이지 안 임베디드 터미널 뷰 진입 (gaCliEnter).
-  //     GUI 세션 뷰(gsEnter)에는 안 들어간다.
-  env = bootGA();
-  env.els.gaText = stubEl(); env.els.gaText.value = 'CLI로 시작할 목표';
-  env.reply = { ok: true, seq: 43 };
-  global.gsEnter = () => { env.gsEntered = true; };
-  global.gaCliEnter = (seq, text) => { env.cliEntered = { seq, text }; };
-  global.gaStart();
-  await tick(); await tick();
-  check('CLI 세션시작 posts /api/goal/add only', env.posts.map(p => p.path), ['/api/goal/add']);
-  check('enters the in-page CLI terminal view', env.cliEntered,
-        { seq: 43, text: 'CLI로 시작할 목표' });
-  check('CLI mode never enters the GUI session view', env.gsEntered === undefined, true);
-  check('draft cleared on CLI session start', env.draftCleared, true);
-
-  // 1a-2) 토글: 클릭이 곧 디폴트 변경 — cm.gaUiMode 영속, 기본 cli.
-  env = bootGA();
-  global.gaUiSet('gui');
-  check('toggle persists the new default', env.local['cm.gaUiMode'], 'gui');
-  check('toggle marks the GUI button on', [env.els.gaUiGui.className, env.els.gaUiCli.className],
-        ['on', '']);
-  global.gaUiSet('cli');
-  check('toggle back to cli persists', env.local['cm.gaUiMode'], 'cli');
 
   // 1b) session-view turns: chat2/say payload carries seq/mode/allow/images/modeOverride.
   env = bootGA();
@@ -157,9 +131,9 @@ async function run() {
   env.reply = { ok: false };
   global.gsEnter = () => { env.gsEntered = true; };
   global.gaStart();
-  check('button disabled while in flight', env.els.gaStartBtn.disabled, true);
+  check('button disabled while in flight', env.els.gaStartGui.disabled, true);
   await tick();
-  check('failed add re-enables the button', env.els.gaStartBtn.disabled, false);
+  check('failed add re-enables the button', env.els.gaStartGui.disabled, false);
   check('failed add never navigates', env.href, '');
   check('failed add never enters the session view', env.gsEntered === undefined, true);
 
@@ -255,6 +229,94 @@ async function run() {
   check('kick text = the composer input', b.text, '결제 모듈 리팩터링');
   check('kick consumed (one-shot)', kenv.session['cmGoalKick:42'] === undefined, true);
   check('stream opened before the turn', kenv.streamOpened, true);
+
+  // 8) 헤더 토글 병합 (2026-07-19): goal-add 헤더의 세그 토글(simple-큐/detail-큐 ·
+  //    CHAT/DETAIL)이 모두 사라졌다 — 검토는 큐 행 펼침, 목표 페이지는 세션 부제목 링크.
+  //    목표 페이지 seg(pgUiSeg)는 그대로 CHAT(ui=gui 링크)+DETAIL 만.
+  const seg = (AD.match(/id="pgUiSeg".*?<\/div>/s) || [''])[0];
+  check('goal page seg: CHAT → gui session view',
+        seg.includes("ui=gui'") && seg.includes('>CHAT<'), true);
+  check('goal page seg dropped CLI/GUI buttons',
+        seg.includes('>CLI<') || seg.includes('>GUI<') || seg.includes('ui=cli'), false);
+  check('goal-add header dropped ALL seg toggles (큐 병합)',
+        GA.includes('id="gaUiChat"') || GA.includes('id="gaUiDash"')
+        || GA.includes('id="gaQSeg"') || GA.includes('gaQGo('), false);
+  check('goal-add header dropped the CLI/GUI toggle',
+        GA.includes('id="gaUiCli"') || GA.includes('id="gaUiGui"') || GA.includes('cm.gaUiMode'), false);
+  check('CLI시작 button is gone', GA.includes('gaStartCli'), false);
+  // gsEnter 가 레일 복원용 마지막 탭 기록(cm.lastTab=gui) + 레일 "보는 중" 스탬프
+  // (/api/goal/viewing — /goal 이동 없이도 왼쪽 레일 세션 목록에 뜬다)를 남긴다.
+  const gsEnterSrc = fn(GA, 'gsEnter');
+  check('gsEnter stamps cm.lastTab=gui', gsEnterSrc.includes("cm.lastTab.'+seq,'gui'"), true);
+  check('gsEnter stamps rail 보는 중 (/api/goal/viewing)',
+        gsEnterSrc.includes("'/api/goal/viewing'"), true);
+  check('gsEnterResume stamps rail 보는 중',
+        fn(GA, 'gsEnterResume').includes("'/api/goal/viewing'"), true);
+  check('server route /api/goal/viewing → markActiveGoal',
+        /\/api\/goal\/viewing[\s\S]{0,400}markActiveGoal/.test(AD), true);
+  // GUI열기: 큐 행에서 바로 세션 — 이미 목표면 gsEnterResume, 미확정 행이면 승격(resolve add)
+  // 후 gsEnter(첫 턴=행 텍스트).
+  const gui = fn(GA, 'gaTallyGui');
+  check('GUI열기: existing goal → resume session view', gui.includes('gsEnterResume(x.seq)'), true);
+  check('GUI열기: unresolved row → promote then start',
+        gui.includes("'/api/goal/queue/resolve'") && gui.includes('gsEnter(d.seq,x.text)'), true);
+  // 이어가기 채널에 연결 세션이 없으면(no-session) 메신저 채널로 조용히 폴백해 재전송한다.
+  const gsPostSrc = fn(GA, 'gsPost');
+  check('no-session → silent chat2 fallback',
+        gsPostSrc.includes("d.error==='no-session'") && gsPostSrc.includes('_gs.sess=false'), true);
+
+  // 9) AI검색 버튼: findOnly 큐 파이프라인 — 목표를 만들지 않고 유사도 분석만.
+  //    추가 모드: 'AI 검색' 행으로 큐 목록에 담긴다(자동 펼침) — 닫기 전까지 큐에 남아
+  //    재진입·새로고침에도 복원된다. 검색 모드(레일 검색 페이지 — 큐 목록 없음)에서만
+  //    #gaResults 인라인 카드. 전용 버튼은 검색 모드에서 숨긴다(primary 리라벨과 중복).
+  check('AI검색 button in the action row', GA.includes('id="gaAiSearchBtn"'), true);
+  check('AI검색 hidden in search mode (primary 리라벨과 중복)',
+        /gaAiSearchBtn'\); if\(asB\) asB\.style\.display='none'/.test(GA), true);
+  check('search-mode primary routes through the same gaAiSearch',
+        fn(GA, 'gaAi').includes('gaAiSearch(); return;'), true);
+  check('find cards render without a search-mode gate',
+        fn(GA, 'gaFindRender').includes('_gaSearchMode'), false);
+  // 추가 모드: 결과 카드 대신 큐 행으로 담긴다.
+  env = bootGA();
+  env.els.gaText = stubEl(); env.els.gaText.value = ' 결제 리팩터링 ';
+  global._gaSearchMode = false;
+  global._gaFindIds = []; global._gaFindSeen = {}; global._gaFindTimer = null;
+  global.vtev = () => {};
+  const tallyRows = [];
+  global.gaTallyAdd = (kind, text) => { const e = { kind, text, id: '', st: '', open: false }; tallyRows.push(e); return e; };
+  global.gaTallyRender = () => { env.tallyRendered = true; };
+  global.gaTallyWatch = now => { env.tallyWatch = !!now; };
+  global.gaFindRender = force => { env.findRendered = !!force; };
+  global.gaFindWatch = () => { env.findWatch = true; };
+  env.reply = { ok: true, id: 'f1' };
+  eval.call(global, 'global.gaAiSearch = ' + fn(GA, 'gaAiSearch'));
+  global.gaAiSearch();
+  await tick();
+  check('AI검색 posts a findOnly enqueue', env.posts.map(p => [p.path, p.obj.search]),
+        [['/api/goal/queue/enqueue', true]]);
+  check('AI검색 sends trimmed text, no goal payload',
+        [env.posts[0].obj.text, 'sprint' in env.posts[0].obj, 'images' in env.posts[0].obj],
+        ['결제 리팩터링', false, false]);
+  check('추가 모드: 큐에 AI 검색 행으로 담긴다 (자동 펼침 + 큐 id 연결)',
+        tallyRows.map(x => [x.kind, x.text, x.id, x.st, x.open]),
+        [['AI 검색', '결제 리팩터링', 'f1', 'pending', true]]);
+  check('추가 모드: 행 렌더 + 상태 폴링 재개(즉시 폴)', [env.tallyRendered, env.tallyWatch], [true, true]);
+  check('추가 모드: 임시 결과 카드 경로는 타지 않는다', [global._gaFindIds, !!env.findRendered], [[], false]);
+  check('AI검색 never posts /api/goal/add (목표 없음)', env.posts.some(p => p.path === '/api/goal/add'), false);
+  // 검색 모드: 기존 #gaResults 카드 경로 유지.
+  env = bootGA();
+  env.els.gaText = stubEl(); env.els.gaText.value = '결제';
+  global._gaSearchMode = true;
+  global._gaFindIds = []; global._gaFindSeen = {}; global._gaFindTimer = null;
+  global.vtev = () => {};
+  global.gaFindRender = force => { env.findRendered = !!force; };
+  global.gaFindWatch = () => { env.findWatch = true; };
+  env.reply = { ok: true, id: 'f2' };
+  eval.call(global, 'global.gaAiSearch = ' + fn(GA, 'gaAiSearch'));
+  global.gaAiSearch();
+  await tick();
+  check('검색 모드: 결과 카드 경로 유지 (_gaFindIds + 렌더/워치)',
+        [global._gaFindIds, env.findRendered, env.findWatch], [['f2'], true, true]);
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>목업 · 계획 = 머릿속 끄집어내기 (큐 기반)</title>
+<style>
+  /* Condition Manager 팔레트 + 실제 큐 UI(QueuePanel) 색 어휘 재사용 */
+  :root{
+    --bg:#0a0d12; --panel:#0f141d; --panel2:#161c2a; --line:#1c2230; --line2:#263143;
+    --txt:#c8cfdb; --txt2:#e7ecf4; --mut:#5d6678; --mut2:#8b93a7;
+    --acc:#5b8cff; --acc2:#7db0ff; --blue:#2563eb; --purple:#a78bfa;
+    --green:#36c08a; --greenline:#2a5a3c; --sub:#9db4ff; --subline:#33406a;
+  }
+  *{ box-sizing:border-box }
+  html,body{ height:100% }
+  body{ margin:0; background:var(--bg); color:var(--txt);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,system-ui,sans-serif }
+
+  .mocknote{ display:flex; align-items:center; gap:10px; padding:7px 14px; font-size:12px;
+    color:#c9a86a; background:#171307; border-bottom:1px solid #2c2410 }
+  .mocknote b{ color:#e6c983 }
+  .mocknote button{ background:none; border:1px solid #3a3016; color:#c9a86a;
+    border-radius:7px; padding:3px 10px; font:inherit; font-size:12px; cursor:pointer }
+  .mocknote button:hover{ background:#221b09 }
+  .mocknote .sp{ margin-left:auto }
+
+  .stage{ display:flex; height:calc(100vh - 33px) }
+
+  /* ── 좌측 레일 (장식, 계획 활성) ── */
+  .rail{ width:200px; flex:none; background:var(--panel); border-right:1px solid var(--line);
+    display:flex; flex-direction:column; padding:14px 8px }
+  .rail .nav{ display:grid; grid-template-columns:repeat(3,1fr); gap:4px; padding:6px;
+    background:#0f141d; border:1px solid var(--line); border-radius:12px; margin-bottom:12px }
+  .rail .it{ display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 2px;
+    border-radius:8px; font-size:11px; color:var(--txt) }
+  .rail .it.on{ background:#152036 } .rail .it.on span{ color:var(--acc2) }
+  .rail .it.off{ opacity:.35 }
+  .rail .ico{ width:16px; height:16px; display:block; stroke:var(--mut2); fill:none;
+    stroke-width:1.4; stroke-linecap:round; stroke-linejoin:round }
+  .rail .it.on .ico{ stroke:var(--acc) }
+  .rail .sec{ padding:8px 8px 4px; font-size:10.5px; letter-spacing:.04em; color:var(--mut); text-transform:uppercase }
+  .rail .sess{ display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:8px; font-size:12.5px }
+  .rail .dot{ width:8px; height:8px; border-radius:50%; background:var(--mut2); flex:none }
+  .rail .ttl{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#dbe2ee }
+
+  /* ── 본문: 헤더 + 2열 (왼쪽 덤프 / 오른쪽 검토·확정) ── */
+  .main{ flex:1; min-width:0; display:flex; flex-direction:column }
+  .hd{ display:flex; align-items:center; gap:14px; padding:16px 22px 12px; border-bottom:1px solid var(--line) }
+  .hd h1{ margin:0; font-size:15.5px; color:var(--txt2); font-weight:600 }
+  .hd .sub{ color:var(--mut); font-size:12px }
+  .hd .stats{ margin-left:auto; display:flex; gap:8px; font-size:11.5px }
+  .hd .stat{ border:1px solid var(--line); border-radius:999px; padding:3px 11px; color:var(--mut2) }
+  .hd .stat b{ color:var(--txt2); font-weight:600 }
+  .hd .stat.g b{ color:var(--green) }
+
+  .cols{ flex:1; min-height:0; display:flex }
+
+  /* ── 왼쪽: 덤프 스트림 (simple-큐 성격) ── */
+  .dump{ flex:1; min-width:0; display:flex; flex-direction:column; border-right:1px solid var(--line) }
+  .dump .cap{ padding:14px 18px 0; font-size:12px; color:var(--mut) }
+  .dump .inwrap{ padding:10px 18px 12px }
+  .dump .box{ display:flex; gap:10px; align-items:flex-end; background:var(--panel);
+    border:1px solid var(--line2); border-radius:12px; padding:10px 12px }
+  .dump .box:focus-within{ border-color:#3b82f6 }
+  .dump textarea{ flex:1; background:none; border:0; outline:none; resize:none; color:var(--txt2);
+    font:inherit; line-height:1.5; max-height:96px }
+  .dump .add{ flex:none; background:var(--blue); border:0; color:#fff; border-radius:8px;
+    padding:7px 14px; font:inherit; font-size:12.5px; font-weight:600; cursor:pointer }
+  .dump .hint{ padding:0 18px; font-size:11px; color:var(--mut) }
+  .dump .hint a{ color:var(--acc); cursor:pointer; text-decoration:none }
+  .dump .hint a:hover{ text-decoration:underline }
+  .stream{ flex:1; overflow-y:auto; padding:10px 18px 18px }
+  .stream .empty{ color:var(--mut); font-size:12.5px; padding:14px 2px }
+  /* 담김 행: 원문 + 상태 칩 (진행중 펄스 → 완료 → 추가됨 #NN / 스킵됨) */
+  .trow{ display:flex; gap:9px; align-items:flex-start; padding:8px 2px; border-top:1px solid var(--line); font-size:13px }
+  .trow:first-child{ border-top:0 }
+  .trow .tx{ flex:1; min-width:0; color:var(--txt); white-space:pre-wrap; word-break:break-word }
+  .tst{ flex:none; font-size:10.5px; font-weight:600; border-radius:999px; padding:2px 9px; border:1px solid; white-space:nowrap }
+  .tst.run{ color:var(--purple); border-color:#3b3357; background:#1a1730 }
+  .tst.run .sp{ display:inline-block; animation:cpd 1.2s infinite }
+  @keyframes cpd{0%,60%,100%{opacity:.25}30%{opacity:1}}
+  .tst.done{ color:var(--acc2); border-color:#274067; background:#13233c }
+  .tst.added{ color:var(--green); border-color:var(--greenline); background:rgba(54,192,138,.08) }
+  .tst.skip{ color:var(--mut); border-color:var(--line2); background:var(--panel) }
+
+  /* ── 오른쪽: 검토·확정 패널 (detail-큐 성격, 실시간) ── */
+  .review{ width:46%; max-width:560px; flex:none; display:flex; flex-direction:column }
+  .review .cap{ display:flex; align-items:center; gap:8px; padding:14px 18px 8px; font-size:12px; color:var(--mut) }
+  .review .cap b{ color:var(--txt2); font-size:12.5px }
+  .rlist{ flex:1; overflow-y:auto; padding:4px 18px 12px }
+  .rlist .empty{ color:var(--mut); font-size:12.5px; padding:10px 2px }
+  /* 검토 카드: 정리된 제목 + 배치 배지(독립/서브) + 우선순위 + 사유 + 번호 옵션(1=추천) */
+  .qcardm{ border:1px solid var(--line2); border-radius:11px; background:var(--panel);
+    padding:12px 14px; margin:8px 0 }
+  .qcardm .raw{ font-size:11.5px; color:var(--mut); margin-bottom:6px; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis }
+  .qcardm .ttl{ font-size:13.5px; font-weight:600; color:var(--txt2); margin-bottom:7px }
+  .qplace{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:7px }
+  .qbadge{ display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:600;
+    border-radius:999px; padding:2px 9px; border:1px solid var(--line); background:#1d2230 }
+  .qbadge.top{ border-color:var(--greenline); background:rgba(54,192,138,.08); color:var(--green) }
+  .qbadge.sub{ border-color:var(--subline); background:rgba(91,140,255,.10); color:var(--sub) }
+  .qbadge.dup{ border-color:#5a4a2a; background:rgba(233,196,106,.08); color:#e9c46a }
+  .qpri{ display:inline-flex; font-size:11px; font-weight:600; border-radius:999px; padding:2px 9px;
+    border:1px solid var(--line); background:#0f131b }
+  .pri-high{ color:#ff8a4c } .pri-medium{ color:#e9c46a } .pri-low{ color:#9aa3ad }
+  .qcardm .why{ font-size:12px; color:var(--mut2); line-height:1.45; margin-bottom:9px }
+  .qopt{ display:flex; gap:10px; align-items:center; border:1px solid var(--line); border-radius:8px;
+    padding:7px 11px; cursor:pointer; background:#0f131b; margin:5px 0; font-size:12.5px }
+  .qopt:hover{ border-color:var(--acc); background:#131a28 }
+  .qopt.rec{ border-color:var(--greenline); background:rgba(54,192,138,.06) }
+  .qopt.rec:hover{ border-color:var(--green) }
+  .qnum{ flex:none; width:20px; height:20px; border-radius:6px; background:#1d2230;
+    border:1px solid var(--line); color:var(--mut); font-size:12px; font-weight:600;
+    display:flex; align-items:center; justify-content:center }
+  .qopt.rec .qnum{ background:#123024; border-color:var(--greenline); color:var(--green) }
+  .qrec-tag{ margin-left:auto; font-size:10px; font-weight:600; color:var(--green);
+    border:1px solid var(--greenline); border-radius:20px; padding:1px 7px }
+  .qcardm.confirmed{ border-color:var(--greenline); background:rgba(54,192,138,.05) }
+
+  /* ── 오늘의 계획 (확정 결과) ── */
+  .today{ border-top:1px solid var(--line); padding:10px 18px 14px; max-height:38%; overflow-y:auto }
+  .today .cap{ font-size:12px; color:var(--mut); margin-bottom:6px }
+  .today .cap b{ color:var(--txt2) }
+  .grow{ display:flex; align-items:center; gap:9px; padding:7px 10px; border:1px solid var(--line);
+    border-radius:9px; background:var(--panel); margin:5px 0; font-size:13px }
+  .grow .no{ flex:none; color:var(--green); font-size:11.5px; font-weight:600 }
+  .grow .t{ flex:1; min-width:0; color:var(--txt2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .grow .indent{ color:var(--mut); font-size:11px }
+  .grow .gui{ flex:none; background:var(--blue); border:0; color:#fff; border-radius:7px;
+    padding:5px 12px; font:inherit; font-size:11.5px; font-weight:600; cursor:pointer }
+  .grow .gui:hover{ background:#1d4ed8 }
+  .today .note{ font-size:11px; color:var(--mut); margin-top:6px }
+</style>
+</head>
+<body>
+
+<div class="mocknote">
+  <span><b>목업</b> — 계획 = 큐 기반 머릿속 끄집어내기. 왼쪽에 연달아 담고, 오른쪽에서 검토·확정하면 오늘의 계획이 됩니다.</span>
+  <span class="sp"></span>
+  <button onclick="seedExamples()">예시 3개 담기</button>
+  <button onclick="location.reload()">처음부터 다시</button>
+</div>
+
+<div class="stage">
+  <aside class="rail">
+    <nav class="nav">
+      <div class="it on"><svg class="ico" viewBox="0 0 16 16"><path d="M6 3.1h4"/><path d="M10 2.3h1.9c.6 0 1 .5 1 1v8.9c0 .6-.4 1-1 1H4.1c-.6 0-1-.4-1-1V3.3c0-.5.4-1 1-1H6"/><path d="M5.4 6.6h5.2M5.4 9.2h3.6"/></svg><span>계획</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><path d="M2.5 7.5c0-2.2 2.3-4 5.5-4s5.5 1.8 5.5 4-2.3 4-5.5 4c-.7 0-1.4-.08-2-.23L3.2 12.7l.7-2.1C3 9.85 2.5 8.73 2.5 7.5Z"/></svg><span>대화</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><path d="M6.3 2.8h3.4v1.5a1.1 1.1 0 1 0 2.2 0V2.8h1.5v3.4h-1.5a1.1 1.1 0 1 0 0 2.2h1.5v3.4h-3.4v-1.5a1.1 1.1 0 1 0-2.2 0v1.5H3.9V10.4h1.5a1.1 1.1 0 1 0 0-2.2H3.9V4.8"/></svg><span>스킬</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8.4" r="5"/><path d="M8 5.6V8.4l1.9 1.2"/></svg><span>크론</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><circle cx="5.6" cy="5.4" r="2.1"/><path d="M2.4 12.8c0-1.9 1.5-3.2 3.2-3.2 1.1 0 2 .5 2.6 1.2"/><path d="M9.4 8.4h4M11.7 6.5l1.9 1.9-1.9 1.9"/></svg><span>위임</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><circle cx="6" cy="5.8" r="2"/><path d="M2.6 12.4c0-1.9 1.5-3.1 3.4-3.1s3.4 1.2 3.4 3.1"/><circle cx="11" cy="6.3" r="1.6"/><path d="M10.4 9.4c1.7 0 3 1 3 2.8"/></svg><span>팀위임</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><path d="M2.6 5.2c0-.6.5-1.1 1.1-1.1h2.1l1.1 1.3h4.4c.6 0 1.1.5 1.1 1.1v4.9c0 .6-.5 1.1-1.1 1.1H3.7c-.6 0-1.1-.5-1.1-1.1V5.2Z"/></svg><span>작업</span></div>
+      <div class="it off"><svg class="ico" viewBox="0 0 16 16" stroke-width="2.2"><path d="M3.6 8.2h.01M8 8.2h.01M12.4 8.2h.01"/></svg><span>미정</span></div>
+      <div class="it off"><svg class="ico" viewBox="0 0 16 16" stroke-width="2.2"><path d="M3.6 8.2h.01M8 8.2h.01M12.4 8.2h.01"/></svg><span>미정</span></div>
+    </nav>
+    <div class="sec">세션</div>
+    <div class="sess"><span class="dot"></span><span class="ttl">주간 리포트 탭</span></div>
+  </aside>
+
+  <div class="main">
+    <div class="hd">
+      <h1>계획</h1><span class="sub">머릿속을 끄집어내 오늘의 계획으로 만듭니다</span>
+      <div class="stats">
+        <span class="stat">담김 <b id="stDump">0</b></span>
+        <span class="stat">검토 대기 <b id="stWait">0</b></span>
+        <span class="stat g">확정 <b id="stDone">0</b></span>
+      </div>
+    </div>
+    <div class="cols">
+      <!-- 왼쪽: 덤프 -->
+      <section class="dump">
+        <div class="cap">생각나는 대로 적고 Enter — 판단하지 말고 전부 꺼내세요. 분류·배치는 AI가 합니다.</div>
+        <div class="inwrap"><div class="box">
+          <textarea id="di" rows="1" placeholder="예) 주간 리포트에 포모도로 합계도 보여주면 좋겠다"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();dump();}"></textarea>
+          <button class="add" onclick="dump()">담기</button>
+        </div></div>
+        <div class="hint">연달아 입력하세요 — 입력이 끊기지 않도록 검토는 오른쪽에서 따로 진행됩니다 · <a onclick="seedExamples()">예시 3개 담기</a></div>
+        <div class="stream" id="stream"><div class="empty">아직 담긴 게 없습니다.</div></div>
+      </section>
+      <!-- 오른쪽: 검토·확정 + 오늘의 계획 -->
+      <section class="review">
+        <div class="cap"><b>검토·확정</b><span>— AI 배치 제안을 보고 번호를 누르면 목표로 승급됩니다</span></div>
+        <div class="rlist" id="rlist"><div class="empty">담긴 항목의 분석이 끝나면 여기 쌓입니다.</div></div>
+        <div class="today">
+          <div class="cap"><b>오늘의 계획</b> — 확정된 목표 <span id="stDone2">0</span>건 · 여기서 바로 업무를 시작합니다</div>
+          <div id="todayList"><div class="empty" style="color:var(--mut);font-size:12px">아직 확정된 목표가 없습니다.</div></div>
+          <div class="note">GUI시작 = 해당 목표의 세션 뷰로 이동해 첫 턴을 시작합니다 (목업에서는 이동하지 않음)</div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+// 목업 엔진: simple-큐(담기 스트림) + detail-큐(검토·확정)를 한 화면 2열로.
+// 실제 앱 계약과 동일한 개념: 담기(enqueue) → 분석(pending→ready) →
+// 확정(resolve: add/task/skip, 이때만 seq 채번) → 오늘의 계획(goal 목록) → GUI시작.
+// ─────────────────────────────────────────────────────────────
+var items=[]; var nextSeq=92; var nId=0;
+
+// 순서 기반 canned 분석: 서브 배치 / 독립 / 중복 의심을 한 번씩 보여준 뒤 독립 반복.
+var CANNED=[
+  {ttl:'주간 리포트에 포모도로 합계 표시', place:'sub', parent:'goal-84 주간 리포트 탭', pri:'medium',
+   why:'주간 리포트 탭(goal-84)의 화면 확장이므로 하위 과제로 두는 것을 추천'},
+  {ttl:'레일 세션 드래그 순서 변경', place:'top', pri:'high',
+   why:'기존 목표와 겹치지 않는 독립 기능 — 레일 UX 개선으로 새 목표 추천'},
+  {ttl:'BGM 슬롯 점수 이상 확인', place:'dup', parent:'goal-77 슬롯 채점 개선', pri:'low',
+   why:'열려 있는 goal-77과 사실상 같은 내용 — 중복이므로 스킵 추천'}
+];
+var EXAMPLES=['주간 리포트에 포모도로 합계도 보여주면 좋겠다',
+  '레일에서 세션을 드래그로 순서 바꾸고 싶음',
+  'bgm 슬롯 점수 요즘 이상한 것 같은데 확인해야 함'];
+
+function $(id){ return document.getElementById(id); }
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+function stats(){
+  var wait=items.filter(function(x){return x.st==='ready';}).length;
+  var done=items.filter(function(x){return x.st==='added';}).length;
+  $('stDump').textContent=items.length; $('stWait').textContent=wait;
+  $('stDone').textContent=done; $('stDone2').textContent=done;
+}
+
+// ── 담기: 입력 즉시 스트림에 행 추가(분석중 펄스), 입력은 바로 비워 다음 생각으로 ──
+function dump(text){
+  var t=$('di'); var v=(text!=null?text:t.value).trim(); if(!v) return;
+  if(text==null){ t.value=''; t.focus(); }
+  var it={id:++nId, raw:v, st:'run'};
+  var c=CANNED[(nId-1)%CANNED.length];
+  it.ttl=(nId<=CANNED.length)?c.ttl:(v.length>26?v.slice(0,26)+'…':v);
+  it.place=c.place; it.parent=c.parent||''; it.pri=c.pri; it.why=c.why;
+  items.push(it); renderStream(); stats();
+  setTimeout(function(){ it.st='ready'; renderStream(); renderReview(); stats(); }, 1100+Math.random()*900);
+}
+function seedExamples(){ EXAMPLES.forEach(function(x,i){ setTimeout(function(){ dump(x); }, i*350); }); }
+
+// ── 왼쪽 스트림 렌더 ──
+function renderStream(){
+  var s=$('stream'); s.innerHTML='';
+  if(!items.length){ s.innerHTML='<div class="empty">아직 담긴 게 없습니다.</div>'; return; }
+  items.slice().reverse().forEach(function(x){
+    var st;
+    if(x.st==='run') st='<span class="tst run"><span class="sp">●</span> 분석중</span>';
+    else if(x.st==='ready') st='<span class="tst done">완료 — 검토 대기</span>';
+    else if(x.st==='added') st='<span class="tst added">추가됨 #'+x.seq+'</span>';
+    else st='<span class="tst skip">스킵됨</span>';
+    s.insertAdjacentHTML('beforeend','<div class="trow"><div class="tx">'+esc(x.raw)+'</div>'+st+'</div>');
+  });
+}
+
+// ── 오른쪽 검토 카드 렌더 (ready 항목만) ──
+function renderReview(){
+  var r=$('rlist'); r.innerHTML='';
+  var wait=items.filter(function(x){return x.st==='ready';});
+  if(!wait.length){ r.innerHTML='<div class="empty">담긴 항목의 분석이 끝나면 여기 쌓입니다.</div>'; return; }
+  wait.forEach(function(x){
+    var badge, opt1;
+    if(x.place==='sub'){ badge='<span class="qbadge sub">서브 · '+esc(x.parent)+' 아래</span>'; opt1='제안대로 하위 과제로 확정'; }
+    else if(x.place==='dup'){ badge='<span class="qbadge dup">중복 의심 · '+esc(x.parent)+'</span>'; opt1='스킵 (기존 목표로 충분)'; }
+    else { badge='<span class="qbadge top">독립 · 새 목표</span>'; opt1='제안대로 새 목표로 확정'; }
+    var priCls = x.pri==='high'?'pri-high':(x.pri==='medium'?'pri-medium':'pri-low');
+    var html='<div class="qcardm" id="qc'+x.id+'">'
+      +'<div class="raw">원문 — '+esc(x.raw)+'</div>'
+      +'<div class="ttl">'+esc(x.ttl)+'</div>'
+      +'<div class="qplace">'+badge+'<span class="qpri '+priCls+'">'+x.pri+'</span></div>'
+      +'<div class="why">'+esc(x.why)+'</div>'
+      +'<div class="qopt rec" onclick="resolve('+x.id+',1)"><span class="qnum">1</span><span>'+opt1+'</span><span class="qrec-tag">추천</span></div>'
+      +'<div class="qopt" onclick="resolve('+x.id+',2)"><span class="qnum">2</span><span>최상위 독립 목표로</span></div>'
+      +'<div class="qopt" onclick="resolve('+x.id+',3)"><span class="qnum">3</span><span>스킵 (지금은 아님)</span></div>'
+      +'</div>';
+    r.insertAdjacentHTML('beforeend', html);
+  });
+}
+
+// ── 확정(resolve): 이 순간에만 seq 채번 — 실제 앱의 큐 승급 계약과 동일 ──
+function resolve(id, opt){
+  var x=items.find(function(i){return i.id===id;}); if(!x) return;
+  var skip = (opt===3) || (opt===1 && x.place==='dup');
+  if(skip){ x.st='skip'; }
+  else{
+    x.st='added'; x.seq=nextSeq++;
+    if(opt===2) x.place='top';
+    var tl=$('todayList');
+    var em=tl.querySelector('.empty'); if(em) em.remove();
+    var indent = (x.place==='sub') ? '<span class="indent">↳ '+esc(x.parent)+'</span>' : '';
+    tl.insertAdjacentHTML('beforeend',
+      '<div class="grow"><span class="no">#'+x.seq+'</span><span class="t">'+esc(x.ttl)+'</span>'+indent
+      +'<button class="gui" onclick="this.textContent=\'세션 이동(목업)\'">GUI시작</button></div>');
+  }
+  renderStream(); renderReview(); stats();
+}
+</script>
+</body>
+</html>
