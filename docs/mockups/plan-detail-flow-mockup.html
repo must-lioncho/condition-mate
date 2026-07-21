@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>목업 · 계획→업무 DETAIL 단일면 흐름</title>
+<style>
+  /* Condition Manager 대시보드 톤 재현 (SessionRail/goal 페이지 팔레트) */
+  :root{
+    --bg:#0a0d12; --panel:#0f141d; --panel2:#161c2a; --line:#1c2230; --line2:#263143;
+    --txt:#c8cfdb; --txt2:#e7ecf4; --mut:#5d6678; --mut2:#8b93a7;
+    --acc:#5b8cff; --acc2:#7db0ff; --blue:#2563eb; --purple:#a78bfa; --green:#4ade80;
+  }
+  *{ box-sizing:border-box }
+  html,body{ height:100% }
+  body{ margin:0; background:var(--bg); color:var(--txt);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,system-ui,sans-serif }
+
+  /* ── 목업 안내 바 ── */
+  .mocknote{ display:flex; align-items:center; gap:10px; padding:7px 14px; font-size:12px;
+    color:#c9a86a; background:#171307; border-bottom:1px solid #2c2410 }
+  .mocknote b{ color:#e6c983 }
+  .mocknote button{ margin-left:auto; background:none; border:1px solid #3a3016; color:#c9a86a;
+    border-radius:7px; padding:3px 10px; font:inherit; font-size:12px; cursor:pointer }
+  .mocknote button:hover{ background:#221b09 }
+
+  .stage{ display:flex; height:calc(100vh - 33px) }
+
+  /* ── 좌측 레일(장식용 축소판) ── */
+  .rail{ width:200px; flex:none; background:var(--panel); border-right:1px solid var(--line);
+    display:flex; flex-direction:column; padding:14px 8px }
+  .rail .nav{ display:grid; grid-template-columns:repeat(3,1fr); gap:4px; padding:6px;
+    background:#0f141d; border:1px solid var(--line); border-radius:12px; margin-bottom:12px }
+  .rail .it{ display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 2px;
+    border-radius:8px; font-size:11px; color:var(--txt); cursor:default }
+  .rail .it.on{ background:#152036 } .rail .it.on span{ color:var(--acc2) }
+  .rail .it.off{ opacity:.35 }
+  .rail .ico{ width:16px; height:16px; display:block; stroke:var(--mut2); fill:none;
+    stroke-width:1.4; stroke-linecap:round; stroke-linejoin:round }
+  .rail .it.on .ico{ stroke:var(--acc) }
+  .rail .sec{ padding:8px 8px 4px; font-size:10.5px; letter-spacing:.04em; color:var(--mut); text-transform:uppercase }
+  .rail .sess{ display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:8px; font-size:12.5px }
+  .rail .sess.on{ background:#1a2438 }
+  .rail .dot{ width:8px; height:8px; border-radius:50%; background:var(--mut2); flex:none }
+  .rail .dot.pulse{ animation:pulse 1.4s ease-in-out infinite }
+  @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.3} }
+  .rail .ttl{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#dbe2ee }
+
+  /* ── 우측: 화면 전환 (계획 오버레이 → goal 페이지) ── */
+  .main{ flex:1; min-width:0; display:flex; flex-direction:column; position:relative }
+
+  /* 계획 오버레이 (1단계) */
+  .plan-ov{ position:absolute; inset:0; background:var(--bg); display:flex; flex-direction:column; z-index:5 }
+  .plan-ov .hd{ display:flex; align-items:center; padding:20px 20px 14px; border-bottom:1px solid var(--line);
+    font-size:16px; font-weight:600; color:var(--txt2) }
+  .plan-ov .bd{ flex:1; display:flex; align-items:center; justify-content:center; padding:24px }
+  .plan-card{ width:100%; max-width:600px }
+  .plan-card .greet{ font-size:20px; font-weight:700; color:#eef2f8; margin-bottom:8px }
+  .plan-card .sub{ color:#9aa4b6; font-size:13px; margin-bottom:16px }
+  .plan-card textarea{ width:100%; min-height:150px; resize:vertical; background:var(--panel);
+    border:1px solid var(--line2); border-radius:10px; color:var(--txt2); font:inherit;
+    line-height:1.6; padding:12px 14px; outline:none }
+  .plan-card textarea:focus{ border-color:#3b82f6 }
+  .plan-card .foot{ display:flex; align-items:center; margin-top:12px }
+  .plan-card .hint{ color:#5f6b7f; font-size:12px }
+  .plan-card .go{ margin-left:auto; background:var(--blue); border:0; color:#fff; font-size:13px;
+    font-weight:600; border-radius:8px; padding:9px 18px; cursor:pointer }
+
+  /* goal 페이지 (2단계~) */
+  .goal{ display:flex; flex-direction:column; height:100%; opacity:0; transition:opacity .35s }
+  .goal.show{ opacity:1 }
+  .goal-hd{ display:flex; align-items:center; gap:12px; padding:16px 20px 12px; border-bottom:1px solid var(--line) }
+  .goal-hd h1{ margin:0; font-size:15.5px; color:var(--txt2); font-weight:600 }
+  .goal-hd .no{ color:var(--mut); font-size:12px; font-weight:400 }
+  /* 단계 칩: 계획중=보라(대기 계열), 업무중=파랑 — 빨강/녹색 신호등 금지 컨벤션 준수 */
+  .chip{ font-size:11px; border-radius:999px; padding:3px 10px; border:1px solid; font-weight:600 }
+  .chip.plan{ color:var(--purple); border-color:#3b3357; background:#1a1730 }
+  .chip.work{ color:var(--acc2); border-color:#274067; background:#13233c }
+  .pseg{ margin-left:auto; display:inline-flex; border:1px solid var(--line); border-radius:9px; overflow:hidden }
+  .pseg button{ background:none; border:0; color:var(--mut2); font:inherit; font-size:12px;
+    padding:5px 14px; cursor:pointer }
+  .pseg button.on{ background:#152036; color:var(--acc2) }
+
+  /* smooth 금지: 타자기 출력이 매 틱 scrollTop을 갱신하므로 smooth면 스크롤이 큐잉되어
+     상단에 머무는 것처럼 보인다 — 즉시 스크롤로 항상 최신 메시지를 따라간다. */
+  .thread{ flex:1; overflow-y:auto; padding:18px 22px 8px }
+  .thread .inner{ max-width:780px; margin:0 auto }
+
+  /* 대화 컨벤션: 사용자=말풍선, AI=플레인 텍스트 (AI 말풍선 금지) */
+  .u{ display:flex; justify-content:flex-end; margin:14px 0 }
+  .u .b{ max-width:78%; background:#1c2c4a; border:1px solid #2a3f68; color:#e2e9f5;
+    border-radius:14px 14px 4px 14px; padding:9px 13px; white-space:pre-wrap }
+  .a{ margin:14px 0; color:var(--txt); white-space:pre-wrap }
+  .a b{ color:var(--txt2) }
+  .cursor{ display:inline-block; width:7px; height:15px; background:var(--mut2); vertical-align:-2px;
+    animation:pulse 1s ease-in-out infinite }
+
+  /* cm-question 카드 */
+  .qcard{ margin:12px 0; background:var(--panel); border:1px solid var(--line2); border-radius:12px; padding:14px 16px }
+  .qcard .ask{ color:var(--txt2); font-weight:600; margin-bottom:10px }
+  .qcard .opt{ display:flex; align-items:flex-start; gap:9px; width:100%; text-align:left;
+    background:var(--panel2); border:1px solid var(--line2); border-radius:9px; color:var(--txt);
+    font:inherit; padding:9px 12px; margin:6px 0; cursor:pointer }
+  .qcard .opt:hover{ border-color:#33507e; background:#182236 }
+  .qcard .opt .rec{ flex:none; font-size:10px; color:var(--acc2); border:1px solid #274067;
+    border-radius:999px; padding:1px 7px; margin-top:1px }
+  .qcard .opt .why{ display:block; color:var(--mut2); font-size:12px; margin-top:2px }
+  .qcard.done{ opacity:.45; pointer-events:none }
+
+  /* 계획 확정 카드 + 업무 시작 버튼 */
+  .plancard{ margin:12px 0; background:#10182a; border:1px solid #274067; border-radius:12px; padding:14px 16px }
+  .plancard .t{ color:var(--acc2); font-weight:700; font-size:13px; margin-bottom:10px }
+  .plancard dl{ margin:0; display:grid; grid-template-columns:84px 1fr; gap:6px 12px; font-size:13px }
+  .plancard dt{ color:var(--mut2) } .plancard dd{ margin:0; color:var(--txt2) }
+  .startbtn{ display:flex; align-items:center; gap:10px; margin:14px 0 6px }
+  .startbtn button{ background:var(--blue); border:0; color:#fff; font-size:13.5px; font-weight:700;
+    border-radius:9px; padding:10px 22px; cursor:pointer; box-shadow:0 4px 18px rgba(37,99,235,.35) }
+  .startbtn button:hover{ background:#1d4ed8 }
+  .startbtn .note{ color:var(--mut); font-size:12px }
+  .startbtn.used{ display:none }
+
+  /* 페이즈 구분선 */
+  .divider{ display:flex; align-items:center; gap:12px; margin:22px 0; color:var(--mut2); font-size:12px }
+  .divider::before,.divider::after{ content:''; flex:1; height:1px; background:var(--line2) }
+
+  /* 도구 요약 카드 (요약 › 드릴다운) */
+  .tool{ margin:8px 0; border:1px solid var(--line); border-radius:9px; background:var(--panel); overflow:hidden }
+  .tool .sum{ display:flex; align-items:center; gap:9px; padding:7px 12px; cursor:pointer;
+    font-size:12.5px; color:var(--mut2) }
+  .tool .sum:hover{ background:var(--panel2) }
+  .tool .sum .k{ color:var(--acc2); font-weight:600 }
+  .tool .sum .chev{ margin-left:auto; transition:transform .15s }
+  .tool.open .sum .chev{ transform:rotate(90deg) }
+  .tool .det{ display:none; border-top:1px solid var(--line); padding:9px 12px;
+    font:11.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--mut2); white-space:pre-wrap }
+  .tool.open .det{ display:block }
+
+  /* 하단 컴포저 */
+  .composer{ border-top:1px solid var(--line); padding:12px 20px 16px }
+  .composer .box{ max-width:780px; margin:0 auto; display:flex; gap:10px; align-items:flex-end;
+    background:var(--panel); border:1px solid var(--line2); border-radius:12px; padding:10px 12px }
+  .composer .box:focus-within{ border-color:#3b82f6 }
+  .composer textarea{ flex:1; background:none; border:0; outline:none; resize:none; color:var(--txt2);
+    font:inherit; line-height:1.5; max-height:120px }
+  .composer .send{ flex:none; background:var(--blue); border:0; color:#fff; border-radius:8px;
+    padding:7px 14px; font:inherit; font-size:12.5px; font-weight:600; cursor:pointer }
+  .composer .modeline{ max-width:780px; margin:6px auto 0; font-size:11px; color:var(--mut) }
+</style>
+</head>
+<body>
+
+<div class="mocknote">
+  <span><b>목업</b> — 실제 앱이 아닙니다. 계획→업무 DETAIL 단일면 흐름을 클릭으로 체험하세요.</span>
+  <button onclick="location.reload()">처음부터 다시</button>
+</div>
+
+<div class="stage">
+  <!-- 좌측 레일 (장식) -->
+  <aside class="rail">
+    <nav class="nav">
+      <div class="it on"><svg class="ico" viewBox="0 0 16 16"><path d="M6 3.1h4"/><path d="M10 2.3h1.9c.6 0 1 .5 1 1v8.9c0 .6-.4 1-1 1H4.1c-.6 0-1-.4-1-1V3.3c0-.5.4-1 1-1H6"/><path d="M5.4 6.6h5.2M5.4 9.2h3.6"/></svg><span>계획</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><path d="M2.5 7.5c0-2.2 2.3-4 5.5-4s5.5 1.8 5.5 4-2.3 4-5.5 4c-.7 0-1.4-.08-2-.23L3.2 12.7l.7-2.1C3 9.85 2.5 8.73 2.5 7.5Z"/></svg><span>대화</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><path d="M6.3 2.8h3.4v1.5a1.1 1.1 0 1 0 2.2 0V2.8h1.5v3.4h-1.5a1.1 1.1 0 1 0 0 2.2h1.5v3.4h-3.4v-1.5a1.1 1.1 0 1 0-2.2 0v1.5H3.9V10.4h1.5a1.1 1.1 0 1 0 0-2.2H3.9V4.8"/></svg><span>스킬</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8.4" r="5"/><path d="M8 5.6V8.4l1.9 1.2"/></svg><span>크론</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><circle cx="5.6" cy="5.4" r="2.1"/><path d="M2.4 12.8c0-1.9 1.5-3.2 3.2-3.2 1.1 0 2 .5 2.6 1.2"/><path d="M9.4 8.4h4M11.7 6.5l1.9 1.9-1.9 1.9"/></svg><span>위임</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><circle cx="6" cy="5.8" r="2"/><path d="M2.6 12.4c0-1.9 1.5-3.1 3.4-3.1s3.4 1.2 3.4 3.1"/><circle cx="11" cy="6.3" r="1.6"/><path d="M10.4 9.4c1.7 0 3 1 3 2.8"/></svg><span>팀위임</span></div>
+      <div class="it"><svg class="ico" viewBox="0 0 16 16"><path d="M2.6 5.2c0-.6.5-1.1 1.1-1.1h2.1l1.1 1.3h4.4c.6 0 1.1.5 1.1 1.1v4.9c0 .6-.5 1.1-1.1 1.1H3.7c-.6 0-1.1-.5-1.1-1.1V5.2Z"/></svg><span>작업</span></div>
+      <div class="it off"><svg class="ico" viewBox="0 0 16 16" stroke-width="2.2"><path d="M3.6 8.2h.01M8 8.2h.01M12.4 8.2h.01"/></svg><span>미정</span></div>
+      <div class="it off"><svg class="ico" viewBox="0 0 16 16" stroke-width="2.2"><path d="M3.6 8.2h.01M8 8.2h.01M12.4 8.2h.01"/></svg><span>미정</span></div>
+    </nav>
+    <div class="sec">세션</div>
+    <div class="sess on" id="railSess" style="display:none"><span class="dot pulse" id="railDot"></span><span class="ttl" id="railTtl">계획: …</span></div>
+  </aside>
+
+  <div class="main">
+    <!-- 1단계: 계획 오버레이 -->
+    <div class="plan-ov" id="planOv">
+      <div class="hd">계획</div>
+      <div class="bd"><div class="plan-card">
+        <div class="greet">무엇을 하려고 하나요? 계획부터 세워봅시다.</div>
+        <div class="sub">하려는 일을 그대로 적으면 대화로 문제정의 → 최종 결과물 → 진행 순서 → 완료 기준을 함께 정리합니다. 계획이 확정되면 같은 화면에서 바로 업무를 시작합니다.</div>
+        <textarea id="planIn">대시보드에 주간 리포트 탭을 붙이고 싶다.
+어디부터 손대야 할지 막막하고, 오늘 안에 1차 버전을 보고 싶다.</textarea>
+        <div class="foot">
+          <span class="hint">⌘⏎ 로 시작</span>
+          <button class="go" onclick="startPlan()">계획 세우기</button>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- 2단계~: goal 페이지 (DETAIL 단일면) -->
+    <div class="goal" id="goal">
+      <div class="goal-hd">
+        <h1><span class="no">goal-91</span> <span id="goalTitle">계획: 대시보드에 주간 리포트 탭</span></h1>
+        <span class="chip plan" id="phaseChip">계획중</span>
+        <div class="pseg"><button title="세션(채팅) 뷰 — 목업에서는 이동하지 않습니다">CHAT</button><button class="on">DETAIL</button></div>
+      </div>
+      <div class="thread" id="thread"><div class="inner" id="inner"></div></div>
+      <div class="composer">
+        <div class="box">
+          <textarea id="ci" rows="1" placeholder="메시지를 입력하세요…"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendUser();}"></textarea>
+          <button class="send" onclick="sendUser()">보내기</button>
+        </div>
+        <div class="modeline" id="modeline">계획 단계 — permission-mode: plan (읽기 전용, CLI 강제) · 계획 코치가 질문으로 계획을 다듬습니다</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+// 목업 시나리오 엔진: 실제 API 없이 추천 화면 구성(DETAIL 단일면)을 재현
+// 계획중(보라 칩) → cm-question 문답 → 계획 확정 카드 + [업무 시작 ▶]
+// → 승인 발화 → 구분선 → 업무중(파랑 칩) 세션 출력(플레인 텍스트+도구 카드)
+// ─────────────────────────────────────────────────────────────
+var inner = null, thread = null;
+var phase = 'plan';           // plan | work
+var qStep = 0;                // 진행된 질문 수
+
+function el(tag, cls, html){ var e=document.createElement(tag); if(cls) e.className=cls; if(html!=null) e.innerHTML=html; return e; }
+function scrollBottom(){ thread.scrollTop = thread.scrollHeight; }
+function userBubble(text){ var w=el('div','u'); w.appendChild(el('div','b',esc(text))); inner.appendChild(w); scrollBottom(); }
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>'); }
+
+// AI 플레인 텍스트 타자기 출력
+function aiSay(text, done){
+  var a=el('div','a',''); inner.appendChild(a);
+  var cur=el('span','cursor'); a.appendChild(cur);
+  var i=0;
+  (function tick(){
+    if(i<text.length){
+      var chunk=text.slice(i, i+3); i+=3;
+      cur.insertAdjacentHTML('beforebegin', esc(chunk));
+      scrollBottom(); setTimeout(tick, 18);
+    } else { cur.remove(); if(done) setTimeout(done, 350); }
+  })();
+}
+
+// cm-question 카드
+function qcard(ask, opts, onPick){
+  var c=el('div','qcard'); c.appendChild(el('div','ask',esc(ask)));
+  opts.forEach(function(o){
+    var b=el('button','opt');
+    b.innerHTML='<span>'+esc(o.label)+(o.why?'<span class="why">'+esc(o.why)+'</span>':'')+'</span>'+(o.rec?'<span class="rec">추천</span>':'');
+    b.onclick=function(){ c.classList.add('done'); userBubble(o.label); onPick(o.label); };
+    c.appendChild(b);
+  });
+  inner.appendChild(c); scrollBottom();
+}
+
+// 도구 요약 카드 (요약 › 클릭 시 드릴다운)
+function toolCard(kind, summary, detail){
+  var t=el('div','tool');
+  t.innerHTML='<div class="sum"><span class="k">'+kind+'</span><span>'+esc(summary)+'</span><span class="chev">›</span></div><div class="det">'+esc(detail)+'</div>';
+  t.querySelector('.sum').onclick=function(){ t.classList.toggle('open'); };
+  inner.appendChild(t); scrollBottom();
+}
+
+// ── 1단계: 계획 오버레이 → goal 페이지 진입 ──
+function startPlan(){
+  var v=document.getElementById('planIn').value.trim(); if(!v) return;
+  document.getElementById('planOv').style.display='none';
+  var g=document.getElementById('goal'); requestAnimationFrame(function(){ g.classList.add('show'); });
+  inner=document.getElementById('inner'); thread=document.getElementById('thread');
+  var rs=document.getElementById('railSess'); rs.style.display='flex';
+  document.getElementById('railTtl').textContent='계획: 주간 리포트 탭';
+  userBubble(v);
+  setTimeout(function(){
+    aiSay('입력을 정리했습니다. 대시보드에 주간 리포트 탭을 추가하고, 오늘 안에 1차 버전을 확인하는 것이 목표군요.\n\n계획을 또렷하게 만들기 위해 먼저 문제정의부터 확인하겠습니다.', function(){
+      qcard('이 탭이 해결하려는 진짜 문제는 무엇인가요?', [
+        {label:'주간 업무 성과를 한 화면에서 회고하고 싶다', why:'입력 문구가 리포트 열람에 무게', rec:true},
+        {label:'외부 공유용 리포트 파일을 뽑고 싶다'},
+        {label:'기존 리포트가 흩어져 있어 모으고 싶다'}
+      ], function(){ nextQ(); });
+    });
+  }, 500);
+}
+
+function nextQ(){
+  qStep++;
+  if(qStep===1){
+    aiSay('좋습니다 — 회고용 열람 화면이군요. 다음으로 1차 버전(오늘)의 범위를 정하겠습니다.', function(){
+      qcard('오늘 확인할 1차 버전에는 무엇까지 들어가면 되나요?', [
+        {label:'포모도로·작업시간 주간 합계 표 1개', why:'가장 작게 시작해 오늘 확인 가능', rec:true},
+        {label:'표 + 주간 추이 차트까지'},
+        {label:'차트 + goal별 상세까지 전부'}
+      ], function(){ confirmPlan(); });
+    });
+  }
+}
+
+// ── 계획 확정: 요약 카드 + [업무 시작 ▶] ──
+function confirmPlan(){
+  aiSay('충분합니다. 계획을 확정하겠습니다.', function(){
+    var p=el('div','plancard');
+    p.innerHTML='<div class="t">확정된 계획</div><dl>'
+      +'<dt>문제정의</dt><dd>주간 업무 성과를 회고할 한 화면이 없다</dd>'
+      +'<dt>최종 결과물</dt><dd>대시보드 새 탭 "주간 리포트" — 포모도로·작업시간 주간 합계 표(1차)</dd>'
+      +'<dt>진행 순서</dt><dd>1) 탭 등록·빈 화면 → 2) 주간 합계 API → 3) 표 렌더 → 4) 눈으로 확인</dd>'
+      +'<dt>완료 기준</dt><dd>탭 클릭 시 이번 주 합계 표가 실데이터로 보인다</dd></dl>';
+    inner.appendChild(p);
+    var s=el('div','startbtn');
+    s.innerHTML='<button>업무 시작 ▶</button><span class="note">클릭하면 같은 대화에서 승인 발화가 전송되고 업무 세션이 이어집니다 (화면 이동 없음)</span>';
+    s.querySelector('button').onclick=function(){ s.classList.add('used'); startWork(); };
+    inner.appendChild(s); scrollBottom();
+  });
+}
+
+// ── 업무 전환: 승인 발화 → 구분선 → 칩 전환 → 세션 출력 ──
+function startWork(){
+  phase='work';
+  userBubble('계획을 승인합니다. 확정된 계획대로 지금부터 구현을 시작하세요.');
+  var chip=document.getElementById('phaseChip');
+  chip.className='chip work'; chip.textContent='업무중';
+  document.getElementById('goalTitle').textContent='주간 리포트 탭 (계획됨)';
+  document.getElementById('railTtl').textContent='주간 리포트 탭';
+  document.getElementById('modeline').textContent='업무 세션 — mode: bypassPermissions (modeOverride) · 같은 스레드에서 이어짐 · CHAT 탭에서 라이브 도구 뷰 열람 가능';
+  inner.appendChild(el('div','divider','업무 세션 시작 · 계획 단계 종료'));
+  scrollBottom();
+  setTimeout(function(){
+    aiSay('계획 승인 확인. 1단계(탭 등록·빈 화면)부터 시작합니다.', function(){
+      toolCard('Read','Sources/ConditionManager/Dashboard/DashboardContent.swift','탭 레지스트리 구조 확인 — _tabOrder, 탭 등록 지점 파악 (…)');
+      setTimeout(function(){
+        toolCard('Edit','DashboardContent.swift — 탭 등록 +12줄','+ {id:"weekly", label:"주간 리포트", render:renderWeekly}\n+ function renderWeekly(){ … }');
+        setTimeout(function(){
+          toolCard('Bash','swift build','Build complete! (4.2s)');
+          setTimeout(function(){
+            aiSay('1단계 완료 — "주간 리포트" 탭이 등록되고 빈 화면이 뜹니다. 2단계(주간 합계 API)로 진행합니다.\n\n(목업 종료 — 실제 앱에서는 세션이 계속 진행되고, 하단 컴포저로 이어서 지시할 수 있습니다. CHAT 토글을 누르면 라이브 도구 카드·메트릭 뷰로 같은 턴을 따라갑니다.)');
+          }, 700);
+        }, 800);
+      }, 900);
+    });
+  }, 600);
+}
+
+// ── 컴포저: 자유 입력도 단계에 맞게 응답 ──
+function sendUser(){
+  var t=document.getElementById('ci'); var v=t.value.trim(); if(!v) return;
+  t.value=''; userBubble(v);
+  setTimeout(function(){
+    if(phase==='plan'){
+      aiSay('메모했습니다 — 계획에 반영하겠습니다. (목업: 위 선택지 카드를 눌러 계획 확정까지 진행해보세요)');
+    } else {
+      aiSay('지시를 반영해 계속 진행합니다. (목업 응답)');
+    }
+  }, 400);
+}
+</script>
+</body>
+</html>

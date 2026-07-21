@@ -1,4 +1,5 @@
 import AppKit
+import Draw
 import GUI
 import WebCLI
 
@@ -18,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let trackPlayStats = TrackPlayStatsStore()
     let bgmPlan = BGMPlanMap()
     let pluginStore = PluginStore()
+    let drawOverlay = DrawOverlayController()
     let equipment = EquipmentStore()
     let chatStore = ChatStore()
     private(set) var director: ConditionDirector!
@@ -46,7 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if path.hasPrefix("/bgm-plan") { return BGMPlanContent.html() }
             if path.hasPrefix("/equipment") { return EquipmentContent.html() }
             // NOTE: must precede the generic "/goal" prefix below, which would swallow it.
-            if path.hasPrefix("/goal-add") { return GoalAddContent.html(serverCtx: Settings.shared.gaComposerJSON()) }
+            if path.hasPrefix("/goal-add") { return GoalAddContent.html(serverCtx: Settings.shared.gaComposerJSON(),
+                                                                        tallyHist: Settings.shared.gaTallyHistJSON()) }
             if path.hasPrefix("/goal") { return self?.goalPage(path) }
             if path.hasPrefix("/worker-log") { return self?.workerLogAllPage(path) }
             if path.hasPrefix("/worker") { return self?.workerLogPage(path) }
@@ -789,6 +792,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             mateWorkerIDs.forEach { r.unregister(id: $0) }
         }
+
+        // 드로우: installing the plugin arms the screen-draw overlay (left ⌥ draws,
+        // left ⌃ wipes). The card's draw on/off (Settings.drawEnabled) pauses it
+        // without uninstalling; either gate closing stops the poller and clears strokes.
+        if pluginStore.isConnected("draw") && Settings.shared.drawEnabled {
+            r.register(id: "draw-overlay", name: "화면 드로우",
+                       detail: "왼쪽 ⌥ 그리기 · 왼쪽 ⌘ 두 번 탭 30pt 글씨 · 왼쪽 ⌃ 지우기", interval: 5, owner: "draw")
+            drawOverlay.onActivity = { WorkerRegistry.shared.recordRun("draw-overlay") }
+            drawOverlay.start()
+        } else {
+            r.unregister(id: "draw-overlay")
+            drawOverlay.stop()
+        }
     }
 
     // MARK: - Heartbeat (1 Hz)
@@ -1191,9 +1207,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // unless an explicit sessions-dir override points the stamper somewhere safe.
         if AppPaths.isCustom,
            ProcessInfo.processInfo.environment["CM_CLAUDE_SESSIONS_DIR"] == nil { return }
-        var map: [String: Int] = [:]
-        for g in reviewStore.goals where !g.sessionId.isEmpty { map[g.sessionId] = g.seq }
-        SessionTitleStamper.stamp(seqBySession: map)
+        var map: [String: SessionTitleStamper.Entry] = [:]
+        for g in reviewStore.goals where !g.sessionId.isEmpty {
+            map[g.sessionId] = .init(seq: g.seq, fallbackTitle: g.text)
+        }
+        SessionTitleStamper.stamp(bySession: map)
     }
 
     // Parse the transcript and report its tail state: the name of the last still-open
@@ -2965,7 +2983,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // show the audit trail, link to the created goal/task, and offer 번복 (undo).
         let queueHistory = reviewStore.queueHistory.suffix(30).reversed()
             .map { h -> String in
-                "{\"id\":\(jsonString(h.id)),\"at\":\(h.at.timeIntervalSince1970),"
+                // qid = the resolved QUEUE item's id (from the restore snapshot; "" for edit
+                // entries) — lets the goal-add tally match its AI 큐 rows to their resolution.
+                "{\"id\":\(jsonString(h.id)),\"qid\":\(jsonString(h.item?.id ?? "")),\"at\":\(h.at.timeIntervalSince1970),"
                     + "\"action\":\(jsonString(h.action)),\"text\":\(jsonString(h.text)),"
                     + "\"seq\":\(h.seq),\"parentSeq\":\(h.parentSeq),\"task\":\(jsonString(h.taskFolder)),"
                     + "\"fallback\":\(h.fallback),\"undone\":\(h.undone)}"
@@ -3797,6 +3817,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let pinned = Settings.shared.setPinnedGoal(seq, pinned: force)
             return "{\"ok\":true,\"seq\":\(seq),\"pinned\":\(pinned ? "true" : "false")}"
         }
+        // 세션 뷰 "보는 중" 스탬프 — /goal 페이지 GET 이 찍는 markActiveGoal 과 같은 도장.
+        // /goal-add 의 인라인 세션 뷰(GUI시작·GUI열기)는 페이지 이동 없이 세션을 열므로
+        // 여기로 직접 찍어야 왼쪽 레일 세션 목록에 그 목표가 바로 나타난다.
+        if path == "/api/goal/viewing" {
+            let seq = (obj["seq"] as? NSNumber)?.intValue
+                ?? Int((obj["seq"] as? String) ?? "")
+            guard let seq, seq > 0 else { return "{\"ok\":false,\"error\":\"bad seq\"}" }
+            Settings.shared.markActiveGoal(seq, at: Date().timeIntervalSince1970)
+            return "{\"ok\":true,\"seq\":\(seq)}"
+        }
         // 목표 추가 컴포저의 마지막 실행 컨텍스트(작업 폴더·브랜치·작업량·모드)를 서버에 영속.
         // localStorage 는 매 실행마다 바뀌는 dynamic 포트(=새 origin)에 리셋되므로, 여기 저장해
         // 재빌드/재시작 후에도 고른 폴더가 유지된다. recents MRU 는 서버가 관리(dedupe·상한 8).
@@ -3808,6 +3838,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                          mode: (obj["mode"] as? String) ?? "",
                                          model: (obj["model"] as? String) ?? "")
             return Settings.shared.gaComposerJSON()
+        }
+        // 담김 히스토리(simple-큐) 서버 영속 — localStorage 는 dynamic 포트 리셋으로 업데이트/재시작
+        // 때 사라지므로 여기 저장한다. 페이지가 보내는 목록을 알려진 필드만 골라 담는다(상한 100).
+        if path == "/api/goal/tally" {
+            let raw = (obj["list"] as? [[String: Any]]) ?? []
+            Settings.shared.gaTallyHist = raw.suffix(100).map { e in
+                ["kind": (e["kind"] as? String) ?? "",
+                 "text": (e["text"] as? String) ?? "",
+                 "id": (e["id"] as? String) ?? "",
+                 "st": (e["st"] as? String) ?? "",
+                 "seq": (e["seq"] as? NSNumber)?.intValue ?? 0,
+                 "resolved": (e["resolved"] as? String) ?? "",
+                 "ts": (e["ts"] as? NSNumber)?.doubleValue ?? 0] as [String: Any]
+            }
+            return "{\"ok\":true}"
         }
         // 장비 EXP 지급 시뮬 — the /equipment page's dev-only 시뮬 button. Real pomodoro
         // completions are judged server-side (heartbeat wall-clock → completePomodoro),
@@ -4131,6 +4176,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return "{\"ok\":true,\"seq\":\(seq)}"
         }
+        // 계획: mint a planning goal for what the user wants to do and hand its number back —
+        // the rail then navigates to the goal page, which auto-sends the first chat2 turn with
+        // preset:"plan" (the planning-coach preamble: refine 문제정의/결과물/진행 순서/완료 기준
+        // BEFORE any real work). The goal itself is a plain addGoal; once the plan is agreed the
+        // user starts actual work on the same goal via GUI시작.
+        if path == "/api/plan/delegate" {
+            let text = ((obj["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return "{\"ok\":false,\"error\":\"empty\"}" }
+            let firstLine = text.split(separator: "\n", omittingEmptySubsequences: true)
+                .first.map(String.init) ?? text
+            let title = "계획: " + String(firstLine.prefix(60))
+            let exec = Self.composerExec(obj)
+            let seq = DispatchQueue.main.sync {
+                reviewStore.addGoal(text: title, effort: exec.effort, mode: exec.mode, cwd: exec.cwd,
+                                    branch: exec.branch, model: exec.model)
+            }
+            guard seq > 0 else { return "{\"ok\":false,\"error\":\"create-failed\"}" }
+            return "{\"ok\":true,\"seq\":\(seq)}"
+        }
         if path == "/api/goal/chat2/stop" {
             chat2Stop(Scope.from(body: obj))
             return "{\"ok\":true}"
@@ -4339,7 +4403,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             if !names.isEmpty { reviewStore.setQueueItemImages(id: qid, images: names) }
                         }
                         kickAIQueueWorker()
+                        // The goal-add tally tracks this candidate by id (status chip + inline edit).
+                        return "{\"ok\":true,\"id\":\(jsonString(qid))}"
                     }
+                }
+            case "/api/goal/queue/edit":
+                // "이번에 담김" inline edit: rewrite the candidate's text and re-run the dedup
+                // analysis (tally chip flips 완료 → 진행중 → 완료). not-found once the item was
+                // resolved/removed — the tally then falls back to editing the created goal's title.
+                if let id = obj["id"] as? String, let text = obj["text"] as? String {
+                    if reviewStore.editQueueItemText(id: id, text: text) {
+                        kickAIQueueWorker()
+                        return "{\"ok\":true}"
+                    }
+                    return "{\"ok\":false,\"error\":\"not-found\"}"
                 }
             case "/api/goal/queue/resolve":
                 // Resolve one queued candidate: add (promote to goal), task (file as a
@@ -4625,6 +4702,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let id = obj["id"] as? String { pluginStore.install(pluginId: id); syncPluginWorkers() }
             case "/api/plugin/uninstall":
                 if let id = obj["id"] as? String { pluginStore.uninstall(pluginId: id); syncPluginWorkers() }
+            case "/api/draw/enabled":
+                // 드로우 card's draw on/off sub-switch. Persist + resync so the overlay
+                // poller starts/stops immediately (turning off also wipes the canvas).
+                Settings.shared.drawEnabled = (obj["on"] as? NSNumber)?.boolValue ?? false
+                syncPluginWorkers()
+            case "/api/draw/clear":
+                // Programmatic wipe (QA/debug parity with the left-⌃ gesture).
+                drawOverlay.clear()
             case "/api/goal/energy":
                 if let id = obj["id"] as? String, let e = (obj["energy"] as? NSNumber)?.intValue {
                     reviewStore.setEnergy(id: id, energy: e)
@@ -6517,8 +6602,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         // preset selects the FIRST-turn framing: "team" turns this chat into a team-lead
-        // multi-agent debate (팀위임); anything else keeps the 목표 명확화 preamble.
-        let preamble = (preset == "team") ? teamChatPreamble(scope) : goalChatPreamble(scope)
+        // multi-agent debate (팀위임); "plan" into a planning-coach session (계획);
+        // anything else keeps the 목표 명확화 preamble.
+        let preamble: String
+        switch preset {
+        case "team": preamble = teamChatPreamble(scope)
+        case "plan": preamble = planChatPreamble(scope)
+        default: preamble = goalChatPreamble(scope)
+        }
         let key = scope.key
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             // 실행 연동: the composer's chosen branch is checked out in the goal's cwd before
@@ -7174,6 +7265,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            - 실행 가능한 개선안 (우선순위 포함)
 
         규칙: 한국어로 답합니다. 결론을 먼저 쓰고 근거를 뒤에 씁니다. 토론을 시작하기 전에 사용자에게 되묻지 말고 바로 진행합니다(입력이 정말 모호할 때만 짧게 확인). 이후 사용자가 추가 질문을 하면 필요할 때 에이전트를 다시 실행해 같은 방식으로 깊게 답합니다.
+        """
+    }
+
+    // First-turn context for a 계획 session (chat2 preset:"plan"): the chat acts as a planning
+    // coach. Purpose: the user historically started work without a plan, burning tokens without
+    // converging on a deliverable — so this preamble forces plan-first (문제정의 → 결과물 →
+    // 진행 순서 → 완료 기준) and explicitly forbids starting implementation. Once the plan is
+    // agreed, the user starts real work on the same goal via GUI시작.
+    private func planChatPreamble(_ scope: Scope) -> String {
+        let title = DispatchQueue.main.sync {
+            reviewStore.goals.first { $0.seq == scope.seq }?.text ?? ""
+        }
+        let dir = scope.workDir?.path ?? ""
+        return """
+        당신은 이 세션의 플래너(계획 코치)입니다. 업무를 시작하기 전에 사용자와 함께 계획을 세우는 것이 이 대화의 유일한 목적입니다. 계획 없이 바로 실행하면 토큰만 쓰고 결과물에 집중하지 못하므로, 이 대화에서는 계획만 다룹니다.
+        - 골 번호: goal-\(scope.seq)
+        - 제목: \(title)
+        - 작업 폴더: \(dir) (계획 산출물을 파일로 남길 때 사용)
+
+        진행 방식 — 반드시 이 순서대로:
+        1. 파악: 사용자의 입력에서 하려는 일을 정리합니다. 파일 경로·링크가 언급되면 먼저 직접 읽고, 계획에 필요한 코드·문서 조사는 해도 됩니다.
+        2. 계획 수립 대화: 아래 4가지가 또렷해질 때까지 모호한 것만 골라 질문합니다.
+           - 문제정의: 왜 하는가, 무엇이 문제인가 (가장 먼저 확인 — 잘못 정의하면 모든 방향이 달라집니다)
+           - 최종 결과물: 끝났을 때 손에 쥐는 것이 정확히 무엇인가
+           - 진행 순서: 단계별로 무엇을 어떤 순서로 하는가 (각 단계는 결과 확인이 가능한 단위로)
+           - 완료 기준: 무엇이 확인되면 끝났다고 판정하는가
+        3. 계획 확정: 합의되면 위 4개 항목으로 계획을 정리해 보여주고, 사용자가 승인하면 "계획이 확정되었습니다. 이 목표에서 GUI시작을 눌러 업무를 시작하세요."라고 안내합니다.
+
+        규칙: 이 대화에서는 실제 구현·실행을 시작하지 않습니다(파일 수정과 상태를 바꾸는 명령 실행 금지, 조사를 위한 읽기만 허용). 한국어로 간결하게 답합니다.
+
+        사용자에게 계획 질문을 할 때는 본문 마크다운으로 길게 풀어쓰지 말고, 반드시 아래 형식의 cm-question 코드블록 하나로만 출력하세요(블록 앞에 짧은 맥락 한두 줄은 두어도 됩니다).
+        ```cm-question
+        {"q":[{"ask":"질문 한 줄","opts":[{"label":"짧은 선택지","why":"추천 이유 한 줄","rec":true},{"label":"다른 선택지"}]}]}
+        ```
+        규칙: 물어볼 질문을 q 배열에 모두 담고, 각 질문의 opts는 2~4개로 한다. 가장 가능성 높은 선택지 하나에만 rec를 true로 두고 why에 한 줄 근거를 적는다. label은 짧게 쓴다. 사용자는 직접 입력으로도 답할 수 있으니 모든 경우를 선택지로 나열할 필요는 없다. 질문이 아닌 일반 설명·답변은 평소대로 마크다운으로 답한다.
         """
     }
 
@@ -8525,11 +8651,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           function rm(eid){if(!confirm('이 첨부를 삭제할까요?'))return;post('/api/goal/evidence/remove',{id:GID,seq:\(seq),task:EVTASK,evidenceId:eid}).then(()=>location.reload());}
           </script>
         """
-        // 헤더 CLI/GUI/대시보드 토글 — goal-add 세션 화면과 왕복하는 상시 내비게이션.
-        // CLI/GUI 는 이 목표의 세션 뷰로 전환(살아있는 PTY 재접속 / 최신 연결 세션 이어가기),
-        // 대시보드는 지금 이 화면이라 켜진 상태. 부분과제 페이지는 세션 스코프가 달라 숨긴다.
+        // 헤더 CHAT/DETAIL 토글 — goal-add 세션 화면과 왕복하는 상시 내비게이션
+        // (2026-07-19 CLI/GUI 버튼 제거 — CLI 미사용). CHAT=이 목표의 GUI 세션 뷰
+        // (최신 연결 세션 이어가기), DETAIL=지금 이 화면(목표 페이지)이라 켜진 상태.
+        // 부분과제 페이지는 세션 스코프가 달라 숨긴다.
         let uiSeg = isTask ? "" : """
-          <div class="pseg" id="pgUiSeg"><button onclick="location.href='/goal-add?goal=\(seq)&ui=cli'" title="이 목표의 세션을 화면 안 터미널(claude CLI)로 엽니다 — 살아있는 세션이 있으면 이어서 접속합니다">CLI</button><button onclick="location.href='/goal-add?goal=\(seq)&ui=gui'" title="이 목표의 세션을 메신저형 세션 뷰로 엽니다 — 최신 연결 세션을 이어갑니다">GUI</button><button class="on" title="지금 이 화면 — 목표 페이지(DETAIL)">DETAIL</button></div>
+          <div class="pseg" id="pgUiSeg"><button onclick="location.href='/goal-add?goal=\(seq)&ui=gui'" title="이 목표의 세션(채팅) 뷰로 전환합니다 — 최신 연결 세션을 이어갑니다">CHAT</button><button class="on" title="지금 이 화면 — 목표 페이지(DETAIL)">DETAIL</button></div>
           <script>try{localStorage.setItem('cm.lastTab.\(seq)','detail');}catch(e){}</script>
         """
         // 우측 메신저를 채팅 아이콘으로 여닫고(기본 접힘), 좌우 드래그로 폭을 조절한다.
@@ -9030,9 +9157,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           }
           function loadChat(){ fetch('/api/goal/chat?seq='+SEQ+TQ).then(function(r){return r.json();})
             .then(function(d){ renderChat(d); sendTeamKick(); }).catch(function(){}); }
-          // 팀위임/세션시작 hand-off: another page stashes the first-turn text in
+          // 팀위임/계획/세션시작 hand-off: another page stashes the first-turn text in
           // sessionStorage and navigates here; fire it as the first chat2 turn. cmTeamKick
-          // (rail 팀위임) runs with preset:'team' (the team-lead debate preamble); cmGoalKick
+          // (rail 팀위임) runs with preset:'team' (the team-lead debate preamble); cmPlanKick
+          // (rail 계획) with preset:'plan' (the planning-coach preamble); cmGoalKick
           // (목표 추가 페이지의 세션시작) is a plain work-kick carrying the composer's 작업
           // 모드. Runs after renderChat so the optimistic user bubble is never wiped by the
           // history load.
@@ -9040,6 +9168,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if(TASK) return;
             var v=null, preset='team', mode='bypassPermissions';
             try{ var k='cmTeamKick:'+SEQ; v=sessionStorage.getItem(k); if(v) sessionStorage.removeItem(k); }catch(e){}
+            if(!v){
+              try{ var pk='cmPlanKick:'+SEQ; var p=sessionStorage.getItem(pk);
+                if(p){ sessionStorage.removeItem(pk); v=p; preset='plan'; } }catch(e){}
+            }
             if(!v){
               try{ var gk='cmGoalKick:'+SEQ; var g=sessionStorage.getItem(gk);
                 if(g){ sessionStorage.removeItem(gk); var o=JSON.parse(g);

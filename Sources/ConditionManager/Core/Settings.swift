@@ -47,6 +47,8 @@ final class Settings {
         static let pinnedGoals    = "cm.pinnedGoalSeqs"
         static let diagHosts      = "cm.diagHosts"
         static let gaComposer     = "cm.gaComposer"
+        static let gaTallyHist    = "cm.gaTallyHist"
+        static let drawEnabled    = "cm.drawEnabled"
     }
 
     // Defaults for values the user has not touched. Mirrors the old register(defaults:).
@@ -60,7 +62,8 @@ final class Settings {
         K.musicEnabled: true,
         K.trackingEnabled: true,
         K.volume: 0.8,
-        K.bgmWindow: true
+        K.bgmWindow: true,
+        K.drawEnabled: true
     ]
 
     private let fileURL: URL
@@ -204,6 +207,14 @@ final class Settings {
         var p = pluginInstalled
         p[pluginId] = on
         pluginInstalled = p
+    }
+
+    // 드로우 plugin sub-switch (the plugin card's draw on/off). The overlay only runs
+    // while the plugin is installed AND this is on — flipping it off pauses drawing
+    // without uninstalling the plugin.
+    var drawEnabled: Bool {
+        get { bool(K.drawEnabled) }
+        set { set(newValue, K.drawEnabled) }
     }
 
     var minBPM: Double {
@@ -454,6 +465,22 @@ final class Settings {
         guard let data = try? JSONSerialization.data(withJSONObject: dict),
               let s = String(data: data, encoding: .utf8) else { return "{}" }
         return s
+    }
+
+    // 담김 히스토리 (simple-큐): goal-add 페이지의 '담김' 목록. localStorage 는 dynamic 포트
+    // (=매 실행 새 origin)에 리셋되므로 서버에 영속해야 재빌드/재시작(업데이트) 후에도 기록이
+    // 남는다 — gaComposer 와 같은 이유·같은 패턴. 항목은 페이지가 쓰는 필드만 골라 담고
+    // (kind/text/id/st/seq/resolved/ts) 최근 100건으로 상한.
+    var gaTallyHist: [[String: Any]] {
+        get { (get(K.gaTallyHist) as? [[String: Any]]) ?? [] }
+        set { set(Array(newValue.suffix(100)), K.gaTallyHist) }
+    }
+    // 렌더 시 window._gaTallyHist 로 인라인 주입되는 JSON. 항목 text 는 사용자 입력이므로
+    // "</" 를 JSON 이스케이프("<\/")로 바꿔 인라인 <script> 를 깨고 나가는 것을 막는다.
+    func gaTallyHistJSON() -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: gaTallyHist),
+              let s = String(data: data, encoding: .utf8) else { return "[]" }
+        return s.replacingOccurrences(of: "</", with: "<\\/")
     }
 
     // The setting resolved to an actual TimeZone; invalid identifiers fall back to local

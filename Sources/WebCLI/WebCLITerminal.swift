@@ -16,11 +16,15 @@ public enum WebCLITerminal {
     // Engine version, shown as a badge at the terminal's bottom-right ("webcli v…").
     // BUMP ON EVERY BEHAVIOR CHANGE — it exists so a live page's engine build is
     // identifiable at a glance (stale-build confusion cost hours on 2026-07-13).
-    public static let engineVersion = "1.0.1"
-    // Bump these to upgrade xterm — the ONLY place versions appear.
-    public static let xtermVersion = "5.3.0"
-    public static let fitAddonVersion = "0.8.0"
-    public static let unicode11AddonVersion = "0.6.0"
+    public static let engineVersion = "1.1.0"
+    // Bump these to upgrade xterm — the ONLY place versions appear. NOTE: upstream renamed the
+    // packages at 5.5.0 (`xterm` → `@xterm/xterm`, `xterm-addon-*` → `@xterm/addon-*`) and the
+    // addon FILES with them (`xterm-addon-fit.js` → `addon-fit.js`), so a major bump touches the
+    // URLs below too, not just these numbers. Globals are unchanged across the rename
+    // (`FitAddon.FitAddon`, `Unicode11Addon.Unicode11Addon`) — verified against the 6.0.0 UMD.
+    public static let xtermVersion = "6.0.0"
+    public static let fitAddonVersion = "0.11.0"
+    public static let unicode11AddonVersion = "0.9.0"
     // Hangul coding font: fills the 2-cell CJK grid slot (unlike the fallback system font,
     // which leaves visible gaps between syllables — "안 녕 하 세 요"). Verified live on jsdelivr
     // (npm package `d2coding`, HTTP 200 font/woff2, 2026-07-13): the "-subset" build (완성형
@@ -34,10 +38,12 @@ public enum WebCLITerminal {
         <script>
         (function(){
           if(window.CMWebCLI) return;
-          const XTERM_CSS='https://cdn.jsdelivr.net/npm/xterm@\#(xtermVersion)/css/xterm.min.css';
-          const XTERM_JS='https://cdn.jsdelivr.net/npm/xterm@\#(xtermVersion)/lib/xterm.min.js';
-          const FIT_JS='https://cdn.jsdelivr.net/npm/xterm-addon-fit@\#(fitAddonVersion)/lib/xterm-addon-fit.min.js';
-          const UNI_JS='https://cdn.jsdelivr.net/npm/xterm-addon-unicode11@\#(unicode11AddonVersion)/lib/xterm-addon-unicode11.min.js';
+          const XTERM_CSS='https://cdn.jsdelivr.net/npm/@xterm/xterm@\#(xtermVersion)/css/xterm.min.css';
+          const XTERM_JS='https://cdn.jsdelivr.net/npm/@xterm/xterm@\#(xtermVersion)/lib/xterm.min.js';
+          // The addon packages ship only .js/.mjs — the .min.js here is jsdelivr's own
+          // on-the-fly minification of that .js (verified HTTP 200), not a package file.
+          const FIT_JS='https://cdn.jsdelivr.net/npm/@xterm/addon-fit@\#(fitAddonVersion)/lib/addon-fit.min.js';
+          const UNI_JS='https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@\#(unicode11AddonVersion)/lib/addon-unicode11.min.js';
           // Regular+bold woff2 straight from the npm package — NOT the package's own CSS.
           // (Confirmed live: d2coding-subset.css's @font-face IS family 'D2Coding', matching
           // FONT_FAMILY below — a name mismatch was ruled out. The real bug: driving font

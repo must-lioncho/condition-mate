@@ -12,7 +12,8 @@ enum DashboardContent {
     static func html(lastView: String = "input", doneCutoff: Double? = nil, uiPrefs: String? = nil) -> String {
         // Clamp to a known view key so the injected JS literal can never be malformed.
         // "actions"(액션로그)·"history"(히스토리)는 컨디션 관리 페이지(/bgm-player)로 이동 — 저장돼 있던 옛 값은 input으로 클램프된다.
-        let valid: Set<String> = ["input", "group", "table", "token", "queue", "schedule", "preview", "sprint", "archived"]
+        // "queue"는 chat(/goal-add)의 detail-큐로 이전(QueuePanel.swift) — 옛 저장값은 input으로 클램프된다.
+        let valid: Set<String> = ["input", "group", "table", "token", "schedule", "preview", "sprint", "archived"]
         let view = valid.contains(lastView) ? lastView : "input"
         // Server-persisted 완료 컷오프 as a JS literal: an integer epoch (0 = 해제) when the
         // user has set one, else "DC_DEFAULT" so the client keeps its built-in default.
@@ -220,7 +221,7 @@ enum DashboardContent {
   .vtab:hover .vdots,.vtab.active .vdots{visibility:visible}
   .vtab .vdots:hover{color:var(--fg);background:#2a3142}
   /* AI 큐 상태 노티 (탭바 우측): 실행 중=액센트 펄스, 검토 대기=보라(대기=보라 컨벤션).
-     클릭하면 큐 탭으로 이동, 큐 탭을 보는 동안은 숨긴다. 큐 탭 라벨 카운트 배지를 대체(신호 단일화). */
+     클릭하면 chat(/goal-add)의 detail-큐로 이동한다 — 큐 UI 이전 후 대시보드의 유일한 큐 신호. */
   .vnoti{display:none;align-items:center;gap:7px;align-self:center;margin-left:auto;margin-bottom:3px;border:1px solid var(--line);background:#151b28;border-radius:20px;padding:5px 12px 5px 10px;font-size:12px;font-weight:600;cursor:pointer;color:var(--fg);font-family:inherit}
   .vnoti:hover{border-color:var(--accent)}
   .vnoti .nd{width:7px;height:7px;border-radius:50%;flex:none}
@@ -229,8 +230,6 @@ enum DashboardContent {
   .vnoti.ready{color:#cfc3f7;border-color:#4b3d78;background:rgba(167,139,250,.10)}
   .vnoti.ready .nd{background:#a78bfa}
   .vnoti .narr{color:var(--mut);font-size:11px}
-  /* 큐 탭 dedup 카드의 목적지 라벨 — 인라인 배치(스프린트 하단) 대신 여기서 행선지를 알린다 */
-  .qdest{font-size:11px;color:#8fa0bd;border:1px solid var(--line);border-radius:20px;padding:1px 8px;margin-left:8px;white-space:nowrap;font-weight:400;vertical-align:middle}
   /* 스프린트 메뉴: 라벨이 길어 줄바꿈 허용 + 폭 확대 */
   .ckmenu.spmenu{min-width:220px;max-width:340px}
   .popup .spmenu .popitem.chk{white-space:normal;align-items:flex-start}
@@ -538,46 +537,6 @@ enum DashboardContent {
   .dupsug{align-self:flex-start;margin:2px 0 0 36px}
   .dupsug button{font-size:12px;padding:4px 10px}
   .duppending{align-self:flex-start;color:var(--mut);font-size:13px;padding:2px 2px 2px 36px}
-  /* AI 큐(bump out): 실행 상태 표시 + 분석 중 행 강조. */
-  .qrun{display:inline-flex;align-items:center;gap:5px;color:var(--green);font-weight:600;font-size:12px}
-  .qrun .qdot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:qpulse 1s infinite}
-  @keyframes qpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}
-  .qrow{display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line);transition:background .2s}
-  .qrow.analyzing{background:rgba(64,200,120,0.10);border-radius:6px;padding:6px 8px;border-top-color:transparent}
-  .qrow.qconfirm{background:rgba(54,192,138,0.10);border:1px solid #2a5a3c;border-radius:8px;padding:8px 10px;border-top-color:transparent;align-items:center;gap:10px}
-  .qspin{display:inline-block;animation:cpd 1.2s infinite}
-  /* 검토 대기 항목: 번호를 입력하거나 클릭해 선택하는 옵션 목록. 1번은 (추천), 마지막은 직접 입력. */
-  .qchoice{margin-top:8px;display:flex;flex-direction:column;gap:5px}
-  .qopt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:8px;padding:8px 11px;cursor:pointer;background:#0f131b;transition:border-color .15s,background .15s}
-  .qopt:hover{border-color:var(--accent);background:#131a28}
-  .qopt.rec{border-color:#2a5a3c;background:rgba(54,192,138,.06)}
-  .qopt.rec:hover{border-color:var(--green)}
-  .qnum{flex-shrink:0;width:20px;height:20px;border-radius:6px;background:#1d2230;border:1px solid var(--line);color:var(--mut);font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}
-  .qopt.rec .qnum{background:#123024;border-color:#2a5a3c;color:var(--green)}
-  .qopt-body{flex:1;min-width:0}
-  .qopt-label{font-size:13px;font-weight:600;color:var(--fg)}
-  .qrec-tag{margin-left:6px;font-size:10px;font-weight:600;color:var(--green);border:1px solid #2a5a3c;border-radius:20px;padding:1px 7px;vertical-align:middle}
-  .qopt-desc{font-size:12px;color:var(--mut);margin-top:3px;line-height:1.45}
-  .qopt.qother,.qopt.qother:hover{cursor:default;border-color:var(--line);background:#0f131b}
-  .qother-input{width:100%;margin-top:6px;box-sizing:border-box;background:#0d1016;color:var(--fg);border:1px solid var(--accent);border-radius:7px;padding:7px 9px;font:13px/1.4 inherit;outline:none}
-  .qhint{font-size:11px;color:var(--mut);margin-top:7px}
-  /* AI 배치 제안: 독립/서브 배지 + 우선순위 칩 + 사유. confidence 낮으면 .dim 으로 흐리게. */
-  .qplace{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:5px 0 2px}
-  .qbadge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid var(--line);background:#1d2230;color:var(--fg);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
-  .qbadge.top{border-color:#2a5a3c;background:rgba(54,192,138,.08);color:var(--green)}
-  .qbadge.sub{border-color:#33406a;background:rgba(91,140,255,.10);color:#9db4ff}
-  .qbadge.dim{opacity:.5}
-  .qprichip{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid var(--line);background:#0f131b}
-  .qplace .qrationale{width:100%;font-size:12px;color:var(--mut);line-height:1.45;margin-top:1px}
-  /* 오버라이드 패널: 배치/우선순위 직접 지정. 기본 닫힘, 링크로 토글. */
-  .qovr-toggle{font-size:11px;color:var(--accent);cursor:pointer;text-decoration:none;user-select:none}
-  .qovr-toggle:hover{text-decoration:underline}
-  .qovr{border:1px dashed #33406a;border-radius:8px;padding:8px 10px;margin-top:6px;background:#101627;display:flex;flex-direction:column;gap:7px}
-  .qovr-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
-  .qovr-lbl{font-size:11px;color:var(--mut);min-width:44px}
-  .qovr select,.qovr input.qpin{background:#0d1016;color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:5px 8px;font:12px inherit;outline:none}
-  .qovr input.qpin{width:70px;font-variant-numeric:tabular-nums}
-  .qovr input.qpin:focus,.qovr select:focus{border-color:var(--accent)}
 
   /* ===== Zen (시작/휴식 화면) =====
      body.cm-zen hides the entire right-hand board so only the rail's challenge dial shows —
@@ -720,7 +679,7 @@ enum DashboardContent {
           </span>
           <span class="infowrap">
             <button class="btn" id="aiAddBtn" onclick="aiAdd()" oncontextmenu="return toggleAiTip(event)">AI추가</button>
-            <div class="infotip" id="aiTip">번호를 보고 각 목표의 <b>부모#</b> 칸에 부모 번호를 입력하면 묶입니다 (비우면 최상위). 압축된 결과는 리포트에서 확인. <b>AI추가</b>는 기다리지 않고 큐에 담아 백그라운드로 중복을 분석합니다 — 결과는 <b>큐</b> 탭에서 원탭으로 확정.</div>
+            <div class="infotip" id="aiTip">번호를 보고 각 목표의 <b>부모#</b> 칸에 부모 번호를 입력하면 묶입니다 (비우면 최상위). 압축된 결과는 리포트에서 확인. <b>AI추가</b>는 기다리지 않고 큐에 담아 백그라운드로 중복을 분석합니다 — 결과는 chat의 <b>detail-큐</b>에서 원탭으로 확정.</div>
           </span>
           <button class="btn" onclick="addGoal()">추가</button>
         </div>
@@ -728,10 +687,8 @@ enum DashboardContent {
       <div id="goals"></div>
     </div>
 
-    <!-- QUEUE VIEW (generic async job queue — sole home of the AI 큐 review UI, Phase 2) -->
-    <div id="queueView" style="display:none">
-      <div id="queueHost"></div>
-    </div>
+    <!-- (큐 뷰는 chat(/goal-add)의 detail-큐로 완전히 이전 — QueuePanel.swift. 진입은
+         탭바 우측 큐 상태 노티 또는 chat 헤더의 detail-큐 토글.) -->
 
     <!-- REPORT VIEW (기간 필터는 컨디션맵과 동일한 CMTimeFilter 재사용) -->
     <div id="previewView" style="display:none">
@@ -884,7 +841,7 @@ enum DashboardContent {
       <input type="file" id="dupFile" accept="image/*" multiple style="display:none" onchange="dupPicked(this.files)">
     </div>
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
-      <button class="btn" id="dupLaterBtn" onclick="dupLater()" title="지금은 결정하지 않고 아래 큐에 쌓아둡니다 — 나중에 하나씩 검토">later (큐에 보관)</button>
+      <button class="btn" id="dupLaterBtn" onclick="dupLater()" title="지금은 결정하지 않고 큐에 보관합니다 — 검토는 chat의 detail-큐에서">later (큐에 보관)</button>
       <button class="btn" id="dupConfirmBtn" onclick="dupConfirm()" title="위 '추가하려는 목표' 문구로 지금 추가합니다">confirm (지금 추가)</button>
     </div>
   </div>
@@ -1006,6 +963,13 @@ function renderPlugins(){
       actions=p.installed
         ?'<button class="btn" onclick="uninstallPlugin(\''+esc(p.id)+'\')">제거</button>'
         :'<button class="btn primary" onclick="installPlugin(\''+esc(p.id)+'\')">설치</button>';
+      // 드로우: detail menu on the installed card — draw on/off pauses the overlay
+      // (left ⌥ draw / left ⌃ wipe) without uninstalling the plugin.
+      if(p.id==='draw'&&p.installed){
+        actions+='<label style="display:inline-flex;align-items:center;gap:6px;margin-left:10px;font-size:12px;cursor:pointer">'
+          +'<input type="checkbox" '+(p.drawOn?'checked':'')+' onchange="setDrawOn(this.checked)"> draw on/off'
+          +'<span class="muted">(왼쪽 ⌥ 그리기 · 왼쪽 ⌘⌘ 글씨 · 왼쪽 ⌃ 지우기)</span></label>';
+      }
     } else {
       actions='<button class="btn primary" onclick="connectPlugin(\''+esc(p.id)+'\')">'+(p.folder?'폴더 변경':'연결')+'</button>';
       if(p.folder){
@@ -1064,6 +1028,8 @@ function disconnectPlugin(id){ if(confirm('이 플러그인 연결을 해제할�
 function verifyPlugin(id){ post('/api/plugin/verify',{id}); pluginRefresh(); }
 // Toggle plugins (e.g. 컨디션 메이트): install/uninstall, no folder picker. 제거하면 BGM도 꺼짐.
 function installPlugin(id){ post('/api/plugin/install',{id}); pluginRefresh(); }
+// 드로우 sub-switch: pause/resume the screen-draw overlay without uninstalling.
+function setDrawOn(on){ post('/api/draw/enabled',{on:!!on}); pluginRefresh(); }
 function uninstallPlugin(id){ if(confirm('이 플러그인을 제거할까요? (컨디션 메이트는 BGM도 함께 꺼집니다)')){ post('/api/plugin/uninstall',{id}); pluginRefresh(); } }
 function hhmm(t){ return CMTimeFilter.hhmm(t); }   // 표시 타임존 기준 HH:MM
 
@@ -1246,7 +1212,7 @@ function showDup(p){
   const cb=$('dupConfirmBtn'); if(cb){ cb.textContent = isQ?'이 결과로 진행':'confirm (지금 추가)';
     cb.title = isQ?'다듬은 문구로 이 항목을 목표로 추가합니다':"위 '추가하려는 목표' 문구로 지금 추가합니다"; }
   const lb=$('dupLaterBtn'); if(lb){ lb.textContent = isQ?'큐에 반영':'later (큐에 보관)';
-    lb.title = isQ?'다듬은 문구로 큐 항목만 갱신하고 계속 대기시킵니다':'지금은 결정하지 않고 아래 큐에 쌓아둡니다'; }
+    lb.title = isQ?'다듬은 문구로 큐 항목만 갱신하고 계속 대기시킵니다':'지금은 결정하지 않고 큐에 보관합니다 — 검토는 chat의 detail-큐에서'; }
   $('dupGoalText').value=p.text;       // 편집 가능한 "추가하려는 목표" (이게 실제로 추가됨)
   $('dupMatches').innerHTML=(p.matches||[]).map(m=>
     '<div style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;margin-bottom:6px">'
@@ -1369,656 +1335,14 @@ function dupLater(){ const p=_dupPending; if(!p){closeDup();return;}
   if(p.queueId){ post('/api/goal/queue/resolve',{id:p.queueId,action:'edit',text:text}); return; }
   const gt=$('goalText'); if(gt){ gt.value=''; gt.focus(); }
   post('/api/goal/queue/add',{text:text,parent:p.parent||'',note:p.note||'',matches:p.matches||[]}); }
-// --- AI 배치 제안 렌더 헬퍼 -------------------------------------------------
-// 큐 항목의 placement/suggestedParentSeq/priority/confidence/rationale 를 한눈 배지로.
-// 레거시 항목은 placement:'top', suggestedParentSeq:0, priority:'medium', confidence:0 로 디코드되어
-// '독립 태스크' 배지 + 보통 우선순위로 자연스럽게 그려진다.
-// 최상위 목표 #seq → 제목 조회 (parent picker 및 서브 배지에 쓴다). 없으면 ''.
-function topGoalTitle(seq){ const g=(_goals||[]).find(x=>!x.parent && (x.seq||0)===seq); return g?(g.text||''):''; }
-// 우선순위 칩(색상은 .pri-* currentColor 재사용) — 화살표 아이콘 + 한국어 라벨.
-function qPriChip(pri){ const p=pri||'medium';
-  return '<span class="qprichip pri-'+p+'" title="AI 추천 우선순위">'+priSvg(p)+priLabel(p)+'</span>'; }
-// 배치 배지: top=독립 태스크(초록), sub=서브 → #seq 제목(파랑). confidence<0.5 면 흐리게(.dim).
-function qPlaceBadge(it){
-  const place=it.placement||'top';
-  const dim=((it.confidence!=null?it.confidence:0)<0.5)?' dim':'';
-  if(place==='sub' && (it.suggestedParentSeq||0)>0){
-    const pn=it.suggestedParentSeq, t=topGoalTitle(pn);
-    const ttl=t?(' '+esc(t)):'';
-    return '<span class="qbadge sub'+dim+'" title="AI 제안: #'+pn+' 아래 서브로">서브 → #'+pn+ttl+'</span>';
-  }
-  return '<span class="qbadge top'+dim+'" title="AI 제안: 독립(최상위) 태스크로">독립 태스크</span>';
-}
-// 배지줄: 배치 배지 + 우선순위 칩 + 사유 한 줄. verdict 카드 상단에 깐다.
-function qPlacementLine(it){
-  const rat=it.rationale?('<div class="qrationale">'+esc(it.rationale)+'</div>'):'';
-  return '<div class="qplace">'+qPlaceBadge(it)+qPriChip(it.priority||'medium')+rat+'</div>';
-}
-// 오버라이드 패널 HTML: 배치(독립/서브 #부모) + 우선순위 직접 지정. '적용' → queueOverrideApply.
-// 최상위 목표만 부모 후보(1-level 규칙) — select 로 고르거나 #번호 직접 입력. 백엔드도 규칙을 강제하므로
-// parentFallback 이 최종 안전망이다.
-function qOverrideHTML(it){
-  const tops=(_goals||[]).filter(g=>!g.parent && (g.seq||0)>0).sort((a,b)=>(a.seq||0)-(b.seq||0));
-  const curParent=(it.placement==='sub'?(it.suggestedParentSeq||0):0);
-  const parentOpts=['<option value="0"'+(curParent===0?' selected':'')+'>독립 (최상위)</option>']
-    .concat(tops.map(g=>'<option value="'+g.seq+'"'+(curParent===(g.seq||0)?' selected':'')+'>#'+g.seq+' '+esc(g.text||'')+'</option>')).join('');
-  const curPri=it.priority||'medium';
-  const priOpts=PRI_ORDER.map(p=>'<option value="'+p+'"'+(p===curPri?' selected':'')+'>'+priLabel(p)+'</option>').join('');
-  return '<div class="qovr" id="qovr_'+it.id+'" style="display:none">'
-    +'<div class="qovr-row"><span class="qovr-lbl">배치</span>'
-      +'<select id="qovrp_'+it.id+'" onchange="qOvrPickParent(\''+it.id+'\')">'+parentOpts+'</select>'
-      +'<input class="qpin" id="qovrn_'+it.id+'" type="text" inputmode="numeric" placeholder="#부모" '
-        +'value="'+(curParent>0?curParent:'')+'" title="최상위 목표 번호 직접 입력 (0/빈칸=독립)" '
-        +'oninput="qOvrSyncSelect(\''+it.id+'\')" onclick="event.stopPropagation()"></div>'
-    +'<div class="qovr-row"><span class="qovr-lbl">우선순위</span>'
-      +'<select id="qovrpri_'+it.id+'">'+priOpts+'</select></div>'
-    +'<div class="qovr-row"><button class="btn primary" onclick="queueOverrideApply(\''+it.id+'\')">이 설정으로 승격</button>'
-      +'<button class="btn" onclick="qOverrideToggle(\''+it.id+'\')">취소</button></div></div>';
-}
-// --- AI 큐(bump out): 도착 순서 그대로 한 줄로 쌓는다. 위쪽이 먼저 처리되고(분석 중·검토 대기),
-// 방금 비워낸 후보는 맨 하단에 붙는다 — "쏟아내면 아래에 쌓이고, 위에서 익는다"는 컨베이어 감각.
-// 헤더의 펄스 '실행 중' 배지로 워커가 돌고 있는지 한눈에 보인다. data.json은 oldest-first 순.
-// aiQueueBoxHTML: 큐 박스 HTML 문자열을 돌려준다(빈 목록이면 ''). 큐 탭(#queueHost)이 유일한
-// 렌더 위치 — 목록/스프린트 인라인 배치는 제거됐고, 진행 상황은 탭바 우측 노티(updateQueueNoti)가,
-// 스프린트 행선지는 각 카드의 목적지 라벨(.qdest)이 알린다. ---
-function aiQueueBoxHTML(items,withConfirm){
-  items=items||[];
-  // 확인 카드는 목록 뷰(전역 큐)에서만 그린다 — 스프린트 뷰는 섹션마다 이 함수를 부르므로 중복 방지.
-  const confirmIds=withConfirm?Object.keys(_qConfirm||{}):[];
-  if(!items.length && !confirmIds.length) return '';
-  const isReady=it=>(!it.status||it.status==='ready');
-  const analyzing=items.filter(it=>it.status==='analyzing').length;
-  const pending=items.filter(it=>it.status==='pending').length;
-  const ready=items.filter(isReady).length;
-  // 헤더: 워커 실행 상태(펄스) + 큐/검토 건수.
-  const run=analyzing
-    ? '<span class="qrun"><span class="qdot"></span>실행 중</span>'
-    : (pending?'<span class="muted" style="font-size:12px">곧 시작…</span>':'');
-  const counts=[];
-  if(analyzing+pending) counts.push('큐 '+(analyzing+pending)+'건');
-  if(ready) counts.push('검토 대기 '+ready+'건');
-  // 추가 직후 확인 카드(초록): '열기' 링크 + 남은 초. 서버엔 이미 없으므로 클라이언트 상태로만 그린다.
-  function confirmRow(id){
-    const c=_qConfirm[id]; if(!c) return '';
-    // task로 추가된 경우: 목적지가 '기존 #seq의 tasks/<folder>' — 새 goal이 아님을 명확히 보여준다.
-    const head=c.task?'✓ task 추가됨':'✓ 추가됨';
-    const where=c.task?('#'+c.seq+' · '+esc(c.task)+' '):(c.parentSeq?('#'+c.parentSeq+' 아래 #'+c.seq):('#'+c.seq));
-    const ttl=c.text?esc(c.text):'항목';
-    // parentFallback: 서브 부착이 거부되어 최상위로 들어간 경우 안내 한 줄.
-    const fb=c.fallback?'<div class="qhint" style="color:#e0a458">상위 목표 아래 넣을 수 없어 최상위로 추가됨</div>':'';
-    return '<div class="qrow qconfirm">'
-      +'<div style="flex:1;min-width:0">'
-      +'<div style="font-size:13px"><span style="color:var(--green);font-weight:600">'+head+'</span> '
-      +'<span class="muted">'+where+'</span> · '+ttl+'</div>'
-      +fb
-      +'<div class="qhint">'+c.sec+'초 후 큐에서 사라집니다 · 지금 열어보세요</div></div>'
-      +'<div style="display:flex;gap:6px;flex-shrink:0;align-items:center">'
-      +'<a class="btn primary" href="/goal?n='+c.seq+'" style="text-decoration:none">열기 →</a>'
-      +'<button class="btn" onclick="dismissQueueConfirm(\''+id+'\')" title="지금 닫기">닫기</button></div></div>';
-  }
-  let waitNo=0;   // pending 행에 "대기 N번째" 부여 (도착 순)
-  function row(it){
-    const rdy=isReady(it);
-    // 검색(찾기만) 카드: AI목표와 같은 dedup 분석을 돌리되 결과는 비슷한 기존 목표만 보여준다.
-    // 분석 중/대기면 진행 상태를, 완료면 찾은 목표를 이유와 함께 나열하고, 액션은 '닫기'뿐(생성 없음).
-    if(it.findOnly){
-      const q='<span id="qt_'+it.id+'">🔍 '+esc(it.text)+'</span>';
-      const closeBtn='<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="검색 결과 닫기">닫기</button>';
-      if(it.status==='analyzing'){
-        return '<div class="qrow analyzing"><div style="flex:1;min-width:0">'+q
-          +'<div style="font-size:12px;color:var(--green)"><span class="qspin">🔄</span> 비슷한 목표 찾는 중…</div></div></div>';
-      }
-      if(!rdy){ waitNo++;
-        return '<div class="qrow"><div style="flex:1;min-width:0">'+q
-          +'<div class="muted" style="font-size:12px">⏳ 대기 '+waitNo+'번째</div></div>'
-          +'<div style="display:flex;gap:4px;flex-shrink:0">'+closeBtn+'</div></div>';
-      }
-      const hits=(it.matches||[]).filter(m=>(m.seq||0)>0);
-      const cnt=hits.length?('비슷한 목표 '+hits.length+'건'):'결과 없음';
-      const note=it.note?'<div class="muted" style="font-size:12px;margin-top:2px">'+esc(it.note)+'</div>':'';
-      const head='<div style="display:flex;align-items:flex-start;gap:8px">'
-        +'<div style="flex:1;min-width:0">'+q+'<div class="muted" style="font-size:12px">'+cnt+'</div>'+note+'</div>'
-        +'<div style="flex-shrink:0">'+closeBtn+'</div></div>';
-      let body;
-      const sel=_qFind[it.id];
-      if(hits.length && sel && sel.parentSeq>0){
-        // 번호를 고른 뒤: 그 목표를 대상으로 다음 액션(끝내기·task 추가·그만두기)을 판단·추천.
-        body=qFindActionHTML(it,hits,sel);
-      } else if(hits.length){
-        // 매치 목록: 번호를 누르면 그 목표를 대상으로 '다음 액션'을 고른다(바로 이동이 아님).
-        const list=hits.map(function(m){ const n=m.seq;
-          const why=m.why?'<div class="qopt-desc">'+esc(m.why)+'</div>':'';
-          return '<div class="qopt" onclick="queueFindPick(\''+it.id+'\','+n+')" style="cursor:pointer">'
-            +'<div class="qnum">→</div>'
-            +'<div class="qopt-body"><div class="qopt-label"><a href="/goal?n='+n+'" onclick="event.stopPropagation()" style="color:var(--accent);text-decoration:none">#'+n+'</a> '+esc(m.text||'')+'</div>'+why+'</div></div>';
-        }).join('');
-        body='<div class="qhint" style="margin:6px 0 2px">번호를 누르면 다음 액션(끝내기 · task 추가 · 그만두기)을 고릅니다</div>'
-          +'<div class="qchoice">'+list+'</div>';
-      } else {
-        body='<div class="muted" style="font-size:12px;margin-top:4px">비슷한 기존 목표를 찾지 못했습니다.</div>';
-      }
-      return '<div class="qrow" style="flex-direction:column;align-items:stretch">'+head
-        +'<div style="margin-top:6px">'+body+'</div></div>';
-    }
-    // 매치의 번호(#seq)는 클릭하면 골 페이지(/goal?n=NN)로 이동해 그 목표 내용을 확인한다.
-    // why가 있으면 링크 title(툴팁)로 붙인다. stopPropagation으로 행/버튼 핸들러와 충돌 방지.
-    const ms=(it.matches||[]).map(m=>{
-      const n=m.seq||0;
-      const tip=m.why?' title='+JSON.stringify(String(m.why)):'';
-      const num=n>0
-        ? '<a href="/goal?n='+n+'"'+tip+' onclick="event.stopPropagation()" style="color:var(--accent);text-decoration:none;font-variant-numeric:tabular-nums">#'+n+'</a>'
-        : '#'+n;
-      return num+' '+esc(m.text||'');
-    }).join(', ');
-    let meta='', cls='qrow', choice='';
-    if(it.status==='analyzing'){
-      cls='qrow analyzing';
-      meta='<div style="font-size:12px;color:var(--green)"><span class="qspin">🔄</span> AI 분석 중…</div>';
-    } else if(!rdy){
-      waitNo++;
-      meta='<div class="muted" style="font-size:12px">⏳ 대기 '+waitNo+'번째</div>';
-    } else {
-      const tag=it.duplicate
-        ? '<span style="color:#e0a458">유사 목표 있음</span>'
-        : '<span style="color:var(--green)">새 목표</span>';
-      const sess=it.refining?'<span style="color:#9db4ff"> · 🔗 세션 이어감</span>':'';
-      meta='<div class="muted" style="font-size:12px">'+tag+(it.note?' · '+esc(it.note):'')+sess+'</div>'
-        +(ms?'<div class="muted" style="font-size:12px">유사: '+ms+'</div>':'');
-    }
-    // 프롬프트 다듬기 패널: 이 항목이 활성일 때만 (입력 or 생성 중).
-    const uiOn=(_qUI&&_qUI.id===it.id);
-    let panel='';
-    if(uiOn && _qUI.mode==='gen'){
-      panel='<div style="border:1px dashed #33406a;border-radius:8px;padding:8px 10px;margin-top:6px;background:#101627">'
-        +'<span style="color:var(--green);font-size:13px"><span class="qspin">🔄</span> 새 결과 생성 중…</span></div>';
-    } else if(uiOn){
-      panel='<div style="border:1px dashed #33406a;border-radius:8px;padding:8px 10px;margin-top:6px;background:#101627">'
-        +'<div style="font-size:11px;color:#9db4ff;margin-bottom:5px">'+(it.refining?'프롬프트 — 이 세션을 이어서 더 낫게 (지시를 계속 쌓으세요)':'프롬프트 — 이 세션에서 목표를 다듬습니다')+'</div>'
-        +'<textarea id="qp_'+it.id+'" oninput="if(_qUI)_qUI.prompt=this.value" placeholder="예: 목표 문구를 &#39;스크립트화&#39;로 바꾸고 매일 자동 발송까지 포함해줘" '
-        +'style="width:100%;background:#0f131b;color:var(--fg);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;font:13px/1.5 inherit;outline:none;resize:vertical;min-height:52px">'+esc(_qUI.prompt||'')+'</textarea>'
-        +'<div style="display:flex;gap:6px;margin-top:6px"><button class="btn" onclick="queuePromptGen(\''+it.id+'\')">생성</button>'
-        +'<button class="btn" onclick="queuePromptCancel()">취소</button></div></div>';
-    }
-    // 우측 버튼: 상태별. 프롬프트 패널이 열려 있으면 액션은 패널이 가진다.
-    let btns;
-    if(!rdy){
-      btns='<button class="btn" onclick="queueAdd(\''+it.id+'\')" title="분석을 기다리지 않고 바로 추가">바로 추가</button>'
-        +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>';
-    } else if(uiOn){
-      btns='';
-    } else if(_qJustRefined===it.id){
-      // 방금 프롬프트로 다듬어진 새 결과 — 맞으면 진행, 아니면 다시 프롬프트.
-      btns='<button class="btn primary" onclick="queueProceed(\''+it.id+'\')" title="이 결과로 목표를 추가">이 결과로 진행</button>'
-        +'<button class="btn" onclick="queuePromptStart(\''+it.id+'\')" title="아직 아니면 다시 프롬프트">다시 프롬프트</button>'
-        +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="버리기">스킵</button>';
-    } else {
-      // 검토 대기: 우측 버튼 대신 번호 선택 UI(추천 1번 + 대안 + 기타 직접입력)로 렌더.
-      btns='';
-      // 1번은 (추천): kind에 따라 다르다 — 반복이면 '부모 아래 추가', 새 목표면 '추가', 진짜 중복이면 '스킵'.
-      const seqs=(it.matches||[]).filter(m=>m.seq>0).map(m=>'#'+m.seq);
-      const note=it.note?esc(it.note):'';
-      const m0=(it.matches||[]).find(function(m){return m.seq>0;});   // 반복/중복이 매달릴 부모 목표
-      const pN=m0?m0.seq:0, pTitle=m0?esc(m0.text||''):'';
-      const kind=it.kind||(it.duplicate?'duplicate':'new');
-      let opts;
-      if(kind==='recurring' && pN>0){
-        // 관계에 따라 추천 액션이 다르다(DASH-9):
-        //   relation==='recurring-execution' → 그 목표의 task(부분과제)로 이번 회차 추가.
-        //   relation==='sub-problem'/'improvement' → 그 목표 아래 '서브 목표'로 추가(별개 하위 문제).
-        // 백엔드 rationale(관리형 다음 단계 제안)이 있으면 추천 옵션 설명으로 그대로 노출한다.
-        const relAct=({'recurring-execution':'task','sub-problem':'under','improvement':'under'})[it.relation]||'task';
-        const backWhy=it.rationale?esc(it.rationale):'';
-        const taskWhy=backWhy||((note?note+' ':'')+'#'+pN+' '+pTitle+'의 반복 작업이라, 새 목표 번호 없이 그 목표의 task로 추가하는 것을 추천합니다.');
-        const underWhy=backWhy||('#'+pN+' '+pTitle+'와 같은 계열의 하위 문제라, 그 목표 아래 서브 목표로 추가하는 것을 추천합니다.');
-        opts=[{a:'task',arg:pN,label:'#'+pN+'의 task로 이번 회차 추가',rec:(relAct==='task'),desc:(relAct==='task'?taskWhy:'기존 목표의 또 다른 회차로, 그 목표의 task(부분과제) 폴더에 붙입니다.')},
-              {a:'under',arg:pN,label:'#'+pN+' 아래 서브 목표로 추가',rec:(relAct==='under'),desc:(relAct==='under'?underWhy:'새 번호를 받는 별도 목표를 만들어 #'+pN+' 아래에 둡니다.')},
-              {a:'add',label:'별도 새 목표로 추가',desc:'#'+pN+'와 무관하게 최상위 목표로 추가합니다.'},
-              {a:'skip',label:'스킵',desc:'이번 회차는 추적하지 않고 버립니다.'}];
-        // 추천(rec) 옵션을 1번으로: "1번=추천" 넘버링 규칙을 지킨다.
-        const ri=opts.findIndex(o=>o.rec); if(ri>0){ opts.unshift(opts.splice(ri,1)[0]); }
-      } else if(kind==='duplicate'){
-        // 진짜 중복: 같은 목표가 이미 있어 새로 추가할 실익이 없음 → 스킵 추천.
-        const why=(seqs.length?'유사 목표 '+seqs.join(', ')+'가 이미 같은 목표를 담고 있습니다. ':'')+(note?note+' ':'')+'새로 추가해도 얻는 게 없어 스킵을 추천합니다.';
-        opts=[{a:'skip',label:'스킵',rec:true,desc:why}];
-        if(pN>0) opts.push({a:'under',arg:pN,label:'#'+pN+' 아래에 추가',desc:'그래도 별도 실행으로 남기려면 그 목표 아래에 넣습니다.'});
-        opts.push({a:'add',label:'별도 목표로 추가',desc:'그래도 독립 목표로 추가합니다.'});
-      } else {
-        // 새 목표: AI 배치 제안(placement)을 그대로 수용해 한 번에 승격하는 것을 추천.
-        // placement==='sub' 면 '#부모 아래 서브로', 'top' 이면 '독립 태스크로'. 어느 쪽이든 1번(승격)은
-        // parentSeq/priority override 없이 add 만 보내 백엔드가 AI 제안을 적용하게 한다.
-        const isSub=(it.placement==='sub' && (it.suggestedParentSeq||0)>0);
-        const pn=it.suggestedParentSeq||0, pt=isSub?topGoalTitle(pn):'';
-        const rat=it.rationale?(esc(it.rationale)):(note||'기존 목표와 겹치지 않는 새 목표라 추가를 추천합니다.');
-        const primLabel=isSub?('승격 — 서브 → #'+pn+(pt?' '+esc(pt):'')):'승격 — 독립 태스크';
-        opts=[{a:'add',label:primLabel,rec:true,desc:'AI 제안('+(isSub?('#'+pn+' 아래 · '):'독립 · ')+priLabel(it.priority||'medium')+' 우선순위)대로 한 번에 추가합니다. '+rat},
-              {a:'override',label:'배치·우선순위 바꾸기',desc:'AI 제안 대신 부모(독립/서브)와 우선순위를 직접 정해 승격합니다.'},
-              {a:'prompt',label:'프롬프트 열기',desc:'이미지 지원 AI 챗으로 이 항목을 직접 다듬습니다.'},
-              {a:'skip',label:'스킵',desc:'이 제안을 버립니다.'}];
-      }
-      let n=0;
-      const rows=opts.map(function(o){ n++;
-        const argAttr=(o.arg!=null?' data-arg="'+o.arg+'"':'');
-        const call=(o.arg!=null?'queueChoose(\''+it.id+'\',\''+o.a+'\','+o.arg+')':'queueChoose(\''+it.id+'\',\''+o.a+'\')');
-        return '<div class="qopt'+(o.rec?' rec':'')+'" data-n="'+n+'" data-action="'+o.a+'"'+argAttr+' onclick="'+call+'">'
-          +'<div class="qnum">'+n+'</div>'
-          +'<div class="qopt-body"><div class="qopt-label">'+o.label+(o.rec?'<span class="qrec-tag">추천</span>':'')+'</div>'
-          +'<div class="qopt-desc">'+o.desc+'</div></div></div>';
-      }).join(''); n++;
-      // 마지막 번호: 직접 입력(기타). 짧은 지시를 넣고 Enter를 누르면 그 문구로 즉시 다듬는다.
-      // 보관해 둔 입력값을 value로 되살린다(속성 안전 이스케이프 — esc()는 따옴표 미처리+빈값을 '-'로 바꿔 부적합).
-      const ov=(_qOther[it.id]||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-      const other='<div class="qopt qother" data-n="'+n+'" data-action="other">'
-        +'<div class="qnum">'+n+'</div>'
-        +'<div class="qopt-body"><div class="qopt-label">기타 (직접 지시)</div>'
-        +'<input id="qother_'+it.id+'" data-qid="'+it.id+'" class="qother-input" value="'+ov+'" placeholder="예: 문구를 &#39;스크립트화&#39;로 바꾸고 자동 발송까지 포함해줘 — Enter 제출" '
-        +'oninput="_qOther[\''+it.id+'\']=this.value" onclick="event.stopPropagation()"></div></div>';
-      const tip=(ready===1?'번호를 입력하거나 항목을 클릭하세요':'항목을 클릭하세요');
-      const links=(ms?'유사: '+ms+' · ':'')+tip;
-      // 새 목표 카드에는 AI 배치 제안 배지줄(placement/priority/rationale) + 오버라이드 패널을 얹는다.
-      // 반복/중복 카드는 이미 부모(#seq) 컨텍스트가 옵션에 녹아 있어 배지줄을 생략한다.
-      const placeLine=(kind!=='recurring' && kind!=='duplicate')?qPlacementLine(it):'';
-      const ovr=(kind!=='recurring' && kind!=='duplicate')?qOverrideHTML(it):'';
-      choice=placeLine+'<div class="qchoice" data-qid="'+it.id+'">'+rows+other+'</div>'+ovr+'<div class="qhint">'+links+'</div>';
-      meta='';   // 기존 태그/노트/유사 줄은 추천 사유로 접어 넣었으므로 비운다
-    }
-    const newBadge=(_qJustRefined===it.id)
-      ? '<span style="font-size:11px;padding:1px 7px;border-radius:20px;background:#0f2a1e;color:var(--green);border:1px solid #1e4a35;margin-right:6px">새 결과</span>' : '';
-    // 목적지 라벨: 스프린트로 담긴 항목은 확정 시 어디로 들어가는지 표시 (인라인 배치 제거의 정보 보존).
-    const dest=(it.sprint||0)>0?(function(){
-      const s=((_review&&_review.sprints)||[]).find(x=>x.number===it.sprint);
-      return '<span class="qdest">→ '+esc((s&&s.code)||('#'+it.sprint))+'</span>'; })():'';
-    return '<div class="'+cls+'">'
-      +'<div style="flex:1;min-width:0">'+newBadge+'<span id="qt_'+it.id+'">'+esc(it.text)+'</span>'+dest+meta+panel+choice+'</div>'
-      +'<div style="display:flex;gap:4px;flex-shrink:0;align-items:flex-start">'+btns+'</div></div>';
-  }
-  const confirmHTML=confirmIds.map(confirmRow).join('');
-  const rightInfo=counts.join(' · ')||(confirmIds.length?'':'대기 없음');
-  return '<div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:4px 0 10px;background:rgba(91,140,255,0.06)">'
-    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
-    +'<span style="font-weight:600">🤖 AI 큐</span>'+run
-    +'<span class="muted" style="font-weight:400;font-size:12px;margin-left:auto">'+rightInfo+'</span></div>'
-    +confirmHTML+items.map(row).join('')+'</div>';
-}
-// === 큐 프롬프트 다듬기 상태 ===
-// _qUI: 프롬프트 입력/생성 중 패널 상태 {id, mode:'prompt'|'gen', prompt}
-// _qJustRefined: 방금 프롬프트로 다듬어진 항목 id — '새 결과'로 강조하고 진행/다시 프롬프트를 띄운다.
-let _qUI=null, _qJustRefined='', _lastAiQueue=[];
-// _qOther: 기타(직접 지시) 입력칸에 친 값을 항목 id별로 보관 → 5초 폴링 재렌더가 innerHTML을
-// 갈아끼워도 value로 다시 그려 넣어 입력이 사라지지 않게 한다(프롬프트 textarea의 _qUI.prompt와 동일 취지).
-let _qOther={};
-// _qFind: 검색(findOnly) 카드에서 '번호를 눌러 대상 목표를 고른 뒤 → 다음 액션(끝내기·task 추가·
-// 그만두기)' 흐름의 항목별 상태. id → {parentSeq, phase:'menu'|'suggesting'|'edit', name}.
-// phase 'edit'의 name(추천 task 폴더명)은 폴링 재렌더에도 유지되도록 여기 보관한다.
-let _qFind={};
-// _qConfirm: 추가(1번 등)로 목표가 생긴 직후의 클라이언트 전용 확인 카드. 서버는 이미 큐에서
-// 항목을 지웠으므로, 새로 만든 목표의 #seq로 '열기' 링크와 5초 카운트다운을 이 상태로 그린다.
-// id → {seq, parentSeq, text, sec}. 0이 되면 카드를 지워 큐를 완전히 사라지게 한다.
-let _qConfirm={}, _qConfirmTimers={};
-// 큐 탭(#queueHost)의 유일한 렌더러. Phase 2: dedup 리뷰 UI가 입력 뷰에서 큐 탭으로 완전히
-// 이전됐다. 두 섹션으로 그린다 — (1) dedup 리뷰(추가/수정/스킵·5초 확인·다시 프롬프트, 기존
-// aiQueueBoxHTML 그대로), (2) 그 외 잡 결과 카드(linkmap/report — resultHTML 보기/다운로드,
-// 오류면 재시도/닫기). 큐가 비면 정의된 빈 상태를 보여준다.
-function renderAiQueue(items){ _lastAiQueue=items||[]; const host=$('queueHost'); if(!host) return;
-  // 재렌더 전에 기타 입력칸의 포커스/캐럿 위치를 기억 → 폴링 재렌더에도 타이핑이 끊기지 않게 복원.
-  const af=document.activeElement;
-  const qo=(af&&af.classList&&(af.classList.contains('qother-input')||af.classList.contains('qfind-input')))
-    ?{id:af.getAttribute('data-qid'),pos:af.selectionStart,cls:(af.classList.contains('qfind-input')?'qfind':'qother')}:null;
-  const all=items||[];
-  const dedup=all.filter(it=>(it.jobKind||'dedup')==='dedup');   // 레거시/디코더 기본값 → dedup
-  const jobs=all.filter(it=>(it.jobKind||'dedup')!=='dedup');
-  const confirmActive=Object.keys(_qConfirm||{}).length>0;
-  const dedupHTML=aiQueueBoxHTML(dedup,true);   // true: 확인 카드는 이 전역 큐 박스에만 그린다
-  const jobsHTML=jobs.map(queueJobCardHTML).join('');
-  const histHTML=queueHistoryHTML();
-  // 빈 상태: dedup·잡·확인 카드가 모두 없을 때 — 히스토리는 있으면 그 아래 계속 보여준다.
-  if(!dedupHTML && !jobsHTML && !confirmActive){
-    host.innerHTML='<div class="muted" style="padding:18px 4px;text-align:center;line-height:1.6">'
-      +'큐가 비어 있습니다 — <b>AI추가</b>로 후보를 던지거나 내보내기를 실행하면 여기에 쌓입니다.</div>'+histHTML;
-    return;
-  }
-  let html='';
-  if(dedupHTML || confirmActive) html+='<div class="queue-section">'+dedupHTML+'</div>';
-  if(jobsHTML) html+='<div class="queue-section" style="margin-top:12px"><div class="muted" style="font-size:12px;margin:2px 0 6px">작업 결과</div>'+jobsHTML+'</div>';
-  html+=histHTML;
-  host.innerHTML=html;
-  // 프롬프트 입력 중이면 재렌더 후 텍스트박스에 포커스를 되돌린다(캐럿 끝으로).
-  if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } }
-  if(qo&&qo.id){ const t=(qo.cls==='qfind')?$('qfind_'+qo.id):$('qother_'+qo.id); if(t){ t.focus(); try{ const p=(qo.pos==null?t.value.length:qo.pos); t.setSelectionRange(p,p); }catch(e){} } } }
-// 큐 탭 진입점: 최신 review의 aiQueue + 처리 히스토리로 큐 탭을 그린다. fillActiveView에서 호출.
-function renderQueueTab(r){ _qHist=(r&&r.queueHistory)||_qHist||[]; renderAiQueue((r&&r.aiQueue)||_lastAiQueue||[]); }
-// === 큐 처리 히스토리 (감사 + 번복) ===
-// _qHist: /data.json review.queueHistory (newest first, 최근 30건). 각 항목은 하나의 확정된
-// 결정 — 무엇을 골랐고 무엇이 생겼는지(#seq/task 폴더) 남아, 5초 확인 카드가 사라진 뒤에도
-// "제대로 됐는지" 확인하고, 클릭해 이동하고, 번복(undo)할 수 있다.
-let _qHist=[];
-// _qHistMsg: 마지막 번복 실패 사유(항목 id → 문구) — 행 안에 인라인으로 보여준다.
-let _qHistMsg={};
-function queueHistoryHTML(){
-  const hist=_qHist||[]; if(!hist.length) return '';
-  function when(ts){ const p=CMTimeFilter.parts((ts||0)*1000), n=CMTimeFilter.parts(new Date());
-    const hm=('0'+p.h).slice(-2)+':'+('0'+p.mi).slice(-2);
-    const sameDay=(p.y===n.y&&p.mo===n.mo&&p.d===n.d);
-    return sameDay?hm:(p.mo+'/'+p.d+' '+hm); }
-  const rows=hist.map(function(h){
-    // 결정 요약: 액션별로 "무엇이 생겼는지"를 링크로. #seq 클릭 → 그 목표 페이지.
-    let what;
-    if(h.action==='add'){
-      const link='<a href="/goal?n='+h.seq+'" style="color:var(--accent);text-decoration:none">#'+h.seq+'</a>';
-      const parent=(h.parentSeq>0)?(' <span class="muted">(#'+h.parentSeq+' 아래)</span>'):'';
-      const fb=h.fallback?' <span style="color:#e0a458">· 서브 부착 불가 → 최상위</span>':'';
-      what='<span style="color:var(--green)">추가</span> → '+link+parent+fb;
-    } else if(h.action==='task'){
-      const link='<a href="/goal?n='+h.seq+'" style="color:var(--accent);text-decoration:none">#'+h.seq+'</a>';
-      what='<span style="color:var(--green)">task 추가</span> → '+link+' <span class="muted">· '+esc(h.task||'')+'</span>';
-    } else if(h.action==='edit'){
-      what='<span class="muted">수정 (계속 대기)</span>';
-    } else {
-      what='<span class="muted">스킵</span>';
-    }
-    // 번복: add/task/skip만. 이미 번복됐으면 흐리게 + '번복됨' 배지.
-    const undoable=!h.undone && (h.action==='add'||h.action==='task'||h.action==='skip');
-    const btn=undoable
-      ? '<button class="btn" onclick="queueUndo(\''+h.id+'\')" title="이 결정을 되돌리고 항목을 큐로 복원">번복</button>'
-      : (h.undone?'<span class="muted" style="font-size:12px">번복됨</span>':'');
-    const msg=_qHistMsg[h.id]?('<div class="qhint" style="color:#e0a458">'+esc(_qHistMsg[h.id])+'</div>'):'';
-    return '<div class="qrow" style="align-items:flex-start'+(h.undone?';opacity:.5':'')+'">'
-      +'<div style="flex:1;min-width:0">'
-      +'<div style="font-size:13px"><span class="muted" style="font-variant-numeric:tabular-nums;margin-right:8px">'+when(h.at)+'</span>'
-      +what+' · '+esc(h.text||'')+'</div>'+msg+'</div>'
-      +'<div style="flex-shrink:0">'+btn+'</div></div>';
-  }).join('');
-  return '<div class="queue-section" style="margin-top:14px">'
-    +'<div class="muted" style="font-size:12px;margin:2px 0 6px">처리 히스토리 <span style="font-weight:400">— 최근 '+hist.length+'건 · 번복하면 항목이 큐로 복원됩니다</span></div>'
-    +rows+'</div>';
-}
-// 번복 실행: 성공하면 결과물(goal/task 폴더)이 제거되고 항목이 큐로 복원된다. 실패 사유는
-// 행 안에 인라인으로 보여준다 (예: 만든 목표에 하위 목표가 생겨 되돌릴 수 없음).
-function queueUndo(hid){
-  delete _qHistMsg[hid];
-  fetch('/api/goal/queue/undo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:hid})})
-    .then(r=>r.json()).then(res=>{
-      if(!(res&&res.ok)){
-        _qHistMsg[hid]=(res&&res.error==='has-children')
-          ?'만든 목표 아래에 하위 목표가 생겨 번복할 수 없습니다. 목표를 직접 정리해주세요.'
-          :'번복하지 못했습니다 (이미 처리됐거나 항목을 찾을 수 없음).';
-        rerenderAiQueue();
-      }
-      load();
-    }).catch(()=>load());
-}
-// 비-dedup 잡(linkmap/report…) 카드 하나. 상태 배지 + 결과(resultHTML) 보기/다운로드, 또는 오류+재시도/닫기.
-function queueJobCardHTML(it){
-  const title=esc(it.title||it.text||'(작업)');
-  const st=it.status||'ready';
-  const badge=st==='analyzing'
-    ? '<span class="qrun"><span class="qdot"></span>실행 중</span>'
-    : (st==='pending'
-        ? '<span class="muted" style="font-size:12px">대기</span>'
-        : (it.error?'<span style="color:#e0a458;font-size:12px">오류</span>':'<span style="color:var(--green);font-size:12px">완료</span>'));
-  let body='';
-  if(st==='ready' && it.error){
-    body='<div class="muted" style="font-size:12px;color:#e0a458;margin-top:4px">'+esc(it.error)+'</div>'
-      +'<div style="display:flex;gap:6px;margin-top:6px">'
-      +'<button class="btn" onclick="queueRetry(\''+it.id+'\')">재시도</button>'
-      +'<button class="btn" onclick="queueRemove(\''+it.id+'\')">닫기</button></div>';
-  } else if(st==='ready' && it.resultHTML){
-    // linkmap 잡: 노드-링크 지도 + 요약 + 압축 내보내기를 카드에 인라인으로 펼쳐 보여준다.
-    // (resultHTML은 서버가 만든 자기완결 HTML 조각 — /data.json aiQueue로 전달됨.)
-    const inline=(it.jobKind==='linkmap')
-      ? '<div style="margin-top:8px;padding:12px;background:#101420;border:1px solid #222838;border-radius:10px;overflow-x:auto">'+it.resultHTML+'</div>'
-      : '';
-    body=inline+'<div style="display:flex;gap:6px;margin-top:6px">'
-      +'<button class="btn primary" onclick="queueView(\''+it.id+'\')">보기</button>'
-      +'<button class="btn" onclick="queueDownload(\''+it.id+'\')">다운로드</button>'
-      +'<button class="btn" onclick="queueRemove(\''+it.id+'\')">닫기</button></div>';
-  } else if(st==='ready'){
-    body='<div class="muted" style="font-size:12px;margin-top:4px">결과가 비어 있습니다.</div>'
-      +'<div style="display:flex;gap:6px;margin-top:6px">'
-      +'<button class="btn" onclick="queueRetry(\''+it.id+'\')">재시도</button>'
-      +'<button class="btn" onclick="queueRemove(\''+it.id+'\')">닫기</button></div>';
-  }
-  return '<div class="qrow" style="align-items:flex-start"><div style="flex:1;min-width:0">'
-    +'<div style="font-size:13px">'+title+' <span style="margin-left:6px">'+badge+'</span></div>'
-    +body+'</div></div>';
-}
-// 잡 결과 카드 액션.
-function queueRetry(id){ post('/api/queue/retry',{id:id}); }
-function queueRemove(id){ post('/api/queue/remove',{id:id}); }
-function queueView(id){ const it=(_lastAiQueue||[]).find(x=>x.id===id); if(!it||!it.resultHTML) return;
-  const w=window.open('','_blank'); if(w){ w.document.write(it.resultHTML); w.document.close(); } }
-function queueDownload(id){ const it=(_lastAiQueue||[]).find(x=>x.id===id); if(!it||!it.resultHTML) return;
-  const blob=new Blob([it.resultHTML],{type:'text/html'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-  a.download=((it.title||it.text||'result').replace(/[^\w가-힣.-]+/g,'_'))+'.html';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
-// 내보내기(Phase 3): 인라인 렌더 대신 linkmap 잡을 큐에 던지고(fire-and-forget) 큐 탭으로 전환한다.
-// 백그라운드 워커가 루트 goal의 링크 체인을 걸어 노드-링크 지도 + 링크-aware 압축 내보내기를 만들어
-// 큐 카드로 올린다. 결과는 큐 탭에서 보기/다운로드/재시도.
+// --- AI 큐 리뷰 UI는 chat(/goal-add)의 detail-큐로 완전히 이전됐다 (QueuePanel.swift) ---
+// 대시보드에 남는 것: 탭바 우측 큐 상태 노티(updateQueueNoti, 클릭=chat detail-큐로 이동)와
+// enqueue 진입점(aiAdd·dupLater·exportLinkmap). 아래 변수는 노티가 쓰는 큐 스냅샷이다.
+let _lastAiQueue=[];
+// 내보내기(링크 체인): linkmap 잡을 큐에 던지고 결과가 쌓이는 detail-큐(chat)로 이동한다.
 function exportLinkmap(id){
   post('/api/queue/enqueue-linkmap',{root:id});
-  setView('queue');
-}
-// 큐 박스는 큐 탭에만 렌더된다(인라인 배치 제거). 프롬프트 열기/취소 같은 즉시 상태 변화는
-// 5초 폴링을 기다리지 않고 바로 다시 그린다. 재렌더 후 입력 중이면 텍스트박스 포커스를 복원한다.
-function rerenderAiQueue(){
-  renderAiQueue(_lastAiQueue);
-  if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } }
-}
-// 추가(1번/바로추가/이 결과로 진행): fire-and-forget이 아니라 응답의 새 #seq를 받아 확인 카드로
-// 전환한다. parentSeq가 있으면 그 목표 아래(반복 회차)로 들어간다.
-// 승격(add): opts로 AI 제안을 덮어쓸 수 있다.
-//  - parentSeq: 숫자면 그 값(0=명시적 최상위)을 override로 보낸다. 생략(undefined)이면 AI 제안(suggestedParentSeq) 수용.
-//  - priority: 있으면 override로 보낸다. 생략이면 AI 제안 우선순위 수용.
-// 옛 시그니처 queueAdd(id, parentSeq) 는 두 번째 인자를 parentSeq override로 그대로 받는다.
-function queueAdd(id,parentSeq,priority){
-  _qJustRefined='';
-  const it=((_review&&_review.aiQueue)||_lastAiQueue||[]).find(x=>x.id===id);
-  const label=it?it.text:'';
-  const body={id:id,action:'add'};
-  if(parentSeq!=null) body.parentSeq=parentSeq;   // 0 도 명시적 최상위 override로 보낸다
-  if(priority) body.priority=priority;
-  fetch('/api/goal/queue/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-    .then(r=>r.json()).then(res=>{
-      if(res&&res.ok&&res.seq){
-        // parentFallback: 서브 부착이 1-level 트리 규칙에 막혀 최상위로 추가된 경우 — 확인 카드에 안내를 얹는다.
-        startQueueConfirm(id,res.seq,(res.parentSeq!=null?res.parentSeq:(parentSeq||0)),label,!!(res&&res.parentFallback));
-      }
-      load();
-    })
-    .catch(()=>load());
-}
-// task로 추가: 새 goal을 채번하지 않고 기존 goal #seq의 부분과제(tasks/taskN 폴더)로 붙인다.
-// 응답의 task 폴더명을 확인 카드에 실어 "무엇이 어디에 생겼는지" 바로 검증할 수 있게 한다.
-function queueAddTask(id,seq,taskName){
-  _qJustRefined='';
-  const it=((_review&&_review.aiQueue)||_lastAiQueue||[]).find(x=>x.id===id);
-  const label=it?it.text:'';
-  const body={id:id,action:'task',parentSeq:seq};
-  if(taskName) body.taskName=taskName;   // 검색→task 추가: 추천/수정된 폴더명을 그대로 사용
-  fetch('/api/goal/queue/resolve',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(body)})
-    .then(r=>r.json()).then(res=>{
-      if(res&&res.ok&&res.seq) startQueueConfirm(id,res.seq,0,label,false,res.task||'');
-      load();
-    }).catch(()=>load());
-}
-// === 검색(findOnly) → 다음 액션 흐름 ===
-// 추천 액션: AI가 붙인 relation/kind로 결정한다. 반복 실행/하위문제면 'task 추가'를, 그 외엔
-// '끝내기(열기)'를 추천한다. rationale/note는 추천 사유로 그대로 노출한다.
-function qFindRec(it){ const rel=it.relation||'', k=it.kind||'';
-  return (rel==='recurring-execution'||rel==='sub-problem'||k==='recurring')?'task':'finish'; }
-// 번호를 골라 대상 목표를 정한다 → 다음 액션 메뉴로.
-function queueFindPick(id,seq){ _qFind[id]={parentSeq:seq,phase:'menu'}; rerenderAiQueue(); }
-// 대상 선택 취소 → 매치 목록으로 되돌린다.
-function queueFindBack(id){ delete _qFind[id]; rerenderAiQueue(); }
-// 액션 실행: finish=목표 열기(끝내기), stop=아무것도 안 하고 검색 닫기(skip),
-// task=이름 추천(서버)을 받아 수정 가능한 입력으로 넘어간다.
-function queueFindAct(id,action,pN){
-  if(action==='finish'){ location.href='/goal?n='+pN; return; }
-  if(action==='stop'){ delete _qFind[id]; queueSkip(id); return; }
-  if(action==='task'){
-    _qFind[id]={parentSeq:pN,phase:'suggesting'}; rerenderAiQueue();
-    fetch('/api/goal/queue/suggest-task-name',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({id:id,parentSeq:pN})})
-      .then(function(r){return r.json();}).then(function(res){
-        if(res&&res.ok&&res.name){ _qFind[id]={parentSeq:pN,phase:'edit',name:res.name}; }
-        else { alert('이름 추천에 실패했습니다 (claude 미설치/오류). 다시 시도하세요.'); _qFind[id]={parentSeq:pN,phase:'menu'}; }
-        rerenderAiQueue();
-      }).catch(function(){ _qFind[id]={parentSeq:pN,phase:'menu'}; rerenderAiQueue(); });
-  }
-}
-// 생성: (수정된) 추천 이름으로 #parentSeq 아래 task를 만든다.
-function queueFindCreate(id){ const sel=_qFind[id]; if(!sel) return;
-  const inp=$('qfind_'+id); const name=((inp?inp.value:sel.name)||'').trim();
-  if(!name){ if(inp) inp.focus(); return; }
-  const pN=sel.parentSeq; delete _qFind[id];
-  queueAddTask(id,pN,name);
-}
-// 검색 카드의 다음 액션 패널 HTML(대상 목표 pN 기준). phase: menu→suggesting→edit.
-function qFindActionHTML(it,hits,sel){
-  const pN=sel.parentSeq;
-  const m0=hits.find(function(m){return m.seq===pN;})||hits[0];
-  const pT=m0?esc(m0.text||''):'';
-  const back='<div class="qhint" style="margin:2px 0 6px">대상: <a href="/goal?n='+pN+'" style="color:var(--accent);text-decoration:none">#'+pN+'</a> '+pT
-    +' · <a href="#" onclick="queueFindBack(\''+it.id+'\');return false" style="color:var(--mut)">다른 목표 선택</a></div>';
-  if(sel.phase==='suggesting'){
-    return back+'<div style="border:1px dashed #33406a;border-radius:8px;padding:8px 10px;background:#101627">'
-      +'<span style="color:var(--green);font-size:13px"><span class="qspin">🔄</span> task 이름 만드는 중…</span></div>';
-  }
-  if(sel.phase==='edit'){
-    const nv=(sel.name||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    return back+'<div style="border:1px dashed #33406a;border-radius:8px;padding:8px 10px;background:#101627">'
-      +'<div style="font-size:11px;color:#9db4ff;margin-bottom:5px">추가할 task 이름 — 수정 가능 (Enter 생성)</div>'
-      +'<input id="qfind_'+it.id+'" data-qid="'+it.id+'" class="qfind-input" value="'+nv+'" '
-      +'onkeydown="if(event.key===\'Enter\'){event.preventDefault();queueFindCreate(\''+it.id+'\');}" '
-      +'oninput="if(_qFind[\''+it.id+'\'])_qFind[\''+it.id+'\'].name=this.value" '
-      +'style="width:100%;background:#0f131b;color:var(--fg);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;outline:none">'
-      +'<div style="display:flex;gap:6px;margin-top:6px"><button class="btn primary" onclick="queueFindCreate(\''+it.id+'\')">생성</button>'
-      +'<button class="btn" onclick="queueFindBack(\''+it.id+'\')">취소</button></div>'
-      +'<div class="qhint" style="margin-top:4px">#'+pN+' 아래 tasks/ 폴더로 이번 회차가 생성됩니다</div></div>';
-  }
-  // phase 'menu': 3 액션(추천 1번).
-  const rec=qFindRec(it);
-  const recWhy=it.rationale?esc(it.rationale):(it.note?esc(it.note):'#'+pN+' '+pT+'의 반복 회차로 보여, 그 목표의 task로 이번 실행을 추가합니다.');
-  let opts=[
-    {a:'task',label:'#'+pN+'에 task 추가',rec:(rec==='task'),desc:(rec==='task'?recWhy:'이번 실행을 #'+pN+'의 task(부분과제)로 추가합니다. 이름은 AI가 추천합니다.')},
-    {a:'finish',label:'#'+pN+' 열기 — 여기서 끝내기',rec:(rec==='finish'),desc:(rec==='finish'?'찾던 목표가 이미 있고 이번엔 새 작업이 없어, 그 목표를 열어 확인만 하고 마칩니다.':'새로 만들지 않고 찾은 목표를 열어 확인합니다.')},
-    {a:'stop',label:'그만두기',desc:'아무것도 하지 않고 이 검색 결과를 닫습니다.'}
-  ];
-  const ri=opts.findIndex(function(o){return o.rec;}); if(ri>0){ opts.unshift(opts.splice(ri,1)[0]); }
-  let n=0;
-  const rows=opts.map(function(o){ n++;
-    return '<div class="qopt'+(o.rec?' rec':'')+'" onclick="queueFindAct(\''+it.id+'\',\''+o.a+'\','+pN+')">'
-      +'<div class="qnum">'+n+'</div>'
-      +'<div class="qopt-body"><div class="qopt-label">'+o.label+(o.rec?'<span class="qrec-tag">추천</span>':'')+'</div>'
-      +'<div class="qopt-desc">'+o.desc+'</div></div></div>';
-  }).join('');
-  return back+'<div class="qchoice">'+rows+'</div>';
-}
-function queueSkip(id){ _qJustRefined=''; post('/api/goal/queue/resolve',{id:id,action:'skip'}); }
-// --- 오버라이드 패널: 배치/우선순위를 직접 지정해 승격 ---
-// 패널 열고 닫기(폴링 재렌더가 innerHTML을 갈아끼워도 다시 열려면 링크를 다시 눌러야 하므로, 열림 상태는 굳이 보존하지 않음 — 가벼움 유지).
-function qOverrideToggle(id){ const p=$('qovr_'+id); if(!p) return;
-  p.style.display=(p.style.display==='none'||!p.style.display)?'flex':'none';
-  if(p.style.display==='flex'){ const n=$('qovrn_'+id); if(n) n.focus(); } }
-// select(부모 목표)로 고르면 #번호 입력칸을 동기화.
-function qOvrPickParent(id){ const s=$('qovrp_'+id), n=$('qovrn_'+id); if(!s||!n) return;
-  const v=parseInt(s.value,10)||0; n.value=(v>0?v:''); }
-// #번호 직접 입력 시 select 를 동기화(그 번호가 최상위 목록에 있으면 선택, 없으면 독립으로).
-function qOvrSyncSelect(id){ const s=$('qovrp_'+id), n=$('qovrn_'+id); if(!s||!n) return;
-  const v=parseInt(n.value,10)||0; let has=false;
-  for(let i=0;i<s.options.length;i++){ if((parseInt(s.options[i].value,10)||0)===v){ s.selectedIndex=i; has=true; break; } }
-  if(!has) s.value='0';   // 최상위 목록에 없는 번호는 서브로 못 다니, 독립으로 표시(백엔드도 fallback)
-}
-// 오버라이드 승격: 선택한 parentSeq(0=독립) + priority 를 명시적으로 보낸다 → 백엔드가 AI 제안 대신 이 값을 적용.
-function queueOverrideApply(id){
-  const n=$('qovrn_'+id), pri=$('qovrpri_'+id);
-  const parentSeq=n?(parseInt(n.value,10)||0):0;   // 빈칸/0 → 명시적 최상위
-  const priority=pri?pri.value:'';
-  queueAdd(id,parentSeq,priority);
-}
-// 추가 직후 확인 카드: '열기' 링크 + 5초 카운트다운. 5초간 아무것도 안 하면 카드를 지워 큐를 없앤다.
-// task: task로 추가된 경우 생성된 tasks/<folder> 이름 — 카드 문구가 '#seq에 task 추가됨'으로 바뀐다.
-function startQueueConfirm(id,seq,parentSeq,label,fallback,task){
-  _qConfirm[id]={seq:seq,parentSeq:parentSeq||0,text:label||'',sec:5,fallback:!!fallback,task:task||''};
-  if(_qConfirmTimers[id]) clearInterval(_qConfirmTimers[id]);
-  _qConfirmTimers[id]=setInterval(function(){
-    const c=_qConfirm[id];
-    if(!c){ clearInterval(_qConfirmTimers[id]); delete _qConfirmTimers[id]; return; }
-    c.sec--;
-    if(c.sec<=0){ dismissQueueConfirm(id); } else { rerenderAiQueue(); }
-  },1000);
-  rerenderAiQueue();
-}
-function dismissQueueConfirm(id){
-  if(_qConfirmTimers[id]){ clearInterval(_qConfirmTimers[id]); delete _qConfirmTimers[id]; }
-  delete _qConfirm[id];
-  rerenderAiQueue();
-}
-// 번호 선택 UI 액션 라우팅: 추가/스킵/프롬프트 열기(이미지 지원 챗)/부모 아래 추가. 'other'는 인라인 입력이 처리.
-function queueChoose(id,action,arg){
-  if(action==='add') return queueAdd(id);
-  if(action==='task') return queueAddTask(id,arg); // 반복 회차: #arg의 task(부분과제)로 — 새 goal 없음
-  if(action==='under') return queueAdd(id,arg);   // 부모 #arg 아래 서브 목표로 추가 + 확인 카드
-  if(action==='skip') return queueSkip(id);
-  if(action==='prompt') return queuePromptChat(id);
-  if(action==='override') return qOverrideToggle(id);   // 배치/우선순위 직접 지정 패널 토글
-}
-// 기타(직접 지시) 입력의 IME-안전 Enter 제출 — 문서 레벨 위임이라 큐가 어느 뷰(목록/스프린트)로
-// 재렌더되든 재바인딩 없이 항상 동작한다. 한글 조합을 확정하는 Enter는 isComposing=true여서 그냥
-// 무시하면 삼켜지므로(마지막 글자 확정용), 보류했다가 compositionend 직후에 제출한다.
-document.addEventListener('keydown',function(e){
-  const el=e.target;
-  if(!el||!el.classList||!el.classList.contains('qother-input')||e.key!=='Enter') return;
-  if(e.isComposing||el._composing){ el._pendingSubmit=true; return; }   // 조합 중: 확정 후로 보류
-  e.preventDefault();
-  const id=el.getAttribute('data-qid'); if(id) queueOtherSubmit(id);
-});
-document.addEventListener('compositionstart',function(e){ const el=e.target; if(el&&el.classList&&el.classList.contains('qother-input')) el._composing=true; });
-document.addEventListener('compositionend',function(e){ const el=e.target;
-  if(!el||!el.classList||!el.classList.contains('qother-input')) return;
-  el._composing=false;
-  if(el._pendingSubmit){ el._pendingSubmit=false; const id=el.getAttribute('data-qid'); if(id) queueOtherSubmit(id); }
-});
-function queueOtherSubmit(id){
-  const inp=$('qother_'+id); const v=(((_qOther[id]!=null?_qOther[id]:(inp?inp.value:''))||'')).trim();
-  if(!v){ if(inp) inp.focus(); return; }
-  delete _qOther[id];                    // 제출됐으니 보관값 정리
-  _qUI={id:id,mode:'prompt',prompt:v};   // queuePromptGen이 t 없으면 _qUI.prompt를 사용
-  queuePromptGen(id);
-}
-// 큐 항목 다듬기: 기존 AI 대화 다이얼로그(이미지 붙여넣기·드래그·다중턴 대화 지원)를 이 항목의
-// 컨텍스트(현재 문구 + 유사 목표 + AI 판정)로 연다. 다듬은 뒤 '이 결과로 진행'(목표 추가) 또는
-// '큐에 반영'(문구만 갱신하고 계속 대기).
-function queuePromptChat(id){
-  const it=((_review&&_review.aiQueue)||_lastAiQueue||[]).find(x=>x.id===id); if(!it) return;
-  _dupPending={queueId:id, text:it.text||'', parent:it.parent||'', sprint:it.sprint||0, note:it.note||'', matches:it.matches||[], refineSession:it.refineSession||''};
-  showDup(_dupPending);
-}
-// 프롬프트 열기 → 입력 → 생성(서버 refine) → 새 결과. 맞으면 진행(queueProceed), 아니면 다시.
-function queuePromptStart(id){ _qJustRefined=''; _qUI={id:id,mode:'prompt',prompt:''}; rerenderAiQueue();
-  const t=$('qp_'+id); if(t) t.focus(); }
-function queuePromptCancel(){ _qUI=null; rerenderAiQueue(); }
-function queuePromptGen(id){
-  const t=$('qp_'+id); const prompt=((t?t.value:((_qUI&&_qUI.prompt)||''))||'').trim();
-  if(!prompt){ if(t) t.focus(); return; }
-  _qUI={id:id,mode:'gen',prompt:prompt}; rerenderAiQueue();
-  fetch('/api/goal/queue/refine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,prompt:prompt})})
-    .then(r=>r.json()).then(res=>{ _qUI=null; if(res&&res.ok){ _qJustRefined=id; } else { alert('다듬기에 실패했습니다 (claude 미설치/오류). 잠시 후 다시 시도하세요.'); } load(); })
-    .catch(()=>{ _qUI=null; load(); });
-}
-function queueProceed(id){ _qJustRefined=''; queueAdd(id); }
-function queueEditStart(id){
-  const span=$('qt_'+id); if(!span||span._editing)return; span._editing=true;
-  const cur=span.textContent;
-  const inp=document.createElement('input'); inp.type='text'; inp.className='gedit'; inp.value=cur;
-  inp.title='Enter 저장 · Esc 취소'; span.innerHTML=''; span.appendChild(inp); inp.focus(); inp.select();
-  let done=false;
-  function commit(){ if(done)return; done=true; const t=inp.value.trim();
-    if(!t||t===cur){ load(); return; } post('/api/goal/queue/resolve',{id:id,action:'edit',text:t}); }
-  inp.addEventListener('keydown',function(ev){ if(ev.key==='Escape'){ev.preventDefault(); if(!done){done=true; load();}} });
-  inp.addEventListener('blur',commit);
-  bindImeEnter(inp,commit);
+  location.href='/goal-add?q=detail';
 }
 function removeGoal(id){ post('/api/goal/remove',{id:id}); }
 function saveNote(id,note){ post('/api/goal/note',{id:id,note:note}); }
@@ -2473,6 +1797,8 @@ function restoreFromURL(){
   // 'skills'·'agents'(레일 독립 오버레이)·'actions'·'history'(컨디션 관리 페이지로 이동)는 더 이상
   // 대시보드 탭이 아니다. 오래된 해시/저장값이 오면 기본 작업뷰로 보정.
   if(_view==='skills'||_view==='agents'||_view==='actions'||_view==='history') _view='input';
+  // 'queue'는 chat(/goal-add)의 detail-큐로 완전히 이전 — 옛 북마크/저장값은 그 화면으로 보낸다.
+  if(_view==='queue'){ location.replace('/goal-add?q=detail'); return; }
   renderTabs();
   const ds=$('flt_donesince'); if(ds) ds.value=_doneSince?localInput(_doneSince):'';
   _urlReady=true;
@@ -2719,8 +2045,11 @@ function pad2(n){ return (n<10?'0':'')+n; }
 // 저장되어 앱을 껐다 켜도 그대로 복원된다. ⋯ 메뉴로 기본 지정·좌우 이동을 한다.
 const VIEW_DEFS=[
   {k:'input',t:'목록'},{k:'group',t:'그룹'},{k:'table',t:'테이블'},
-  {k:'token',t:'토큰'},{k:'queue',t:'큐'},{k:'schedule',t:'일정'},{k:'preview',t:'리포트'},
+  {k:'token',t:'토큰'},{k:'schedule',t:'일정'},{k:'preview',t:'리포트'},
   {k:'sprint',t:'스프린트'},{k:'archived',t:'아카이브'}
+  // 큐는 더 이상 대시보드 탭이 아니다 — chat(/goal-add)의 detail-큐로 완전히 이전 (QueuePanel.swift).
+  // 탭바 우측 큐 상태 노티(qNoti)가 /goal-add?q=detail 로 안내한다. 옛 'queue' 해시/저장값은
+  // restoreFromURL이 그 주소로 리다이렉트한다.
   // 액션로그·히스토리는 더 이상 대시보드 탭이 아니다 — 컨디션 관리 페이지(/bgm-player)의 서브탭으로 이동
   // (컨디션맵·오늘 활동과 한곳에서 분석). normTabOrder가 저장된 옛 'actions'·'history' 키를 걸러낸다.
   // 에이전트는 더 이상 대시보드 탭이 아니다 — 레일의 '위임' 메뉴가 소유하는 독립 오버레이(SessionRail cmNav('delegate')).
@@ -2747,7 +2076,9 @@ function renderTabs(){
       +'</button>';
   }).join('')
   // 탭바 우측 AI 큐 상태 노티 — innerHTML 재생성으로 사라지므로 매번 스켈레톤을 함께 그리고 채운다.
-  +'<button class="vnoti" id="qNoti" onclick="setView(\'queue\')" title="AI 큐로 이동">'
+  // 큐 UI는 chat(/goal-add)의 큐 목록(행 펼침 검토)으로 이전됐으므로 클릭은 그 화면으로 이동한다
+  // (?q=detail: 미확정 행을 모두 펼치고 큐 히스토리를 연 상태로 진입).
+  +'<button class="vnoti" id="qNoti" onclick="location.href=\'/goal-add?q=detail\'" title="큐(chat)로 이동 — 담긴 항목을 펼쳐 검토·확정합니다">'
   +'<span class="nd"></span><span class="nt"></span><span class="narr">→</span></button>';
   updateQueueNoti(_lastAiQueue);
 }
@@ -2757,9 +2088,9 @@ function markActiveTab(){
   [...host.querySelectorAll('.vtab')].forEach(b=>b.classList.toggle('active', b.dataset.k===_view));
 }
 // 탭바 우측 AI 큐 상태 노티 — enqueue 직후엔 '큐 실행 중 N건'(액센트 펄스), 분석이 끝나면
-// '검토 대기 N건'(보라)으로 바뀐다. 클릭하면 큐 탭으로 이동, 큐 탭을 보는 동안은 숨긴다.
-// 예전의 큐 탭 라벨 카운트 배지를 대체한다(신호 단일화). 리스트/보드에 큐 박스를 끼워 넣지
-// 않아도 "지금 큐가 돌고 있다"는 걸 어느 뷰에서든 알 수 있게 하는 것이 목적.
+// '검토 대기 N건'(보라)으로 바뀐다. 클릭하면 chat의 detail-큐로 이동한다(큐 UI 이전 후 대시보드에
+// 남은 유일한 큐 신호). 리스트/보드에 큐 박스를 끼워 넣지 않아도 "지금 큐가 돌고 있다"는 걸
+// 어느 뷰에서든 알 수 있게 하는 것이 목적.
 function updateQueueNoti(items){
   const n=$('qNoti'); if(!n) return;
   const list=items||[];
@@ -2770,7 +2101,7 @@ function updateQueueNoti(items){
     return it.status==='ready';                                   // 잡: 완료/오류
   }).length;
   n.classList.remove('run','ready');
-  if(_view==='queue' || (running+ready)===0){ n.style.display='none'; return; }
+  if((running+ready)===0){ n.style.display='none'; return; }
   n.style.display='inline-flex';
   const t=n.querySelector('.nt'); if(!t) return;
   if(ready>0){ n.classList.add('ready'); t.textContent='🤖 검토 대기 '+ready+'건'+(running?' · 실행 중 '+running:''); }
@@ -2802,11 +2133,10 @@ function tabSetDefault(k){
 // Persist the chosen view server-side (Settings file store) so the next launch reopens here.
 // A URL hash (bookmark/refresh) still wins over this on load — see restoreFromURL.
 function setView(v){ _view=v; if(_review) fillActiveView(_review); applyView(); syncURL(); post('/api/prefs/view',{view:v});
-  updateQueueNoti(_lastAiQueue);   // 큐 탭 진입/이탈에 맞춰 노티를 즉시 숨김/복원
+  updateQueueNoti(_lastAiQueue);   // 뷰 전환 시 노티를 즉시 갱신
 }
 function applyView(){
   const inp=$('inputView'), pv=$('previewView'), gv=$('groupView'), sv=$('scheduleView'), tv=$('tableView'), tkv=$('tokenView'), spv=$('sprintView'), av=$('archivedView');
-  const qv=$('queueView'); if(qv) qv.style.display=(_view==='queue')?'':'none';
   inp.style.display=(_view==='input')?'':'none';
   gv.style.display =(_view==='group')?'':'none';
   sv.style.display =(_view==='schedule')?'':'none';
@@ -2835,7 +2165,6 @@ function fillActiveView(r){
   else if(_view==='schedule'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('tableHost').innerHTML=''; renderSchedule(r); }
   else if(_view==='table'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderTable(r); }
   else if(_view==='token'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderTokenView(r); }
-  else if(_view==='queue'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderQueueTab(r); }
   else if(_view==='sprint'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderSprintView(r); }
   else if(_view==='archived'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderArchivedView(r); }
   else { $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; }   // preview: report only
@@ -4472,22 +3801,6 @@ window.addEventListener('resize', load);
 // 부모 채우기 무장: Cmd(또는 Ctrl)를 누르는 동안 부모#칸이 채우기 소스로 강조된다.
 document.addEventListener('keydown',function(e){ if(e.key==='Meta'||e.key==='Control') document.body.classList.add('armparent'); });
 document.addEventListener('keyup',  function(e){ if(e.key==='Meta'||e.key==='Control') document.body.classList.remove('armparent'); });
-// 검토 대기 항목이 정확히 1건일 때 숫자키(1-N)로 옵션 선택. 여러 건이면 모호하므로 클릭만 허용.
-// 입력/텍스트영역에 포커스가 있으면(기타 직접 입력 등) 무시한다.
-document.addEventListener('keydown',function(e){
-  if(e.metaKey||e.ctrlKey||e.altKey) return;
-  if(!/^[1-9]$/.test(e.key)) return;
-  const t=e.target, tag=(t&&t.tagName)||'';
-  if(tag==='INPUT'||tag==='TEXTAREA'||(t&&t.isContentEditable)) return;
-  const cards=document.querySelectorAll('.qchoice');
-  if(cards.length!==1) return;
-  const card=cards[0], opt=card.querySelector('.qopt[data-n="'+e.key+'"]');
-  if(!opt) return;
-  e.preventDefault();
-  const id=card.getAttribute('data-qid'), act=opt.getAttribute('data-action'), arg=opt.getAttribute('data-arg');
-  if(act==='other'){ const inp=$('qother_'+id); if(inp) inp.focus(); }
-  else queueChoose(id,act,arg);
-});
 window.addEventListener('blur',function(){ document.body.classList.remove('armparent'); });
 // Run the QA self-audit independently of load(), so it still fires (and re-measures on
 // resize) even if a render path hiccups. Cheap; only POSTs when the finding set changes.

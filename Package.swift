@@ -28,9 +28,16 @@ let package = Package(
             name: "GUI",
             path: "Sources/GUI"
         ),
+        // Screen-drawing overlay engine (드로우 plugin): transparent click-through
+        // per-screen windows, left-⌥-to-draw / left-⌃-to-wipe key polling. App-agnostic
+        // like GUI — the app decides when it runs (Sources/Draw).
+        .target(
+            name: "Draw",
+            path: "Sources/Draw"
+        ),
         .executableTarget(
             name: "ConditionManager",
-            dependencies: ["WebCLI", "GUI"],
+            dependencies: ["WebCLI", "GUI", "Draw"],
             path: "Sources/ConditionManager"
         ),
         // Standalone web terminal: serves the in-app CLI 세션 view to a real browser,

@@ -19,7 +19,7 @@ import WebCLI
 // The draft is the same localStorage key the dashboard chip watches (cm.gaDraft), and
 // the add context is persisted to cm.gaCtx so the chip can reopen the same target.
 //
-// 세션시작 turns THIS page into an inline session view (no navigation): the composer
+// GUI시작 turns THIS page into an inline session view (no navigation): the composer
 // panel hides, chat2 events stream into #gsLive over the goal's SSE channel
 // (GET /api/goal/chat2/stream?seq=N), and a Claude-Code-Desktop-style composer fixed to
 // the bottom sends follow-up turns (POST /api/goal/chat2/say). Composer images ride the
@@ -27,18 +27,31 @@ import WebCLI
 // ride their own turn (chat2/say images:[…]) — both are embedded as real base64 image
 // blocks server-side so the model actually sees them (chat2RunTurn).
 //
-// The header CLI/GUI toggle is LIVE while a session view is open: clicking it switches
-// the current view, continuing the same session. CLI→GUI stops the terminal polling
-// (the PTY stays alive in the background) and opens the messenger view in resume mode —
-// sends go through POST /api/goal/session/say (headless --resume of the goal's latest
-// associated session, the 세션 정보 tab's channel) and events arrive over &sess=1 SSE.
-// GUI→CLI closes the SSE stream and reopens the in-page terminal via cli/start, which
-// reconnects the live PTY or --resumes the connected session (cliCommand tiers). A turn
-// that is still running is NEVER aborted by the toggle: the CLI view waits (polling
-// chat2/state) and connects the terminal once the turn finishes on its own.
+// Queue surface (2026-07-19 simple/detail 큐 병합 — 별도 표면·헤더 세그 없음): the
+// composer page IS the queue. Everything dumped stays visible in the 큐 list
+// (cm.gaTallyHist, last 100; unresolved AI-queue rows resume polling after re-entry),
+// and an unresolved row expands IN PLACE (▸) into the full review card
+// (QueuePanel.swift — 추천 옵션·배치 오버라이드·프롬프트 다듬기) so review/confirm
+// happens without leaving the page. Resolved rows fold into the 큐 히스토리 section at
+// the bottom (번복 포함) which is COLLAPSED by default. Direct entry: /goal-add?q=detail
+// (dashboard 큐 노티·exportLinkmap·old #view=queue redirects) auto-expands unresolved
+// rows and opens the history. Non-dedup job results (linkmap 등) render as cards in the
+// 작업 결과 section. AI검색(findOnly — 추가 모드의 전용 버튼과 검색 모드의 primary 리라벨
+// 둘 다 gaAiSearch 공용)은 추가 모드에선 'AI 검색' 행으로 큐 목록에 담긴다(자동 펼침 →
+// 검색 카드 인라인, 닫기 전까지 큐에 남아 재진입에도 복원 — 닫으면 '닫힘'으로 히스토리행).
+// 검색 모드(레일 검색 페이지 — 큐 목록 없음)에서만 #gaResults 인라인 카드로 그린다.
+//
+// The header seg toggles (simple-큐/detail-큐 and CHAT/DETAIL) are gone with the merge.
+// The session view's sub-header links to the goal page (구 DETAIL 버튼의 역할). Every
+// queue row gets a GUI열기 button: rows that are already goals open the in-page session
+// view directly (gsEnterResume), unresolved queue rows are promoted (resolve add, AI
+// placement accepted) and the session starts immediately with the row text as the first
+// turn (gsEnter). GUI시작/GUI열기 also stamp POST /api/goal/viewing so the goal appears
+// in the LEFT RAIL's session list (보는 중) right away — no /goal navigation needed.
+// The legacy CLI terminal view remains reachable only via ?ui=cli (old rail lastTab).
 enum GoalAddContent {
 
-    static func html(serverCtx: String = "{}") -> String {
+    static func html(serverCtx: String = "{}", tallyHist: String = "[]") -> String {
         return #"""
         <!doctype html><html lang="ko"><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -140,8 +153,48 @@ enum GoalAddContent {
             border-radius:999px; padding:0 8px; white-space:nowrap }
           .tally .t-kind.direct{ color:var(--accent); border-color:#33406a }
           .tally .t-txt{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+          /* 상태 칩: 진행중(분석 중·펄스) → 완료(분석 끝·큐 탭 확정 대기) → 추가됨 #NN(확정, 링크) */
+          .tally .t-st{ flex:0 0 auto; display:inline-flex; align-items:center; gap:4px; font-size:10.5px;
+            border-radius:999px; padding:0 7px; white-space:nowrap; text-decoration:none }
+          .tally .t-st.prog{ color:var(--accent); border:1px solid #33406a }
+          .tally .t-st.prog .dot{ width:5px; height:5px; border-radius:50%; background:var(--accent);
+            animation:tpulse 1.2s ease-in-out infinite }
+          @keyframes tpulse{ 0%,100%{opacity:.25} 50%{opacity:1} }
+          .tally .t-st.done{ color:var(--green); border:1px solid #2a5a3c }
+          .tally .t-st.skip{ color:var(--mut); border:1px solid var(--line) }
+          /* 인라인 수정: 행에 호버하면 ✎ — 입력창 + 저장/취소 (Enter 저장 · Esc 취소) */
+          .tally .t-edit{ flex:0 0 auto; background:transparent; border:none; color:var(--mut);
+            cursor:pointer; font-size:12px; padding:0 2px; opacity:0; transition:opacity .12s }
+          .tally .t-row:hover .t-edit{ opacity:.85 }
+          .tally .t-edit:hover{ color:var(--fg) }
+          .tally .t-in{ flex:1; min-width:0; background:var(--bg); border:1px solid var(--accent);
+            border-radius:8px; color:var(--fg); font:inherit; font-size:12.5px; padding:2px 8px; outline:none }
+          .tally .t-act{ flex:0 0 auto; background:transparent; border:1px solid var(--line); border-radius:8px;
+            color:var(--fg); cursor:pointer; font-size:11px; padding:1px 8px }
+          .tally .t-act:hover{ background:#1d2230 }
+          .tally .t-head{ display:flex; align-items:baseline; gap:8px }
+          .tally .t-when{ flex:0 0 auto; font-size:10px; color:var(--mut) }
+          .t-clear{ flex:0 0 auto; margin-left:auto; background:transparent; border:none;
+            color:var(--mut); font-size:11px; cursor:pointer; padding:0 }
+          .t-clear:hover{ color:var(--fg) }
+          /* 행 펼침 토글(▸/▾): 미확정 AI 큐 행에서 검토 카드를 그 자리에 연다. sp=자리맞춤 */
+          .tally .t-exp{ flex:0 0 auto; width:16px; background:transparent; border:none; color:var(--mut);
+            cursor:pointer; font-size:11px; padding:0; text-align:center }
+          .tally .t-exp:hover{ color:var(--fg) }
+          .tally .t-exp.sp{ cursor:default }
+          /* 펼쳐진 검토 카드 컨테이너 — QueuePanel 카드(qrow/qopt…)가 이 안에 그려진다 */
+          .tally .t-det{ margin:4px 0 8px 22px; border:1px solid var(--line); border-radius:10px;
+            padding:8px 10px; background:rgba(91,140,255,.05) }
+          .tally .t-gui{ color:var(--accent); border-color:#33406a }
+          .tally .t-gui:hover{ background:rgba(91,140,255,.12) }
+          /* 큐 히스토리 (맨 하단, 기본 닫힘): 확정된 담김 기록 + 번복 */
+          .qhist{ border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin-top:12px;
+            font-size:12.5px }
+          .qhist .qh-head{ display:flex; align-items:baseline; gap:8px; cursor:pointer; user-select:none }
+          .qhist .qh-head:hover #gaHistArrow{ color:var(--fg) }
+          .qhist #gaHistArrow{ color:var(--mut); font-size:11px }
 
-          /* ── 세션 뷰: 세션시작 후 이 화면이 그대로 세션이 된다 — 출력은 플레인 텍스트,
+          /* ── 세션 뷰: GUI시작 후 이 화면이 그대로 세션이 된다 — 출력은 플레인 텍스트,
                 도구는 요약 한 줄›드릴다운, 입력은 하단 고정 컴포저(클로드 코드 데스크탑식) ── */
           body.sess main{ padding-bottom:170px }
           body.sess .gacomp, body.sess .tally{ display:none }
@@ -254,7 +307,7 @@ enum GoalAddContent {
           .gs-bar .gs-ctx .gc-branch{ color:#5eead4 }
           .gs-bar .gs-ctx .ic{ opacity:.7; font-size:11px }
 
-          /* ── CLI 세션 뷰: 세션시작(CLI 토글)이 페이지 안 임베디드 터미널로 진행된다 ──
+          /* ── CLI 세션 뷰(레거시, ?ui=cli 진입 전용): 페이지 안 임베디드 터미널 ──
              높이는 flex 체인으로 채운다 — calc(100vh - N) 매직넘버는 헤더 실높이(제목/부제
              줄바꿈에 따라 가변)와 어긋나는 순간 터미널 하단이 뷰포트 밖으로 잘린다. */
           #gaCli{ display:none }
@@ -277,25 +330,22 @@ enum GoalAddContent {
           #gaCliTerm .xterm-viewport::-webkit-scrollbar-track{ background:transparent }
           #gaCliTerm .xterm-viewport::-webkit-scrollbar-thumb{ background:#2a3340; border-radius:4px }
           #gaCliTerm .xterm-viewport::-webkit-scrollbar-thumb:hover{ background:#3a4658 }
+        \#(QueuePanel.css())
         </style></head>
         <body>
           <script>window.CM_PAGE='goal-add';
           // 서버 영속 컴포저 컨텍스트(작업 폴더·브랜치·작업량·모드·최근 폴더). 렌더 시 인라인 주입 —
           // dynamic 포트로 origin 이 바뀌어도 재시작 후 고른 폴더가 유지된다(localStorage 대체 소스).
-          try{ window._gaServerCtx=\#(serverCtx); }catch(e){ window._gaServerCtx={}; }</script>
+          try{ window._gaServerCtx=\#(serverCtx); }catch(e){ window._gaServerCtx={}; }
+          // 담김 히스토리 서버 주입 — localStorage 는 dynamic 포트(새 origin)마다 리셋되므로
+          // 서버 영속본이 진실이다 (localStorage 는 같은 실행 안 새로고침용 캐시로만 남는다).
+          try{ window._gaTallyHist=\#(tallyHist); }catch(e){ window._gaTallyHist=[]; }</script>
           \#(SessionRail.html())
           <header>
             <div><h1><span id="gaEditIcon" style="display:none" title="작성 중이던 초안을 이어서 편집 중">✎ </span><span id="gaTitle">목표 추가</span> <span class="muted" id="gaWhere" style="font-size:13px;font-weight:400"></span></h1>
               <div class="sub" id="gaSub">깨끗한 화면에서 목표만 담습니다 — 담고 나면 대시보드로 돌아가세요</div></div>
-            <!-- 세션시작 실행 방식 토글: 클릭이 곧 디폴트 변경 (cm.gaUiMode 영속, 기본 CLI).
-                 세션 뷰가 열려 있으면 클릭이 곧 뷰 전환 — 같은 세션을 이어서 반대 모드로 연다. -->
-            <div class="ga-seg" id="gaUiSeg">
-              <button type="button" id="gaUiCli" onclick="gaUiSet('cli')" title="세션시작이 이 화면 안 터미널(claude CLI)로 열립니다 (기본) — 세션 중이면 지금 세션을 터미널로 이어서 엽니다">CLI</button>
-              <button type="button" id="gaUiGui" onclick="gaUiSet('gui')" title="세션시작이 이 화면의 메신저형 세션 뷰로 열립니다 — 세션 중이면 지금 세션을 이어서 이 뷰로 전환합니다">GUI</button>
-              <!-- 대시보드: 이 화면에서 목표가 실제로 생기면(직접 추가·세션시작) 활성화 —
-                   목표 페이지로 이동한다. 목표/과제 없는 temp 상태(입력만·AI 큐 대기)에선 비활성. -->
-              <button type="button" id="gaUiDash" onclick="gaDashOpen()" disabled>DETAIL</button>
-            </div>
+            <!-- 헤더 세그 토글(simple-큐/detail-큐 · CHAT/DETAIL)은 2026-07-19 큐 병합으로 제거 —
+                 검토·확정은 큐 행 펼침(▸)으로, 목표 페이지(구 DETAIL)는 세션 뷰 부제목 링크로. -->
           </header>
           <main>
           <div class="panel gacomp">
@@ -359,18 +409,25 @@ enum GoalAddContent {
               <button class="btn primary" id="gaAiBtn" onclick="gaAi()" title="추가 전에 AI가 비슷한 목표가 있는지 먼저 검사합니다">AI추가</button>
               <button class="btn" id="gaAddBtn" onclick="gaAdd()">추가</button>
               <button class="btn" id="gaSearchBtn" onclick="gaSearch()" title="번호 또는 제목으로 즉시 찾습니다 — 완료·릴리즈·보관·취소된 목표도 찾아줍니다">검색</button>
-              <button class="btn start ga-execonly" id="gaStartBtn" onclick="gaStart()" title="목표를 바로 추가하고 이 화면에서 AI 세션을 시작합니다 — 하단 입력창으로 이어서 지시할 수 있습니다">세션시작</button>
+              <button class="btn" id="gaAiSearchBtn" onclick="gaAiSearch()" title="표현이 달라도 의미가 비슷한 목표를 AI가 찾습니다 — 목표를 만들지 않고, 결과 카드가 아래에 표시됩니다">AI검색</button>
+              <button class="btn start ga-execonly" id="gaStartGui" onclick="gaStart()" title="목표를 바로 추가하고 이 화면의 메신저형 세션 뷰에서 AI 세션을 시작합니다 — 하단 입력창으로 이어서 지시할 수 있습니다">GUI시작</button>
             </div>
-            <div class="muted" id="gaHint" style="font-size:12px"><b>Enter</b>를 누르면 <b>AI추가</b>로 담깁니다 — 비슷한 목표가 있는지 먼저 확인하며, 페이지는 열린 채 계속 추가할 수 있습니다. 바로 추가하려면 <b>추가</b>, 비슷한 목표만 찾으려면 <b>검색</b>. <b>세션시작</b>은 목표를 바로 추가하고 AI 세션까지 시작합니다 — 페이지 이동 없이 이 화면에서 AI 출력이 흐르고, 하단 입력창으로 이어서 지시할 수 있습니다.</div>
+            <div class="muted" id="gaHint" style="font-size:12px"><b>Enter</b>를 누르면 <b>AI추가</b>로 담깁니다 — 비슷한 목표가 있는지 먼저 확인하며, 페이지는 열린 채 계속 추가할 수 있습니다. 바로 추가하려면 <b>추가</b>. 찾기만 하려면 <b>검색</b>(번호·제목 즉시 조회) 또는 <b>AI검색</b>(표현이 달라도 의미로 찾기 — 목표를 만들지 않고 결과 카드만). <b>GUI시작</b>은 목표를 바로 추가하고 AI 세션까지 시작합니다 — 페이지 이동 없이 이 화면에서 AI 출력이 흐르고, 하단 입력창으로 이어서 지시할 수 있습니다.</div>
             <div id="gaResults" style="margin-top:2px"></div>
           </div>
-          <div class="tally" id="gaTally"><b style="font-size:12px">이번에 담김 <span id="gaTallyN">0</span>건</b> <span class="muted" style="font-size:11px">— AI추가 항목의 검토·확정은 대시보드 <a href="/#view=queue" style="color:var(--accent)">큐 탭</a>에서</span><div id="gaTallyList" style="margin-top:6px"></div></div>
-          <!-- 세션 뷰: 세션시작이 페이지 이동 없이 여기서 진행된다 (body.sess 에서만 보임) -->
+          <!-- 큐 (simple/detail 병합): 담긴 항목이 여기 쌓이고, 미확정 AI 큐 행은 ▸ 로 펼쳐
+               그 자리에서 검토·확정한다. 확정된 기록은 아래 큐 히스토리(기본 닫힘)로 접힌다. -->
+          <div class="tally" id="gaTally"><div class="t-head"><b style="font-size:12px">큐 <span id="gaTallyN">0</span>건</b> <span class="muted" style="font-size:11px">— 행을 펼치면(▸) AI 분석 결과를 검토·확정할 수 있습니다 · <b>GUI열기</b>는 바로 세션까지</span></div><div id="gaTallyList" style="margin-top:6px"></div></div>
+          <!-- 작업 결과 (linkmap/report 등 비-dedup 잡): 있을 때만 보인다 -->
+          <div class="tally" id="gaJobs"><div class="t-head"><b style="font-size:12px">작업 결과</b></div><div id="gaJobsList" style="margin-top:6px"></div></div>
+          <!-- 큐 히스토리: 확정된 담김 기록(+번복). 기본 닫힘 — 헤더를 누르면 펼쳐진다 -->
+          <div class="tally qhist" id="gaHist"><div class="qh-head" onclick="gaHistToggle()" title="담고 확정한 기록 — 클릭해 펼치기/접기"><span id="gaHistArrow">▸</span> <b style="font-size:12px">큐 히스토리 <span id="gaHistN">0</span>건</b> <span class="muted" style="font-size:11px">— 확정된 담김 기록 · 번복 가능</span><button class="t-clear" onclick="event.stopPropagation();gaTallyClear()" title="큐 히스토리 표시를 비웁니다 — 미확정 큐 항목은 남습니다">비우기</button></div><div id="gaHistBody" style="display:none;margin-top:6px"></div></div>
+          <!-- 세션 뷰: GUI시작이 페이지 이동 없이 여기서 진행된다 (body.sess 에서만 보임) -->
           <div id="gaSess">
             <div id="gsLive"></div>
             <div class="gs-stat" id="gsStat"><span class="gstar">✳</span><span id="gsStxt">대기 중</span></div>
           </div>
-          <!-- CLI 세션 뷰: 세션시작(CLI 토글)이 페이지 안 임베디드 터미널로 진행된다 (body.cli 에서만 보임) -->
+          <!-- CLI 세션 뷰(레거시, ?ui=cli 진입 전용): 페이지 안 임베디드 터미널 (body.cli 에서만 보임) -->
           <div id="gaCli">
             <div class="cli-head"><span class="st" id="gaCliState">연결 중…</span></div>
             <div id="gaCliTerm"></div>
@@ -426,89 +483,13 @@ enum GoalAddContent {
         // 앱 창 밖에서 열리면 없을 수 있어 가드).
         function vtev(n){ try{ if(window.cmVT) cmVT.ev(n); }catch(e){} }
 
-        // ── 세션시작 실행 방식 토글 (헤더 CLI/GUI): CLI=터미널의 claude, GUI=이 화면 세션 뷰.
-        //    클릭이 곧 디폴트 변경 — cm.gaUiMode 로 영속, 기본 cli.
-        //    세션 뷰가 이미 열려 있으면 클릭이 곧 라이브 전환: 같은 세션을 이어서 반대 뷰로
-        //    연다 (CLI→GUI = session/say 재개, GUI→CLI = cli/start 재접속·--resume). ──
-        let _gaUi='cli';
+        // ── 헤더 세그 토글 없음 (2026-07-19 simple/detail 큐 + CHAT/DETAIL 병합): 검토는 큐 행
+        //    펼침(▸)이, 목표 페이지 이동(구 DETAIL)은 세션 뷰 부제목 링크가 담당한다. 세션은
+        //    항상 GUI(메신저형 세션 뷰)로 시작·재개하고, CLI 터미널 뷰(gaCliEnter)는 레거시
+        //    진입(?ui=cli — 옛 레일 lastTab)용으로만 남는다. ──
         let _gaSessSeq=0;   // 이 화면에서 세션 뷰가 열린 목표 seq — 0 이면 세션 없음
-        // ── 대시보드 버튼: 이 화면에서 목표가 실제로 생겨야(직접 추가·세션시작) 열 수 있다.
-        //    입력만 있거나 AI추가로 큐에 담긴 temp 상태에선 목표 페이지가 없으므로 비활성.
-        //    여러 개를 담았으면 마지막으로 생긴 목표를 가리킨다. ──
-        let _gaGoalSeq=0;   // 이 화면에서 만들어진/열린 마지막 목표 seq — 0=temp(비활성)
-        function gaGoalBorn(seq){ if(!(seq>0)) return; _gaGoalSeq=seq; gaDashSync(); }
-        function gaDashSync(){ const b=$('gaUiDash'); if(!b) return;
-          b.disabled=!(_gaGoalSeq>0);
-          b.title=(_gaGoalSeq>0)
-            ?('goal-'+pad2(_gaGoalSeq)+' 목표 페이지(DETAIL)를 엽니다 — 정의·대화 기록·첨부가 여기 남습니다')
-            :'아직 목표가 없습니다 — 추가 또는 세션시작으로 목표가 생기면 열 수 있습니다'; }
-        function gaDashOpen(){ if(!(_gaGoalSeq>0)) return;
-          try{ localStorage.setItem('cm.lastTab.'+_gaGoalSeq,'detail'); }catch(e){}
-          vtev('dashOpen goal-'+pad2(_gaGoalSeq)); location.href='/goal?n='+_gaGoalSeq; }
-        function gaUiSync(){ const c=$('gaUiCli'), g=$('gaUiGui');
-          if(c) c.className=(_gaUi==='cli')?'on':'';
-          if(g) g.className=(_gaUi==='gui')?'on':'';
-          const b=$('gaStartBtn'); if(b) b.title=(_gaUi==='cli')
-            ?'목표를 바로 추가하고 이 화면 안 터미널(claude CLI)에서 세션을 시작합니다'
-            :'목표를 바로 추가하고 이 화면에서 AI 세션을 시작합니다 — 하단 입력창으로 이어서 지시할 수 있습니다'; }
-        function gaUiSet(m){ _gaUi=(m==='gui')?'gui':'cli';
-          try{ localStorage.setItem('cm.gaUiMode',_gaUi); }catch(e){}
-          // 열려 있는 세션이 있으면 그 목표의 '마지막 본 탭'으로 이 뷰를 기록 — 레일 재진입 복원용.
-          try{ const sq=_gaSessSeq>0?_gaSessSeq:_gaGoalSeq; if(sq>0) localStorage.setItem('cm.lastTab.'+sq,_gaUi); }catch(e){}
-          gaUiSync();
-          if(_gaSessSeq>0){
-            if(_gaUi==='gui'&&document.body.classList.contains('cli')) gaCliToGui();
-            else if(_gaUi==='cli'&&document.body.classList.contains('sess')) gaGuiToCli();
-          } }
-        // CLI → GUI 라이브 전환: 터미널 폴링만 끊고(PTY는 백그라운드 유지 — 레일·재전환으로
-        // 재접속 가능) 같은 화면을 메신저형 세션 뷰로 바꾼다. 이어지는 지시는
-        // /api/goal/session/say 가 목표의 최신 연결 세션(방금 그 CLI 세션)을 headless 로
-        // 재개한다 — 목표 페이지 세션 정보 탭과 같은 &sess=1 채널.
-        function gaCliToGui(){
-          if(_cliCtl) _cliCtl.disconnect();
-          document.body.classList.remove('cli');
-          gsEnterResume(_gaSessSeq);
-        }
-        // GUI → CLI 라이브 전환: SSE만 닫고 같은 세션을 페이지 안 터미널로 다시 연다 —
-        // cli/start 가 살아있는 PTY 재접속 또는 연결 세션 --resume 으로 잇는다(cliCommand).
-        // 턴이 돌고 있어도 중단하지 않는다: 백그라운드에서 계속 돌게 두고, 끝나서 세션
-        // id 가 저장된 뒤 터미널이 이어받는다(그 전에 --resume 하면 진행 중 턴을 못 본다).
-        function gaGuiToCli(){
-          const seq=_gaSessSeq;
-          let running=false, sess=false;
-          if(_gs){
-            running=!!_gs.running; sess=!!_gs.sess;
-            if(_gs.es){ try{ _gs.es.close(); }catch(e){} }
-            _gs=null;
-          }
-          gsWorking(false);
-          document.body.classList.remove('sess');
-          if(!running){ gaCliEnter(seq,''); return; }
-          gaCliWaitTurn(seq,sess);
-        }
-        // 턴이 도는 동안의 CLI 진입 대기: CLI 뷰 골격(타이틀·상태줄)만 먼저 열고 턴 상태를
-        // 폴링, running=false 가 되면 그때 터미널을 연결한다. 사용자가 GUI 로 되돌아가면
-        // (body 에서 cli 클래스가 빠지면) 폴링을 멈춘다 — 턴은 계속 GUI 뷰로 수신된다.
-        let _gaCliWaitT=null;
-        function gaCliWaitTurn(seq,sess){
-          document.body.classList.add('cli');
-          document.title='goal-'+pad2(seq)+' CLI';
-          const ttl=$('gaTitle'); if(ttl) ttl.textContent='goal-'+pad2(seq)+' CLI 세션';
-          const sub=$('gaSub'); if(sub) sub.innerHTML='인터랙티브 claude 가 이 터미널에서 진행됩니다 — 기록·첨부는 <a href="/goal?n='+seq+'" style="color:var(--accent)">목표 페이지</a>에 그대로 남습니다';
-          cliState('AI 턴 진행 중 — 중단하지 않고, 끝나는 대로 터미널이 이어받습니다 (GUI 탭에서 진행을 볼 수 있습니다)');
-          const url='/api/goal/chat2/state?seq='+seq+(sess?'&sess=1':'');
-          clearInterval(_gaCliWaitT);
-          _gaCliWaitT=setInterval(()=>{
-            if(!document.body.classList.contains('cli')){ clearInterval(_gaCliWaitT); _gaCliWaitT=null; return; }
-            fetch(url).then(r=>r.json()).then(d=>{
-              if(d&&d.running) return;
-              clearInterval(_gaCliWaitT); _gaCliWaitT=null;
-              if(document.body.classList.contains('cli')) gaCliEnter(seq,'');
-            }).catch(()=>{});
-          },1000);
-        }
-        (function(){ let m='cli'; try{ m=localStorage.getItem('cm.gaUiMode')||'cli'; }catch(e){}
-          _gaUi=(m==='gui')?'gui':'cli'; gaUiSync(); gaDashSync(); })();
+        let _gaGoalSeq=0;   // 이 화면에서 만들어진/열린 마지막 목표 seq (기록용)
+        function gaGoalBorn(seq){ if(seq>0) _gaGoalSeq=seq; }
 
         // ===== 컴포저 상태 — 폴더·작업량·작업모드·사진. gaExec()로 추가 payload에 실린다. =====
         let _gaComp={images:[],effort:'',mode:'',cwd:'',branch:'',model:''};   // images: [{data:dataURL,name}]
@@ -718,13 +699,288 @@ enum GoalAddContent {
         function gaClearImages(){ _gaComp.images=[]; gaRenderThumbs(); const fi=$('gaFile'); if(fi) fi.value='';
           try{ localStorage.removeItem('cm.gaDraftImgs'); }catch(e){} }
 
-        // ── 이번 방문 집계: 페이지는 열린 채 계속 추가하므로, 방금 담은 것들을 아래에 쌓아 보여준다. ──
+        // ── 큐 목록 (simple/detail 병합): 페이지는 열린 채 계속 추가하므로, 담은 것들이 아래에
+        //    쌓인다. 각 행은 그 자리에서 수정(✎)·펼침(▸ — QueuePanel 검토 카드)·GUI열기(세션
+        //    시작)까지 된다. AI 큐 행 상태 칩: 진행중(pending/analyzing) → 완료(ready=분석 끝·
+        //    펼쳐서 확정 대기) → 추가됨 #NN(확정). 완료된 항목을 수정하면 서버가 분석을 다시
+        //    돌리므로 칩이 진행중으로 돌아갔다가 다시 완료가 된다. 목록은 localStorage
+        //    (cm.gaTallyHist, 최근 100건) + 서버(settings.json)에 영속 — 재진입·새로고침에도
+        //    남고, 미확정 AI 큐 행은 복원 후 폴링으로 상태가 이어진다. 확정/직접추가 행은
+        //    '이번 방문(fresh)' 동안만 상단 큐 목록에 남고, 다음 방문부턴 큐 히스토리(하단,
+        //    기본 닫힘)로 접힌다. ──
         let _gaTally=[];
-        function gaTallyAdd(kind,text){ _gaTally.push({kind:kind,text:text});
-          const box=$('gaTally'); if(box) box.classList.add('on');
-          const n=$('gaTallyN'); if(n) n.textContent=String(_gaTally.length);
-          const l=$('gaTallyList'); if(l) l.innerHTML=_gaTally.map(x=>
-            '<div class="t-row"><span class="t-kind'+(x.kind==='직접 추가'?' direct':'')+'">'+x.kind+'</span><span class="t-txt">'+esc(x.text)+'</span></div>').join(''); }
+        let _gaHistOpen=false;   // 큐 히스토리 섹션 — 기본 닫힘
+        // 큐 파이프라인을 타는 행: AI 큐(dedup 검토) + AI 검색(findOnly — 결과 카드가 행 펼침으로
+        // 열리고, 닫기 전까지 큐에 남는다). 상태 폴링·펼침·영속 로직이 이 둘을 같이 다룬다.
+        function gaIsQ(x){ return x.kind==='AI 큐'||x.kind==='AI 검색'; }
+        function gaTallyAdd(kind,text){
+          const e={kind:kind,text:text,id:'',st:'',seq:0,resolved:'',editing:false,ts:Date.now(),
+                   open:false,fresh:true};
+          _gaTally.push(e); gaTallyRender(); return e; }
+        function gaTallyStrip(){ return _gaTally.slice(-100).map(x=>(
+          {kind:x.kind,text:x.text,id:x.id||'',st:x.st||'',seq:x.seq||0,resolved:x.resolved||'',ts:x.ts||0})); }
+        // 영속 이중화: 진실은 서버(/api/goal/tally → settings.json — dynamic 포트 리셋을 견딘다),
+        // localStorage 는 같은 실행 안 새로고침용 캐시. 서버 쓰기는 500ms 디바운스(폴링 갱신 묶음)
+        // + 내용이 안 변했으면 보내지 않는다(병합 후 렌더 빈도가 늘어 무의미한 쓰기 방지).
+        let _gaTallySaveT=null,_gaTallyLastSaved='';
+        function gaTallyPersist(){ if(_gaSearchMode) return;
+          const j=JSON.stringify(gaTallyStrip());
+          try{ localStorage.setItem('cm.gaTallyHist',j); }catch(e){}
+          if(j===_gaTallyLastSaved) return;
+          clearTimeout(_gaTallySaveT);
+          _gaTallySaveT=setTimeout(()=>{ _gaTallyLastSaved=JSON.stringify(gaTallyStrip());
+            post('/api/goal/tally',{list:gaTallyStrip()}); },500); }
+        function gaTallyClear(){
+          // 히스토리 표시만 비운다 — 미확정 큐 행(검토 대상)은 남기고, 확정된 기록만 지운다.
+          _gaTally=_gaTally.filter(x=>gaIsQ(x)&&x.id&&!x.resolved);
+          clearTimeout(_gaTallySaveT); _gaTallySaveT=null;
+          const j=JSON.stringify(gaTallyStrip());
+          try{ localStorage.setItem('cm.gaTallyHist',j); }catch(e){}
+          _gaTallyLastSaved=j;
+          post('/api/goal/tally',{list:gaTallyStrip()});   // 서버 영속본도 즉시 반영 (디바운스 재기록 방지)
+          gaTallyRender(); vtev('tallyClear 큐 히스토리 비우기'); }
+        // 이전 날짜에 담긴 행엔 날짜 칩 (오늘 것엔 없음) — 표시 타임존 준수: CMTimeFilter.parts.
+        function gaTallyWhen(ts){ if(!ts||!window.CMTimeFilter) return '';
+          const a=CMTimeFilter.parts(ts), b=CMTimeFilter.parts(Date.now());
+          if(a.y===b.y&&a.mo===b.mo&&a.d===b.d) return '';
+          return '<span class="t-when">'+a.mo+'/'+a.d+'</span>'; }
+        function gaTallyChip(x){
+          if(!gaIsQ(x))
+            return (x.seq>0)?('<a class="t-st done" href="/goal?n='+x.seq+'" title="목표 페이지 열기">#'+x.seq+'</a>'):'';
+          if(x.resolved==='add'||x.resolved==='task')
+            return '<a class="t-st done" href="/goal?n='+x.seq+'" title="목표 페이지 열기">추가됨 #'+x.seq+'</a>';
+          // AI 검색 행의 닫기(skip)/큐 이탈은 결정이 아니라 결과 카드를 닫은 것 — '닫힘'으로 표기.
+          if(x.kind==='AI 검색'&&x.resolved) return '<span class="t-st skip">닫힘</span>';
+          if(x.resolved==='skip') return '<span class="t-st skip">스킵됨</span>';
+          if(x.resolved) return '<span class="t-st skip">처리됨</span>';
+          if(x.st==='ready')
+            return (x.kind==='AI 검색')
+              ? '<span class="t-st done" title="AI 검색 완료 — 행을 펼쳐(▸) 결과를 확인하세요">완료</span>'
+              : '<span class="t-st done" title="AI 분석 완료 — 행을 펼쳐(▸) 검토·확정하세요">완료</span>';
+          return '<span class="t-st prog" title="AI가 비슷한 목표를 분석 중입니다"><span class="dot"></span>진행중</span>';
+        }
+        // 상단 '큐' 목록에 남는 행: 미확정 AI 큐(검토 대상) 또는 이번 방문에서 담긴/확정된 행
+        // (fresh — 결과 피드백이 바로 보이도록). 나머지는 하단 큐 히스토리로 접힌다.
+        function gaTallyActiveRow(x){ return !!x.fresh || (gaIsQ(x)&&x.id&&!x.resolved); }
+        // 이 행에 대응하는 처리 히스토리 항목 (번복 버튼·실패 사유용) — QueuePanel 의 _qHist.
+        function gaTallyHistInfo(x){
+          if(!(gaIsQ(x)&&x.id)) return null;
+          const qh=(typeof _qHist!=='undefined'?_qHist:[])||[];
+          return qh.find(y=>y&&y.qid===x.id&&y.action!=='edit')||null; }
+        // 행 하나의 HTML (원본 인덱스 i 유지 — 핸들러가 _gaTally[i] 를 본다). inHist=히스토리 섹션.
+        function gaTallyRowHTML(x,i,inHist){
+          const kind='<span class="t-kind'+(x.kind==='직접 추가'?' direct':'')+'">'+x.kind+'</span>';
+          if(x.editing) return '<div class="t-row"><span class="t-exp sp"></span>'+kind
+            +'<input class="t-in" id="gaTIn'+i+'" onkeydown="gaTallyKey(event,'+i+')">'
+            +'<button class="t-act" onclick="gaTallySave('+i+')">저장</button>'
+            +'<button class="t-act" onclick="gaTallyCancel('+i+')" style="color:var(--mut)">취소</button></div>';
+          // 펼침: 미확정 AI 큐/AI 검색 행 — 검토·검색 카드(QueuePanel)가 행 아래에 인라인으로 열린다.
+          const expandable=(gaIsQ(x)&&x.id&&!x.resolved);
+          const exp=expandable
+            ?('<button class="t-exp" onclick="gaTallyToggle('+i+')" title="'+(x.open?'접기':'펼쳐서 검토·확정')+'">'+(x.open?'▾':'▸')+'</button>')
+            :'<span class="t-exp sp"></span>';
+          // 수정 가능: AI 큐(큐에 있는 동안 → 텍스트 재분석) 또는 목표가 이미 생긴 행(제목 변경).
+          const editable=expandable||x.seq>0;
+          // GUI열기: 이미 목표면 세션 뷰를 바로, 미확정 큐 행이면 승격+세션 시작까지 한 번에.
+          // AI 검색 행은 목표를 만들지 않는(findOnly) 항목이라 승격 경로를 걸지 않는다
+          // (task 추가로 seq가 생기면 그때부터 세션 열기 버튼이 살아난다).
+          const gui=(x.seq>0||(expandable&&x.kind!=='AI 검색'))
+            ?('<button class="t-act t-gui" onclick="gaTallyGui('+i+')"'+(x.busy?' disabled':'')
+              +' title="'+(x.seq>0?'이 화면의 세션 뷰에서 goal-'+pad2(x.seq)+' 세션을 엽니다'
+                                  :'AI 제안대로 바로 추가하고 이 화면에서 세션을 시작합니다')+'">GUI열기</button>')
+            :'';
+          // 히스토리 섹션: 번복 버튼(+실패 사유) — 처리 히스토리(_qHist)와 id 로 잇는다.
+          let undo='',umsg='';
+          if(inHist){ const h=gaTallyHistInfo(x);
+            if(h&&!h.undone&&(h.action==='add'||h.action==='task'||h.action==='skip')&&typeof queueUndo==='function')
+              undo='<button class="t-act" onclick="queueUndo(\''+h.id+'\')" title="이 결정을 되돌리고 항목을 큐로 복원">번복</button>';
+            if(h&&typeof _qHistMsg!=='undefined'&&_qHistMsg[h.id])
+              umsg='<div class="qhint" style="color:#e0a458;margin-left:22px">'+esc(_qHistMsg[h.id])+'</div>'; }
+          let h='<div class="t-row">'+exp+kind+'<span class="t-txt">'+esc(x.text)+'</span>'+gaTallyWhen(x.ts)+gaTallyChip(x)
+            +(editable?'<button class="t-edit" onclick="gaTallyEdit('+i+')" title="수정">✎</button>':'')
+            +gui+undo+'</div>'+umsg;
+          if(x.fb) h+='<div class="qhint" style="color:#e0a458;margin-left:22px">상위 목표 아래 넣을 수 없어 최상위로 추가됨</div>';
+          if(expandable&&x.open) h+='<div class="t-det">'+gaTallyDetHTML(x)+'</div>';
+          return h;
+        }
+        // 펼쳐진 검토 카드: 최신 aiQueue 스냅샷(_lastAiQueue — QueuePanel)에서 이 행의 항목을
+        // 찾아 카드를 그린다. 아직 스냅샷이 없으면 로딩 문구 (gaTallyToggle 이 qdReload 를 돈다).
+        function gaTallyDetHTML(x){
+          const q=(typeof _lastAiQueue!=='undefined'?_lastAiQueue:[])||[];
+          const it=q.find(y=>y&&y.id===x.id);
+          if(it&&typeof qItemCardHTML==='function') return qItemCardHTML(it);
+          return '<div class="muted" style="font-size:12px;padding:4px 2px">분석 데이터를 불러오는 중…</div>';
+        }
+        function gaTallyToggle(i){ const x=_gaTally[i]; if(!x) return;
+          x.open=!x.open; gaTallyRender();
+          if(x.open){ vtev('qExpand 큐 행 펼침');
+            const q=(typeof _lastAiQueue!=='undefined'?_lastAiQueue:[])||[];
+            if(!q.some(y=>y&&y.id===x.id)&&typeof qdReload==='function') qdReload(); } }
+        function gaHistToggle(force){
+          _gaHistOpen=(force!==undefined)?!!force:!_gaHistOpen;
+          gaTallyRender();
+          if(_gaHistOpen){ vtev('qHist 큐 히스토리 열림'); if(typeof qdReload==='function') qdReload(); } }
+        // GUI열기: 이미 목표(seq>0)면 이 화면의 세션 뷰로 이어가기, 미확정 큐 행이면 AI 제안대로
+        // 승격(resolve add)한 뒤 곧바로 세션 뷰에서 첫 턴(행 텍스트)을 시작한다.
+        function gaTallyGui(i){ const x=_gaTally[i]; if(!x||x.busy) return;
+          if(x.seq>0){ vtev('guiOpen goal-'+pad2(x.seq)); gsEnterResume(x.seq); return; }
+          if(!(x.kind==='AI 큐'&&x.id&&!x.resolved)) return;
+          x.busy=true; gaTallyRender();
+          post('/api/goal/queue/resolve',{id:x.id,action:'add'}).then(r=>r.json()).then(d=>{
+            x.busy=false;
+            if(d&&d.ok&&d.seq>0){ x.resolved='add'; x.seq=d.seq; x.open=false; x.fresh=true;
+              gaTallyRender(); vtev('guiOpen 승격 goal-'+pad2(d.seq)); gsEnter(d.seq,x.text); }
+            else gaTallyRender();
+          }).catch(()=>{ x.busy=false; gaTallyRender(); }); }
+        // 작업 결과 (linkmap/report 등 비-dedup 잡): 있을 때만 섹션을 보인다 — QueuePanel 카드.
+        function gaJobsRender(){
+          const box=$('gaJobs'), l=$('gaJobsList'); if(!box||!l) return;
+          const q=(typeof _lastAiQueue!=='undefined'?_lastAiQueue:[])||[];
+          const jobs=q.filter(it=>it&&(it.jobKind||'dedup')!=='dedup');
+          const on=jobs.length>0&&typeof queueJobCardHTML==='function';
+          box.classList.toggle('on',on);
+          if(on) l.innerHTML=jobs.map(queueJobCardHTML).join('');
+        }
+        function gaTallyRender(){
+          gaTallyPersist();
+          // 재렌더 전에 포커스·캐럿 보존 — 펼쳐진 카드의 기타/프롬프트 입력, 행 인라인 수정(t-in)이
+          // 5초 폴 재렌더에 끊기지 않게 한다 (QueuePanel renderAiQueue 의 보존과 같은 취지).
+          const af=document.activeElement;
+          const foc=(af&&af.id&&((af.classList&&(af.classList.contains('qother-input')||af.classList.contains('qfind-input')||af.classList.contains('t-in')))||/^qp_/.test(af.id)))
+            ?{id:af.id,pos:af.selectionStart}:null;
+          // 최신이 위로 — 목록이 길어져도 방금 담은 것이 항상 눈앞에 온다 (핸들러의 원본 인덱스 유지).
+          const act=[], hist=[];
+          _gaTally.forEach((x,i)=>{ (gaTallyActiveRow(x)?act:hist).push({x:x,i:i}); });
+          const box=$('gaTally'); if(box) box.classList.toggle('on',act.length>0);
+          const n=$('gaTallyN'); if(n) n.textContent=String(act.length);
+          const l=$('gaTallyList');
+          if(l) l.innerHTML=act.slice().reverse().map(p=>gaTallyRowHTML(p.x,p.i,false)).join('');
+          // 큐 히스토리 (하단, 기본 닫힘): 확정된 담김 기록 + 담김에 없는 처리 히스토리(orphan).
+          const qh=(typeof _qHist!=='undefined'?_qHist:[])||[];
+          const orphans=qh.filter(h=>h&&!_gaTally.some(x=>x.id&&x.id===h.qid));
+          const hbox=$('gaHist'); if(hbox) hbox.classList.toggle('on',(hist.length+orphans.length)>0);
+          const hn=$('gaHistN'); if(hn) hn.textContent=String(hist.length+orphans.length);
+          const ar=$('gaHistArrow'); if(ar) ar.textContent=_gaHistOpen?'▾':'▸';
+          const hb=$('gaHistBody');
+          if(hb){ hb.style.display=_gaHistOpen?'':'none';
+            if(_gaHistOpen) hb.innerHTML=hist.slice().reverse().map(p=>gaTallyRowHTML(p.x,p.i,true)).join('')
+              +((orphans.length&&typeof queueHistRowHTML==='function')
+                ?('<div class="muted" style="font-size:11px;margin:8px 0 2px">그 외 처리 기록 — 다른 진입점에서 담긴 항목</div>'
+                  +orphans.map(queueHistRowHTML).join('')):''); }
+          gaJobsRender();
+          // 편집 입력값은 프로퍼티로 넣는다 — esc()가 따옴표를 안 다루므로 value 속성 주입은 안전하지 않다.
+          _gaTally.forEach((x,i)=>{ if(x.editing){ const el=$('gaTIn'+i); if(el&&!el.value) el.value=x.text; } });
+          if(foc){ const t=$(foc.id); if(t){ t.focus();
+            try{ const p=(foc.pos==null?t.value.length:foc.pos); t.setSelectionRange(p,p); }catch(e){} } }
+        }
+        // ── QueuePanel 호스트 훅: 카드 액션·리로드가 이 페이지의 렌더러로 되돌아온다. ──
+        // renderAiQueue(스냅샷 갱신) 후 호출 — 펼쳐진 카드·잡 결과·히스토리를 다시 그린다.
+        window.gaQueueRender=function(){ gaFindRender(); if(!_gaSearchMode) gaTallyRender(); };
+        // 확정(추가/task/스킵) 직후 — 해당 담김 행을 즉시 결과 상태로 바꾼다 (5초 폴 대기 없음).
+        // AI검색(findOnly) 카드의 확정/닫기는 카드만 걷어낸다 (담김 행이 아니므로).
+        window.gaQueueResolved=function(id,info){ info=info||{};
+          if(_gaFindIds.indexOf(id)>=0){ _gaFindIds=_gaFindIds.filter(x=>x!==id); gaFindRender(); return; }
+          if(_gaSearchMode) return;
+          const x=_gaTally.find(y=>y.id===id); if(!x) return;
+          x.resolved=info.action||'add';
+          if(info.seq>0){ x.seq=info.seq; gaGoalBorn(info.seq); }
+          x.fb=!!info.fallback; x.open=false; x.fresh=true;
+          gaTallyRender(); };
+        // 번복 성공 — 항목이 큐로 복원됐으니 행을 미확정으로 되돌리고 폴링을 재개한다.
+        window.gaQueueUndone=function(qid){
+          const x=_gaTally.find(y=>y.id===qid); if(!x) return;
+          x.resolved=''; x.seq=0; x.st='pending'; x.fb=false; x.fresh=true;
+          gaTallyRender(); gaTallyWatch(true); };
+        function gaTallyEdit(i){ const x=_gaTally[i]; if(!x) return; x.editing=true; gaTallyRender();
+          const el=$('gaTIn'+i); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } }
+        function gaTallyCancel(i){ const x=_gaTally[i]; if(x) x.editing=false; gaTallyRender(); }
+        function gaTallyKey(ev,i){ if(ev.key==='Enter'){ ev.preventDefault(); gaTallySave(i); }
+          else if(ev.key==='Escape'){ ev.preventDefault(); gaTallyCancel(i); } }
+        function gaTallySave(i){ const x=_gaTally[i]; if(!x) return;
+          const el=$('gaTIn'+i); const t=String((el&&el.value)||'').trim();
+          x.editing=false;
+          if(!t||t===x.text){ gaTallyRender(); return; }
+          if(gaIsQ(x)&&x.id&&!x.resolved){
+            // 큐 후보 수정: 텍스트를 바꾸고 분석을 다시 돌린다 → 칩이 진행중으로 돌아간다.
+            // 즉시 폴은 서버가 반영한 뒤(.then)에만 — 반영 전 스냅샷이 낙관적 갱신을 덮지 않게.
+            x.text=t; x.st='pending'; x.busy=true; gaTallyRender(); gaTallyWatch(); vtev('tallyEdit 큐 재분석');
+            post('/api/goal/queue/edit',{id:x.id,text:t}).then(r=>r.json()).then(d=>{
+              x.busy=false;
+              if(d&&d.ok){ gaTallyPoll(); return; }
+              // 그 사이 큐 탭에서 확정된 뒤였다: 폴링으로 행 상태를 맞추고, 목표가 생겼으면 제목 변경으로 이어간다.
+              gaTallyPoll().then(rev=>{ if(x.seq>0){ x.text=t;
+                const g=((rev&&rev.goals)||[]).find(g=>(g.seq||0)===x.seq);
+                if(g) post('/api/goal/title',{id:g.id,title:t});
+                gaTallyRender(); } });
+            }).catch(()=>{ x.busy=false; });
+            return;
+          }
+          if(x.seq>0){
+            // 이미 목표가 된 행(직접 추가·확정된 AI 큐): 제목만 변경 — goals.json 직접쓰기 금지, 전용 API 사용.
+            x.text=t; gaTallyRender(); vtev('tallyEdit 제목 변경 #'+x.seq);
+            gsData().then(r=>{ const g=((r&&r.goals)||[]).find(g=>(g.seq||0)===x.seq);
+              if(g) post('/api/goal/title',{id:g.id,title:t}); });
+            return;
+          }
+          gaTallyRender();
+        }
+        // ── 상태 폴링: AI 큐 행이 남아 있는 동안 /data.json 을 주기적으로 읽어 칩을 갱신한다.
+        //    (대시보드와 같은 루프백 폴링 — 워커의 pending→analyzing→ready 전이와 큐 탭 확정을 따라간다.) ──
+        let _gaTallyTimer=null;
+        function gaTallyWatch(now){
+          if(!_gaTallyTimer) _gaTallyTimer=setInterval(()=>{ if(!document.hidden) gaTallyPoll(); },5000);
+          if(now) gaTallyPoll(); }
+        function gaTallyPoll(){
+          const watch=_gaTally.filter(x=>gaIsQ(x)&&x.id&&!x.resolved);
+          // 비-dedup 잡(linkmap 등)이 도는 동안에도 계속 폴링해 작업 결과 카드를 갱신한다.
+          const q0=(typeof _lastAiQueue!=='undefined'?_lastAiQueue:[])||[];
+          const jobsBusy=q0.some(it=>it&&(it.jobKind||'dedup')!=='dedup'&&(it.status==='pending'||it.status==='analyzing'));
+          if(!watch.length&&!jobsBusy){ if(_gaTallyTimer){ clearInterval(_gaTallyTimer); _gaTallyTimer=null; } return Promise.resolve(null); }
+          return fetch('/data.json',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+            const rev=(d&&d.review)||{}; const q=rev.aiQueue||[], h=rev.queueHistory||[];
+            let changed=false;
+            // 스냅샷 변화(항목 상태·매치 도착·잡 진행)도 렌더 사유 — 펼쳐진 카드가 따라간다.
+            const snapKey=a=>JSON.stringify((a||[]).map(it=>it&&[it.id,it.status,it.error||'',(it.matches||[]).length]));
+            if(snapKey(q0)!==snapKey(q)) changed=true;
+            for(const x of watch){
+              if(x.editing||x.busy) continue;            // 편집 중/수정 요청 중인 행은 건드리지 않는다
+              const it=q.find(y=>y.id===x.id);
+              if(it){ x.miss=0;
+                const st=(!it.status||it.status==='ready')?'ready':it.status;
+                if(st!==x.st){ x.st=st; changed=true; }
+                if(it.text&&it.text!==x.text){ x.text=it.text; changed=true; }   // 큐 탭에서 수정된 경우
+              } else {
+                // 큐를 떠났다: 히스토리(qid)로 결말을 찾는다 — add/task=확정(#seq 링크), skip=스킵.
+                const he=h.find(y=>y.qid===x.id&&!y.undone&&y.action!=='edit');
+                if(he){ x.miss=0; x.resolved=he.action; x.seq=he.seq||0; if(he.text) x.text=he.text; changed=true;
+                  if(he.action==='add'&&he.seq>0) gaGoalBorn(he.seq); }
+                // 어디에도 없음(큐 탭에서 닫힘/삭제, 혹은 일시적 글리치): 한 번에 단정하지 않고
+                // 2회 연속 미스일 때만 확정한다 — 스냅샷 한 장으로 행을 죽이지 않는다.
+                else if((x.miss=(x.miss||0)+1)>=2){ x.resolved='removed'; changed=true; }
+              }
+            }
+            // QueuePanel 스냅샷 반입(_review/_goals/_qHist/_lastAiQueue) — 렌더는 아래서 한 번만.
+            if(typeof qdSnap==='function') qdSnap(rev);
+            if(changed) gaTallyRender();
+            return rev;
+          }).catch(()=>null);
+        }
+        document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&_gaTallyTimer) gaTallyPoll(); });
+        // ── 큐 목록 복원: chat 재진입·새로고침은 물론 앱 업데이트/재시작 후에도 담았던 기록이
+        //    남는다. 서버 주입본(window._gaTallyHist — settings.json 영속)이 진실이고,
+        //    비어 있을 때만 localStorage(같은 origin 캐시)로 폴백한다 — dynamic 포트가 origin 을
+        //    바꿔 localStorage 를 리셋해도 서버본이 살아 있다. 미확정 AI 큐 행이 있으면 폴링을
+        //    재개해 진행중→완료→추가됨을 이어간다. 복원 행은 fresh 가 아니므로 확정분은 하단
+        //    큐 히스토리로 접히고, 미확정 행만 상단 큐 목록에 남는다(펼침은 기본 닫힘). ──
+        if(!_gaSearchMode){ try{
+          let arr=(Array.isArray(window._gaTallyHist)&&window._gaTallyHist.length)?window._gaTallyHist:null;
+          if(!arr) arr=JSON.parse(localStorage.getItem('cm.gaTallyHist')||'[]');
+          if(Array.isArray(arr)&&arr.length){
+            _gaTally=arr.filter(x=>x&&x.text).map(x=>({kind:x.kind||'AI 큐',text:String(x.text),
+              id:x.id||'',st:x.st||'',seq:x.seq||0,resolved:x.resolved||'',ts:x.ts||0,editing:false,open:false}));
+            gaTallyRender();   // render→persist 가 서버·로컬 사본을 즉시 재동기화한다
+            if(_gaTally.some(x=>gaIsQ(x)&&x.id&&!x.resolved)) gaTallyWatch(true);
+          } }catch(e){} }
 
         // ── 추가/AI추가/검색 — 서버 API는 모달 시절과 동일하다. ──
         function gaPayload(text){
@@ -738,30 +994,76 @@ enum GoalAddContent {
         function gaAfterSubmit(){ const inp=$('gaText'); inp.value=''; if(inp._grow) inp._grow();
           gaClearDraft(); gaClearImages(); inp.focus(); }
         function gaAdd(){ const inp=$('gaText'); const t=String(inp.value||'').trim(); if(!t) return;
+          const e=gaTallyAdd('직접 추가',t);
           post('/api/goal/add',gaPayload(t)).then(r=>r.json())
-            .then(d=>{ if(d&&d.ok) gaGoalBorn(d.seq); }).catch(()=>{});
-          gaTallyAdd('직접 추가',t); gaAfterSubmit(); }
-        // 세션시작: 목표를 바로 추가하고(seq를 받아) 헤더 CLI/GUI 토글에 따라, 페이지 이동
-        // 없이 이 화면을 세션 뷰로 전환한다.
-        //   GUI - 메신저형 세션 뷰 (AI 출력 스트리밍 + 하단 컴포저)
-        //   CLI - 페이지 안 임베디드 터미널(xterm)에서 인터랙티브 claude (gaCliEnter)
-        // 첨부 이미지는 /api/goal/add 로 이미 목표에 실렸으므로 첫 턴에 서버가 동봉한다.
-        // 실패 시 배너 없이 버튼만 되살린다 (no-user-facing-failure).
+            .then(d=>{ if(d&&d.ok){ gaGoalBorn(d.seq); e.seq=d.seq||0; gaTallyRender(); } }).catch(()=>{});
+          gaAfterSubmit(); }
+        // GUI시작: 목표를 바로 추가하고(seq를 받아) 페이지 이동 없이 이 화면을 메신저형
+        // 세션 뷰로 전환한다 (AI 출력 스트리밍 + 하단 컴포저). CLI 시작 경로는 제거됨
+        // (2026-07-19, CLI 미사용). 첨부 이미지는 /api/goal/add 로 이미 목표에 실렸으므로
+        // 첫 턴에 서버가 동봉한다. 실패 시 배너 없이 버튼만 되살린다 (no-user-facing-failure).
         function gaStart(){ const inp=$('gaText'); const t=String(inp.value||'').trim(); if(!t) return;
-          const btn=$('gaStartBtn'); if(btn&&btn.disabled) return; if(btn) btn.disabled=true;
+          const btn=$('gaStartGui'); if(btn&&btn.disabled) return; if(btn) btn.disabled=true;
           post('/api/goal/add',gaPayload(t)).then(r=>r.json()).then(d=>{
             if(!(d&&d.ok&&d.seq>0)){ if(btn) btn.disabled=false; return; }
             gaClearDraft();
-            if(_gaUi==='cli') gaCliEnter(d.seq,t); else gsEnter(d.seq,t);
+            gsEnter(d.seq,t);
           }).catch(()=>{ if(btn) btn.disabled=false; }); }
         function gaAi(){ const inp=$('gaText'); const t=String(inp.value||'').trim(); if(!t) return;
-          if(_gaSearchMode){
-            // 검색 모드의 [AI검색]: findOnly 큐 파이프라인(search:true) — 목표 생성 없이 유사도 분석만.
-            post('/api/goal/queue/enqueue',{text:t,search:true}); gaAfterSubmit();
-            const res=$('gaResults'); if(res) res.innerHTML='<div class="muted" style="font-size:12.5px;border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin-top:6px">큐에 담겼습니다 — AI가 의미가 비슷한 목표를 분석 중입니다. 결과는 대시보드 <b>큐</b> 탭에 \'검색 결과\' 카드로 표시됩니다.<div style="margin-top:8px"><a href="/#view=queue" style="display:inline-block;color:var(--accent);font-weight:600;text-decoration:none">큐 페이지로 이동 →</a></div></div>';
-            return;
+          // 검색 모드의 primary 버튼은 AI검색으로 리라벨된다 — 같은 findOnly 경로로 보낸다.
+          if(_gaSearchMode){ gaAiSearch(); return; }
+          const e=gaTallyAdd('AI 큐',t);
+          // 서버가 큐 후보 id를 돌려준다 — 행의 상태 칩(진행중→완료)과 인라인 수정이 이 id 로 이어진다.
+          post('/api/goal/queue/enqueue',gaPayload(t)).then(r=>r.json())
+            .then(d=>{ if(d&&d.ok&&d.id){ e.id=d.id; e.st='pending'; gaTallyRender(); gaTallyWatch(true); } })
+            .catch(()=>{});
+          gaAfterSubmit(); }
+
+        // ── AI검색(findOnly): 목표를 만들지 않고 의미가 비슷한 기존 목표만 AI가 찾는다
+        //    (search:true 큐 파이프라인). 추가 모드(전용 AI검색 버튼)에선 'AI 검색' 행으로
+        //    큐 목록에 담는다 — 자동 펼침으로 분석 중 → 매치 목록 → 다음 액션(끝내기·task
+        //    추가·그만두기)이 행 아래 인라인 카드(QueuePanel 검색 카드)로 흐르고, 닫기 전까지
+        //    큐에 남아 재진입·새로고침에도 복원된다. 검색 모드(primary AI검색 리라벨 —
+        //    큐 목록이 없는 레일 검색 페이지)에서만 #gaResults 카드로 그린다. 로컬 검색
+        //    (gsRender)이 결과 영역을 차지한 뒤에는 폴링 재렌더가 그것을 덮지 않는다
+        //    (#gaFindCards 마커 확인). ──
+        let _gaFindIds=[],_gaFindSeen={},_gaFindTimer=null;
+        function gaAiSearch(){ const inp=$('gaText'); const t=String(inp.value||'').trim(); if(!t) return;
+          if(!_gaSearchMode){
+            // 추가 모드: 큐 목록의 'AI 검색' 행으로 — AI 큐(gaAi)와 같은 담김/폴링 수명주기.
+            const e=gaTallyAdd('AI 검색',t); e.open=true;
+            post('/api/goal/queue/enqueue',{text:t,search:true}).then(r=>r.json())
+              .then(d=>{ if(d&&d.ok&&d.id){ e.id=d.id; e.st='pending'; gaTallyRender(); gaTallyWatch(true); } })
+              .catch(()=>{});
+            vtev('aiSearch findOnly 담김');
+            gaAfterSubmit(); return;
           }
-          post('/api/goal/queue/enqueue',gaPayload(t)); gaTallyAdd('AI 큐',t); gaAfterSubmit(); }
+          const res=$('gaResults'); if(res) res.innerHTML='<div id="gaFindCards"><div class="muted" style="font-size:12.5px;border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin-top:6px">큐에 담는 중…</div></div>';
+          post('/api/goal/queue/enqueue',{text:t,search:true}).then(r=>r.json()).then(d=>{
+            if(d&&d.ok&&d.id){ _gaFindIds.push(d.id); gaFindRender(true); gaFindWatch();
+              if(typeof qdReload==='function') qdReload(); } }).catch(()=>{});
+          vtev('aiSearch findOnly 담김');
+          gaAfterSubmit(); }
+        function gaFindWatch(){ if(_gaFindTimer) return;
+          _gaFindTimer=setInterval(()=>{ if(document.hidden) return;
+            if(!_gaFindIds.length){ clearInterval(_gaFindTimer); _gaFindTimer=null; return; }
+            if(typeof qdReload==='function') qdReload(); },5000); }
+        function gaFindRender(force){
+          const host=$('gaResults'); if(!host) return;
+          const q=(typeof _lastAiQueue!=='undefined'?_lastAiQueue:[])||[];
+          // 큐에서 사라진 항목(닫힘/확정)은 카드로 한 번 보인 적 있을 때만 목록에서 뺀다.
+          _gaFindIds=_gaFindIds.filter(id=>{ const has=q.some(y=>y&&y.id===id);
+            if(has) _gaFindSeen[id]=1; return has||!_gaFindSeen[id]; });
+          const wrap=document.getElementById('gaFindCards');
+          if(!wrap&&!force) return;   // 로컬 검색 결과가 영역을 점유 중 — 덮지 않는다
+          if(!_gaFindIds.length){ if(wrap) host.innerHTML=''; return; }
+          host.innerHTML='<div id="gaFindCards">'+_gaFindIds.map(id=>{
+            const it=q.find(y=>y&&y.id===id);
+            if(it&&typeof qItemCardHTML==='function')
+              return '<div style="border:1px solid var(--line);border-radius:12px;padding:6px 12px;margin-top:8px">'+qItemCardHTML(it)+'</div>';
+            return '<div class="muted" style="font-size:12.5px;border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin-top:6px">🔍 AI가 의미가 비슷한 목표를 분석 중입니다…</div>';
+          }).join('')+'</div>';
+        }
 
         // ── 검색(즉시 조회): 큐를 거치지 않는 로컬 검색 — /data.json 을 필요할 때 받아 캐시한다.
         //    숫자 → seq 정확 일치(상태 무관: 완료·릴리즈·보관·취소 포함), 텍스트 → 제목 부분일치. ──
@@ -872,7 +1174,7 @@ enum GoalAddContent {
             +'<div class="muted" style="font-size:12px;margin-top:4px">아직 번호가 없습니다 — 추가/스킵 확정은 대시보드 큐 탭에서.</div></div>';
         }
 
-        // ===== 세션 뷰 (세션시작): 페이지 이동 없이 이 화면에서 chat2 턴을 돌린다. =====
+        // ===== 세션 뷰 (GUI시작): 페이지 이동 없이 이 화면에서 chat2 턴을 돌린다. =====
         // 이벤트는 목표의 메신저 채널(/api/goal/chat2/stream?seq=N)을 그대로 쓰므로 대화
         // 기록은 목표 페이지에도 남는다. 컨벤션(chat-ui): AI 말풍선 금지(플레인 텍스트),
         // 도구는 요약 한 줄›드릴다운, 생각(thinking)은 흐린 스트림 → 턴이 이어지면 접힘.
@@ -890,7 +1192,7 @@ enum GoalAddContent {
           .replace(/javascript:/gi,''); }
         function md(text){ if(window.marked){ try{ return sanitizeHTML(window.marked.parse(text||'',{breaks:true})); }catch(e){} }
           return esc(text||'').replace(/\n/g,'<br>'); }
-        // ── CLI 세션 뷰 (세션시작의 CLI 토글): 공용 웹터미널 엔진 CMWebCLI(Sources/WebCLI,
+        // ── CLI 세션 뷰 (레거시 ?ui=cli 진입 전용): 공용 웹터미널 엔진 CMWebCLI(Sources/WebCLI,
         //    WebCLITerminal.script() 로 이 페이지에 동봉)를 페이지 안 xterm 터미널로 연다.
         //    xterm 버전·IME 인수·폴링은 전부 엔진 소관 — 여기는 얇은 어댑터만: 뷰 전환,
         //    상태 라벨, 그리고 첫 프롬프트(입력한 목표 텍스트)를 실은 cli/start POST.
@@ -899,6 +1201,7 @@ enum GoalAddContent {
         function cliState(txt,cls){ const e=$('gaCliState'); if(e){ e.textContent=txt; e.className='st'+(cls?(' '+cls):''); } }
         function gaCliEnter(seq,firstText){
           _gaSessSeq=seq; gaGoalBorn(seq);
+          try{ localStorage.setItem('cm.lastTab.'+seq,'cli'); }catch(e){}
           vtev('cliOpen goal-'+pad2(seq)); window.cmView='cli';
           document.body.classList.add('cli');
           document.title='goal-'+pad2(seq)+' CLI';
@@ -912,8 +1215,8 @@ enum GoalAddContent {
         window.addEventListener('resize',()=>{ if(document.body.classList.contains('cli')&&_cliCtl) _cliCtl.fit(); });
 
         // 세션 하단 컴포저의 실행 컨텍스트 스트립을 채운다 — 작업 폴더(cwd 없으면 목표 폴더)
-        // + 브랜치(있을 때만). 즉시 _gaComp 값으로 그리고(세션시작 경로에선 이게 정답),
-        // 헤더 토글 재진입처럼 _gaComp 가 그 목표와 다를 수 있는 경우를 위해 goal 레코드로 보정한다.
+        // + 브랜치(있을 때만). 즉시 _gaComp 값으로 그리고(GUI시작 경로에선 이게 정답),
+        // 목표 페이지 CHAT 재진입처럼 _gaComp 가 그 목표와 다를 수 있는 경우를 위해 goal 레코드로 보정한다.
         function gsRenderCtx(seq,cwd,branch){ const box=$('gsCtx'); if(!box) return;
           const folder=cwd ? (cwd.replace(/\/+$/,'').split('/').pop()||cwd)
                            : ('goal-'+pad2(seq||_gaSessSeq||0)+' (목표 폴더)');
@@ -931,6 +1234,10 @@ enum GoalAddContent {
           }).catch(function(){}); }catch(e){} }
         function gsEnter(seq,firstText){
           _gaSessSeq=seq; gaGoalBorn(seq);
+          // 레일 "보는 중" 스탬프: /goal 페이지를 거치지 않고 세션이 열리므로 여기서 직접 찍어
+          // 왼쪽 레일 세션 목록에 이 목표가 바로 나타난다.
+          post('/api/goal/viewing',{seq:seq});
+          try{ localStorage.setItem('cm.lastTab.'+seq,'gui'); }catch(e){}
           vtev('sessOpen goal-'+pad2(seq)); window.cmView='sess';
           _gs={seq:seq,sess:false,mode:_gaComp.mode||'bypassPermissions',allow:[],es:null,cur:null,text:'',sawText:false,
                think:null,thinkText:'',tools:null,toolCount:0,toolCards:{},running:false,lastMode:'',
@@ -947,10 +1254,13 @@ enum GoalAddContent {
           gsPost(firstText,[]);
           setTimeout(()=>{ const i=$('gsIn'); if(i) i.focus(); },80);
         }
-        // 이어가기 진입 (CLI→GUI 토글): 첫 턴을 쏘지 않고 세션 뷰만 연다. sess=true 라
+        // 이어가기 진입 (목표 페이지 CHAT·레거시 CLI 뷰 탈출): 첫 턴을 쏘지 않고 세션 뷰만 연다. sess=true 라
         // 전송은 /api/goal/session/say(최신 연결 세션 headless 재개), 수신은 &sess=1 SSE.
         function gsEnterResume(seq){
           _gaSessSeq=seq; gaGoalBorn(seq);
+          // 레일 "보는 중" 스탬프 — gsEnter 와 동일 (GUI열기/이어가기도 레일에 바로 뜬다).
+          post('/api/goal/viewing',{seq:seq});
+          try{ localStorage.setItem('cm.lastTab.'+seq,'gui'); }catch(e){}
           vtev('sessResume goal-'+pad2(seq)); window.cmView='sess';
           _gs={seq:seq,sess:true,mode:_gaComp.mode||'bypassPermissions',allow:[],es:null,cur:null,text:'',sawText:false,
                think:null,thinkText:'',tools:null,toolCount:0,toolCards:{},running:false,lastMode:'',
@@ -1009,7 +1319,7 @@ enum GoalAddContent {
             }).catch(function(){});
         }
         // 재진입 시 중단 여부 가시화: 서버 턴 상태(/api/goal/chat2/state)로 "지금 돌고
-        // 있는지 / 직전 턴이 어떻게 끝났는지"를 복원한다. 채널은 둘 다 본다 — 세션시작(GUI)
+        // 있는지 / 직전 턴이 어떻게 끝났는지"를 복원한다. 채널은 둘 다 본다 — GUI시작
         // 턴은 메신저 채널(chat2/say), 이어가기 턴은 sess 채널(session/say)이라, sess 만
         // 열면 돌고 있는 메신저 턴의 진행이 안 보여 '중단'처럼 보인다.
         function gsRestoreState(seq){
@@ -1051,9 +1361,16 @@ enum GoalAddContent {
             post('/api/goal/session/say',{seq:_gs.seq,task:'',text:text,mode:_gs.mode,allow:_gs.allow})
               .then(r=>r.json()).then(d=>{
                 if(!d||!d.ok){
-                  gsNote(d&&d.error==='no-session'
-                    ?'⚠️ 이어갈 세션을 찾지 못했습니다 — 터미널(CLI)로 전환해 계속하세요'
-                    :'⚠️ 전송 실패 — 잠시 후 다시 시도하세요');
+                  if(d&&d.error==='no-session'){
+                    // 이어갈 연결 세션이 없다(예: GUI열기로 연 아직 세션 없는 목표) — 메신저
+                    // 채널(chat2)로 조용히 전환해 같은 턴을 다시 보낸다 (배너 없음).
+                    _gs.sess=false;
+                    if(_gs.es){ _gs.es.close(); _gs.es=null; }
+                    gsOpenStream();
+                    gsPost(text,images,override);
+                    return;
+                  }
+                  gsNote('⚠️ 전송 실패 — 잠시 후 다시 시도하세요');
                   gsWorking(false); }
               }).catch(()=>{ gsNote('⚠️ 전송 실패 — 잠시 후 다시 시도하세요'); gsWorking(false); });
             return;
@@ -1392,6 +1709,8 @@ enum GoalAddContent {
               aiB.title='표현이 달라도 의미가 비슷한 목표를 AI가 찾습니다 — 큐에 담겨 비동기로 분석, 결과는 대시보드 큐 탭'; }
             const seB=$('gaSearchBtn'); if(seB) seB.classList.add('primary');
             const adB=$('gaAddBtn'); if(adB) adB.style.display='none';   // 검색 모드에서 '추가'는 혼란만 준다
+            // 전용 AI검색 버튼은 추가 모드용 — 검색 모드에선 primary(AI검색 리라벨)와 중복이라 숨긴다.
+            const asB=$('gaAiSearchBtn'); if(asB) asB.style.display='none';
             const hint=$('gaHint'); if(hint) hint.innerHTML='<b>검색</b>은 번호를 넣으면 그 목표를 <b>상태와 무관하게</b>(완료·릴리즈·보관·취소 포함) 즉시 찾고, 텍스트면 제목 부분일치로 찾습니다. 표현이 달라 못 찾으면 <b>AI검색</b> — AI가 의미가 비슷한 목표를 찾아 대시보드 큐 탭에 결과를 남깁니다.';
           } else if(_gaCtx.label){ document.title='목표 추가 · '+_gaCtx.label; }
           // 마지막 선택 폴더·브랜치 복원 (추가 모드만) — 보통 같은 폴더 작업을 이어가므로 그대로
@@ -1457,20 +1776,33 @@ enum GoalAddContent {
               const fs=(e.dataTransfer&&e.dataTransfer.files)||[]; gaPicked(fs); });
           }
           gaModeInit(); gaBuildModelSeg(); gaRenderThumbs();
-          // 목표 페이지 헤더의 CLI/GUI 토글에서 되돌아오는 진입 (/goal-add?goal=N&ui=cli|gui):
-          // 컴포저를 건너뛰고 그 목표의 세션 뷰를 바로 연다 — CLI=살아있는 PTY 재접속/--resume,
-          // GUI=최신 연결 세션 이어가기 뷰. 헤더 토글 상태·기본 모드도 함께 맞춘다.
+          // 초기 큐 데이터 반입(펼침 카드·작업 결과·큐 히스토리 카운트) + ?q=detail 직행 진입
+          // (대시보드 큐 노티·exportLinkmap·옛 #view=queue): 미확정 행을 모두 펼치고 큐 히스토리도
+          // 연다. QueuePanel 스크립트가 이 아래에서 로드되므로 파싱이 끝난 뒤(setTimeout 0) 돈다.
+          if(!_gaSearchMode) setTimeout(function(){
+            if(typeof qdReload==='function') qdReload();
+            if(_qs.get('q')==='detail'){
+              _gaTally.forEach(x=>{ if(gaIsQ(x)&&x.id&&!x.resolved) x.open=true; });
+              _gaHistOpen=true; gaTallyRender(); vtev('qNav 큐 직행(q=detail)');
+              const box=$('gaTally'); if(box&&box.classList.contains('on')) box.scrollIntoView({block:'start'});
+            }
+          },0);
+          // 목표 페이지 헤더의 CHAT에서 되돌아오는 진입 (/goal-add?goal=N[&ui=…]):
+          // 컴포저를 건너뛰고 그 목표의 GUI 세션 뷰(최신 연결 세션 이어가기)를 바로 연다.
+          // ?ui=cli 는 레거시(옛 레일 lastTab)만 — 살아있는 PTY 재접속/--resume 터미널.
           const backSeq=parseInt(_qs.get('goal')||'0',10)||0;
           if(backSeq>0 && !_gaSearchMode){
-            const m=(_qs.get('ui')==='gui')?'gui':'cli';
-            _gaUi=m; try{ localStorage.setItem('cm.gaUiMode',m); }catch(e){}
-            try{ localStorage.setItem('cm.lastTab.'+backSeq,m); }catch(e){}
-            gaUiSync();
-            if(m==='gui') gsEnterResume(backSeq); else gaCliEnter(backSeq,'');
+            if(_qs.get('ui')==='cli') gaCliEnter(backSeq,''); else gsEnterResume(backSeq);
             return;
           }
           setTimeout(()=>{ gt.focus(); const n=gt.value.length; try{ gt.setSelectionRange(n,n); }catch(_){} },50);
         })();
+        </script>
+        <!-- 큐 검토 카드 + 확정 액션 스크립트 (QueuePanel.swift). 메인 스크립트가 제공하는
+             $/esc/post/CMTimeFilter/_review 와 호스트 훅(gaQueueRender/gaQueueResolved/
+             gaQueueUndone)을 쓰므로 그 뒤에 로드한다. -->
+        <script>
+        \#(QueuePanel.script())
         </script>
         </body></html>
         """#

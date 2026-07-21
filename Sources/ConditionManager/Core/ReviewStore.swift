@@ -864,6 +864,10 @@ final class ReviewStore {
                           placement: String = "top", suggestedParentSeq: Int = 0,
                           priority: String = "medium", confidence: Double = 0, rationale: String = "") {
         guard let idx = aiQueue.firstIndex(where: { $0.id == id }) else { return }
+        // Only an in-flight "analyzing" item may complete. If the user edited the text while
+        // the worker ran (editQueueItemText flips it back to "pending"), this verdict is for
+        // the OLD text — drop it; the drain loop re-claims the item and analyzes the new text.
+        guard aiQueue[idx].status == "analyzing" else { return }
         aiQueue[idx].status = "ready"
         aiQueue[idx].duplicate = duplicate
         aiQueue[idx].kind = kind
@@ -876,6 +880,29 @@ final class ReviewStore {
         aiQueue[idx].confidence = max(0, min(1, confidence))
         aiQueue[idx].rationale = rationale
         saveQueue()
+    }
+
+    // "이번에 담김" inline edit (goal-add tally): rewrite a queued candidate's text and send
+    // it BACK through analysis (완료 → 진행중 → 완료). Unlike resolve "edit" (text only, verdict
+    // kept, stays "ready"), this resets the lifecycle to "pending" so the dedup verdict is
+    // recomputed for the new text; a stale in-flight verdict is dropped by the "analyzing"
+    // guard in completeAnalysis. originPrompt is refreshed too — the edit IS the new raw
+    // brain-dump. Returns false once the item left the queue (resolved) or for non-dedup jobs.
+    // Call on main; the caller kicks the worker.
+    @discardableResult
+    func editQueueItemText(id: String, text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, let idx = aiQueue.firstIndex(where: { $0.id == id }),
+              aiQueue[idx].jobKind == "dedup" else { return false }
+        aiQueue[idx].text = t
+        aiQueue[idx].originPrompt = t
+        aiQueue[idx].status = "pending"
+        aiQueue[idx].note = ""
+        aiQueue[idx].matches = []
+        // Audit-only history entry (not undoable — the item stays queued), same as resolve "edit".
+        logQueueDecision(action: "edit", item: aiQueue[idx], snapshot: false)
+        saveQueue()
+        return true
     }
 
     // Generic job enqueue (Phase 2): park a non-dedup background job (linkmap/report/...)
