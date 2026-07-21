@@ -47,6 +47,8 @@ final class Settings {
         static let pinnedGoals    = "cm.pinnedGoalSeqs"
         static let diagHosts      = "cm.diagHosts"
         static let gaComposer     = "cm.gaComposer"
+        static let gaTallyHist    = "cm.gaTallyHist"
+        static let drawEnabled    = "cm.drawEnabled"
     }
 
     // Defaults for values the user has not touched. Mirrors the old register(defaults:).
@@ -60,7 +62,8 @@ final class Settings {
         K.musicEnabled: true,
         K.trackingEnabled: true,
         K.volume: 0.8,
-        K.bgmWindow: true
+        K.bgmWindow: true,
+        K.drawEnabled: true
     ]
 
     private let fileURL: URL
@@ -204,6 +207,14 @@ final class Settings {
         var p = pluginInstalled
         p[pluginId] = on
         pluginInstalled = p
+    }
+
+    // 드로우 plugin sub-switch (the plugin card's draw on/off). The overlay only runs
+    // while the plugin is installed AND this is on — flipping it off pauses drawing
+    // without uninstalling the plugin.
+    var drawEnabled: Bool {
+        get { bool(K.drawEnabled) }
+        set { set(newValue, K.drawEnabled) }
     }
 
     var minBPM: Double {

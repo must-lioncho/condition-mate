@@ -60,12 +60,23 @@ final class PluginStore {
                name: "컨디션 메이트",
                desc: "상황을 함께 읽고 BGM으로 컨디션을 끌어올리는 메이트. 설치 시 BGM 동작 · Discord 연결로 강화.",
                hint: "설치형 — 켜면 BGM 디렉터가 함께 동작합니다. 자원은 앱 데이터 폴더에 자동 보관.",
+               kind: .toggle, folderPath: "", status: .disconnected, detail: "미설치", verifiedAt: nil),
+        // 드로우 (Sources/Draw): hold left ⌥ to sketch on top of the screen with the
+        // mouse, double-tap left ⌘ to type 30pt text at the cursor, tap left ⌃ to wipe.
+        // Toggle model — installing arms the overlay; the card carries a draw on/off
+        // sub-switch (Settings.drawEnabled) for pausing without uninstalling. No
+        // permissions needed (key-state polling, no event tap).
+        Plugin(id: "draw",
+               name: "드로우",
+               desc: "왼쪽 ⌥(Option)을 누른 채 마우스로 화면 위에 그림 · 왼쪽 ⌘(Command) 두 번 탭으로 30pt 글씨 · 왼쪽 ⌃(Control)로 지웁니다.",
+               hint: "설치형 — 켜면 화면 드로잉 오버레이가 동작합니다. 카드의 draw on/off로 즉시 일시정지.",
                kind: .toggle, folderPath: "", status: .disconnected, detail: "미설치", verifiedAt: nil)
     ]
 
     // Toggle plugins that should be installed out of the box (so the feature works on a
-    // fresh launch). 컨디션 메이트 owns BGM, which the app has always played by default.
-    private static let defaultInstalled: Set<String> = ["condition-mate"]
+    // fresh launch). 컨디션 메이트 owns BGM, which the app has always played by default;
+    // 드로우 ships armed so the ⌥-draw gesture works right after the update.
+    private static let defaultInstalled: Set<String> = ["condition-mate", "draw"]
 
     private(set) var plugins: [Plugin]
     // Latest per-project activity scan (claude-desktop). Refreshed by the sync-check
@@ -343,12 +354,14 @@ final class PluginStore {
             let when = p.verifiedAt.map { String($0.timeIntervalSince1970) } ?? "0"
             // claude-desktop carries its per-project activity scan; others get [].
             let projects = (p.id == "claude-desktop") ? claudeProjectsJSON() : "[]"
+            // 드로우 carries its sub-switch state so the card can render draw on/off.
+            let extra = (p.id == "draw") ? ",\"drawOn\":\(Settings.shared.drawEnabled)" : ""
             return "{\"id\":\(esc(p.id)),\"name\":\(esc(p.name)),\"desc\":\(esc(p.desc)),"
                 + "\"hint\":\(esc(p.hint)),\"kind\":\(esc(p.kind.rawValue)),"
                 + "\"installed\":\(p.kind == .toggle && p.status == .valid),"
                 + "\"folder\":\(esc(p.folderPath)),"
                 + "\"status\":\(esc(p.status.rawValue)),\"detail\":\(esc(p.detail)),"
-                + "\"verifiedAt\":\(when),\"projects\":\(projects)}"
+                + "\"verifiedAt\":\(when),\"projects\":\(projects)\(extra)}"
         }.joined(separator: ",")
         return "[\(items)]"
     }

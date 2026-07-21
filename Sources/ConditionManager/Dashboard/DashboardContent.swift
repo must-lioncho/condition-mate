@@ -1006,6 +1006,13 @@ function renderPlugins(){
       actions=p.installed
         ?'<button class="btn" onclick="uninstallPlugin(\''+esc(p.id)+'\')">제거</button>'
         :'<button class="btn primary" onclick="installPlugin(\''+esc(p.id)+'\')">설치</button>';
+      // 드로우: detail menu on the installed card — draw on/off pauses the overlay
+      // (left ⌥ draw / left ⌃ wipe) without uninstalling the plugin.
+      if(p.id==='draw'&&p.installed){
+        actions+='<label style="display:inline-flex;align-items:center;gap:6px;margin-left:10px;font-size:12px;cursor:pointer">'
+          +'<input type="checkbox" '+(p.drawOn?'checked':'')+' onchange="setDrawOn(this.checked)"> draw on/off'
+          +'<span class="muted">(왼쪽 ⌥ 그리기 · 왼쪽 ⌘⌘ 글씨 · 왼쪽 ⌃ 지우기)</span></label>';
+      }
     } else {
       actions='<button class="btn primary" onclick="connectPlugin(\''+esc(p.id)+'\')">'+(p.folder?'폴더 변경':'연결')+'</button>';
       if(p.folder){
@@ -1064,6 +1071,8 @@ function disconnectPlugin(id){ if(confirm('이 플러그인 연결을 해제할�
 function verifyPlugin(id){ post('/api/plugin/verify',{id}); pluginRefresh(); }
 // Toggle plugins (e.g. 컨디션 메이트): install/uninstall, no folder picker. 제거하면 BGM도 꺼짐.
 function installPlugin(id){ post('/api/plugin/install',{id}); pluginRefresh(); }
+// 드로우 sub-switch: pause/resume the screen-draw overlay without uninstalling.
+function setDrawOn(on){ post('/api/draw/enabled',{on:!!on}); pluginRefresh(); }
 function uninstallPlugin(id){ if(confirm('이 플러그인을 제거할까요? (컨디션 메이트는 BGM도 함께 꺼집니다)')){ post('/api/plugin/uninstall',{id}); pluginRefresh(); } }
 function hhmm(t){ return CMTimeFilter.hhmm(t); }   // 표시 타임존 기준 HH:MM
 

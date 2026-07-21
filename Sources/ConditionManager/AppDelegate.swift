@@ -1,4 +1,5 @@
 import AppKit
+import Draw
 import GUI
 import WebCLI
 
@@ -18,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let trackPlayStats = TrackPlayStatsStore()
     let bgmPlan = BGMPlanMap()
     let pluginStore = PluginStore()
+    let drawOverlay = DrawOverlayController()
     let equipment = EquipmentStore()
     let chatStore = ChatStore()
     private(set) var director: ConditionDirector!
@@ -785,6 +787,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                        detail: "상황 평가 후 음악 연출(Cue) 산출 — 활성 메이트가 결정", interval: 30, owner: "condition-mate")
         } else {
             mateWorkerIDs.forEach { r.unregister(id: $0) }
+        }
+
+        // 드로우: installing the plugin arms the screen-draw overlay (left ⌥ draws,
+        // left ⌃ wipes). The card's draw on/off (Settings.drawEnabled) pauses it
+        // without uninstalling; either gate closing stops the poller and clears strokes.
+        if pluginStore.isConnected("draw") && Settings.shared.drawEnabled {
+            r.register(id: "draw-overlay", name: "화면 드로우",
+                       detail: "왼쪽 ⌥ 그리기 · 왼쪽 ⌘ 두 번 탭 30pt 글씨 · 왼쪽 ⌃ 지우기", interval: 5, owner: "draw")
+            drawOverlay.onActivity = { WorkerRegistry.shared.recordRun("draw-overlay") }
+            drawOverlay.start()
+        } else {
+            r.unregister(id: "draw-overlay")
+            drawOverlay.stop()
         }
     }
 
@@ -4624,6 +4639,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let id = obj["id"] as? String { pluginStore.install(pluginId: id); syncPluginWorkers() }
             case "/api/plugin/uninstall":
                 if let id = obj["id"] as? String { pluginStore.uninstall(pluginId: id); syncPluginWorkers() }
+            case "/api/draw/enabled":
+                // 드로우 card's draw on/off sub-switch. Persist + resync so the overlay
+                // poller starts/stops immediately (turning off also wipes the canvas).
+                Settings.shared.drawEnabled = (obj["on"] as? NSNumber)?.boolValue ?? false
+                syncPluginWorkers()
+            case "/api/draw/clear":
+                // Programmatic wipe (QA/debug parity with the left-⌃ gesture).
+                drawOverlay.clear()
             case "/api/goal/energy":
                 if let id = obj["id"] as? String, let e = (obj["energy"] as? NSNumber)?.intValue {
                     reviewStore.setEnergy(id: id, energy: e)
