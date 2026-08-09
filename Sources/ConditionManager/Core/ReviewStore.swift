@@ -84,7 +84,7 @@ final class ReviewStore {
         var targetAt: Date? = nil
         var completedAt: Date? = nil
 
-        // Sprint membership (지라식 스프린트 = 릴리즈 단위). The number is the user-typed
+        // Sprint membership (지라식 루프 = 릴리즈 단위). The number is the user-typed
         // sprint id (0 = unassigned / backlog). `released` marks a goal that has been
         // committed via the 릴리즈 action: it is hidden from the active list and recorded
         // in a Release (releaseId), and a 복원 clears both flags to bring it back.
@@ -101,7 +101,7 @@ final class ReviewStore {
 
         // Manual archive (보관). Distinct from `released` (a sprint commit): the user
         // explicitly stows a goal away so it drops out of every ACTIVE view — 목록·그룹·
-        // 테이블·일정·스프린트 보드 — yet stays fully intact and searchable in the 아카이브
+        // 테이블·일정·루프 보드 — yet stays fully intact and searchable in the 아카이브
         // view, where a 보관 해제 brings it straight back. Unlike release it needs no sprint
         // and mints no Release record: it is a reversible "put this out of sight" switch.
         var archived: Bool = false
@@ -260,8 +260,12 @@ final class ReviewStore {
         // removes an auto-created successor that ends up empty because of it.
         var carriedTo: Int = 0
         var carriedIds: [String] = []
+        // 메모장 수확분 (2026-08-07): 릴리즈 컷 때 메모장에서 거둔 완료 줄의 제목 스냅숏.
+        // titles(보드 목표 = session 작업)와 구분해 로그에서 '노트' 태그로 보인다.
+        // 기록은 불변 — 복원해도 메모는 되돌리지 않는다(MemoStore.harvestLoop 참조).
+        var notes: [String] = []
 
-        enum CodingKeys: String, CodingKey { case id, sprint, code, releasedAt, startedAt, value, goalIds, titles, carriedTo, carriedIds }
+        enum CodingKeys: String, CodingKey { case id, sprint, code, releasedAt, startedAt, value, goalIds, titles, carriedTo, carriedIds, notes }
         init(id: String, sprint: Int, code: String = "", releasedAt: Date, startedAt: Date? = nil,
              value: Int, goalIds: [String], titles: [String]) {
             self.id = id; self.sprint = sprint; self.code = code; self.releasedAt = releasedAt
@@ -279,6 +283,7 @@ final class ReviewStore {
             titles = try c.decodeIfPresent([String].self, forKey: .titles) ?? []
             carriedTo = try c.decodeIfPresent(Int.self, forKey: .carriedTo) ?? 0
             carriedIds = try c.decodeIfPresent([String].self, forKey: .carriedIds) ?? []
+            notes = try c.decodeIfPresent([String].self, forKey: .notes) ?? []
         }
     }
 
@@ -548,6 +553,7 @@ final class ReviewStore {
 
     private let dir: URL
     private let goalsURL: URL
+    private let seqFloorURL: URL
     private let releasesURL: URL
     private let sprintsURL: URL
     private let queueURL: URL
@@ -559,7 +565,7 @@ final class ReviewStore {
     private(set) var aiQueue: [AIQueueItem] = []
     private(set) var queueHistory: [QueueHistoryEntry] = []
 
-    // The "current" sprint for live timers (the challenge dial's 스프린트 mode): the open (not
+    // The "current" sprint for live timers (the challenge dial's 루프 mode): the open (not
     // closed) sprint with the highest number; if every sprint is closed, the highest-numbered one.
     // nil when no sprints exist.
     var currentSprint: Sprint? {
@@ -570,6 +576,7 @@ final class ReviewStore {
     init() {
         dir = AppPaths.sub("review")
         goalsURL = dir.appendingPathComponent("goals.json")
+        seqFloorURL = dir.appendingPathComponent("seq-floor.json")
         releasesURL = dir.appendingPathComponent("releases.json")
         sprintsURL = dir.appendingPathComponent("sprints.json")
         queueURL = dir.appendingPathComponent("ai-queue.json")
@@ -581,6 +588,7 @@ final class ReviewStore {
         dayFmt = f
 
         loadGoals()
+        loadSeqFloor()
         loadReleases()
         loadSprints()
         loadQueue()
@@ -643,7 +651,33 @@ final class ReviewStore {
         }
         if changed { saveGoals() }
     }
-    private func nextSeq() -> Int { (goals.map { $0.seq }.max() ?? 0) + 1 }
+    private func nextSeq() -> Int { max(goals.map { $0.seq }.max() ?? 0, seqFloor) + 1 }
+
+    // ── 골번호 예약 (메모장 체크리스트 줄) ───────────────────────────────────
+    // The 메모장 stamps each checklist line with a goal number from the SAME sequence the
+    // board uses, so a line can name any goal as its 부모 and reports can cite one number
+    // space. Reserved numbers are NOT goals — no Goal is minted — but they must never be
+    // reissued to a later board goal, so the highest number ever handed out is persisted
+    // as a floor (seq-floor.json) that nextSeq() respects. Numbers, once given, are
+    // immutable and never reused — same rule as goal seq.
+    private var seqFloor = 0
+    private func loadSeqFloor() {
+        guard let data = try? Data(contentsOf: seqFloorURL),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let f = obj["floor"] as? NSNumber else { return }
+        seqFloor = f.intValue
+    }
+    private func saveSeqFloor() {
+        try? Data("{\"floor\":\(seqFloor)}".utf8).write(to: seqFloorURL, options: .atomic)
+    }
+    @discardableResult
+    func reserveSeqs(_ count: Int) -> [Int] {
+        let n = max(1, min(count, 500))
+        let start = nextSeq()
+        seqFloor = start + n - 1
+        saveSeqFloor()
+        return Array(start..<(start + n))
+    }
     private func saveGoals() {
         // Never let a failed/empty in-memory state destroy real on-disk data.
         // 1) If we never successfully loaded, refuse to write at all.
@@ -663,7 +697,8 @@ final class ReviewStore {
     // callers can build a link to the created goal's page.
     //
     // NUMBERING RULE: a real Goal is minted here — and ONLY here — with a UNIQUE, IMMUTABLE
-    // seq. `bump: true` marks it as a raw brain-dump idea so it lands in the Bump out 인박스
+    // seq. (The 메모장 reserves numbers from the same sequence via reserveSeqs — those are
+    // number reservations only, never Goals.) `bump: true` marks it as a raw brain-dump idea so it lands in the Bump out 인박스
     // (정리 전) at the bottom of the board instead of Backlog; it's still a real numbered goal,
     // so promotion (setGoalSprint) just clears the flag without renumbering. The AI 큐
     // (queue.json) remains a separate dedup path reached only via enqueuePending (AI추가) — a
@@ -1035,7 +1070,12 @@ final class ReviewStore {
             // sub-attach through setParent so its 1-level guard is the single source of truth.
             // The composer's execution settings (effort/mode/cwd) ride along; images are then
             // moved from the pending staging folder into the new goal-NN/attachments.
+            // No explicit destination at all (no sprint, no parent to attach) → the promoted
+            // goal lands in the Dump out 인박스, not Backlog: the default accumulation tier
+            // is the raw-idea inbox, and 정리 (setGoalSprint / setParent) promotes it out.
+            let willAttachParent = (effParentSeq > 0) || (!forceTopLevel && !item.parent.isEmpty)
             let newSeq = addGoal(text: final, sprint: item.sprint,
+                                 bump: item.sprint == 0 && !willAttachParent,
                                  effort: item.effort, mode: item.mode, cwd: item.cwd,
                                  branch: item.branch, model: item.model)
             let promoteImages = ReviewStore.movePendingAttachments(queueId: item.id, toSeq: newSeq)
@@ -1205,7 +1245,7 @@ final class ReviewStore {
     func setGoalSprint(id: String, sprint: Int) {
         guard let idx = goals.firstIndex(where: { $0.id == id }) else { return }
         goals[idx].sprint = max(-1, sprint)
-        goals[idx].bump = false   // 정리해 스프린트/Backlog로 배정하면 Bump out 인박스에서 빠진다
+        goals[idx].bump = false   // 정리해 루프/Backlog로 배정하면 Bump out 인박스에서 빠진다
         saveGoals()
     }
 
@@ -1274,7 +1314,7 @@ final class ReviewStore {
     // sprint so completed sub-items (own sprint 0) ship with the parent's sprint group they
     // visually belong to. Results are GROUPED BY SPRINT — one Release record per sprint number —
     // so the release log always shows which sprint shipped (번호 + 결과물). Each released sprint
-    // is also marked closed, dropping it from the 스프린트 관리 list.
+    // is also marked closed, dropping it from the 루프 관리 list.
     // `sprint == nil` releases across all sprints (still grouped per sprint).
     private func isEffectivelyDone(_ g: Goal) -> Bool {
         if g.status == "done" { return true }
@@ -1290,7 +1330,29 @@ final class ReviewStore {
             !goals[i].released && isEffectivelyDone(goals[i]) &&
             (sprint == nil || effectiveSprint(goals[i]) == sprint!)
         }
-        guard !targets.isEmpty else { return [] }
+        guard !targets.isEmpty else {
+            // 완료 목표는 없어도 메모장 완료 줄이 있으면 컷의 기록은 남긴다 (2026-08-07) —
+            // 메모만으로 돈 루프도 '완료된 루프' 로그에 보여야 한다. 대상 스프린트가
+            // 명시된 컷(completeSprint 경로)에서만 — 전체 컷은 어느 루프의 기록인지
+            // 모호하므로 기존대로 조용히 빠진다.
+            if let sp = sprint, sp > 0 {
+                let base = sprints.first(where: { $0.number == sp })?.code ?? ""
+                let code = nextReleaseCode(forSprint: sp)
+                let notes = MemoStore.shared.harvestLoop(sprintCode: base, releaseCode: code,
+                                                         includeStamped: !base.isEmpty && code == base)
+                if !notes.isEmpty {
+                    var rel = Release(id: UUID().uuidString, sprint: sp, code: code,
+                                      releasedAt: Date(),
+                                      startedAt: sprints.first(where: { $0.number == sp })?.startAt,
+                                      value: 0, goalIds: [], titles: [])
+                    rel.notes = notes
+                    releases.insert(rel, at: 0)
+                    saveReleases()
+                    return [rel]
+                }
+            }
+            return []
+        }
         var groups: [Int: [Int]] = [:]
         for i in targets { groups[effectiveSprint(goals[i]), default: []].append(i) }
         let now = Date()
@@ -1314,11 +1376,25 @@ final class ReviewStore {
                 sprints[si].closed = true
             }
         }
+        // 메모장 수확 (2026-08-07): 컷은 보드 목표와 함께 메모장의 완료 줄도 거둔다.
+        // 메모는 루프 스코프가 없으므로 한 번만 거둬, 이번 컷의 대상 스프린트 릴리즈
+        // (전체 컷이면 첫 그룹)에 싣는다. 수확은 메모에 '@루프: <code>' 를 찍으므로
+        // 그 줄들은 패드의 기본(현재 루프) 보기에서 함께 사라진다.
+        if let prime = (sprint != nil ? created.first(where: { $0.sprint == sprint! }) : created.first),
+           let ri = releases.firstIndex(where: { $0.id == prime.id }) {
+            let base = sprints.first(where: { $0.number == prime.sprint })?.code ?? ""
+            let notes = MemoStore.shared.harvestLoop(sprintCode: base, releaseCode: prime.code,
+                                                     includeStamped: !base.isEmpty && prime.code == base)
+            if !notes.isEmpty {
+                releases[ri].notes = notes
+                if let ci = created.firstIndex(where: { $0.id == prime.id }) { created[ci].notes = notes }
+            }
+        }
         saveGoals(); saveReleases(); saveSprints()
         return created
     }
 
-    // Complete a sprint. This is the "Complete sprint" action — the bump-out / reset
+    // Complete a sprint. This is the "Complete loop" action — the bump-out / reset
     // moment (see .doc/sprint-policy.md, tests/prototypes/sprint-lifecycle-test.html).
     // In one step it: (1) commits the sprint's finished goals to the 완료 로그 (nothing
     // done → no log entry at all), (2) closes the old sprint, and (3) ONLY IF unfinished
@@ -1358,7 +1434,7 @@ final class ReviewStore {
     }
 
     // Restore (복원) a release = the full undo of its complete: bring its goals back into
-    // the active list, reopen its sprint (so it returns to 스프린트 관리), move goals that
+    // the active list, reopen its sprint (so it returns to 루프 관리), move goals that
     // were carried into a successor at complete-time back home, delete that successor if
     // it was auto-created and is now empty, and drop the release record.
     func restoreRelease(id: String) {
@@ -1655,8 +1731,11 @@ final class ReviewStore {
 
     // Drive a goal from a Claude Code session lifecycle event. The goal is keyed by
     // the session id and auto-created on first sight, so the hooks need no goal id:
-    //   start  - session opened: ensure the goal exists (대기/backlog), don't disturb a live run
-    //   active - agent started working a turn: in_progress (진행), begin a timed session
+    //   start  - session opened: park an EXISTING goal at 대기/backlog, don't disturb a live
+    //            run. Never mints a goal — a session with no turn writes no transcript, so
+    //            minting here left permanently untitled ghosts (see the mint guard below).
+    //   active - agent started working a turn: in_progress (진행), begin a timed session.
+    //            This is the ONLY event that mints a session goal.
     //   wait   - agent parked waiting for a human (응답 대기/waiting): bank elapsed active
     //            time and STOP the clock, so the waiting window is not counted as work
     //   idle   - agent finished a turn (Stop hook): also awaiting the human, so it shares
@@ -1683,8 +1762,19 @@ final class ReviewStore {
             idx = i
             if !label.isEmpty { goals[idx].text = label }   // refresh to the current aiTitle
         } else {
+            // No turn, no goal. A session that fires `start` and dies before its first
+            // prompt never writes a transcript at all, so its goal can never be titled
+            // or timed — it just sits on the "Claude 세션 <id>" placeholder forever.
+            // Minting on `start` produced ~120 such ghosts (19% of the board), so the
+            // goal is now minted on the FIRST PROMPT (`active`) only; every other event
+            // for an unknown session is a no-op until that prompt arrives.
+            guard event == "active" else { return }
             let title = label.isEmpty ? "Claude 세션 \(sid.prefix(8))" : label
-            goals.append(Goal(id: UUID().uuidString, seq: nextSeq(), text: title, sessionId: sid))
+            // Session-mirrored goals accumulate on their own (every Claude session mints
+            // one) — park them in the Dump out 인박스 by default instead of Backlog, so
+            // the board's curated tiers only hold goals the user placed there.
+            goals.append(Goal(id: UUID().uuidString, seq: nextSeq(), text: title,
+                              sessionId: sid, bump: true))
             idx = goals.count - 1
         }
         if !tpath.isEmpty { goals[idx].transcriptPath = tpath }   // remember where to read
@@ -1738,7 +1828,8 @@ final class ReviewStore {
             goals[idx].waitingSince = nil
             goals[idx].waitKind = ""
             goals[idx].status = "done"
-        default: // "start" — just ensure it exists; never interrupt an active run.
+        default: // "start" — only ever reaches an EXISTING goal (see the mint guard above);
+                 // refreshes its label/transcript without interrupting an active run.
             if goals[idx].status == "in_progress" { bankLive() }
             goals[idx].waitingSince = nil
             goals[idx].waitKind = ""

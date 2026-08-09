@@ -45,10 +45,20 @@ final class Settings {
         static let activeGoalAt   = "cm.activeGoalAt"
         static let recentTasks    = "cm.recentTasks"
         static let pinnedGoals    = "cm.pinnedGoalSeqs"
+        static let recentParents  = "cm.recentParentSeqs"
         static let diagHosts      = "cm.diagHosts"
         static let gaComposer     = "cm.gaComposer"
         static let gaTallyHist    = "cm.gaTallyHist"
         static let drawEnabled    = "cm.drawEnabled"
+        static let cameraGuardOn  = "cm.cameraGuardOn"
+        static let debugButtons   = "cm.debugButtons"
+        static let bgmVenue       = "cm.bgmVenue"
+        static let muted          = "cm.muted"
+        static let gwMode         = "cm.gwMode"
+        static let gwBaseURL      = "cm.gwBaseURL"
+        static let gwScheme       = "cm.gwScheme"
+        static let gwKeyService   = "cm.gwKeyService"
+        static let gwKeyAccount   = "cm.gwKeyAccount"
     }
 
     // Defaults for values the user has not touched. Mirrors the old register(defaults:).
@@ -63,7 +73,12 @@ final class Settings {
         K.trackingEnabled: true,
         K.volume: 0.8,
         K.bgmWindow: true,
-        K.drawEnabled: true
+        K.drawEnabled: true,
+        K.cameraGuardOn: true,
+        K.debugButtons: true,
+        K.gwMode: "auto",
+        K.gwScheme: "bearer",
+        K.gwKeyService: "claude-code-token"
     ]
 
     private let fileURL: URL
@@ -128,6 +143,13 @@ final class Settings {
     var musicFolderPath: String? {
         get { string(K.musicFolder) }
         set { set(newValue, K.musicFolder) }
+    }
+
+    // 전략7 · 장소·컨디션 프리셋 키 (VenueContext.key). nil = 기본(2명 사무실).
+    // settings.json에 저장되므로 앱 재시작·업데이트를 넘어 마지막 선택이 유지된다.
+    var bgmVenueKey: String? {
+        get { string(K.bgmVenue) }
+        set { set(newValue, K.bgmVenue) }
     }
 
     // Base ".claude" folder whose /skills subfolder holds the user's skills. Empty/absent
@@ -212,9 +234,63 @@ final class Settings {
     // 드로우 plugin sub-switch (the plugin card's draw on/off). The overlay only runs
     // while the plugin is installed AND this is on — flipping it off pauses drawing
     // without uninstalling the plugin.
+    // Last music-mute state. Durable so an app update / relaunch restores the user's intent:
+    // if the sound was muted when the app went down, it comes back muted. Written through
+    // ChallengeSession (the single source of truth for the live flag).
+    var muted: Bool {
+        get { bool(K.muted) }
+        set { set(newValue, K.muted) }
+    }
+
     var drawEnabled: Bool {
         get { bool(K.drawEnabled) }
         set { set(newValue, K.drawEnabled) }
+    }
+
+    // 카메라 지킴이 card sub-switch (on = keep the camera alive while Gather runs).
+    // Pauses the guard without uninstalling the plugin, mirroring drawEnabled.
+    var cameraGuardOn: Bool {
+        get { bool(K.cameraGuardOn) }
+        set { set(newValue, K.cameraGuardOn) }
+    }
+
+    // 전역 디버그 버튼 노출 스위치 (레일 ⚙️ 설정). off면 각 페이지의 디버그성
+    // 버튼/배지가 아예 렌더링되지 않는다. 페이지들은 피드 폴링으로 즉시 반영.
+    var debugButtons: Bool {
+        get { bool(K.debugButtons) }
+        set { set(newValue, K.debugButtons) }
+    }
+
+    // --- Claude CLI 연결(게이트웨이) 설정 -----------------------------------------
+    // 앱이 spawn하는 `claude` 는 유저 터미널의 zsh 함수(키체인 토큰을 env로 주입)를 타지
+    // 않으므로, 게이트웨이를 쓰는 환경에서는 앱이 직접 ANTHROPIC_* 을 넣어줘야 한다.
+    // "auto"(기본)면 아무것도 주입하지 않고 CLI 자신의 로컬 로그인(OAuth)을 쓴다.
+    // 비밀 값은 절대 여기 저장하지 않는다 — 키체인 항목 이름만 보관한다.
+
+    /// "auto" = 주입 없음(로컬 OAuth) · "gateway" = ANTHROPIC_BASE_URL/토큰 주입
+    var gatewayMode: String {
+        get { string(K.gwMode) ?? "auto" }
+        set { set(newValue, K.gwMode) }
+    }
+    /// 추론 게이트웨이 엔드포인트. 빈 문자열 = 미설정.
+    var gatewayBaseURL: String {
+        get { string(K.gwBaseURL) ?? "" }
+        set { set(newValue, K.gwBaseURL) }
+    }
+    /// "bearer" → ANTHROPIC_AUTH_TOKEN · "apiKey" → ANTHROPIC_API_KEY
+    var gatewayScheme: String {
+        get { string(K.gwScheme) ?? "bearer" }
+        set { set(newValue, K.gwScheme) }
+    }
+    /// 토큰을 담고 있는 키체인 generic-password 의 서비스명.
+    var gatewayKeyService: String {
+        get { string(K.gwKeyService) ?? "claude-code-token" }
+        set { set(newValue, K.gwKeyService) }
+    }
+    /// 키체인 항목의 계정명. 빈 문자열이면 현재 로그인 유저를 쓴다.
+    var gatewayKeyAccount: String {
+        get { string(K.gwKeyAccount) ?? "" }
+        set { set(newValue, K.gwKeyAccount) }
     }
 
     var minBPM: Double {
@@ -351,6 +427,24 @@ final class Settings {
         return target
     }
 
+    // Goals recently used AS A PARENT (부모#). Newest-first, capped — this drives the "최근 사용"
+    // section of the parent dropdown and mildly boosts the automatic parent suggestion.
+    // Server-side rather than localStorage for the same reason as lastView/doneCutoff: the
+    // dashboard port changes every launch, which wipes the browser origin's storage.
+    var recentParentSeqs: [Int] {
+        get { ((get(K.recentParents) as? [Any]) ?? []).compactMap { ($0 as? NSNumber)?.intValue } }
+        set { set(newValue.map { NSNumber(value: $0) }, K.recentParents) }
+    }
+    // Record that `seq` was just chosen as a parent. Upserts to the front so the list reads
+    // as "what I've been filing under lately".
+    func noteParentUse(_ seq: Int) {
+        guard seq > 0 else { return }
+        var list = recentParentSeqs.filter { $0 != seq }
+        list.insert(seq, at: 0)
+        if list.count > 8 { list = Array(list.prefix(8)) }
+        recentParentSeqs = list
+    }
+
     // Dashboard "완료 컷오프" — completion-time cutoff for hiding old 완료 goals.
     // Persisted server-side for the same reason as lastView: the dynamic port resets
     // any browser-side store (URL hash / localStorage) on every launch.
@@ -362,7 +456,7 @@ final class Settings {
         set { set(newValue.map { NSNumber(value: $0) }, K.doneCutoff) }
     }
 
-    // Dashboard UI state blob (보기 상태 필터 · 상위 항상 표시 · 스프린트 선택 · 접기/펼치기).
+    // Dashboard UI state blob (보기 상태 필터 · 상위 항상 표시 · 루프 선택 · 접기/펼치기).
     // Persisted server-side for the same reason as lastView/doneCutoff: the dynamic server
     // port resets any browser-side store (URL hash / localStorage) on every launch, so the
     // last filter/expand layout would otherwise be lost when the app restarts. Stored as the

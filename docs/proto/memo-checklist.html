@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<title>메모장 체크리스트 프로토타입</title>
+<!--
+  메모장 체크리스트 — 프로토타입 (구현 전 검증용)
+
+  검증하려는 것 4가지
+   1) 라운드 박스(원형 체크박스) 행 편집이 메모 타이핑 흐름을 끊지 않는가
+   2) 일련번호를 "데이터에는 있고 화면에는 없는" 상태로 두고, 호버에서만 드러내는 게 읽히는가
+   3) 긴 글을 상세(⌘Enter)로 접어 두면 목록이 한 줄 제목만 남아 깨끗해지는가
+   4) 저장 텍스트가 깨끗한가 — 번호를 본문에 박지 않아도 리포트에서 번호가 살아나는가
+
+  저장 포맷(순수 텍스트, 번호 없음):
+     - [ ] 할 일          미완료
+     - [x] 할 일          완료
+     - [!] 할 일          바틀넥(막힘)
+     ····상세 본문        앞의 항목에 딸린 상세(4칸 들여쓰기, 여러 줄 가능)
+     그 외 줄            그냥 메모 텍스트
+
+  번호는 저장하지 않는다. 화면에 그릴 때 체크리스트 줄만 위에서부터 1,2,3… 으로 매긴다.
+  상세도 저장은 그냥 들여쓴 텍스트 — 다른 편집기로 열어도 읽히고, 파싱이 실패해도 글이 남는다.
+-->
+<style>
+  :root{
+    --bg:#0b0f17; --panel:#141821; --line:#222a36; --fg:#e6e9ef; --mut:#8a93a3;
+    --accent:#5b8cff; --field:#0e1320;
+    --block:#e2a03f;   /* 바틀넥 — 빨강 금지(앱 규칙), 호박색 */
+  }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--fg);
+        font:14px/1.75 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif }
+  .wrap{ max-width:760px; margin:0 auto; padding:28px 22px 60px }
+  h1{ font-size:14px; font-weight:600; margin:0 0 4px }
+  .sub{ font-size:12px; color:var(--mut); margin:0 0 18px }
+
+  .cmmemo{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:12px 14px }
+  .cmmemo-hd{ display:flex; align-items:baseline; gap:8px; margin-bottom:9px }
+  .cmmemo-hd .t{ font-size:12px; font-weight:600 }
+  .cmmemo-hd .sp{ flex:1 }
+  .cmmemo-hd .meta{ font-size:11px; color:var(--mut); white-space:nowrap }
+  .cmmemo-hd button{ appearance:none; cursor:pointer; border:1px solid var(--line);
+    background:transparent; color:var(--mut); border-radius:7px; padding:2px 8px;
+    font-size:11px; line-height:1.6 }
+  .cmmemo-hd button:hover{ color:var(--fg); border-color:var(--accent) }
+
+  /* 편집면 — 행 하나가 곧 메모 한 줄. 체크리스트 줄만 왼쪽에 라운드 박스가 붙는다. */
+  .doc{ background:var(--field); border:1px solid transparent; border-radius:10px;
+        padding:8px 10px; min-height:200px }
+  .doc:focus-within{ border-color:var(--accent) }
+  .row{ padding:1px 0 }
+  .ln{ display:flex; align-items:flex-start; gap:9px }
+  .row .tx{ flex:1; outline:none; white-space:pre-wrap; word-break:break-word; min-height:24px;
+            padding:1px 2px; border-radius:5px }
+  .row .tx:empty::before{ content:attr(data-ph); color:var(--mut); opacity:.55 }
+
+  /* ── 라운드 박스 ────────────────────────────────────────────────────
+     기본은 빈 원. 호버하면 원 안이 일련번호로 바뀐다 — 번호는 데이터에만 있고
+     평소 화면에는 없다가 필요할 때만 드러난다. */
+  .ck{ position:relative; flex:0 0 auto; width:19px; height:19px; margin-top:3px;
+       border-radius:50%; border:1.5px solid #3a4557; background:transparent;
+       cursor:pointer; padding:0; display:grid; place-items:center;
+       transition:border-color .12s, background .12s }
+  .ck:hover{ border-color:var(--accent) }
+  .ck .mk{ font-size:12px; line-height:1 }      /* ✓ / ! 표식 */
+  .ck .no{ position:absolute; inset:0; display:none; place-items:center;
+           font-size:10px; font-weight:700; letter-spacing:-.3px; color:var(--fg);
+           background:var(--field); border-radius:50% }
+  .ck:hover .no{ display:grid }                 /* 호버 = 번호 노출 */
+  .ck:hover .mk{ visibility:hidden }
+
+  .row[data-st="done"] .ck{ border-color:var(--accent); background:rgba(91,140,255,.16); color:var(--accent) }
+  .row[data-st="done"] .tx{ color:var(--mut); text-decoration:line-through; text-decoration-color:#4c566b }
+  /* 바틀넥 = 막힘. 빨강은 쓰지 않는다(앱 규칙: 상태에 신호등 색 금지) — 호박색. */
+  .row[data-st="block"] .ck{ border-color:var(--block); background:rgba(226,160,63,.16); color:var(--block) }
+  .row[data-st="block"] .tx{ color:#f0cd97 }
+  .row[data-st="todo"] .ck{ color:transparent }
+
+  /* ── 상세(⌘Enter) ──────────────────────────────────────────────────
+     긴 글은 여기로 내려간다. 접혀 있을 때 목록에는 한 줄 제목만 남는다.
+     접힘 표시는 제목 오른쪽의 작은 알약 — 상세가 있다는 사실만 조용히 알린다. */
+  .cue{ flex:0 0 auto; margin-top:4px; font-size:10px; line-height:1.5; color:var(--mut);
+        border:1px solid var(--line); border-radius:20px; padding:0 7px; cursor:pointer;
+        white-space:nowrap; user-select:none; visibility:hidden }
+  .row[data-has="1"] .cue{ visibility:visible }
+  .cue:hover{ color:var(--fg); border-color:var(--accent) }
+  .row[data-open="1"] .cue{ color:var(--accent); border-color:var(--accent) }
+  .dt{ display:none; margin:3px 0 8px 28px; padding:7px 11px;
+       border-left:2px solid #2b3444; border-radius:0 8px 8px 0;
+       background:rgba(255,255,255,.022); color:#c3cbd8; font-size:13.5px; line-height:1.8;
+       white-space:pre-wrap; word-break:break-word; outline:none }
+  .row[data-open="1"] .dt{ display:block }
+  .dt:focus{ border-left-color:var(--accent) }
+  .dt:empty::before{ content:'상세 내용 — Esc 로 접기'; color:var(--mut); opacity:.5 }
+
+  .hint{ margin-top:10px; font-size:11px; color:var(--mut) }
+  .hint b{ color:#b9c2d0; font-weight:600 }
+  kbd{ font:inherit; font-size:10.5px; border:1px solid var(--line); border-radius:4px;
+       padding:0 4px; color:#b9c2d0 }
+
+  .cols{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:20px }
+  .box{ background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:11px 13px }
+  .box h2{ font-size:11.5px; font-weight:600; margin:0 0 7px; color:var(--mut) }
+  .box pre{ margin:0; font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;
+            color:#c7cedb; white-space:pre-wrap; word-break:break-word }
+</style>
+
+<div class="wrap">
+  <h1>메모장 체크리스트 — 프로토타입</h1>
+  <p class="sub">라운드 박스 · 히든 일련번호(호버 노출) · 상세 접기(⌘Enter) · 바틀넥 상태 · 리포트 산출.</p>
+
+  <section class="cmmemo">
+    <div class="cmmemo-hd">
+      <span class="t">메모장</span>
+      <span class="sp"></span>
+      <span class="meta" id="meta"></span>
+      <button type="button" id="add">＋ 체크리스트</button>
+    </div>
+    <div class="doc" id="doc"></div>
+    <div class="hint">
+      <kbd>⌘Enter</kbd> <b>상세 열기/접기</b> — 긴 글은 여기에, 목록에는 제목 한 줄만 ·
+      <b>원</b> 클릭 미완료 → 완료 → 바틀넥 ·
+      원에 <b>마우스 올리면</b> 일련번호 ·
+      <kbd>⌘⇧K</kbd> 체크리스트로/해제 ·
+      <kbd>⌘⇧S</kbd> 취소선 ·
+      <kbd>Enter</kbd> 새 줄 ·
+      상세에서 <kbd>Esc</kbd> 접기
+    </div>
+  </section>
+
+  <div class="cols">
+    <div class="box">
+      <h2>저장되는 텍스트 (번호 없음 · 그대로 /api/memo)</h2>
+      <pre id="raw"></pre>
+    </div>
+    <div class="box">
+      <h2>리포트 (번호는 여기서 살아난다)</h2>
+      <pre id="rep"></pre>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var doc=document.getElementById('doc'), meta=document.getElementById('meta'),
+      raw=document.getElementById('raw'), rep=document.getElementById('rep');
+  var STATES=['todo','done','block'], MARK={todo:'',done:'✓',block:'!'},
+      TOKEN={todo:'- [ ] ',done:'- [x] ',block:'- [!] '}, IND='    ';
+
+  // ── 행 ────────────────────────────────────────────────────────────
+  // st=null 이면 그냥 메모 줄, 아니면 체크리스트 줄. 번호는 행에 저장하지 않는다 —
+  // 항상 현재 문서에서 다시 센다(줄을 지워도 번호가 비지 않도록).
+  function makeRow(text, st, detail){
+    var row=document.createElement('div');
+    row.className='row'; if(st) row.dataset.st=st;
+
+    var ln=document.createElement('div'); ln.className='ln';
+    var ck=document.createElement('button');
+    ck.type='button'; ck.className='ck'; ck.tabIndex=-1;
+    ck.innerHTML='<span class="mk"></span><span class="no"></span>';
+    ck.addEventListener('click', function(){
+      var i=STATES.indexOf(row.dataset.st||'todo');
+      row.dataset.st=STATES[(i+1)%STATES.length];
+      paint();
+    });
+    var tx=document.createElement('div');
+    tx.className='tx'; tx.contentEditable='true'; tx.textContent=text||'';
+    tx.setAttribute('data-ph','떠오른 생각을 그대로 적어 두세요');
+    var cue=document.createElement('span');
+    cue.className='cue'; cue.textContent='상세';
+    cue.addEventListener('mousedown', function(e){ e.preventDefault(); toggleDetail(row, true); });
+    ln.appendChild(ck); ln.appendChild(tx); ln.appendChild(cue);
+
+    // 상세는 늘 DOM 에 있고 CSS 로만 접힌다 — 접었다 펴도 글이 사라질 여지가 없다.
+    var dt=document.createElement('div');
+    dt.className='dt'; dt.contentEditable='true'; dt.textContent=detail||'';
+
+    row.appendChild(ln); row.appendChild(dt);
+    if(detail) row.dataset.has='1';
+    if(!st) ck.style.visibility='hidden';
+    return row;
+  }
+  function rows(){ return Array.prototype.slice.call(doc.children); }
+  function setChecklist(row, on){
+    if(on){ if(!row.dataset.st) row.dataset.st='todo'; row.querySelector('.ck').style.visibility=''; }
+    else { delete row.dataset.st; row.querySelector('.ck').style.visibility='hidden'; }
+    paint();
+  }
+  // 상세 열고 닫기. 열면 커서를 상세로 옮긴다 — ⌘Enter 치자마자 바로 쓸 수 있게.
+  function toggleDetail(row, focus){
+    var open = row.dataset.open==='1';
+    if(open){ closeDetail(row); return; }
+    row.dataset.open='1';
+    if(focus) caretEnd(row.querySelector('.dt'));
+    paint();
+  }
+  function closeDetail(row){
+    delete row.dataset.open;
+    // 비어 있으면 흔적을 남기지 않는다 — 실수로 연 상세가 알약으로 남지 않도록.
+    if(!row.querySelector('.dt').textContent.trim()) delete row.dataset.has;
+    paint();
+  }
+  function caretEnd(el){
+    el.focus();
+    var r=document.createRange(); r.selectNodeContents(el); r.collapse(false);
+    var s=getSelection(); s.removeAllRanges(); s.addRange(r);
+  }
+
+  // ── 그리기 ────────────────────────────────────────────────────────
+  // 여기가 이 프로토타입의 핵심: 번호는 오직 이 함수에서만 생기고, 원 안에 숨어 있다.
+  function paint(){
+    var n=0, done=0, block=0, todo=0;
+    rows().forEach(function(row){
+      var dt=row.querySelector('.dt');
+      if(dt.textContent.trim()) row.dataset.has='1'; else if(row.dataset.open!=='1') delete row.dataset.has;
+      var lines=dt.textContent.trim() ? dt.textContent.trim().split('\n').length : 0;
+      row.querySelector('.cue').textContent = row.dataset.open==='1' ? '접기' : ('상세 '+lines+'줄');
+
+      var st=row.dataset.st;
+      if(!st) return;
+      n++;
+      row.dataset.no=n;                                  // 데이터에는 있다
+      row.querySelector('.no').textContent=n;            // 화면에는 호버에서만
+      row.querySelector('.mk').textContent=MARK[st];
+      if(st==='done') done++; else if(st==='block') block++; else todo++;
+    });
+    meta.textContent = n ? (n+'개 · 완료 '+done+' · 바틀넥 '+block+' · 남음 '+todo) : '체크리스트 없음';
+    dump();
+  }
+
+  function serialize(){
+    var out=[];
+    rows().forEach(function(row){
+      var st=row.dataset.st, t=row.querySelector('.tx').textContent;
+      out.push(st ? TOKEN[st]+t : t);
+      var d=row.querySelector('.dt').textContent.replace(/\s+$/,'');
+      if(d.trim()) d.split('\n').forEach(function(l){ out.push(IND+l); });
+    });
+    return out.join('\n');
+  }
+  // 저장된 텍스트를 다시 읽어 화면으로 — 서버에서 받아 올 때 쓰는 경로.
+  // 규칙 하나뿐: 4칸 이상 들여쓴 줄은 바로 앞 줄의 상세. 앞 줄이 없으면 그냥 본문으로 둔다
+  // (파싱이 애매할 때 글을 버리지 않는 쪽으로).
+  function parse(s){
+    var out=[], last=null;
+    (s||'').split('\n').forEach(function(line){
+      var det=/^(\s{4}|\t)(.*)$/.exec(line);
+      if(det && last){ last.detail.push(det[2]); return; }
+      var m=/^-\s\[([ x!])\]\s?(.*)$/.exec(line);
+      last={ st: m ? ({' ':'todo','x':'done','!':'block'})[m[1]] : null,
+             text: m ? m[2] : line, detail: [] };
+      out.push(last);
+    });
+    return out;
+  }
+  function setText(s){
+    doc.innerHTML='';
+    parse(s).forEach(function(it){ doc.appendChild(makeRow(it.text, it.st, it.detail.join('\n'))); });
+    if(!doc.children.length) doc.appendChild(makeRow('', null, ''));
+    paint();
+  }
+
+  function dump(){
+    raw.textContent=serialize() || '(비어 있음)';
+    var out=[], d=[], b=[], t=[];
+    rows().forEach(function(row){
+      var st=row.dataset.st; if(!st) return;
+      var line=row.dataset.no+'. '+(row.querySelector('.tx').textContent||'(빈 항목)');
+      var det=row.querySelector('.dt').textContent.trim();
+      // 리포트에는 상세를 들여써서 함께 — 특히 바틀넥은 "왜 못 했는지"가 상세에 있다.
+      if(det) line+='\n'+det.split('\n').map(function(l){ return '   '+l; }).join('\n');
+      (st==='done'?d:st==='block'?b:t).push(line);
+    });
+    if(d.length){ out.push('완료'); out=out.concat(d); }
+    if(b.length){ out.push((out.length?'\n':'')+'바틀넥으로 못 함'); out=out.concat(b); }
+    if(t.length){ out.push((out.length?'\n':'')+'남음'); out=out.concat(t); }
+    rep.textContent=out.join('\n') || '(항목 없음)';
+  }
+
+  // ── 키 ────────────────────────────────────────────────────────────
+  doc.addEventListener('keydown', function(ev){
+    var el=ev.target; if(!el.classList) return;
+    var inDetail=el.classList.contains('dt'), inTitle=el.classList.contains('tx');
+    if(!inDetail && !inTitle) return;
+    var row=el.closest('.row');
+
+    // ⌘Enter — 상세 열기/접기. 제목에서든 상세 안에서든 같은 키로 오간다.
+    if((ev.metaKey||ev.ctrlKey) && ev.key==='Enter'){
+      ev.preventDefault();
+      if(inDetail){ closeDetail(row); caretEnd(row.querySelector('.tx')); }
+      else toggleDetail(row, true);
+      return;
+    }
+    if(inDetail){
+      if(ev.key==='Escape'){ ev.preventDefault(); closeDetail(row); caretEnd(row.querySelector('.tx')); }
+      // 상세 안의 Enter 는 그냥 줄바꿈 — 여기선 자유롭게 길게 쓰는 게 목적이다.
+      return;
+    }
+
+    if((ev.metaKey||ev.ctrlKey) && ev.shiftKey && ev.code==='KeyK'){
+      ev.preventDefault(); setChecklist(row, !row.dataset.st); return;
+    }
+    if((ev.metaKey||ev.ctrlKey) && ev.shiftKey && ev.code==='KeyS'){
+      ev.preventDefault(); strike(el); return;
+    }
+    if(ev.key==='Enter' && !ev.shiftKey && !ev.isComposing){
+      ev.preventDefault();
+      var next=makeRow('', row.dataset.st ? 'todo' : null);  // 체크리스트 줄이면 이어서 체크리스트
+      row.after(next); paint(); caretEnd(next.querySelector('.tx')); return;
+    }
+    if(ev.key==='Backspace' && !el.textContent){
+      if(row.dataset.st){ ev.preventDefault(); setChecklist(row,false); return; }  // 먼저 일반 줄로
+      // 상세가 남아 있는 줄은 지우지 않는다 — 안 보이는 글이 조용히 사라지면 안 된다.
+      if(row.dataset.has==='1'){ ev.preventDefault(); toggleDetail(row,true); return; }
+      var prev=row.previousElementSibling;
+      if(prev){ ev.preventDefault(); row.remove(); paint(); caretEnd(prev.querySelector('.tx')); }
+      return;
+    }
+  });
+  doc.addEventListener('input', function(ev){
+    // "- " 를 직접 타이핑해도 체크리스트가 되게 — 손이 기억하는 마크다운 습관 존중.
+    var el=ev.target;
+    if(el.classList && el.classList.contains('tx') && !el.closest('.row').dataset.st){
+      if(/^-\s/.test(el.textContent)){
+        el.textContent=el.textContent.replace(/^-\s/,'');
+        setChecklist(el.closest('.row'),true); caretEnd(el); return;
+      }
+    }
+    paint();
+  });
+
+  var STRIKE='̶';
+  function strike(tx){
+    var s=tx.textContent; if(!s.trim()) return;
+    tx.textContent = s.indexOf(STRIKE)>=0 ? s.split(STRIKE).join('')
+                   : s.split('').map(function(c){ return c+STRIKE; }).join('');
+    caretEnd(tx); dump();
+  }
+
+  document.getElementById('add').addEventListener('click', function(){
+    var r=makeRow('','todo'); doc.appendChild(r); paint(); caretEnd(r.querySelector('.tx'));
+  });
+
+  // ── 시드 ── 사진의 실제 메모를 그대로 — 제목 한 줄 + 접힌 상세가 목적.
+  [['오늘 정리',null,''],
+   ['kyc 전용 앱, 그것이 솔로페이','todo',
+    '그리고 월렛. 토스페이로 로그인할때 우리는 걱정 안하잖아. 그것과 같지.\n'+
+    '하지만 송금 버튼이 나오는건 조심해야하는데.\n'+
+    '무조건 승인했다가 돈 나가면 안되니 앱에서 처리를 돕도록 하자.\n'+
+    '예를 들어 송금시에는 얼굴 인증과 백에서 안 보이는 것으로 승인을 확인한다.\n'+
+    '사람들이 얼굴 인식 = 돈 내는 것, 지문인식 = 로그인 정도로 인식하게끔.'],
+   ['주정산 온체인 실측 대조','done',''],
+   ['개런티 lost 리스트 회신','block','상대 회신 대기 — 지갑 재매칭 결과 없이는 진행 불가.'],
+   ['리포트 PDF 릴리즈','todo',''],
+   ['',null,'']
+  ].forEach(function(x){ doc.appendChild(makeRow(x[0],x[1],x[2])); });
+  paint();
+
+  window.CMMemoProto={ serialize:serialize, setText:setText, parse:parse };
+})();
+</script>
+</html>

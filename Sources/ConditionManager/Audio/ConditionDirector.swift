@@ -72,7 +72,7 @@ final class ConditionDirector {
     private static let releaseKeyword = "창가의 바람"
 
     // Per-mode BGM playlists (전략2) — one list per session mode of the rail's
-    // challenge dial (25분 포모도로 · 스프린트 · 무제한/트래커, see SessionRail
+    // challenge dial (25분 포모도로 · 루프 · 무제한/트래커, see SessionRail
     // cmChModes). Entries are EXACT filenames in the music folder; the FIRST entry
     // is the mode's pinned opener. Since 전략3 these lists are the FALLBACK gate:
     // while the plan map (BGMPlanMap) resolves a slot, the slot's theme pool gates
@@ -150,7 +150,7 @@ final class ConditionDirector {
     private(set) var activeProfileLabel: String = "기본"
 
     // 전략5 · 모드 에너지: each challenge mode targets a different BPM region of the
-    // SAME plan pool, so 25분/스프린트/트래커 sound distinct without touching the plan
+    // SAME plan pool, so 25분/루프/트래커 sound distinct without touching the plan
     // gate (inActivePool). lo/hi are fractions of the base band's span; ramp scales
     // the warmup climb. Unknown modes leave the full base band (see applyModeEnergy).
     private struct ModeEnergy { let lo: Double; let hi: Double; let ramp: Double }
@@ -172,7 +172,7 @@ final class ConditionDirector {
     //   초집중 : 업무 2h+ — 이제 휴식이 아니라 경쟁이다. 밴드 상단에서 시작해 빠르게 점화
     // 라운지/초집중 티어는 테마 오버레이(contextOverlayMinutes): 그동안 선곡 풀 자체가
     // 해당 테마 폴더로 바뀌고(우선순위: 폭우 > 시작 컨텍스트 > 플랜 슬롯 > 모드 리스트),
-    // 만료되면 자연 회전으로 플랜 풀에 복귀한다. 모드 보정(스프린트=한 단계 위,
+    // 만료되면 자연 회전으로 플랜 풀에 복귀한다. 모드 보정(루프=한 단계 위,
     // 트래커=한 단계 아래)까지 겹쳐 같은 순간이라도 세 타이머가 다르게 들린다.
     struct StartTier {
         let label: String       // 로그/풀 칩에 보이는 한국어 이름
@@ -220,7 +220,7 @@ final class ConditionDirector {
         } else {
             tier = daypart == "아침" ? "focus" : "hyper"  // 2h+ = 경쟁 모드 (이른 아침만 유예)
         }
-        // 모드 보정: 스프린트는 스스로 고속을 골랐으니 한 단계 위로, 트래커(무제한)는
+        // 모드 보정: 루프는 스스로 고속을 골랐으니 한 단계 위로, 트래커(무제한)는
         // 오래 달릴 판이니 한 단계 아래로. 라운지의 "무드"는 위로만 벗어난다.
         if mode == "sprint" {
             tier = ["gentle": "focus", "lounge": "focus", "focus": "hyper"][tier] ?? tier
@@ -228,6 +228,23 @@ final class ConditionDirector {
             tier = ["hyper": "focus", "focus": "gentle"][tier] ?? tier
         }
         return tier
+    }
+
+    // 전략7 · 장소·컨디션 컨텍스트: the user's explicit "where am I / how do I feel"
+    // pick (VenueContext catalog). Seeded from Settings so the last choice survives
+    // restarts and updates; setVenue persists every change back. The venue narrows
+    // the tempo envelope BEFORE 전략5's mode split (nap presets cap even 루프 low)
+    // and — when it names real theme folders — owns the selection pool above every
+    // automatic gate except the rain reset (the user said where they are; the app
+    // should not argue). The default 2명 사무실 is a passthrough: no pool override,
+    // full band, so the pre-전략7 pipeline is exactly what "기본" means.
+    private(set) var venue = VenueContext.by(key: Settings.shared.bgmVenueKey ?? VenueContext.defaultKey)
+
+    // The venue owns the pool only when it declares themes that actually exist in
+    // the library — a preset pointing at missing folders degrades to the auto pool
+    // instead of letting the blocked-pool fallback pretend the gate worked.
+    private var venueGateActive: Bool {
+        !venue.themes.isEmpty && library.tracks.contains { venue.themes.contains($0.theme) }
     }
 
     // Overlay liveness — mirrors rainActive's shape.
@@ -267,15 +284,21 @@ final class ConditionDirector {
     // The bands for sprint (upper) and unlimited (lower) don't overlap, so the same
     // plan pool yields a different nearest-BPM pick per mode.
     private func applyModeEnergy() {
-        let span = max(0, baseMaxBPM - baseMinBPM)
+        // 전략7: the venue narrows the profile band first — the user's declared
+        // place/condition is the outer envelope 전략5's mode split subdivides, so a
+        // nap preset caps even 루프 low while modes still sound distinct inside it.
+        let baseSpan = max(0, baseMaxBPM - baseMinBPM)
+        let venueMin = baseMinBPM + baseSpan * venue.lo
+        let venueMax = baseMinBPM + baseSpan * venue.hi
+        let span = max(0, venueMax - venueMin)
         if let e = Self.modeEnergy[sessionMode], span > 0 {
-            activeMinBPM = baseMinBPM + span * e.lo
-            activeMaxBPM = baseMinBPM + span * e.hi
-            modeRamp = e.ramp
+            activeMinBPM = venueMin + span * e.lo
+            activeMaxBPM = venueMin + span * e.hi
+            modeRamp = e.ramp * venue.ramp
         } else {
-            activeMinBPM = baseMinBPM
-            activeMaxBPM = baseMaxBPM
-            modeRamp = 1.0
+            activeMinBPM = venueMin
+            activeMaxBPM = venueMax
+            modeRamp = venue.ramp
         }
         targetBPM = min(max(targetBPM, activeMinBPM), activeMaxBPM)
     }
@@ -349,7 +372,7 @@ final class ConditionDirector {
 
     // Session-mode seam, driven by AppDelegate.startWorking(mode:) — i.e. the
     // rail's /api/session/control start POST. Switching modes while music plays
-    // (e.g. picking 스프린트 during the launch countdown while the auto-started
+    // (e.g. picking 루프 during the launch countdown while the auto-started
     // session is already live) jumps straight to the new mode's opener so the
     // switch is audible.
     func setSessionMode(_ mode: String) {
@@ -414,12 +437,15 @@ final class ConditionDirector {
     }
 
     // The one candidate gate every selection goes through. A live rain reset wins over
-    // everything (only heavy_rain tracks); a live 시작 컨텍스트 오버레이(전략6) comes next
-    // (the session's opening mood owns the pool for its window). Otherwise an active plan
-    // slot narrows to its theme folders; else the 전략2 mode playlist applies. BPMLibrary's
-    // blocked-pool fallback keeps music playing even if a gate names only missing themes.
+    // everything (only heavy_rain tracks); a non-default 장소·컨디션 프리셋(전략7) comes
+    // next — the user explicitly said where they are, so it outranks every automatic
+    // gate; then a live 시작 컨텍스트 오버레이(전략6) (the session's opening mood owns
+    // the pool for its window). Otherwise an active plan slot narrows to its theme
+    // folders; else the 전략2 mode playlist applies. BPMLibrary's blocked-pool fallback
+    // keeps music playing even if a gate names only missing themes.
     private func inActivePool(_ track: BPMLibrary.Track) -> Bool {
         if rainActive { return track.theme == rainTheme }
+        if venueGateActive { return venue.themes.contains(track.theme) }
         if contextActive { return contextThemes.contains(track.theme) }
         if let slot = currentSlot { return slot.themes.contains(track.theme) }
         return inModePlaylist(track)
@@ -432,6 +458,7 @@ final class ConditionDirector {
     // plan slot (not the session mode) is what actually picked the music.
     private var poolLabel: String {
         if rainActive { return "폭우 리셋" }
+        if venueGateActive { return "장소 · \(venue.label)" }
         if contextActive { return "시작 컨텍스트 · \(startContextLabel ?? "")" }
         if let slot = currentSlot { return "플랜 · \(slot.label)" }
         return "모드 · \(sessionMode)"
@@ -538,7 +565,7 @@ final class ConditionDirector {
 
     // 전략5 Phase2 · 모드 어피니티. The BPM band (Phase1) can't tell tracks apart when a
     // plan pool has no BPM tags (every file falls to BPMLibrary.defaultBPM). To still make
-    // 25분/스프린트/트래커 sound different there, pin each track to one of 3 stable buckets
+    // 25분/루프/트래커 sound different there, pin each track to one of 3 stable buckets
     // by a deterministic filename hash and have each mode prefer its own bucket. Soft
     // (virtual-BPM penalty, never a hard gate), so an empty bucket never causes silence and
     // recency still rotates within a bucket. On BPM-TAGGED pools the band already separates
@@ -594,6 +621,36 @@ final class ConditionDirector {
     @discardableResult
     private func playOpener() -> Bool {
         refreshPlanSlot()
+        // 전략7: a non-default venue owns the opener too — the session's first sound
+        // comes from the declared place/condition's pool, nearest to the tier start
+        // point, with recency rotating back-to-back starts through the pool.
+        if venueGateActive {
+            let now = Date()
+            let gateBand = bandGateActive(now: now)
+            if let pick = library.track(
+                forTargetBPM: targetBPM,
+                excluding: audio.currentURL,
+                penalty: { [prefStore] in
+                    prefStore.bpmPenalty(key: $0.url.lastPathComponent, now: now) + self.recencyPenalty($0)
+                },
+                blocked: { [prefStore] in
+                    !self.venue.themes.contains($0.theme)
+                        || prefStore.isBlocked(key: $0.url.lastPathComponent, now: now)
+                        || (gateBand && self.outsideModeBand($0))
+                }),
+               venue.themes.contains(pick.theme) {   // blocked-pool fallback may leak outside
+                openerPending = false
+                phase = .warmup
+                plateauCount = 0
+                releaseUntil = nil
+                lastTrackChange = Date()
+                notePlayed(pick.url)
+                audio.play(url: pick.url, title: pick.title)
+                logTrack("opener", url: pick.url, title: pick.title,
+                         detail: "장소·컨디션 오프너 · \(venue.label)")
+                return true
+            }
+        }
         // 전략6: a live theme overlay picks the opener from ITS pool — the first sound
         // of the session is the context's mood (라운지/점화), not the plan slot's. The
         // recency penalty rotates the pick, so back-to-back starts don't repeat one file.
@@ -664,6 +721,34 @@ final class ConditionDirector {
     // later stages. A default cue (no profileKey) leaves autonomous control alone.
     func apply(cue: Cue) {
         if let key = cue.profileKey { applyProfile(BGMProfile.by(key: key)) }
+    }
+
+    // 전략7: the user picked a place/condition preset (POST /api/bgm/venue). Persist
+    // it, re-derive the band (venue → mode), and — if music is live — restart the
+    // warmup from the new envelope with an immediate audible move into the new pool,
+    // so the tap is heard within a crossfade, not on the next organic rotation.
+    func setVenue(key: String) {
+        let next = VenueContext.by(key: key)
+        guard next.key != venue.key else { return }
+        let previous = venue
+        venue = next
+        Settings.shared.bgmVenueKey = next.key
+        applyModeEnergy()
+        var e = ActionLog.Event()
+        e.kind = "user"; e.action = "venueChange"
+        e.detail = "장소·컨디션 \(previous.label) → \(next.label)"
+            + " · 밴드 \(Int(activeMinBPM))-\(Int(activeMaxBPM))BPM"
+            + (next.themes.isEmpty ? " · 자동 풀" : " · 테마 \(next.themes.joined(separator: "·"))")
+        e.mode = sessionMode; e.phase = phase.rawValue; e.profile = activeProfileLabel
+        e.pool = poolLabel
+        ActionLog.shared.append(e)
+        if isActive {
+            phase = .warmup
+            plateauCount = 0
+            releaseUntil = nil
+            targetBPM = min(max(targetBPM, activeMinBPM), activeMaxBPM)
+            applyTrack(force: true)
+        }
     }
 
     // Switch the active tempo band to a per-app BGM profile. Re-seats the
@@ -778,7 +863,7 @@ final class ConditionDirector {
                 // A session start is a fresh moment (전략6): when every opener
                 // fallback misses (no overlay, no slot opener, mode opener outside
                 // the pool), don't blind-resume the PREVIOUS mode's track — it can
-                // sit outside this mode's band/pool and make 스프린트/트래커 sound
+                // sit outside this mode's band/pool and make 루프/트래커 sound
                 // identical for a whole min-dwell window.
                 applyTrack(force: true)
             } else {
@@ -865,7 +950,7 @@ final class ConditionDirector {
         switch phase {
         case .warmup:
             // Climb tempo to raise potential. 전략5: the active mode scales the step
-            // (스프린트 climbs faster, 트래커 slower). 전략6: the start tier scales it
+            // (루프 climbs faster, 트래커 slower). 전략6: the start tier scales it
             // again (라운지는 눌러두고, 초집중은 빠르게 점화).
             targetBPM = min(maxBPM, targetBPM + warmupStep * modeRamp * contextRamp)
             if targetBPM >= maxBPM - 0.001 {

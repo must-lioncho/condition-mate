@@ -8,10 +8,18 @@ import WebCLI
 // navigates here instead of opening an overlay.
 //
 // Query params (all optional):
-//   sprint=N   add into sprint N            label=…   human label shown next to the title
+//   sprint=N   (legacy, ignored for adds — see below)  label=…  human label next to the title
 //   bump=1     add into the Bump out inbox  parent=ID add as a child of goal ID
 //   search=1   목표 검색 mode (find only — no goal is created; same UI, actions differ)
 //   resume=1   restore the last add context from localStorage (draft chip re-entry)
+//
+// DESTINATION RULE (2026-07-28): every add from this composer — 일반 추가(추가),
+// GUI시작, AI추가 — lands in the Dump out 인박스, never directly in a sprint. A sprint
+// context (?sprint=N from the board's ＋목표, or a stale cm.gaCtx restored via resume=1)
+// used to ride the payload and silently file a plain add into that sprint; now the
+// composer normalizes it away. Sprint placement happens only by 정리 (promotion) on the
+// board. The one exception is a parent context (?parent=ID): a sub-task add still
+// attaches to its parent as before.
 //
 // Shares the same server APIs as the old modal: POST /api/goal/add (직접 추가),
 // POST /api/goal/queue/enqueue (AI추가 / AI검색 with search:true), GET /api/folders
@@ -41,8 +49,8 @@ import WebCLI
 // 검색 카드 인라인, 닫기 전까지 큐에 남아 재진입에도 복원 — 닫으면 '닫힘'으로 히스토리행).
 // 검색 모드(레일 검색 페이지 — 큐 목록 없음)에서만 #gaResults 인라인 카드로 그린다.
 //
-// The header seg toggles (simple-큐/detail-큐 and CHAT/DETAIL) are gone with the merge.
-// The session view's sub-header links to the goal page (구 DETAIL 버튼의 역할). Every
+// The page header (title/subtitle) was removed 2026-07-21 — it overlapped the left rail
+// and looked broken; the goal page (구 DETAIL) stays reachable from the dashboard. Every
 // queue row gets a GUI열기 button: rows that are already goals open the in-page session
 // view directly (gsEnterResume), unresolved queue rows are promoted (resolve add, AI
 // placement accepted) and the session starts immediately with the row text as the first
@@ -51,7 +59,10 @@ import WebCLI
 // The legacy CLI terminal view remains reachable only via ?ui=cli (old rail lastTab).
 enum GoalAddContent {
 
-    static func html(serverCtx: String = "{}", tallyHist: String = "[]") -> String {
+    // embed=true — 대시보드의 오른쪽 대화 패널 안에서 <iframe> 으로 뜨는 모드(2026-07-31 통합).
+    // 레일과 메모장은 호스트 페이지가 이미 갖고 있으므로 여기서는 빼고, 컴포저·큐·세션 뷰만
+    // 남긴다. 그 외 동작(추가·AI추가·검색·GUI시작·세션 스트림)은 단독 페이지와 완전히 같다.
+    static func html(serverCtx: String = "{}", tallyHist: String = "[]", embed: Bool = false) -> String {
         return #"""
         <!doctype html><html lang="ko"><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -64,12 +75,14 @@ enum GoalAddContent {
           *{ box-sizing:border-box }
           body{ margin:0; background:var(--bg); color:var(--fg);
             font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif }
-          header{ position:sticky; top:0; z-index:30; display:flex; align-items:center;
-            justify-content:space-between; gap:12px; background:rgba(14,17,22,.92);
-            backdrop-filter:blur(6px); border-bottom:1px solid var(--line); padding:14px 20px }
-          header h1{ margin:0; font-size:16px }
-          header .sub{ color:var(--mut); font-size:12px; margin-top:2px }
           main{ max-width:760px; margin:0 auto; padding:26px 20px 80px }
+          \#(embed ? """
+          /* 임베드(대시보드 대화 패널) — 레일이 없으니 본문 들여쓰기를 걷어내고, 패널 폭에
+             맞춰 여백을 좁힌다. 상단 타이틀바 여백도 호스트가 이미 갖고 있다. */
+          body{ padding-left:0; background:transparent }
+          main{ max-width:none; padding:14px 16px 96px }
+          .panel{ padding:15px }
+          """ : "")
           .panel{ background:var(--panel); border:1px solid var(--line); border-radius:14px;
             padding:20px; margin-bottom:14px }
           .row{ display:flex; align-items:center }
@@ -144,6 +157,36 @@ enum GoalAddContent {
           .ga-effort input[type=range]{ flex:1; accent-color:var(--accent); cursor:pointer }
           .ga-effort .cap{ font-size:10.5px; color:var(--mut); white-space:nowrap }
 
+          /* 버튼 라벨은 어떤 폭에서도 줄바꿈하지 않는다 — 좁아지면 "AI추가" 같은 한글이
+             한 글자씩 세로로 쪼개져 보이던 증상의 원인. 폭이 모자라면 버튼이 아니라
+             줄(툴바·세그먼트)이 접히게 한다. */
+          .btn, .iconbtn, .ga-seg button{ white-space:nowrap; flex:0 0 auto }
+
+          /* ── 좁은 폭 (3단계 대화 패널 안 / 작은 창) ──
+             임베드 시 이 문서의 뷰포트는 iframe 폭(=대화 패널 폭, 340~520px)이라
+             여기 미디어 쿼리가 정확히 패널 폭을 기준으로 동작한다. */
+          @media (max-width: 560px){
+            main{ padding-left:14px; padding-right:14px }
+            .panel{ padding:14px }
+            /* 툴바는 좌/우 두 덩어리를 위아래로 쌓는다(가로로 욱여넣지 않는다). */
+            .ga-toolbar{ flex-direction:column; align-items:stretch; gap:10px }
+            .ga-tbleft, .ga-tbright{ gap:10px; row-gap:8px }
+            /* 모델 세그먼트: 한 줄 유지하고 넘치면 가로 스크롤 — 탭이 반쯤 잘려 보이지 않게. */
+            .ga-seg{ flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; max-width:100% }
+            .ga-seg button{ padding:5px 8px }
+            .ga-effort{ min-width:0; width:100% }
+            .ga-folder{ min-width:0 }
+            .fchip{ min-width:0 }
+            .fchip .nm{ max-width:100% }
+            .ga-fmenu{ min-width:0; width:100%; max-width:100% }
+            .ga-fmenu .fopt .fp{ max-width:90px }
+            .ga-modemenu{ min-width:0; max-width:100% }
+            .comprow{ flex-wrap:wrap; row-gap:6px }
+            .comphint{ display:none }
+            .gs-bar{ padding-left:8px; padding-right:8px }
+            .gs-bar .brow{ flex-wrap:wrap; row-gap:6px }
+          }
+
           /* 이번 방문에서 담은 목표(세션 집계) — 페이지는 열린 채 계속 추가하는 흐름의 피드백 */
           .tally{ border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin-top:12px;
             font-size:12.5px; display:none }
@@ -198,8 +241,26 @@ enum GoalAddContent {
                 도구는 요약 한 줄›드릴다운, 입력은 하단 고정 컴포저(클로드 코드 데스크탑식) ── */
           body.sess main{ padding-bottom:170px }
           body.sess .gacomp, body.sess .tally{ display:none }
+          /* 메모장은 컴포저 화면 맨 위에만 둔다 — 세션(스트림)·CLI 뷰에서는 출력 높이를 먹으므로
+             접어둔다. 단 3단계(메모장만)에서는 어느 뷰에 있어도 패드가 주인공이므로 되살린다. */
+          body.sess .cmmemo, body.cli .cmmemo{ display:none }
+          body.cmmemo-only .cmmemo{ display:flex }
           #gaSess{ display:none }
           body.sess #gaSess{ display:block }
+          /* 세션/CLI 뷰 상단 네비게이션 — 목표 페이지 헤더의 CHAT/DETAIL 토글과 왕복 대칭.
+             CHAT으로 넘어오면 DETAIL로 돌아갈 길이 없던 문제의 해결 (main 안이라 레일과 안 겹침) */
+          #gsHead{ display:none; align-items:center; gap:10px; margin-bottom:14px }
+          body.sess #gsHead, body.cli #gsHead{ display:flex }
+          #gsHead .gh-back{ color:var(--mut); text-decoration:none; font-size:13px; flex:0 0 auto }
+          #gsHead .gh-back:hover{ color:var(--accent) }
+          #gsHead .gh-title{ font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+          #gsHead .spacer{ flex:1 }
+          #gsHead .pseg{ display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; flex:0 0 auto }
+          #gsHead .pseg button{ background:transparent; border:none; color:var(--mut); padding:0 10px; height:30px;
+            font-size:12px; cursor:pointer; border-right:1px solid var(--line) }
+          #gsHead .pseg button:last-child{ border-right:none }
+          #gsHead .pseg button.on{ background:var(--accent); color:#fff; font-weight:600; cursor:default }
+          #gsHead .pseg button:hover:not(.on){ color:var(--fg); background:#1d2230 }
           #gsLive .su{ width:fit-content; max-width:82%; margin:16px 0 16px auto; padding:9px 13px;
             border-radius:12px; background:rgba(91,140,255,.10); border:1px solid rgba(91,140,255,.30);
             white-space:pre-wrap; font-size:13.5px }
@@ -306,6 +367,24 @@ enum GoalAddContent {
           .gs-bar .gs-ctx .gc-repo{ color:var(--fg); font-weight:600 }
           .gs-bar .gs-ctx .gc-branch{ color:#5eead4 }
           .gs-bar .gs-ctx .ic{ opacity:.7; font-size:11px }
+          /* 세션 컴포저 옵션 셀렉터 (클로드 코드 데스크탑식): 왼쪽=권한 모드, 오른쪽=모델·작업량 */
+          .gs-bar .inner{ position:relative }
+          .gs-opt{ background:transparent; border:none; color:var(--mut); font-size:12px;
+            padding:4px 9px; border-radius:7px; cursor:pointer; white-space:nowrap }
+          .gs-opt:hover{ background:#1d2230; color:var(--fg) }
+          .gs-menu{ position:absolute; bottom:48px; z-index:80; min-width:210px; max-width:280px;
+            background:#171c28; border:1px solid var(--line); border-radius:10px;
+            box-shadow:0 12px 32px rgba(0,0,0,.5); padding:6px }
+          .gs-menu .mm-title{ font-size:10.5px; color:var(--mut); padding:3px 9px 6px; letter-spacing:.02em }
+          .gs-menu .fopt{ display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:7px;
+            cursor:pointer; font-size:12.5px }
+          .gs-menu .fopt:hover{ background:#1d2230 }
+          .gs-menu .fopt.on{ background:#1d2230 }
+          .gs-menu .fopt .nm{ flex:1; white-space:nowrap }
+          .gs-menu .ck{ color:var(--accent); flex:0 0 auto; font-size:12px }
+          .gs-menu .mm-k{ color:var(--mut); font-size:11px; flex:0 0 auto; min-width:12px; text-align:right }
+          .gs-menu .mm-sep{ height:1px; background:var(--line); margin:5px 4px }
+          .gs-menu .mm-state{ flex:0 0 auto; font-size:11px; color:var(--mut) }
 
           /* ── CLI 세션 뷰(레거시, ?ui=cli 진입 전용): 페이지 안 임베디드 터미널 ──
              높이는 flex 체인으로 채운다 — calc(100vh - N) 매직넘버는 헤더 실높이(제목/부제
@@ -313,7 +392,6 @@ enum GoalAddContent {
           #gaCli{ display:none }
           body.cli .gacomp, body.cli .tally, body.cli #gaSess, body.cli .gs-bar{ display:none }
           body.cli{ height:100vh; overflow:hidden; display:flex; flex-direction:column }
-          body.cli header{ flex:0 0 auto }
           body.cli main{ flex:1; min-height:0; max-width:none; width:100%; margin:0; padding:12px 18px 16px }
           body.cli #gaCli{ display:flex; flex-direction:column; gap:8px; height:100% }
           #gaCli .cli-head{ display:flex; align-items:center; gap:10px; font-size:12px; color:var(--mut) }
@@ -340,14 +418,26 @@ enum GoalAddContent {
           // 담김 히스토리 서버 주입 — localStorage 는 dynamic 포트(새 origin)마다 리셋되므로
           // 서버 영속본이 진실이다 (localStorage 는 같은 실행 안 새로고침용 캐시로만 남는다).
           try{ window._gaTallyHist=\#(tallyHist); }catch(e){ window._gaTallyHist=[]; }</script>
-          \#(SessionRail.html())
-          <header>
-            <div><h1><span id="gaEditIcon" style="display:none" title="작성 중이던 초안을 이어서 편집 중">✎ </span><span id="gaTitle">목표 추가</span> <span class="muted" id="gaWhere" style="font-size:13px;font-weight:400"></span></h1>
-              <div class="sub" id="gaSub">깨끗한 화면에서 목표만 담습니다 — 담고 나면 대시보드로 돌아가세요</div></div>
-            <!-- 헤더 세그 토글(simple-큐/detail-큐 · CHAT/DETAIL)은 2026-07-19 큐 병합으로 제거 —
-                 검토·확정은 큐 행 펼침(▸)으로, 목표 페이지(구 DETAIL)는 세션 뷰 부제목 링크로. -->
-          </header>
+          \#(embed ? "" : SessionRail.html())
+          <!-- 헤더(타이틀·서브타이틀)는 2026-07-21 제거 — 레일과 겹쳐 왼쪽이 깨져 보였음.
+               (헤더 세그 토글은 이미 2026-07-19 큐 병합으로 제거된 상태였다.) -->
           <main>
+          <!-- 메모장 (대화창 맨 위) — 전역 1개 공유 메모, MemoPad.swift 드롭인 모듈.
+               레일 ⊞ 를 세 번째로 누르면(또는 창을 최소폭까지 줄이면) 이 패드만 남는다.
+               임베드 모드에서는 호스트(대시보드)가 메모장을 네이티브로 갖고 있으므로 뺀다. -->
+          \#(embed ? "" : MemoPad.html())
+          <!-- 세션/CLI 뷰 상단 네비게이션 (body.sess·body.cli 에서만 보임): 목표 페이지 헤더와
+               같은 CHAT/DETAIL 토글로 왕복 — CHAT에서 DETAIL로 못 돌아오던 문제의 해결.
+               내용(제목·DETAIL 링크)은 gsHeadSet(seq)이 세션 진입 시 채운다. -->
+          <div id="gsHead">
+            <a class="gh-back" href="/" title="대시보드로 돌아갑니다">← 대시보드</a>
+            <span class="gh-title" id="gsHeadTitle"></span>
+            <span class="spacer"></span>
+            <div class="pseg">
+              <button class="on" title="지금 이 화면 — 세션(채팅) 뷰">CHAT</button>
+              <button id="gsHeadDetail" title="목표 페이지(DETAIL)로 전환합니다">DETAIL</button>
+            </div>
+          </div>
           <div class="panel gacomp">
             <!-- 작업 폴더: 목표가 실제로 어느 폴더에서 실행될지 (프리셋 + 직접 입력) -->
             <div class="ga-folder ga-execonly">
@@ -444,11 +534,16 @@ enum GoalAddContent {
               <div class="compthumbs" id="gsThumbs"></div>
               <textarea id="gsIn" rows="1" placeholder="이어서 지시하기… (Enter 전송 · ⇧Enter 줄바꿈 · 이미지 붙여넣기 가능)"></textarea>
               <div class="brow">
+                <button class="gs-opt" id="gsModeBtn" onclick="gsMenu('mode',event)" title="권한 모드 — 다음 턴부터 적용됩니다">Auto</button>
                 <span class="comphint" id="gsImgHint"></span>
                 <span class="spacer" style="flex:1"></span>
+                <button class="gs-opt" id="gsModelBtn" onclick="gsMenu('model',event)" title="모델 — 다음 턴부터 적용됩니다">자동</button>
+                <button class="gs-opt" id="gsEffortBtn" onclick="gsMenu('effort',event)" title="작업량(추론 노력) — 다음 턴부터 적용됩니다">기본</button>
                 <button class="btn" id="gsStopBtn" onclick="gsStop()" style="display:none" title="Esc 로도 중단할 수 있습니다">중단 <span style="opacity:.55;font-size:.85em">Esc</span></button>
                 <button class="btn primary" id="gsSendBtn" onclick="gsSend()">보내기 ↵</button>
               </div>
+              <!-- 셀렉터 팝업 (모드/모델/작업량 공용) — 클릭한 버튼 위로 뜬다 -->
+              <div class="gs-menu" id="gsMenuBox" style="display:none"></div>
             </div>
           </div>
         \#(WebCLITerminal.script())
@@ -464,6 +559,9 @@ enum GoalAddContent {
         const _qs=new URLSearchParams(location.search);
         let _gaCtx={sprint:0,parent:'',bump:false,label:''};
         let _gaSearchMode=(_qs.get('search')==='1');
+        // Slack 번역함 GUI세션에서 넘어온 원 메시지 id — GUI시작으로 목표가 만들어지면
+        // 그 seq를 이 id에 연결해 둔다 (다음부터 "세션 이어가기").
+        let _gaSlackId=_qs.get('slackId')||'';
         (function(){
           if(_qs.get('resume')==='1'){
             // 대시보드의 이어쓰기 칩: 마지막으로 열었던 대상(cm.gaCtx) 그대로 복원.
@@ -473,6 +571,12 @@ enum GoalAddContent {
             _gaCtx={sprint:parseInt(_qs.get('sprint')||'0',10)||0,parent:_qs.get('parent')||'',
                     bump:_qs.get('bump')==='1',label:_qs.get('label')||''};
           }
+          // 컴포저의 추가 목적지는 Dump out 인박스로 고정 (2026-07-28): 루프 컨텍스트
+          // (?sprint=N, 이어쓰기로 복원된 옛 cm.gaCtx)가 남아 있어도 일반 추가·GUI시작·AI추가가
+          // 루프로 직행하지 않는다 — 축적처는 항상 bump 티어(정리 전)이고, 루프 배치는
+          // 보드의 정리(승급)로만 한다. 부분과제 추가(부모 컨텍스트)만 예외로 부모에 붙는다.
+          if(!_gaSearchMode && !_gaCtx.parent){
+            _gaCtx.sprint=0; _gaCtx.bump=true; _gaCtx.label='Dump out'; }
           if(!_gaSearchMode){ try{ localStorage.setItem('cm.gaCtx',JSON.stringify(_gaCtx)); }catch(e){} }
         })();
         // 뒤로: 앱 안 내비게이션이면 이전 페이지로, 직접 진입이면 대시보드로. (ESC 전용 — 헤더 링크는 없음)
@@ -483,8 +587,8 @@ enum GoalAddContent {
         // 앱 창 밖에서 열리면 없을 수 있어 가드).
         function vtev(n){ try{ if(window.cmVT) cmVT.ev(n); }catch(e){} }
 
-        // ── 헤더 세그 토글 없음 (2026-07-19 simple/detail 큐 + CHAT/DETAIL 병합): 검토는 큐 행
-        //    펼침(▸)이, 목표 페이지 이동(구 DETAIL)은 세션 뷰 부제목 링크가 담당한다. 세션은
+        // ── 컴포저 화면엔 헤더 세그 없음 (2026-07-19 simple/detail 큐 + CHAT/DETAIL 병합): 검토는 큐 행
+        //    펼침(▸)이, 목표 페이지 이동은 세션/CLI 뷰 상단 네비게이션(#gsHead — gsHeadSet)이 담당한다. 세션은
         //    항상 GUI(메신저형 세션 뷰)로 시작·재개하고, CLI 터미널 뷰(gaCliEnter)는 레거시
         //    진입(?ui=cli — 옛 레일 lastTab)용으로만 남는다. ──
         let _gaSessSeq=0;   // 이 화면에서 세션 뷰가 열린 목표 seq — 0 이면 세션 없음
@@ -693,8 +797,7 @@ enum GoalAddContent {
         function gaSaveImgDraft(){ try{
           if(_gaComp.images.length) localStorage.setItem('cm.gaDraftImgs',JSON.stringify(_gaComp.images.slice(0,5)));
           else localStorage.removeItem('cm.gaDraftImgs'); }catch(e){} }
-        function gaClearDraft(){ try{ localStorage.removeItem('cm.gaDraft'); }catch(e){}
-          const ei=$('gaEditIcon'); if(ei) ei.style.display='none'; }
+        function gaClearDraft(){ try{ localStorage.removeItem('cm.gaDraft'); }catch(e){} }
         // 추가 후 이미지는 비운다(이 목표 전용) — 폴더·작업량·모드는 다음 빠른 추가를 위해 유지.
         function gaClearImages(){ _gaComp.images=[]; gaRenderThumbs(); const fi=$('gaFile'); if(fi) fi.value='';
           try{ localStorage.removeItem('cm.gaDraftImgs'); }catch(e){} }
@@ -723,7 +826,20 @@ enum GoalAddContent {
         // localStorage 는 같은 실행 안 새로고침용 캐시. 서버 쓰기는 500ms 디바운스(폴링 갱신 묶음)
         // + 내용이 안 변했으면 보내지 않는다(병합 후 렌더 빈도가 늘어 무의미한 쓰기 방지).
         let _gaTallySaveT=null,_gaTallyLastSaved='';
-        function gaTallyPersist(){ if(_gaSearchMode) return;
+        // 펼침 상태(어느 큐 행이 열려 있는지)는 서버 영속 목록(gaTallyStrip)에 담지 않고
+        // localStorage(cm.qOpenRows)에 항목 id 목록으로 따로 남긴다 — 다른 페이지에 갔다
+        // 돌아와도 열어 둔 검토/검색 카드가 그대로 열려 있다.
+        // _gaOpenReady: 복원 블록이 돌기 전의 렌더가 빈 목록으로 저장본을 지우지 않게 하는 빗장.
+        let _gaOpenSaved='',_gaOpenReady=false;
+        function gaOpenPersist(){ if(!_gaOpenReady) return;
+          const ids=_gaTally.filter(x=>gaIsQ(x)&&x.id&&!x.resolved&&x.open).map(x=>x.id);
+          const j=JSON.stringify(ids); if(j===_gaOpenSaved) return; _gaOpenSaved=j;
+          try{ localStorage.setItem('cm.qOpenRows',j); }catch(e){} }
+        function gaOpenRestoreSet(){ _gaOpenReady=true;
+          try{ const a=JSON.parse(localStorage.getItem('cm.qOpenRows')||'[]');
+            const s={}; if(Array.isArray(a)) a.forEach(function(id){ if(id) s[id]=1; }); return s;
+          }catch(e){ return {}; } }
+        function gaTallyPersist(){ gaOpenPersist(); if(_gaSearchMode) return;
           const j=JSON.stringify(gaTallyStrip());
           try{ localStorage.setItem('cm.gaTallyHist',j); }catch(e){}
           if(j===_gaTallyLastSaved) return;
@@ -796,7 +912,9 @@ enum GoalAddContent {
               undo='<button class="t-act" onclick="queueUndo(\''+h.id+'\')" title="이 결정을 되돌리고 항목을 큐로 복원">번복</button>';
             if(h&&typeof _qHistMsg!=='undefined'&&_qHistMsg[h.id])
               umsg='<div class="qhint" style="color:#e0a458;margin-left:22px">'+esc(_qHistMsg[h.id])+'</div>'; }
-          let h='<div class="t-row">'+exp+kind+'<span class="t-txt">'+esc(x.text)+'</span>'+gaTallyWhen(x.ts)+gaTallyChip(x)
+          // 수정 진입은 ✎ 버튼과 텍스트 더블클릭 둘 다 — 같은 editable 조건을 공유한다.
+          const txt='<span class="t-txt"'+(editable?' ondblclick="gaTallyEdit('+i+')" title="더블클릭으로 수정"':'')+'>'+esc(x.text)+'</span>';
+          let h='<div class="t-row">'+exp+kind+txt+gaTallyWhen(x.ts)+gaTallyChip(x)
             +(editable?'<button class="t-edit" onclick="gaTallyEdit('+i+')" title="수정">✎</button>':'')
             +gui+undo+'</div>'+umsg;
           if(x.fb) h+='<div class="qhint" style="color:#e0a458;margin-left:22px">상위 목표 아래 넣을 수 없어 최상위로 추가됨</div>';
@@ -877,7 +995,7 @@ enum GoalAddContent {
         // renderAiQueue(스냅샷 갱신) 후 호출 — 펼쳐진 카드·잡 결과·히스토리를 다시 그린다.
         window.gaQueueRender=function(){ gaFindRender(); if(!_gaSearchMode) gaTallyRender(); };
         // 확정(추가/task/스킵) 직후 — 해당 담김 행을 즉시 결과 상태로 바꾼다 (5초 폴 대기 없음).
-        // AI검색(findOnly) 카드의 확정/닫기는 카드만 걷어낸다 (담김 행이 아니므로).
+        // AI검색(findOnly) 카드의 확정은 카드만 걷어낸다 (담김 행이 아니므로).
         window.gaQueueResolved=function(id,info){ info=info||{};
           if(_gaFindIds.indexOf(id)>=0){ _gaFindIds=_gaFindIds.filter(x=>x!==id); gaFindRender(); return; }
           if(_gaSearchMode) return;
@@ -886,6 +1004,13 @@ enum GoalAddContent {
           if(info.seq>0){ x.seq=info.seq; gaGoalBorn(info.seq); }
           x.fb=!!info.fallback; x.open=false; x.fresh=true;
           gaTallyRender(); };
+        // 검색 카드 '닫기' — 스킵이 아니라 뷰만 닫는다: 담김 행이면 접고(다시 ▸로 펼칠 수 있음),
+        // 검색 페이지의 결과 카드면 화면에서만 치운다. 항목은 큐에 남아 나중에 이어서 처리한다.
+        window.gaQueueClosed=function(id){
+          if(_gaFindIds.indexOf(id)>=0){ _gaFindIds=_gaFindIds.filter(x=>x!==id); gaFindRender(); return; }
+          if(_gaSearchMode) return;
+          const x=_gaTally.find(y=>y.id===id); if(!x) return;
+          x.open=false; gaTallyRender(); };
         // 번복 성공 — 항목이 큐로 복원됐으니 행을 미확정으로 되돌리고 폴링을 재개한다.
         window.gaQueueUndone=function(qid){
           const x=_gaTally.find(y=>y.id===qid); if(!x) return;
@@ -975,9 +1100,13 @@ enum GoalAddContent {
         if(!_gaSearchMode){ try{
           let arr=(Array.isArray(window._gaTallyHist)&&window._gaTallyHist.length)?window._gaTallyHist:null;
           if(!arr) arr=JSON.parse(localStorage.getItem('cm.gaTallyHist')||'[]');
+          // 펼침은 기본 닫힘이되, 떠나기 전 열어 두었던 행(cm.qOpenRows)은 열린 채로 되살린다.
+          // (목록이 비어도 호출해야 이후 새 항목의 펼침이 저장된다 — _gaOpenReady 빗장을 연다.)
+          const _op=gaOpenRestoreSet();
           if(Array.isArray(arr)&&arr.length){
             _gaTally=arr.filter(x=>x&&x.text).map(x=>({kind:x.kind||'AI 큐',text:String(x.text),
-              id:x.id||'',st:x.st||'',seq:x.seq||0,resolved:x.resolved||'',ts:x.ts||0,editing:false,open:false}));
+              id:x.id||'',st:x.st||'',seq:x.seq||0,resolved:x.resolved||'',ts:x.ts||0,editing:false,
+              open:!!(x.id&&!x.resolved&&_op[x.id])}));
             gaTallyRender();   // render→persist 가 서버·로컬 사본을 즉시 재동기화한다
             if(_gaTally.some(x=>gaIsQ(x)&&x.id&&!x.resolved)) gaTallyWatch(true);
           } }catch(e){} }
@@ -1007,6 +1136,9 @@ enum GoalAddContent {
           post('/api/goal/add',gaPayload(t)).then(r=>r.json()).then(d=>{
             if(!(d&&d.ok&&d.seq>0)){ if(btn) btn.disabled=false; return; }
             gaClearDraft();
+            // Slack 번역함에서 온 GUI세션(?slackId=)이면 어느 목표로 열렸는지 남긴다 —
+            // 그래야 그 메시지의 버튼이 "세션 이어가기"가 되고 이 세션으로 되돌아온다.
+            if(_gaSlackId){ post('/api/slack/gui/link',{id:_gaSlackId,seq:d.seq}); _gaSlackId=''; }
             gsEnter(d.seq,t);
           }).catch(()=>{ if(btn) btn.disabled=false; }); }
         function gaAi(){ const inp=$('gaText'); const t=String(inp.value||'').trim(); if(!t) return;
@@ -1113,7 +1245,7 @@ enum GoalAddContent {
           if(g.released){ const rel=gsRelOf(g);
             return '릴리즈 '+((rel&&rel.code)?esc(rel.code):'')+((rel&&rel.releasedAt)?(' · '+fmtDate(rel.releasedAt)):''); }
           if(g.status==='cancelled') return '취소됨';
-          if(g.sprint>0) return '스프린트 '+esc(sprintCode(g.sprint));
+          if(g.sprint>0) return '루프 '+esc(sprintCode(g.sprint));
           return g.bump?'Dump out 인박스':'백로그';
         }
         function gsBadge(g){
@@ -1146,7 +1278,7 @@ enum GoalAddContent {
             const rel=gsRelOf(g);
             return view
               +'<button class="btn primary" onclick="gsAct(\'reopen\',\''+g.id+'\')" title="이 목표만 릴리즈에서 꺼내 백로그로 되돌립니다 — 릴리즈 기록은 그대로 남고 재오픈 표시가 붙습니다">이 목표만 다시 열기</button>'
-              +(rel?('<button class="btn" onclick="gsAct(\'restore\',\''+rel.id+'\')" title="릴리즈 전체를 복원합니다 — 소속 목표 모두 활성으로, 스프린트도 다시 열립니다">릴리즈 전체 복원</button>'):'');
+              +(rel?('<button class="btn" onclick="gsAct(\'restore\',\''+rel.id+'\')" title="릴리즈 전체를 복원합니다 — 소속 목표 모두 활성으로, 루프도 다시 열립니다">릴리즈 전체 복원</button>'):'');
           }
           if(g.status==='done'||g.status==='cancelled')
             return view+'<button class="btn primary" onclick="gsAct(\'reopen\',\''+g.id+'\')" title="백로그로 되돌립니다 (번호 유지)">다시 열기</button>';
@@ -1200,13 +1332,11 @@ enum GoalAddContent {
         let _cliCtl=null;
         function cliState(txt,cls){ const e=$('gaCliState'); if(e){ e.textContent=txt; e.className='st'+(cls?(' '+cls):''); } }
         function gaCliEnter(seq,firstText){
-          _gaSessSeq=seq; gaGoalBorn(seq);
+          _gaSessSeq=seq; gaGoalBorn(seq); gsHeadSet(seq);
           try{ localStorage.setItem('cm.lastTab.'+seq,'cli'); }catch(e){}
           vtev('cliOpen goal-'+pad2(seq)); window.cmView='cli';
           document.body.classList.add('cli');
           document.title='goal-'+pad2(seq)+' CLI';
-          const ttl=$('gaTitle'); if(ttl) ttl.textContent='goal-'+pad2(seq)+' CLI 세션';
-          const sub=$('gaSub'); if(sub) sub.innerHTML='인터랙티브 claude 가 이 터미널에서 진행됩니다 — 기록·첨부는 <a href="/goal?n='+seq+'" style="color:var(--accent)">목표 페이지</a>에 그대로 남습니다';
           gaClearImages();
           if(!_cliCtl) _cliCtl=CMWebCLI.create({termEl:$('gaCliTerm'),onState:cliState});
           else _cliCtl.reset();   // 재접속: 살아있는 PTY 가 버퍼 테일을 처음부터 다시 재생한다
@@ -1227,13 +1357,36 @@ enum GoalAddContent {
           box.style.display='flex'; }
         function gsSetCtx(seq){
           gsRenderCtx(seq,_gaComp.cwd,_gaComp.cwd?_gaComp.branch:'');
-          // 그 목표의 저장된 실행 설정으로 보정 (side-effect 없이 스트립 DOM 만 갱신).
+          gsBarSync();
+          // 그 목표의 저장된 실행 설정으로 보정 — 스트립 DOM + 하단 셀렉터 라벨. 서버는 매 턴
+          // goal 레코드의 effort/mode/model 을 적용하므로(요청값보다 우선) 셀렉터도 goal 값이 진실.
           try{ fetch('/data.json',{cache:'no-store'}).then(r=>r.json()).then(d=>{
             const gs=(d&&d.review&&d.review.goals)||[]; const g=gs.find(x=>x&&x.seq===seq);
-            if(g && document.body.classList.contains('sess')) gsRenderCtx(seq,g.cwd||'',g.cwd?(g.branch||''):'');
+            if(g && document.body.classList.contains('sess')){
+              gsRenderCtx(seq,g.cwd||'',g.cwd?(g.branch||''):'');
+              gsAdoptExec(g);
+            }
           }).catch(function(){}); }catch(e){} }
+        // 목표 레코드의 실행 설정을 화면 상태로 들여온다 — 영속(persist)은 하지 않는다:
+        // 열람만으로 '마지막 사용 설정'이 바뀌면 안 되고, 사용자가 고르는 순간에만 저장한다.
+        function gsAdoptExec(g){
+          _gaComp.effort=g.effort||''; _gaComp.model=g.model||'';
+          if(g.mode) _gaComp.mode=g.mode;
+          gaModeDerive(); gaModeLabel(); gaBuildModeMenu(); gaBuildModelSeg();
+          const ei=Math.max(0,_GA_EFFORTS.indexOf(_gaComp.effort));
+          const sl=$('gaEffort'); if(sl) sl.value=ei;
+          const el=$('gaEffortLab'); if(el) el.textContent=_GA_EFFORT_LABELS[ei];
+          if(_gs) _gs.mode=_gaComp.mode||'bypassPermissions';
+          gsBarSync();
+        }
+        // 상단 네비게이션 채우기 — 세션/CLI 뷰 진입 시 제목과 DETAIL 링크(목표 페이지)를 잇는다.
+        function gsHeadSet(seq){
+          const t=$('gsHeadTitle'); if(t) t.textContent='goal-'+pad2(seq);
+          const d=$('gsHeadDetail');
+          if(d) d.onclick=function(){ vtev('navDetail goal-'+pad2(seq)); location.href='/goal?n='+seq; };
+        }
         function gsEnter(seq,firstText){
-          _gaSessSeq=seq; gaGoalBorn(seq);
+          _gaSessSeq=seq; gaGoalBorn(seq); gsHeadSet(seq);
           // 레일 "보는 중" 스탬프: /goal 페이지를 거치지 않고 세션이 열리므로 여기서 직접 찍어
           // 왼쪽 레일 세션 목록에 이 목표가 바로 나타난다.
           post('/api/goal/viewing',{seq:seq});
@@ -1244,8 +1397,6 @@ enum GoalAddContent {
                startedAt:0,tokens:0,workLabel:''};
           document.body.classList.add('sess');
           document.title='goal-'+pad2(seq)+' 세션';
-          const ttl=$('gaTitle'); if(ttl) ttl.textContent='goal-'+pad2(seq)+' 세션';
-          const sub=$('gaSub'); if(sub) sub.innerHTML='세션이 이 화면에서 진행됩니다 — 대화 기록·첨부는 <a href="/goal?n='+seq+'" style="color:var(--accent)">목표 페이지</a>에 그대로 남습니다';
           gsSetCtx(seq);
           const firstImgs=_gaComp.images.slice(0,5);
           gaClearImages(); loadMarked();
@@ -1257,7 +1408,7 @@ enum GoalAddContent {
         // 이어가기 진입 (목표 페이지 CHAT·레거시 CLI 뷰 탈출): 첫 턴을 쏘지 않고 세션 뷰만 연다. sess=true 라
         // 전송은 /api/goal/session/say(최신 연결 세션 headless 재개), 수신은 &sess=1 SSE.
         function gsEnterResume(seq){
-          _gaSessSeq=seq; gaGoalBorn(seq);
+          _gaSessSeq=seq; gaGoalBorn(seq); gsHeadSet(seq);
           // 레일 "보는 중" 스탬프 — gsEnter 와 동일 (GUI열기/이어가기도 레일에 바로 뜬다).
           post('/api/goal/viewing',{seq:seq});
           try{ localStorage.setItem('cm.lastTab.'+seq,'gui'); }catch(e){}
@@ -1267,8 +1418,6 @@ enum GoalAddContent {
                startedAt:0,tokens:0,workLabel:'',lastText:'',lastImgs:[]};
           document.body.classList.add('sess');
           document.title='goal-'+pad2(seq)+' 세션';
-          const ttl=$('gaTitle'); if(ttl) ttl.textContent='goal-'+pad2(seq)+' 세션';
-          const sub=$('gaSub'); if(sub) sub.innerHTML='터미널 세션을 이 뷰에서 이어갑니다 — 대화 기록은 <a href="/goal?n='+seq+'" style="color:var(--accent)">목표 페이지</a>에 그대로 남습니다';
           gsSetCtx(seq);
           loadMarked();
           const tx=$('gsStxt'); if(tx) tx.textContent='대기 중 — 아래 입력창으로 지시하면 방금 세션이 여기서 이어집니다';
@@ -1667,6 +1816,88 @@ enum GoalAddContent {
         }
         function gsStop(){ if(!_gs) return;
           post(_gs.sess?'/api/goal/session/stop':'/api/goal/chat2/stop',{seq:_gs.seq,task:''}); }
+
+        // ── 세션 컴포저 옵션 셀렉터 (클로드 코드 데스크탑 컴포저식) ──
+        // 왼쪽 하단=권한 모드, 오른쪽 하단=모델·작업량. 라벨은 데스크탑 앱 스크린샷과 동일한
+        // 영문 표기. 선택은 두 곳에 반영된다:
+        //  1) /api/goal/composer (gaComposerPersist) — '마지막 사용 설정'으로 서버 영속,
+        //     재시작·앱 업데이트 후에도 다음 목표의 기본값이 된다.
+        //  2) /api/goal/exec — 현재 목표 레코드. 서버는 매 턴 goal 의 effort/mode/model 을
+        //     적용하므로 이걸 바꿔야 진행 중 세션의 다음 턴부터 실제로 반영된다.
+        const _GS_MODES=[['default','Manual'],['acceptEdits','Accept edits'],['plan','Plan'],['auto','Auto']];
+        const _GS_MODELS=[['fable','Fable 5'],['opus','Opus 4.8'],['sonnet','Sonnet 5'],['haiku','Haiku 4.5']];
+        const _GS_EFFORT_LIST=[['low','Low'],['medium','Medium'],['high','High'],['xhigh','Extra high'],['max','Max']];
+        let _gsMenuKind='';
+        function gsBarSync(){
+          const mb=$('gsModeBtn');
+          if(mb) mb.textContent=_gaBypass?'Bypass permissions':(_GS_MODES.find(x=>x[0]===_gaBaseMode)||['auto','Auto'])[1];
+          const ob=$('gsModelBtn');
+          if(ob) ob.textContent=(_GS_MODELS.find(x=>x[0]===_gaComp.model)||['','자동'])[1];
+          const eb=$('gsEffortBtn');
+          if(eb) eb.textContent=(_GS_EFFORT_LIST.find(x=>x[0]===_gaComp.effort)||['','기본'])[1];
+        }
+        function gsMenuClose(){ const m=$('gsMenuBox'); if(m) m.style.display='none'; _gsMenuKind=''; }
+        function gsMenu(kind,ev){ ev.stopPropagation(); const m=$('gsMenuBox'); if(!m) return;
+          if(m.style.display==='block'&&_gsMenuKind===kind){ gsMenuClose(); return; }
+          _gsMenuKind=kind; gsMenuRender();
+          const btn=$(kind==='mode'?'gsModeBtn':(kind==='model'?'gsModelBtn':'gsEffortBtn'));
+          const inner=btn&&btn.closest('.inner'); if(!btn||!inner) return;
+          m.style.display='block';
+          const br=btn.getBoundingClientRect(), ir=inner.getBoundingClientRect();
+          if(kind==='mode'){ m.style.left=Math.max(0,br.left-ir.left)+'px'; m.style.right='auto'; }
+          else { m.style.left='auto'; m.style.right=Math.max(0,ir.right-br.right)+'px'; }
+          const close=(e)=>{ if(!m.contains(e.target)&&!e.target.closest('.gs-opt')){
+            gsMenuClose(); document.removeEventListener('mousedown',close); } };
+          setTimeout(()=>document.addEventListener('mousedown',close),0);
+        }
+        function gsMenuRender(){ const m=$('gsMenuBox'); if(!m) return; let h='';
+          if(_gsMenuKind==='mode'){
+            h='<div class="mm-title">Mode</div>';
+            _GS_MODES.forEach((it,i)=>{ const on=(!_gaBypass&&it[0]===_gaBaseMode);
+              h+='<div class="fopt'+(on?' on':'')+'" onclick="gsPickMode(\''+it[0]+'\')">'
+                +'<span class="nm">'+it[1]+'</span>'
+                +(on?'<span class="ck">✓</span>':'<span class="mm-k">'+(i+1)+'</span>')+'</div>'; });
+            h+='<div class="fopt'+(_gaBypass?' on':'')+'" onclick="gsPickBypass()">'
+              +'<span class="nm">Bypass permissions</span>'
+              +(_gaBypass?'<span class="ck">✓</span>':'<span class="mm-state">Enable</span>')+'</div>';
+          } else if(_gsMenuKind==='model'){
+            h='<div class="mm-title">Models</div>';
+            _GS_MODELS.forEach((it,i)=>{ const on=(it[0]===_gaComp.model);
+              h+='<div class="fopt'+(on?' on':'')+'" onclick="gsPickModel(\''+it[0]+'\')">'
+                +'<span class="nm">'+it[1]+'</span>'
+                +(on?'<span class="ck">✓</span>':'<span class="mm-k">'+(i+1)+'</span>')+'</div>'; });
+            h+='<div class="mm-sep"></div>';
+            h+='<div class="fopt'+(!_gaComp.model?' on':'')+'" onclick="gsPickModel(\'\')">'
+              +'<span class="nm">자동 (CLI 기본)</span>'+(!_gaComp.model?'<span class="ck">✓</span>':'')+'</div>';
+          } else {
+            h='<div class="mm-title">Effort</div>';
+            _GS_EFFORT_LIST.forEach((it,i)=>{ const on=(it[0]===_gaComp.effort);
+              h+='<div class="fopt'+(on?' on':'')+'" onclick="gsPickEffort(\''+it[0]+'\')">'
+                +'<span class="nm">'+it[1]+'</span>'
+                +(on?'<span class="ck">✓</span>':'<span class="mm-k">'+(i+1)+'</span>')+'</div>'; });
+            h+='<div class="mm-sep"></div>';
+            h+='<div class="fopt'+(!_gaComp.effort?' on':'')+'" onclick="gsPickEffort(\'\')">'
+              +'<span class="nm">기본 (CLI 기본)</span>'+(!_gaComp.effort?'<span class="ck">✓</span>':'')+'</div>';
+          }
+          m.innerHTML=h;
+        }
+        // 선택 확정 공통: 라벨 동기화 + 현재 목표 레코드 반영(/api/goal/exec) + 메뉴 닫기.
+        // gaModeApply/gaModelSet/gaEffortSet 이 이미 gaComposerPersist(마지막 사용 설정)를 부른다.
+        function gsOptDone(field){
+          gsBarSync();
+          if(_gs&&_gs.seq){
+            const o={seq:_gs.seq};
+            o[field]=(field==='mode')?_gaComp.mode:((field==='model')?_gaComp.model:_gaComp.effort);
+            post('/api/goal/exec',o);
+            if(field==='mode') _gs.mode=_gaComp.mode||'bypassPermissions';
+          }
+          gsMenuClose();
+        }
+        function gsPickMode(v){ _gaBaseMode=v; _gaBypass=false; gaModeApply(true); gsOptDone('mode'); }
+        function gsPickBypass(){ _gaBypass=!_gaBypass; gaModeApply(true); gsOptDone('mode'); }
+        function gsPickModel(v){ gaModelSet(v); gsOptDone('model'); }
+        function gsPickEffort(v){ const i=Math.max(0,_GA_EFFORTS.indexOf(v));
+          const sl=$('gaEffort'); if(sl) sl.value=i; gaEffortSet(i); gsOptDone('effort'); }
         // 하단 컴포저 이미지: 붙여넣기/끌어놓기 — 보내는 턴에만 동봉된다 (턴 단위 첨부).
         function gsAddImageFile(file){ if(!file||!/^image\//.test(file.type||'')) return;
           if(_gsImgs.length>=5){ const h=$('gsImgHint'); if(h) h.textContent='최대 5장까지'; return; }
@@ -1698,12 +1929,9 @@ enum GoalAddContent {
 
         // ── 페이지 초기화: 모드별 문구/버튼, 초안 복원, 입력 배선(오토그로우·IME-safe Enter·이미지) ──
         (function(){
-          const where=$('gaWhere'); if(where) where.textContent=_gaCtx.label?('· '+_gaCtx.label):'';
           if(_gaSearchMode){
             document.title='목표 검색';
             document.querySelectorAll('.ga-execonly').forEach(el=>{ el.style.display='none'; });
-            const ttl=$('gaTitle'); if(ttl) ttl.textContent='목표 검색';
-            const sub=$('gaSub'); if(sub) sub.textContent='번호·제목으로 즉시 찾고, 표현이 다르면 AI검색으로 의미 검색';
             const inp=$('gaText'); if(inp) inp.placeholder='goal 번호(예: 346) 또는 제목 일부 — Enter로 즉시 조회';
             const aiB=$('gaAiBtn'); if(aiB){ aiB.classList.remove('primary'); aiB.textContent='AI검색';
               aiB.title='표현이 달라도 의미가 비슷한 목표를 AI가 찾습니다 — 큐에 담겨 비동기로 분석, 결과는 대시보드 큐 탭'; }
@@ -1734,7 +1962,7 @@ enum GoalAddContent {
           const gt=$('gaText');
           // 초안 복원(추가 모드만) — 검색 모드 입력은 초안과 무관하다.
           if(!_gaSearchMode){ try{ const d=localStorage.getItem('cm.gaDraft')||'';
-            if(d.trim()){ gt.value=d; const ei=$('gaEditIcon'); if(ei) ei.style.display=''; } }catch(e){} }
+            if(d.trim()) gt.value=d; }catch(e){} }
           // 첨부 사진 초안 복원(추가 모드만) — 다른 페이지로 갔다 와도 붙였던 사진이 남도록.
           if(!_gaSearchMode){ try{ const raw=localStorage.getItem('cm.gaDraftImgs');
             if(raw){ const arr=JSON.parse(raw); if(Array.isArray(arr)){
@@ -1792,9 +2020,23 @@ enum GoalAddContent {
           // ?ui=cli 는 레거시(옛 레일 lastTab)만 — 살아있는 PTY 재접속/--resume 터미널.
           const backSeq=parseInt(_qs.get('goal')||'0',10)||0;
           if(backSeq>0 && !_gaSearchMode){
-            if(_qs.get('ui')==='cli') gaCliEnter(backSeq,''); else gsEnterResume(backSeq);
+            if(_qs.get('ui')==='cli'){ gaCliEnter(backSeq,''); return; }
+            gsEnterResume(backSeq);
+            // ?prefill=1 (Slack 번역함 "세션 이어가기"): 그 화면에서 쓰던 초안을 세션
+            // 컴포저에 실어 둔다 — 전송은 사용자가 직접 (자동 전송하지 않는다).
+            if(_qs.get('prefill')==='1'){
+              let pf=''; try{ pf=localStorage.getItem('cm.gaDraft')||''; }catch(e){}
+              if(pf){ gaClearDraft();
+                setTimeout(()=>{ const i=$('gsIn'); if(!i) return;
+                  i.value=pf; if(i._grow) i._grow(); i.focus();
+                  try{ i.setSelectionRange(pf.length,pf.length); }catch(_){} },140); }
+            }
             return;
           }
+          // 컨텍스트 동봉 자동 시작 (?start=1 — Slack 번역함 GUI세션 버튼): 넘어온 초안
+          // (cm.gaDraft — 위에서 gt 로 복원됨)을 그대로 GUI시작한다. 목표 추가 실패 시엔
+          // gaStart 가 조용히 버튼만 되살리므로 초안이 채워진 컴포저로 남는다.
+          if(_qs.get('start')==='1' && gt.value.trim()){ vtev('sessAutoStart(start=1)'); gaStart(); return; }
           setTimeout(()=>{ gt.focus(); const n=gt.value.length; try{ gt.setSelectionRange(n,n); }catch(_){} },50);
         })();
         </script>

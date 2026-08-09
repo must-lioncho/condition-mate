@@ -71,7 +71,7 @@ final class TrackPlayStatsStore {
     private(set) var stats: [String: TrackPlayStat] = [:]
     // The strategy new playback time accrues under. Stored in the JSON (seeded, never
     // hardcoded at the accrual sites) so a future strategy switch is a data change.
-    private(set) var activeStrategy = 5
+    private(set) var activeStrategy = 7
     private(set) var strategies: [BGMStrategy] = []
 
     private let fileURL: URL
@@ -84,7 +84,17 @@ final class TrackPlayStatsStore {
     // 전략4's retrospective, seeded when the 4→5 migration closes it (and on fresh
     // installs). Same drift-guard role as strategy3RetroSeed.
     private static let strategy4RetroSeed =
-        "슬롯별 hit/miss 관측 레이어는 자리를 잡았지만 Phase1이 관측·표시만 하고 선곡을 바꾸지 않아, 챌린지 모드(25분/스프린트/트래커)를 무엇을 골라도 같은 음악이 나오는 문제(플랜 슬롯이 선곡을 독점, 모드 선택이 무의미)가 남았다 — 모드를 BPM 밴드로 선곡에 재연결(전략5). 플랜 pool과 슬롯 hit/miss 채점은 전략5의 실행 가설로 유지."
+        "슬롯별 hit/miss 관측 레이어는 자리를 잡았지만 Phase1이 관측·표시만 하고 선곡을 바꾸지 않아, 챌린지 모드(25분/루프/트래커)를 무엇을 골라도 같은 음악이 나오는 문제(플랜 슬롯이 선곡을 독점, 모드 선택이 무의미)가 남았다 — 모드를 BPM 밴드로 선곡에 재연결(전략5). 플랜 pool과 슬롯 hit/miss 채점은 전략5의 실행 가설로 유지."
+
+    // 전략5's retrospective, seeded when the 5→6 migration closes it (and on fresh
+    // installs). Same drift-guard role as strategy3RetroSeed.
+    private static let strategy5RetroSeed =
+        "모드별 BPM 밴드 분리는 자리를 잡았지만 세션을 '시작하는 순간'의 상황(시간대·업무 경과)이 반영되지 않아, 심야에 막 앉은 사람과 2시간째 달리는 사람이 같은 워밍업을 들었다 — 시작 티어(가볍게/라운지/집중/초집중)+20분 테마 오버레이(전략6)로 확장. 모드 에너지 밴드는 전략6의 실행 가설로 유지."
+
+    // 전략6's retrospective, seeded when the 6→7 migration closes it (and on fresh
+    // installs).
+    private static let strategy6RetroSeed =
+        "시작 순간의 자동 추론(시간대×업무경과)은 유효했지만 앱이 알 수 없는 실제 환경 — 지금 앉아 있는 장소(카페/독립방/다인 사무실)와 몸 상태(불면·번아웃·낮잠) — 는 반영할 수 없었고, 200곡+ 라이브러리에서 늘 듣던 곡만 돌았다 — 유저가 직접 고르는 장소·컨디션 프리셋 10종(전략7)으로 확장. 시작 컨텍스트는 티어 시작점·램프로 유지."
 
     // The known strategies, seeded on migration and on fresh installs. 전략2 began
     // 2026-07-08 (the per-mode playlist change); 전략1 is everything before it. 전략3
@@ -99,7 +109,7 @@ final class TrackPlayStatsStore {
                     summary: "활동 강도만 반영한 적응형 선곡",
                     retro: "특정 곡 편중(상위 1~3곡이 재생시간 독식) 문제로 전략2로 개선"),
         BGMStrategy(id: 2, name: "모드 플레이리스트", startedAt: "2026-07-08", endedAt: "2026-07-08",
-                    summary: "포모도로/스프린트/트래커 모드별 플레이리스트 + 고정 첫 곡, BPM 적응은 리스트 내부로 제한",
+                    summary: "포모도로/루프/트래커 모드별 플레이리스트 + 고정 첫 곡, BPM 적응은 리스트 내부로 제한",
                     retro: "곡 편중은 줄였지만 요일·시간대 상황을 반영하지 못해 전략3(플랜 맵)으로 확장 — 모드 리스트는 플랜 공백 시 폴백으로 유지"),
         BGMStrategy(id: 3, name: "플랜 맵", startedAt: "2026-07-08", endedAt: "2026-07-10",
                     summary: "요일(평일/주말)×시간대 사전 계획 맵(bgm-plan.json)이 테마 폴더 풀을 지정, 액티비티 적응 선곡은 풀 내부로 제한. 계획은 고급 모델이 미리, 실행은 앱이 즉시",
@@ -107,8 +117,14 @@ final class TrackPlayStatsStore {
         BGMStrategy(id: 4, name: "상태 인지형", startedAt: "2026-07-10", endedAt: "2026-07-10",
                     summary: "전략3 플랜 맵을 가설로 유지하고, 컨디션맵 업무시작(8h 갭)·세션 진행/유휴·심야 활동과 actions.jsonl 피드백(싫어요·뮤트·완주)을 슬롯별 hit/miss로 채점하는 폐루프. 계획을 실행하며 동시에 검증·교정. Phase1은 관측·표시만(선곡·플랜 무변경).",
                     retro: strategy4RetroSeed),
-        BGMStrategy(id: 5, name: "모드 에너지", startedAt: "2026-07-10", endedAt: "",
-                    summary: "전략3 플랜 pool과 전략4 슬롯 관측을 그대로 유지한 채, 챌린지 모드(25분/스프린트/트래커)를 선곡에 재연결. Phase1: 모드마다 플랜 밴드의 다른 BPM 구간(포모도로=집중 중속, 스프린트=고속 상승, 트래커=저속 앰비언트)을 타깃. Phase2: BPM 태그 없는 평탄 풀에서도 파일명 해시 버킷 소프트 페널티로 모드별 선곡을 분리. 게이트(inActivePool)·플랜 맵은 불변.",
+        BGMStrategy(id: 5, name: "모드 에너지", startedAt: "2026-07-10", endedAt: "2026-07-16",
+                    summary: "전략3 플랜 pool과 전략4 슬롯 관측을 그대로 유지한 채, 챌린지 모드(25분/루프/트래커)를 선곡에 재연결. Phase1: 모드마다 플랜 밴드의 다른 BPM 구간(포모도로=집중 중속, 루프=고속 상승, 트래커=저속 앰비언트)을 타깃. Phase2: BPM 태그 없는 평탄 풀에서도 파일명 해시 버킷 소프트 페널티로 모드별 선곡을 분리. 게이트(inActivePool)·플랜 맵은 불변.",
+                    retro: strategy5RetroSeed),
+        BGMStrategy(id: 6, name: "시작 컨텍스트", startedAt: "2026-07-16", endedAt: "2026-07-24",
+                    summary: "세션 시작 '순간'의 모드×시간대(표시 타임존)×업무 경과(6h갭 블록)로 시작 티어(가볍게/라운지/집중/초집중)를 정해 시작 BPM·워밍업 램프를 심고, 라운지·초집중은 20분 테마 오버레이로 선곡 풀 자체를 바꾼다(폭우 > 시작 컨텍스트 > 플랜 > 모드). 만료 후 자연 회전으로 플랜 풀 복귀.",
+                    retro: strategy6RetroSeed),
+        BGMStrategy(id: 7, name: "장소·컨디션", startedAt: "2026-07-24", endedAt: "",
+                    summary: "앱이 알 수 없는 실제 환경을 유저가 원탭으로 선언: 장소·컨디션 프리셋 10종(작은/큰 카페, 독립방/2인/다인 사무실, 밤 10시 혼자, 새벽 4시 뜬눈, 컨디션 바닥, 책상 낮잠, 식후 노곤)이 테마 풀을 재편성하고 BPM 밴드·램프를 보정. 기본=2인 사무실(자동 풀 그대로), 선택은 settings.json 영속(재시작·업데이트 생존). 컨디션 적응 코어(워밍업/서스테인/릴리즈·싫어요·플랜)는 그 안에서 그대로 동작.",
                     retro: ""),
     ]
 
@@ -209,7 +225,7 @@ final class TrackPlayStatsStore {
             s.strategy = 1
             return (Self.statKey(strategy: 1, key: s.key), s)
         }, uniquingKeysWith: { a, _ in a })
-        activeStrategy = 5
+        activeStrategy = 7
         strategies = Self.seedStrategies
         save()
     }
@@ -269,6 +285,32 @@ final class TrackPlayStatsStore {
                 strategies.append(entry)
             }
             activeStrategy = 5
+            changed = true
+        }
+        // 5 → 6 (2026-07-16, 시작 컨텍스트). 전략6 shipped in the director without a
+        // catalog entry at the time; this back-fills it so the history stays honest.
+        if !strategies.contains(where: { $0.id == 6 }) {
+            if let i = strategies.firstIndex(where: { $0.id == 5 }) {
+                if strategies[i].endedAt.isEmpty { strategies[i].endedAt = "2026-07-16" }
+                if strategies[i].retro.isEmpty { strategies[i].retro = Self.strategy5RetroSeed }
+            }
+            if let entry = Self.seedStrategies.first(where: { $0.id == 6 }) {
+                strategies.append(entry)
+            }
+            activeStrategy = 6
+            changed = true
+        }
+        // 6 → 7 (2026-07-24, 장소·컨디션): close 전략6, seed its 6→7 transition retro,
+        // append 전략7, and accrue new playback time under venue/condition selection.
+        if !strategies.contains(where: { $0.id == 7 }) {
+            if let i = strategies.firstIndex(where: { $0.id == 6 }) {
+                if strategies[i].endedAt.isEmpty { strategies[i].endedAt = "2026-07-24" }
+                if strategies[i].retro.isEmpty { strategies[i].retro = Self.strategy6RetroSeed }
+            }
+            if let entry = Self.seedStrategies.first(where: { $0.id == 7 }) {
+                strategies.append(entry)
+            }
+            activeStrategy = 7
             changed = true
         }
         if changed { save() }

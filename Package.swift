@@ -35,9 +35,18 @@ let package = Package(
             name: "Draw",
             path: "Sources/Draw"
         ),
+        // Slack 👀 번역 plugin (independent development): dashboard-side stores/page
+        // (SlackTranslateStore/SlackActionLog/SlackTranslateContent) plus the external
+        // Socket Mode daemon under Daemon/ (not compiled — launchd runs the .mjs).
+        // App-agnostic like GUI/Draw; the app injects data dir + settings hooks.
+        .target(
+            name: "Slack",
+            path: "Sources/Slack",
+            exclude: ["Daemon"]
+        ),
         .executableTarget(
             name: "ConditionManager",
-            dependencies: ["WebCLI", "GUI", "Draw"],
+            dependencies: ["WebCLI", "GUI", "Draw", "Slack"],
             path: "Sources/ConditionManager"
         ),
         // Standalone web terminal: serves the in-app CLI 세션 view to a real browser,

@@ -8,6 +8,7 @@ import Foundation
 //   renderAiQueue(items) → _lastAiQueue 갱신 + window.gaQueueRender() (호스트 훅) 호출
 //   queueAdd/queueAddTask/queueSkip 확정 → window.gaQueueResolved(id,info) (호스트 훅)
 //   queueUndo 성공 → window.gaQueueUndone(qid) (호스트 훅 — 행을 미확정으로 되돌림)
+//   queueClose(검색 카드 닫기) → window.gaQueueClosed(id) (호스트 훅 — 뷰만 접음, 큐에 남음)
 // 호스트 페이지가 제공해야 하는 것: $, esc, post, CMTimeFilter, _review/_reviewAt,
 // gaQueueRender/gaQueueResolved/gaQueueUndone.
 enum QueuePanel {
@@ -43,7 +44,7 @@ enum QueuePanel {
         .qrec-tag{margin-left:6px;font-size:10px;font-weight:600;color:var(--green);border:1px solid #2a5a3c;border-radius:20px;padding:1px 7px;vertical-align:middle}
         .qopt-desc{font-size:12px;color:var(--mut);margin-top:3px;line-height:1.45}
         .qopt.qother,.qopt.qother:hover{cursor:default;border-color:var(--line);background:#0f131b}
-        .qother-input{width:100%;margin-top:6px;box-sizing:border-box;background:#0d1016;color:var(--fg);border:1px solid var(--accent);border-radius:7px;padding:7px 9px;font:13px/1.4 inherit;outline:none}
+        .qother-input,.qfindn-input,.qfindp-input{width:100%;margin-top:6px;box-sizing:border-box;background:#0d1016;color:var(--fg);border:1px solid var(--accent);border-radius:7px;padding:7px 9px;font:13px/1.4 inherit;outline:none}
         .qhint{font-size:11px;color:var(--mut);margin-top:7px}
         /* AI 배치 제안: 독립/서브 배지 + 우선순위 칩 + 사유. confidence 낮으면 .dim 으로 흐리게. */
         .qplace{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:5px 0 2px}
@@ -62,7 +63,7 @@ enum QueuePanel {
         .qovr select,.qovr input.qpin{background:#0d1016;color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:5px 8px;font:12px inherit;outline:none}
         .qovr input.qpin{width:70px;font-variant-numeric:tabular-nums}
         .qovr input.qpin:focus,.qovr select:focus{border-color:var(--accent)}
-        /* 큐 탭 dedup 카드의 목적지 라벨 — 인라인 배치(스프린트 하단) 대신 여기서 행선지를 알린다 */
+        /* 큐 탭 dedup 카드의 목적지 라벨 — 인라인 배치(루프 하단) 대신 여기서 행선지를 알린다 */
         .qdest{font-size:11px;color:#8fa0bd;border:1px solid var(--line);border-radius:20px;padding:1px 8px;margin-left:8px;white-space:nowrap;font-weight:400;vertical-align:middle}
         """#
     }
@@ -140,7 +141,9 @@ enum QueuePanel {
             // 분석 중/대기면 진행 상태를, 완료면 찾은 목표를 이유와 함께 나열하고, 액션은 '닫기'뿐(생성 없음).
             if(it.findOnly){
               const q='<span id="qt_'+it.id+'">🔍 '+esc(it.text)+'</span>';
-              const closeBtn='<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="검색 결과 닫기">닫기</button>';
+              // 닫기 = 뷰만 접는다(항목은 큐에 남음). 버리기(스킵)는 목록의 '그만두기' 행 —
+              // 둘을 섞지 않는다(닫았다가 나중에 다시 펼쳐 이어서 처리할 수 있다).
+              const closeBtn='<button class="btn" onclick="queueClose(\''+it.id+'\')" title="접어두기 — 항목은 큐에 남습니다">닫기</button>';
               if(it.status==='analyzing'){
         return '<div class="qrow analyzing"><div style="flex:1;min-width:0">'+q
           +'<div style="font-size:12px;color:var(--green)"><span class="qspin">🔄</span> 비슷한 목표 찾는 중…</div></div></div>';
@@ -148,7 +151,8 @@ enum QueuePanel {
               if(!rdy){
         return '<div class="qrow"><div style="flex:1;min-width:0">'+q
           +'<div class="muted" style="font-size:12px">⏳ 대기 중 — 곧 분석이 시작됩니다</div></div>'
-          +'<div style="display:flex;gap:4px;flex-shrink:0">'+closeBtn+'</div></div>';
+          +'<div style="display:flex;gap:4px;flex-shrink:0">'
+          +'<button class="btn" onclick="queueSkip(\''+it.id+'\')" title="검색을 버립니다">스킵</button>'+closeBtn+'</div></div>';
               }
               const hits=(it.matches||[]).filter(m=>(m.seq||0)>0);
               const cnt=hits.length?('비슷한 목표 '+hits.length+'건'):'결과 없음';
@@ -161,18 +165,46 @@ enum QueuePanel {
               if(hits.length && sel && sel.parentSeq>0){
         // 번호를 고른 뒤: 그 목표를 대상으로 다음 액션(끝내기·task 추가·그만두기)을 판단·추천.
         body=qFindActionHTML(it,hits,sel);
-              } else if(hits.length){
-        // 매치 목록: 번호를 누르면 그 목표를 대상으로 '다음 액션'을 고른다(바로 이동이 아님).
-        const list=hits.map(function(m){ const n=m.seq;
-          const why=m.why?'<div class="qopt-desc">'+esc(m.why)+'</div>':'';
-          return '<div class="qopt" onclick="queueFindPick(\''+it.id+'\','+n+')" style="cursor:pointer">'
-            +'<div class="qnum">→</div>'
-            +'<div class="qopt-body"><div class="qopt-label"><a href="/goal?n='+n+'" onclick="event.stopPropagation()" style="color:var(--accent);text-decoration:none">#'+n+'</a> '+esc(m.text||'')+'</div>'+why+'</div></div>';
-        }).join('');
-        body='<div class="qhint" style="margin:6px 0 2px">번호를 누르면 다음 액션(끝내기 · task 추가 · 그만두기)을 고릅니다</div>'
-          +'<div class="qchoice">'+list+'</div>';
               } else {
-        body='<div class="muted" style="font-size:12px;margin-top:4px">비슷한 기존 목표를 찾지 못했습니다.</div>';
+        // 매치 목록(또는 결과 없음): 번호를 누르면 그 목표를 대상으로 '다음 액션'을 고른다(바로
+        // 이동이 아님). 매치가 답이 아닐 때의 출구를 목록 안에 항상 둔다 — 잘못 잡힌 검색
+        // (인사말 등)은 '그만두기' 행 하나로 버리고, 목록에 없는 목표는 #번호를 직접 치고,
+        // 검색 자체가 빗나갔으면 마지막 행에 지시문을 쳐서 다시 찾는다(재검색). 결과 없음일
+        // 때도 같은 꼬리 행들이 남아 막다른 길이 없다.
+        let n=0;
+        const list=hits.map(function(m){ const s=m.seq; n++;
+          const why=m.why?'<div class="qopt-desc">'+esc(m.why)+'</div>':'';
+          return '<div class="qopt" data-n="'+n+'" data-action="pick" data-arg="'+s+'" onclick="queueFindPick(\''+it.id+'\','+s+')" style="cursor:pointer">'
+            +'<div class="qnum">'+n+'</div>'
+            +'<div class="qopt-body"><div class="qopt-label"><a href="/goal?n='+s+'" onclick="event.stopPropagation()" style="color:var(--accent);text-decoration:none">#'+s+'</a> '+esc(m.text||'')+'</div>'+why+'</div></div>';
+        }).join('');
+        n++;
+        const skipRow='<div class="qopt" data-n="'+n+'" data-action="skip" onclick="queueSkip(\''+it.id+'\')" style="cursor:pointer">'
+          +'<div class="qnum">'+n+'</div>'
+          +'<div class="qopt-body"><div class="qopt-label">그만두기 (스킵)</div>'
+          +'<div class="qopt-desc">아무것도 하지 않고 이 검색 결과를 버립니다.</div></div></div>';
+        n++;
+        const mv=(_qFindNum[it.id]||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        const manualRow='<div class="qopt qother" data-n="'+n+'" data-action="findnum">'
+          +'<div class="qnum">'+n+'</div>'
+          +'<div class="qopt-body"><div class="qopt-label">다른 목표 번호 직접 입력</div>'
+          +'<input id="qfindn_'+it.id+'" data-qid="'+it.id+'" class="qfindn-input" value="'+mv+'" inputmode="numeric" '
+          +'placeholder="#번호 — Enter로 그 목표를 대상으로 진행" '
+          +'oninput="_qFindNum[\''+it.id+'\']=this.value;qDraftSave()" onclick="event.stopPropagation()" '
+          +'onkeydown="if(event.key===\'Enter\'){event.preventDefault();queueFindManual(\''+it.id+'\');}"></div></div>';
+        n++;
+        const pv=(_qFindPrompt[it.id]||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        const promptRow='<div class="qopt qother" data-n="'+n+'" data-action="findprompt">'
+          +'<div class="qnum">'+n+'</div>'
+          +'<div class="qopt-body"><div class="qopt-label">기타 (직접 지시 — 다시 검색)</div>'
+          +'<input id="qfindp_'+it.id+'" data-qid="'+it.id+'" class="qfindp-input" value="'+pv+'" '
+          +'placeholder="예: 인사말 말고 MPC 시즌 정리 쪽으로 다시 찾아줘 — Enter 재검색" '
+          +'oninput="_qFindPrompt[\''+it.id+'\']=this.value;qDraftSave()" onclick="event.stopPropagation()"></div></div>';
+        const hint=hits.length
+          ?'번호를 누르면 다음 액션(끝내기 · task 추가 · 그만두기)을 고릅니다'
+          :'비슷한 기존 목표를 찾지 못했습니다 — 번호를 직접 치거나 지시문으로 다시 찾을 수 있습니다';
+        body='<div class="qhint" style="margin:6px 0 2px">'+hint+'</div>'
+          +'<div class="qchoice" data-qid="'+it.id+'">'+list+skipRow+manualRow+promptRow+'</div>';
               }
               return '<div class="qrow" style="flex-direction:column;align-items:stretch">'+head
         +'<div style="margin-top:6px">'+body+'</div></div>';
@@ -287,7 +319,7 @@ enum QueuePanel {
         +'<div class="qnum">'+n+'</div>'
         +'<div class="qopt-body"><div class="qopt-label">기타 (직접 지시)</div>'
         +'<input id="qother_'+it.id+'" data-qid="'+it.id+'" class="qother-input" value="'+ov+'" placeholder="예: 문구를 &#39;스크립트화&#39;로 바꾸고 자동 발송까지 포함해줘 — Enter 제출" '
-        +'oninput="_qOther[\''+it.id+'\']=this.value" onclick="event.stopPropagation()"></div></div>';
+        +'oninput="_qOther[\''+it.id+'\']=this.value;qDraftSave()" onclick="event.stopPropagation()"></div></div>';
               const tip='항목을 클릭해 확정하세요 — 검토 카드가 하나뿐이면 숫자키(1–N)로도 선택됩니다';
               const links=(ms?'유사: '+ms+' · ':'')+tip;
               // 새 목표 카드에는 AI 배치 제안 배지줄(placement/priority/rationale) + 오버라이드 패널을 얹는다.
@@ -299,7 +331,7 @@ enum QueuePanel {
             }
             const newBadge=(_qJustRefined===it.id)
               ? '<span style="font-size:11px;padding:1px 7px;border-radius:20px;background:#0f2a1e;color:var(--green);border:1px solid #1e4a35;margin-right:6px">새 결과</span>' : '';
-            // 목적지 라벨: 스프린트로 담긴 항목은 확정 시 어디로 들어가는지 표시 (인라인 배치 제거의 정보 보존).
+            // 목적지 라벨: 루프로 담긴 항목은 확정 시 어디로 들어가는지 표시 (인라인 배치 제거의 정보 보존).
             const dest=(it.sprint||0)>0?(function(){
               const s=((_review&&_review.sprints)||[]).find(x=>x.number===it.sprint);
               return '<span class="qdest">→ '+esc((s&&s.code)||('#'+it.sprint))+'</span>'; })():'';
@@ -314,6 +346,23 @@ enum QueuePanel {
         // _qOther: 기타(직접 지시) 입력칸에 친 값을 항목 id별로 보관 → 5초 폴링 재렌더가 innerHTML을
         // 갈아끼워도 value로 다시 그려 넣어 입력이 사라지지 않게 한다(프롬프트 textarea의 _qUI.prompt와 동일 취지).
         let _qOther={};
+        // _qFindNum/_qFindPrompt: 검색(findOnly) 카드의 '#번호 직접 입력'/'기타(직접 지시)' 값
+        // 보관 — _qOther와 같은 취지(5초 폴링 재렌더가 innerHTML을 갈아끼워도 value로 되살린다).
+        let _qFindNum={},_qFindPrompt={};
+        // 세 입력값은 localStorage(cm.qDrafts)에도 남긴다 — 페이지를 떠났다가 돌아와도(다른 탭/목표
+        // 페이지 왕복) 치던 지시문이 그대로 있어야 한다. 제출/스킵 시에는 delete 후 저장해 비운다.
+        function qDraftSave(){ try{ localStorage.setItem('cm.qDrafts',
+            JSON.stringify({other:_qOther,findNum:_qFindNum,findPrompt:_qFindPrompt})); }catch(e){} }
+        (function(){ try{ const raw=localStorage.getItem('cm.qDrafts'); if(!raw) return;
+            const d=JSON.parse(raw)||{};
+            _qOther=d.other||{}; _qFindNum=d.findNum||{}; _qFindPrompt=d.findPrompt||{}; }catch(e){} })();
+        // 사라진 큐 항목의 초안은 남겨둘 이유가 없다 — 현재 큐에 없는 id는 정리한다.
+        function qDraftPrune(items){
+            const live={}; (items||[]).forEach(function(it){ live[it.id]=1; });
+            let dirty=false;
+            [_qOther,_qFindNum,_qFindPrompt].forEach(function(m){
+              Object.keys(m).forEach(function(k){ if(!live[k]){ delete m[k]; dirty=true; } }); });
+            if(dirty) qDraftSave(); }
         // _qFind: 검색(findOnly) 카드에서 '번호를 눌러 대상 목표를 고른 뒤 → 다음 액션(끝내기·task 추가·
         // 그만두기)' 흐름의 항목별 상태. id → {parentSeq, phase:'menu'|'suggesting'|'edit', name}.
         // phase 'edit'의 name(추천 task 폴더명)은 폴링 재렌더에도 유지되도록 여기 보관한다.
@@ -321,14 +370,15 @@ enum QueuePanel {
         // 유일한 렌더 경로: 스냅샷을 보관하고 호스트(GoalAddContent)의 gaQueueRender 훅을 부른다.
         // 호스트가 펼쳐진 행의 카드(qItemCardHTML)·잡 결과·큐 히스토리를 자기 위치에 그린다.
         // 재렌더 전에 기타/검색 입력칸의 포커스·캐럿을 기억해 폴링 재렌더에도 타이핑이 안 끊긴다.
-        function renderAiQueue(items){ _lastAiQueue=items||[];
+        function renderAiQueue(items){ _lastAiQueue=items||[]; qDraftPrune(_lastAiQueue);
         const af=document.activeElement;
-        const qo=(af&&af.classList&&(af.classList.contains('qother-input')||af.classList.contains('qfind-input')))
-            ?{id:af.getAttribute('data-qid'),pos:af.selectionStart,cls:(af.classList.contains('qfind-input')?'qfind':'qother')}:null;
+        // 카드 안 입력칸(기타/task 이름/#번호/재검색 지시)은 모두 data-qid + 고유 id 를 가진다 —
+        // 어느 것이든 id 로 포커스·캐럿을 복원한다(값은 각자 _qOther/_qFind/_qFindNum/_qFindPrompt 보관).
+        const qo=(af&&af.id&&af.getAttribute&&af.getAttribute('data-qid'))?{eid:af.id,pos:af.selectionStart}:null;
         if(window.gaQueueRender) gaQueueRender();
         // 프롬프트 입력 중이면 재렌더 후 텍스트박스에 포커스를 되돌린다(캐럿 끝으로).
         if(_qUI&&_qUI.mode==='prompt'){ const t=$('qp_'+_qUI.id); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} } }
-        if(qo&&qo.id){ const t=(qo.cls==='qfind')?$('qfind_'+qo.id):$('qother_'+qo.id); if(t){ t.focus(); try{ const p=(qo.pos==null?t.value.length:qo.pos); t.setSelectionRange(p,p); }catch(e){} } } }
+        if(qo){ const t=$(qo.eid); if(t){ t.focus(); try{ const p=(qo.pos==null?t.value.length:qo.pos); t.setSelectionRange(p,p); }catch(e){} } } }
         // === 큐 처리 히스토리 (감사 + 번복) ===
         // _qHist: /data.json review.queueHistory (newest first, 최근 30건). 각 항목은 하나의 확정된
         // 결정 — 무엇을 골랐고 무엇이 생겼는지(#seq/task 폴더) 남아, 5초 확인 카드가 사라진 뒤에도
@@ -487,6 +537,29 @@ enum QueuePanel {
         return (rel==='recurring-execution'||rel==='sub-problem'||k==='recurring')?'task':'finish'; }
         // 번호를 골라 대상 목표를 정한다 → 다음 액션 메뉴로.
         function queueFindPick(id,seq){ _qFind[id]={parentSeq:seq,phase:'menu'}; rerenderAiQueue(); }
+        // 매치 목록 마지막 행의 '#번호 직접 입력' 확정 — 목록에 없는 목표도 대상으로 삼는다.
+        function queueFindManual(id){
+        const inp=$('qfindn_'+id);
+        const raw=((inp?inp.value:_qFindNum[id])||'').replace(/[^0-9]/g,'');
+        const seq=parseInt(raw,10)||0;
+        if(seq<=0){ if(inp) inp.focus(); return; }
+        delete _qFindNum[id]; qDraftSave();
+        queueFindPick(id,seq);
+        }
+        // 닫기 = 뷰만 닫는다(접기/카드 제거) — 항목은 큐에 남아 다시 펼치면 이어진다. 스킵과 다름.
+        function queueClose(id){ delete _qFind[id]; if(window.gaQueueClosed) gaQueueClosed(id); }
+        // '기타(직접 지시 — 다시 검색)': 지시문을 새 검색어로 보내 분석을 리셋(pending)하고 다시
+        // 찾는다(/api/goal/queue/edit — 검색 분석 자체가 AI라 문장 지시를 그대로 이해한다).
+        function queueFindPrompt(id){
+        const inp=$('qfindp_'+id);
+        const v=(((inp?inp.value:_qFindPrompt[id])||'')).trim();
+        if(!v){ if(inp) inp.focus(); return; }
+        delete _qFindPrompt[id]; delete _qFind[id]; qDraftSave();
+        post('/api/goal/queue/edit',{id:id,text:v}).then(r=>r.json()).then(res=>{
+            if(!(res&&res.ok)) alert('다시 검색을 시작하지 못했습니다 (이미 처리된 항목).');
+            qdReload();
+        }).catch(()=>qdReload());
+        }
         // 대상 선택 취소 → 매치 목록으로 되돌린다.
         function queueFindBack(id){ delete _qFind[id]; rerenderAiQueue(); }
         // 액션 실행: finish=목표 열기(끝내기), stop=아무것도 안 하고 검색 닫기(skip),
@@ -515,8 +588,9 @@ enum QueuePanel {
         // 검색 카드의 다음 액션 패널 HTML(대상 목표 pN 기준). phase: menu→suggesting→edit.
         function qFindActionHTML(it,hits,sel){
         const pN=sel.parentSeq;
-        const m0=hits.find(function(m){return m.seq===pN;})||hits[0];
-        const pT=m0?esc(m0.text||''):'';
+        // 직접 입력한 번호는 매치 목록에 없을 수 있다 — 그땐 최상위 목표 목록에서 제목을 찾는다.
+        const m0=hits.find(function(m){return m.seq===pN;});
+        const pT=m0?esc(m0.text||''):esc(topGoalTitle(pN)||'');
         const back='<div class="qhint" style="margin:2px 0 6px">대상: <a href="/goal?n='+pN+'" style="color:var(--accent);text-decoration:none">#'+pN+'</a> '+pT
             +' · <a href="#" onclick="queueFindBack(\''+it.id+'\');return false" style="color:var(--mut)">다른 목표 선택</a></div>';
         if(sel.phase==='suggesting'){
@@ -586,27 +660,33 @@ enum QueuePanel {
         if(action==='skip') return queueSkip(id);
         if(action==='prompt') return queuePromptChat(id);
         if(action==='override') return qOverrideToggle(id);   // 배치/우선순위 직접 지정 패널 토글
+        if(action==='pick') return queueFindPick(id,parseInt(arg,10)||0);   // 검색 매치 → 다음 액션 메뉴
         }
-        // 기타(직접 지시) 입력의 IME-안전 Enter 제출 — 문서 레벨 위임이라 큐가 어느 뷰(목록/스프린트)로
-        // 재렌더되든 재바인딩 없이 항상 동작한다. 한글 조합을 확정하는 Enter는 isComposing=true여서 그냥
-        // 무시하면 삼켜지므로(마지막 글자 확정용), 보류했다가 compositionend 직후에 제출한다.
+        // 기타(직접 지시)·재검색 지시 입력의 IME-안전 Enter 제출 — 문서 레벨 위임이라 큐가 어느
+        // 뷰(목록/루프)로 재렌더되든 재바인딩 없이 항상 동작한다. 한글 조합을 확정하는 Enter는
+        // isComposing=true여서 그냥 무시하면 삼켜지므로(마지막 글자 확정용), 보류했다가
+        // compositionend 직후에 제출한다. 제출 대상은 클래스로 가른다:
+        //   qother-input → queueOtherSubmit(프롬프트 다듬기) · qfindp-input → queueFindPrompt(재검색)
+        function qImeInput(el){ return el&&el.classList&&(el.classList.contains('qother-input')||el.classList.contains('qfindp-input')); }
+        function qImeSubmit(el){ const id=el.getAttribute('data-qid'); if(!id) return;
+        if(el.classList.contains('qfindp-input')) queueFindPrompt(id); else queueOtherSubmit(id); }
         document.addEventListener('keydown',function(e){
         const el=e.target;
-        if(!el||!el.classList||!el.classList.contains('qother-input')||e.key!=='Enter') return;
+        if(!qImeInput(el)||e.key!=='Enter') return;
         if(e.isComposing||el._composing){ el._pendingSubmit=true; return; }   // 조합 중: 확정 후로 보류
         e.preventDefault();
-        const id=el.getAttribute('data-qid'); if(id) queueOtherSubmit(id);
+        qImeSubmit(el);
         });
-        document.addEventListener('compositionstart',function(e){ const el=e.target; if(el&&el.classList&&el.classList.contains('qother-input')) el._composing=true; });
+        document.addEventListener('compositionstart',function(e){ if(qImeInput(e.target)) e.target._composing=true; });
         document.addEventListener('compositionend',function(e){ const el=e.target;
-        if(!el||!el.classList||!el.classList.contains('qother-input')) return;
+        if(!qImeInput(el)) return;
         el._composing=false;
-        if(el._pendingSubmit){ el._pendingSubmit=false; const id=el.getAttribute('data-qid'); if(id) queueOtherSubmit(id); }
+        if(el._pendingSubmit){ el._pendingSubmit=false; qImeSubmit(el); }
         });
         function queueOtherSubmit(id){
         const inp=$('qother_'+id); const v=(((_qOther[id]!=null?_qOther[id]:(inp?inp.value:''))||'')).trim();
         if(!v){ if(inp) inp.focus(); return; }
-        delete _qOther[id];                    // 제출됐으니 보관값 정리
+        delete _qOther[id]; qDraftSave();      // 제출됐으니 보관값 정리
         _qUI={id:id,mode:'prompt',prompt:v};   // queuePromptGen이 t 없으면 _qUI.prompt를 사용
         queuePromptGen(id);
         }
@@ -643,6 +723,8 @@ enum QueuePanel {
         e.preventDefault();
         const id=card.getAttribute('data-qid'), act=opt.getAttribute('data-action'), arg=opt.getAttribute('data-arg');
         if(act==='other'){ const inp=$('qother_'+id); if(inp) inp.focus(); }
+        else if(act==='findnum'){ const inp=$('qfindn_'+id); if(inp) inp.focus(); }
+        else if(act==='findprompt'){ const inp=$('qfindp_'+id); if(inp) inp.focus(); }
         else queueChoose(id,act,arg);
         });
         // ===== 데이터 리로드 =====

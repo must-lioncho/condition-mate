@@ -1,6 +1,7 @@
 import AppKit
 import Draw
 import GUI
+import Slack
 import WebCLI
 
 // Central coordinator. Owns every subsystem and runs a single 1 Hz heartbeat
@@ -11,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = TimeStore()
     let activity = ActivityMonitor()
     let library = BPMLibrary()
+    let bgmTags = BGMTags()
     let audio = AudioEngine()
     let activityLog = ActivityLog()
     let reviewStore = ReviewStore()
@@ -22,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let drawOverlay = DrawOverlayController()
     let equipment = EquipmentStore()
     let chatStore = ChatStore()
+    let cameraWatch = CameraMonitor()
     private(set) var director: ConditionDirector!
 
     // Local dashboard web server (loopback only, started on demand).
@@ -47,9 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if path.hasPrefix("/bgm-player") { return BGMPlayerContent.html() }
             if path.hasPrefix("/bgm-plan") { return BGMPlanContent.html() }
             if path.hasPrefix("/equipment") { return EquipmentContent.html() }
+            if path.hasPrefix("/slack-translate") { return SlackTranslateContent.html() }
             // NOTE: must precede the generic "/goal" prefix below, which would swallow it.
             if path.hasPrefix("/goal-add") { return GoalAddContent.html(serverCtx: Settings.shared.gaComposerJSON(),
-                                                                        tallyHist: Settings.shared.gaTallyHistJSON()) }
+                                                                        tallyHist: Settings.shared.gaTallyHistJSON(),
+                                                                        embed: path.contains("embed=1")) }
             if path.hasPrefix("/goal") { return self?.goalPage(path) }
             if path.hasPrefix("/worker-log") { return self?.workerLogAllPage(path) }
             if path.hasPrefix("/worker") { return self?.workerLogPage(path) }
@@ -110,14 +115,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if path.hasPrefix("/api/agents") {
                 return self?.agentsJSON()
             }
+            // 팀 칭찬 기록 (대시보드 Hero 탭) — agent-mustcompany /hero 스킬의 heroes.db 읽기 전용.
+            if path.hasPrefix("/api/hero") {
+                return HeroStore.listJSON()
+            }
             if path.hasPrefix("/history.json") {
                 return self?.dashboardHistory(path)
+            }
+            if path.hasPrefix("/tokens-sessions.json") {   // /tokens.json 보다 먼저 (접두어 겹침)
+                return self?.dashboardTokenSessions(path)
+            }
+            if path.hasPrefix("/tokens-detail.json") {     // 버킷 내용물 드릴다운
+                return self?.dashboardTokenDetail(path)
             }
             if path.hasPrefix("/tokens.json") {
                 return self?.dashboardTokens(path)
             }
             if path.hasPrefix("/api/bgm/now") {
                 return self?.bgmNowJSON()
+            }
+            // Slack 👀 번역함 feed (the /slack-translate page): daemon-appended
+            // items.jsonl + app-owned done map (see SlackTranslateStore).
+            if path.hasPrefix("/api/slack/items") {
+                return SlackTranslateStore.itemsJSON()
+            }
+            // slack-translate 액션 로그 (디버그 패널) — 모든 액션 + 소요시간.
+            if path.hasPrefix("/api/slack/actions") {
+                let limit = URLComponents(string: "http://x" + path)?.queryItems?
+                    .first(where: { $0.name == "limit" })?.value.flatMap(Int.init) ?? 200
+                return SlackActionLog.recentJSON(limit: limit)
             }
             // 액션 로그 feed (the /actions page): last N user actions + BGM reactions.
             if path.hasPrefix("/api/actions") {
@@ -147,6 +173,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 표시 타임존 설정 (rail ⚙️설정) — 저장은 항상 epoch(UTC), 표시만 이 tz를 따른다.
             if path.hasPrefix("/api/settings/timezone") {
                 return self?.timezoneJSON()
+            }
+            // 메모장 칸(담당·팀·프로젝트) 태그 검색 — 타이핑이 2초 멎으면 패드가 한 번 부른다.
+            // /api/memo 보다 먼저 봐야 한다(접두어가 겹친다).
+            if path.hasPrefix("/api/memo/tags") {
+                let q = URLComponents(string: "http://x" + path)?.queryItems
+                return self?.memoTagsJSON(kind: q?.first(where: { $0.name == "k" })?.value ?? "",
+                                          query: q?.first(where: { $0.name == "q" })?.value ?? "")
+            }
+            // 메모장 지난 판 목록 — 패드의 히스토리 메뉴가 열릴 때 읽는다(최신순).
+            // /api/memo 보다 먼저 봐야 한다(접두어가 겹친다).
+            if path.hasPrefix("/api/memo/history") {
+                return self?.memoHistoryJSON()
+            }
+            // 메모장 부모 칸 후보 — 칸에 들어오면 패드가 한 번 부른다: 최근 쓴 부모(MRU)
+            // 가 맨 위, 그 아래 이 줄 제목에 대한 AI 추천(ParentSuggest.rank).
+            // /api/memo 보다 먼저 봐야 한다(접두어가 겹친다).
+            if path.hasPrefix("/api/memo/parent-suggest") {
+                let q = URLComponents(string: "http://x" + path)?.queryItems
+                let title = q?.first(where: { $0.name == "title" })?.value ?? ""
+                let no = q?.first(where: { $0.name == "no" })?.value.flatMap(Int.init) ?? 0
+                return self?.memoParentSuggestJSON(title: title, no: no)
+            }
+            // 메모장 (전역 1개 공유) — 페이지에 마운트된 MemoPad 가 로드 시 1회 읽는다.
+            if path.hasPrefix("/api/memo") {
+                return self?.memoJSON()
+            }
+            // 전역 디버그 버튼 노출 여부 (rail ⚙️설정 토글).
+            if path.hasPrefix("/api/settings/debug-buttons") {
+                return "{\"on\":\(Settings.shared.debugButtons)}"
+            }
+            // Claude CLI 연결 설정 (rail ⚙️설정) — 자동(로컬 OAuth) 또는 게이트웨이.
+            if path.hasPrefix("/api/settings/gateway") {
+                return self?.settingsGatewayJSON()
             }
             // 네트워크 진단(DiagProbe) 대상 호스트 목록 — 진단 탭에서 편집.
             if path.hasPrefix("/api/settings/diag-hosts") {
@@ -201,6 +260,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if path.hasPrefix("/api/bgm/list") {
                 return self?.bgmListJSON()
             }
+            // 전략7 · 장소·컨디션 preset catalog + current pick (액티비티 탭 selector).
+            if path.hasPrefix("/api/bgm/venue") {
+                return self?.bgmVenueJSON()
+            }
             // Lightweight worker snapshot for the standalone 크론(/cron) page — just the
             // workers array, so that page never has to poll the heavy /data.json.
             if path.hasPrefix("/workers.json") {
@@ -238,6 +301,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // only while the app is active and for ANY of its windows/pages — exactly "앱을 활성화한 뒤 어느
     // 페이지에서든" — without the system-wide Accessibility grant a global monitor would need.
     private var shortcutMonitor: Any?
+    // 전역 음소거 단축키 (⌃⌘M). Registered with the OS hotkey registry (GUI/GlobalHotKey), so it
+    // fires from any app WITHOUT the Accessibility grant and never falls through to the frontmost
+    // app. Held here because releasing the object unregisters the chord.
+    private var globalMuteHotKey: GlobalHotKey?
     private var heartbeat: Timer?
     private var tick: Int = 0
     // Smooth menu-bar APM: the heartbeat only fires at 1 Hz, so reading instantAPM
@@ -356,15 +423,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sessionSeenSize: [String: Int] = [:]
     private var sessionPendingAsk: [String: Bool] = [:]   // last tail had an unanswered AskUserQuestion
     private var sessionTurnEnded: [String: Bool] = [:]     // last tail was a finished assistant turn (awaiting human)
+    // Session ids the title-repair sweep already probed and found to have no transcript
+    // anywhere (a `start`-only ghost from before the mint guard). Locating one costs a
+    // full ~/.claude/projects scan, and it will never appear, so probe it once per run.
+    private var titleRepairHopeless: Set<String> = []
     // Per-transcript token-by-day cache: parsing every ~/.claude/projects/*.jsonl on each
     // poll would be costly, so remember (mtime, size) -> per-day token totals and re-parse a
     // file only when it changes. Keyed by absolute path. Guarded by tokenDayLock.
-    private var tokenDayCache: [String: (mtime: Date, size: Int, days: [String: Int])] = [:]
+    // One day's aggregate for a transcript: deduped spend, prompt-vs-output split, the
+    // output further split into thinking/visible-text/tool-args (apportioned from
+    // output_tokens by block character weight), and human prompt lead times (seconds
+    // between the assistant's last line and the next human-typed message, ≤30 min).
+    struct DayTok {
+        var spent = 0        // input + output + cache_creation, counted once per message id
+        var inTok = 0        // prompt side: input + cache_creation
+        var outTok = 0       // output_tokens
+        var thinkTok = 0     // output share attributed to thinking blocks
+        var textTok = 0      // output share attributed to visible text
+        var toolTok = 0      // output share attributed to tool_use arguments
+        // Prompt-side sub-split (estimates; the transcript records only per-request input
+        // totals, so text is char-weighted and images use the official w*h/750 formula).
+        // reloadTok is the residual: inTok minus the measured three — i.e. conversation
+        // re-cache + system prompt/CLAUDE.md, the part the user never typed nor attached.
+        var typedTok = 0     // human-typed prompt text
+        var imgN = 0         // user-attached images (count)
+        var imgBytes = 0     // their raw (decoded) bytes
+        var imgTok = 0       // their estimated tokens
+        var toolResTok = 0   // tool_result content fed back (incl. tool-produced images)
+        var reloadTok = 0    // residual: history re-cache + system prompt
+        var aiSec = 0        // AI runtime: human prompt -> last AI/tool line of that turn
+        var models: [String: ModelUse] = [:]   // per-model raw usage, for $-cost (client-side rates)
+        var leads: [Double] = []
+    }
+    // Raw per-model usage — kept separate from the display buckets above because $-cost
+    // needs cache reads (excluded from `spent`) and the cache-write TTL split (5m=1.25x,
+    // 1h=2x input rate). A session can switch models mid-way (haiku -> fable), so usage
+    // is keyed by message.model, never assumed uniform per session.
+    struct ModelUse {
+        var inTok = 0        // uncached input_tokens
+        var cacheRead = 0    // cache_read_input_tokens
+        var cache5m = 0      // cache_creation ephemeral_5m (fallback bucket when no detail)
+        var cache1h = 0      // cache_creation ephemeral_1h
+        var outTok = 0
+    }
+    private var tokenDayCache: [String: (mtime: Date, size: Int, days: [String: DayTok], title: String)] = [:]
     private let tokenDayLock = NSLock()
+
+    // JSON for a DayTok's per-model usage map: {"claude-fable-5":{"in":..,"cr":..,"c5m":..,"c1h":..,"out":..},...}
+    private func modelsJSON(_ models: [String: ModelUse]) -> String {
+        let rows = models.keys.sorted().map { m -> String in
+            let u = models[m]!
+            return "\(jsonString(m)):{\"in\":\(u.inTok),\"cr\":\(u.cacheRead),\"c5m\":\(u.cache5m),\"c1h\":\(u.cache1h),\"out\":\(u.outTok)}"
+        }
+        return "{\(rows.joined(separator: ","))}"
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLog.log("LAUNCH — bundle=\(Bundle.main.bundleIdentifier ?? "nil") argv0=\(CommandLine.arguments.first ?? "?") log=\(AppLog.fileURL.path)")
         WebCLILog.sink = AppLog.log   // WebCLI target logs (PTY spawn failures 등) into app.log
+        // Slack 👀 번역 plugin (Sources/Slack, app-agnostic) — wire the app's data
+        // dir, the global debug-buttons setting, and the display-timezone boot HTML.
+        SlackTranslateStore.dir = AppPaths.sub("slack-translate")
+        // #hero 채널 수집 파일 (slack-eyes-daemon.mjs 소유, 앱은 읽기만)
+        HeroStore.slackFile = AppPaths.sub("hero").appendingPathComponent("slack.jsonl")
+        SlackTranslateStore.debugButtons = { Settings.shared.debugButtons }
+        SlackTranslateContent.headExtraHTML = { CMTimeFilter.bootHTML() }
         // View-trace anchor: every launch (including an update relaunch) starts the screen
         // timeline here, so "실행 → 첫 화면까지" is measurable against windowOpen/navCommit/firstPaint.
         ViewTrace.shared.native("appLaunch",
@@ -393,6 +516,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         director.workElapsedMinutes = { [weak self] in self?.workElapsedMinutes() ?? 0 }
         ActionLog.shared.workMinutesProvider = { [weak self] in self?.workElapsedMinutes() ?? -1 }
         audio.targetVolume = Float(Settings.shared.volume)
+        // Restore the last mute state (ChallengeSession loads it from Settings): if the sound was
+        // muted when the app went down, an update/relaunch must come back muted, not playing.
+        applyNativeMute()
+        if session.isMuted { AppLog.log("mute restored from last run -> muted") }
         // Play-time accounting: AudioEngine times each audible segment; the store accrues
         // per-track seconds/plays that feed the BGM 관리 "재생 시간 순위" section.
         audio.onSegmentEnd = { [weak self] key, title, secs in
@@ -403,6 +530,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         activity.start()
+        // 카메라 지킴이 (camera-guard plugin): 위반 시 반응만 여기서 배선한다 — 시작/중지는
+        // syncPluginWorkers가 설치 상태 + 카드 on/off(Settings.cameraGuardOn)로 게이팅.
+        cameraWatch.onViolation = { msg in
+            NSSound(named: "Funk")?.play()
+            // No UNUserNotificationCenter plumbing needed: a plain banner via
+            // osascript, off-main (Process launch would stall the main thread).
+            DispatchQueue.global(qos: .utility).async {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                p.arguments = ["-e",
+                    "display notification \"\(msg)\" with title \"Condition Manager\" subtitle \"카메라 꺼짐 감지\""]
+                try? p.run()
+            }
+        }
         reloadLibrary()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -433,6 +574,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // mute intent (session.isMuted) rather than blindly unmuting — so ⌘M made before closing
             // is preserved.
             self.applyNativeMute()
+            // The window's player starts unmuted; push the restored/current mute intent as soon as
+            // it takes over so a muted user never hears a burst before the /api/bgm/now poll lands.
+            if owns { self.appWindow.setWebMute(self.session.isMuted) }
             AppLog.log("app window owns audio=\(owns) -> native muted=\(self.audio.muted)")
         }
         // Closing the app window quits the entire app — the window and the menu-bar app terminate
@@ -454,6 +598,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return event }
             return self.handleShortcut(event)
         }
+
+        // 전역 음소거 토글 — ⌃⌘M works from ANY app, no activation first. The local monitor above
+        // only fires while this app is frontmost, which made ⌘M useless in practice: you had to
+        // click the app (and in another app ⌘M just minimised ITS window). ⌃⌘M avoids both the
+        // system's ⌘M "minimize" and the 드로우 plugin's left-⌥ draw gesture, so it stays clean
+        // whichever app has focus. Silent if the chord is already taken by another app: the
+        // in-app ⌘M and the menu item still work (no failure banner).
+        globalMuteHotKey = GlobalHotKey(keyCode: 46, modifiers: [.control, .command]) { [weak self] in
+            self?.toggleMute()
+        }
+        AppLog.log("global hotkey ⌃⌘M mute registered=\(globalMuteHotKey != nil)")
 
         updateStatusTitle()
 
@@ -541,16 +696,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appWindow.closeForQuit()
         gauge?.showIdle()
         if let m = shortcutMonitor { NSEvent.removeMonitor(m); shortcutMonitor = nil }
+        // Hand ⌃⌘M back to the system explicitly (a relaunching dev-watch build re-registers it).
+        globalMuteHotKey?.unregister(); globalMuteHotKey = nil
         heartbeat?.invalidate()
         titleTimer?.invalidate()
         AppLog.log("applicationWillTerminate — done")
     }
 
-    // Log the quit request and let it proceed. If something ever blocked termination this would
-    // show us the app got the request but did not die.
+    // Drain unsaved webview state (메모장 debounce 등) BEFORE letting termination proceed —
+    // the dashboard server is still alive here, so the pages' final flush POST can land.
+    // willTerminate then stops the server and blanks the webviews as before. ≤1.5s delay,
+    // well inside apply-update.sh's 6s quit-wait. Guarded so the reply happens exactly once.
+    private var quitDrained = false
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        AppLog.log("applicationShouldTerminate — reply=terminateNow")
-        return .terminateNow
+        if quitDrained {
+            AppLog.log("applicationShouldTerminate — reply=terminateNow (drained)")
+            return .terminateNow
+        }
+        AppLog.log("applicationShouldTerminate — draining webviews, reply=terminateLater")
+        appWindow.drainForQuit { [weak self] in
+            self?.quitDrained = true
+            AppLog.log("applicationShouldTerminate — drain done, resuming quit")
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     // Force-quit any other running copy of this app (same bundle id) so only one instance ever
@@ -615,6 +784,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                    detail: "키·마우스 입력률 평활화(APM 산출)", interval: 5)
         r.register(id: "browser-domain", name: "브라우저 도메인",
                    detail: "활성 탭 도메인 갱신(가치 분류용)", interval: 5)
+        // The 카메라 지킴이 worker is owned by the camera-guard plugin (registered in
+        // syncPluginWorkers) — installing that plugin is what brings the guard online.
         // The BGM 디렉터 worker is owned by 컨디션 메이트 (registered in syncPluginWorkers),
         // not core — installing that plugin is what brings BGM online.
         r.register(id: "autosave", name: "상태 저장",
@@ -672,6 +843,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                    detail: "매일 09:10 온체인·NSS 데이터로 일일 모니터 리포트 생성 · 리포트 허브 아티팩트 재발행",
                    interval: 86400, owner: "sut",
                    enabled: !FileManager.default.fileExists(atPath: Self.nssReportDisabledFlag.path))
+        // 자동 빌드: an EXTERNAL watcher (launchd KeepAlive → Scripts/autobuild-watch.sh)
+        // that waits for the sources to go quiet after a save, then compiles a release
+        // build and PARKS it in <data>/updates/ — the running app is never touched. It
+        // exists so the rail's 업데이트 button is a ~2s copy instead of a ~40s compile the
+        // user waits out. Realtime watcher, so interval is liveness only (it pings every
+        // few seconds while idle). Toggleable (꺼짐 writes autobuild-disabled; the script
+        // polls the flag and idles while present). Reads 오류 when a build fails — the
+        // failure is deliberately invisible in the rail and lives on this row instead.
+        r.register(id: "autobuild", name: "자동 빌드",
+                   detail: "소스 저장 후 정적 상태 감지 · 백그라운드 릴리즈 빌드 · 업데이트 대기열에 적재(앱은 계속 실행)",
+                   interval: 15,
+                   enabled: !FileManager.default.fileExists(atPath: Self.autobuildDisabledFlag.path))
+        // Slack 👀 번역: an EXTERNAL long-running daemon (launchd KeepAlive →
+        // Sources/Slack/Daemon/slack-eyes-daemon.mjs) holding a Slack Socket Mode WebSocket. When
+        // the user reacts :eyes: to a Slack message it translates the text to Korean
+        // (claude -p headless) and appends to <data>/slack-translate/items.jsonl,
+        // rendered by the /slack-translate page. Realtime — interval is display/
+        // liveness only. Toggleable (꺼짐 writes slack-translate-disabled; the daemon
+        // polls the flag, idles while present, reconnects when removed).
+        r.register(id: "slack-eyes", name: "Slack 번역",
+                   detail: "슬랙 👀 리액션 실시간 감지 · 한국어 번역 · /slack-translate 페이지",
+                   interval: 1800,
+                   enabled: !FileManager.default.fileExists(atPath: Self.slackEyesDisabledFlag.path))
+        // 데몬은 앱 밖 launchd 프로세스라 죽어도 앱은 모른다. SlackHealth가 하트비트
+        // 단절을 감지해 스스로 되살리고, 그 사실을 워커 상태 행에 남긴다 — 사용자가
+        // 시스템 관리 화면에서 "꺼져 있었고, 다시 켰다"를 볼 수 있어야 한다.
+        SlackHealth.onEvent = { why, effect, ok in
+            let reg = WorkerRegistry.shared
+            if ok {
+                reg.clearError("slack-eyes")
+                reg.recordRun("slack-eyes", why: why, effect: effect)
+            } else {
+                reg.recordError("slack-eyes", why: why, detail: effect)
+            }
+        }
         // Claude Desktop's session workers are NOT registered here — they are owned by
         // the plugin and appear/disappear with its connection (see syncPluginWorkers).
         syncPluginWorkers()
@@ -711,9 +917,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Scripts/nss-report-daily.sh reads this flag and no-ops when the file exists.
     static var nssReportDisabledFlag: URL { AppPaths.base.appendingPathComponent("nss-report-disabled") }
     static var qaForceRunFlag: URL { AppPaths.base.appendingPathComponent("qa-force-run") }
+    // autobuild-disabled present -> the background auto-builder is OFF (its 꺼짐 toggle).
+    // Scripts/autobuild-watch.sh polls this file and idles while it exists, so the user can
+    // stop background compiles from the 시스템 페이지 without unloading the launchd agent.
+    static var autobuildDisabledFlag: URL { AppPaths.base.appendingPathComponent("autobuild-disabled") }
     // bug-hunt-disabled present -> the bug-hunt agent is OFF (its 꺼짐 toggle). The runner
     // (Scripts/bug-hunt.sh) refuses to start, and a running hunt stops at the next round.
     static var bugHuntDisabledFlag: URL { AppPaths.base.appendingPathComponent("bug-hunt-disabled") }
+    // slack-translate-disabled present -> the Slack 👀 번역 daemon is OFF (its 꺼짐 toggle).
+    // slack-eyes-daemon.mjs polls this flag: idles while present, reconnects when removed.
+    static var slackEyesDisabledFlag: URL { AppPaths.base.appendingPathComponent("slack-translate-disabled") }
     // Latest DOM self-audit pushed by the dashboard ({width, ts, issues:[…]}).
     static var qaAuditFile: URL { AppPaths.base.appendingPathComponent("qa-audit.json") }
 
@@ -740,11 +953,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/bash")
             p.arguments = [script.path]
-            var env = ProcessInfo.processInfo.environment
+            // qa-scan.sh runs a headless `claude -p` UI-QA worker, so it needs the same
+            // PATH/auth/session-suppression env as our in-process claude spawns.
+            var env = Self.claudeEnv()
             env["QA_FORCE"] = "1"
-            // qa-scan.sh runs a headless `claude -p` UI-QA worker; suppress its session so it
-            // is not mirrored as a dashboard goal (see Scripts/cc-session-hook.sh).
-            env["CM_SUPPRESS_SESSION_GOAL"] = "1"
             p.environment = env
             do { try p.run() } catch {
                 try? Data().write(to: Self.qaForceRunFlag)   // fall back to the flag
@@ -756,7 +968,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Worker ids owned by the Claude Desktop plugin (registered on connect, removed on
     // disconnect). Kept in one place so the heartbeat gating and the registry agree.
-    private let claudeWorkerIDs = ["session-reconcile", "title-stamp", "claude-sync-check"]
+    private let claudeWorkerIDs = ["session-reconcile", "title-stamp", "claude-sync-check", "title-repair"]
 
     // Worker ids owned by the 컨디션 메이트 plugin (registered on install, removed on
     // uninstall). The BGM director is the plugin's basic function; mate-tick is the
@@ -776,6 +988,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                        detail: "데스크톱 세션 제목에 [seq] 재기입", interval: 30, owner: "claude-desktop")
             r.register(id: "claude-sync-check", name: "프로젝트 활성·싱크 점검",
                        detail: "프로젝트별 활성 강도(5단계) 산출 · 연동 목표 transcript 누락 검사", interval: 30, owner: "claude-desktop")
+            r.register(id: "title-repair", name: "세션 제목 복구",
+                       detail: "'Claude 세션 <id>' 플레이스홀더에 머문 목표를 트랜스크립트에서 재명명", interval: 30, owner: "claude-desktop")
             pluginStore.refreshClaudeProjects()   // seed the project list before the first 30s tick
         } else {
             claudeWorkerIDs.forEach { r.unregister(id: $0) }
@@ -794,16 +1008,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 드로우: installing the plugin arms the screen-draw overlay (left ⌥ draws,
-        // left ⌃ wipes). The card's draw on/off (Settings.drawEnabled) pauses it
+        // fn wipes). The card's draw on/off (Settings.drawEnabled) pauses it
         // without uninstalling; either gate closing stops the poller and clears strokes.
         if pluginStore.isConnected("draw") && Settings.shared.drawEnabled {
             r.register(id: "draw-overlay", name: "화면 드로우",
-                       detail: "왼쪽 ⌥ 그리기 · 왼쪽 ⌘ 두 번 탭 30pt 글씨 · 왼쪽 ⌃ 지우기", interval: 5, owner: "draw")
+                       detail: "왼쪽 ⌥ 그리기 · 왼쪽 ⌘ 세 번 탭 30pt 글씨 · fn 지우기", interval: 5, owner: "draw")
             drawOverlay.onActivity = { WorkerRegistry.shared.recordRun("draw-overlay") }
             drawOverlay.start()
         } else {
             r.unregister(id: "draw-overlay")
             drawOverlay.stop()
+        }
+
+        // 카메라 지킴이: installing the plugin arms the guard (개더 실행 중 keep-alive로
+        // 자리비움 카메라-끄기 방지 + 꺼짐 지속 시 알림). The card's on/off
+        // (Settings.cameraGuardOn) pauses it without uninstalling. start/stop are
+        // idempotent, so re-syncing is safe.
+        if pluginStore.isConnected("camera-guard") && Settings.shared.cameraGuardOn {
+            r.register(id: "camera-watch", name: "카메라 지킴이",
+                       detail: "개더 실행 중 카메라 상시-ON — keep-alive · 꺼짐 지속 시 알림",
+                       interval: 2, owner: "camera-guard")
+            cameraWatch.start()
+        } else {
+            r.unregister(id: "camera-watch")
+            cameraWatch.stop()
         }
     }
 
@@ -814,6 +1042,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WorkerRegistry.shared.recordRun("heartbeat")
         // Reap idle/exited background CLI sessions once a minute.
         if tick % 60 == 0 { cliReapIdle() }
+        // Slack 수집 데몬 워치독 — 하트비트가 끊겼으면 스스로 되살린다. 평상시엔
+        // 파일 조회 한 번이라 가볍고, 죽었을 때만 launchctl을 부른다 (off-thread:
+        // Process 실행이 메인 스레드를 잡으면 UI가 멈춘다).
+        if tick % 30 == 0 {
+            DispatchQueue.global(qos: .utility).async { SlackHealth.watchdogTick() }
+        }
         let s = Settings.shared
         // CM_FAKE_FRONT overrides the frontmost app (tests).
         let frontBundle = ProcessInfo.processInfo.environment["CM_FAKE_FRONT"]
@@ -982,6 +1216,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Quality check: every 30s confirm each session-linked goal's transcript is
             // resolvable. Any missing → 데이터 싱크 오류 (red status + error log line).
             if tick % 30 == 0 { runClaudeSyncCheck() }
+
+            // The hooks title a goal at event time only — before the first turn the
+            // transcript holds no title source, so the goal keeps its placeholder and
+            // nothing ever re-reads it. Sweep those back up every 30s (file IO, cheap:
+            // hopeless ids are probed once per app run).
+            if tick % 30 == 0 { repairSessionTitles() }
         }
 
         // 컨디션 메이트: every 30s, the active mate reads the situation and hands the director
@@ -1111,6 +1351,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 break
             }
         }
+    }
+
+    // Re-title session goals still sitting on the "Claude 세션 <id>" placeholder
+    // (title-repair worker, 30s). The hooks title a goal from the transcript at event
+    // time, which is fire-and-forget: on the first events the transcript holds no title
+    // source yet, and nothing re-reads it afterwards — so a goal can stay unnamed for
+    // its whole life even though its transcript grew a perfectly good title minutes
+    // later. This is the pull-based repair, same priority ladder as the hook
+    // (override > ai-title > custom-title > first prompt), and it deliberately covers
+    // every status: most stranded placeholders are already 완료.
+    private func repairSessionTitles() {
+        var fixed = 0, lastTitle = ""
+        for goal in reviewStore.goals {
+            guard !goal.sessionId.isEmpty,
+                  goal.text == "Claude 세션 \(goal.sessionId.prefix(8))",
+                  !titleRepairHopeless.contains(goal.sessionId) else { continue }
+            guard let url = resolveTranscript(goal) else {
+                titleRepairHopeless.insert(goal.sessionId)   // no transcript exists; never will
+                continue
+            }
+            let title = transcriptTitle(url)
+            guard !title.isEmpty else { continue }           // transcript exists but is still title-less
+            reviewStore.setGoalTitle(id: goal.id, title: title)
+            fixed += 1
+            lastTitle = title
+        }
+        WorkerRegistry.shared.recordRun("title-repair",
+            why: fixed > 0 ? "제목 없는 세션 목표 \(fixed)개 트랜스크립트에서 재명명"
+                           : "제목 없는 세션 목표 점검 — 복구 대상 없음",
+            effect: fixed > 0 ? "최근 복구: '\(lastTitle.count > 40 ? String(lastTitle.prefix(40)) + "…" : lastTitle)'"
+                              : "변경 없음")
     }
 
     // Quality check for the Claude Desktop plugin (claude-sync-check worker, 30s). For
@@ -1511,6 +1782,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // don't hijack ⌘⇧M / ⌥⌘S etc. Returns nil to swallow the event, or the event to let it pass.
     private func handleShortcut(_ event: NSEvent) -> NSEvent? {
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // ⌃⌘N — 레일의 사이드바 버튼(⊞)과 똑같은 3단계 순환. 마우스 없이 레일 접기 → 메모장만 →
+        // 원래대로 를 오간다. 전역(Carbon) 등록이 아니라 이 앱이 앞에 있을 때만 잡는 이유: ⌃⌘N 은
+        // Finder 의 '선택 항목으로 새 폴더'라서 전역으로 뺏으면 남의 앱을 망가뜨린다.
+        // 토글할 화면이 없으면 이벤트를 그대로 흘려보낸다.
+        if mods == [.command, .control], event.keyCode == 45 {  // kVK_ANSI_N
+            return appWindow.cycleRailStage() ? nil : event
+        }
         guard mods == .command else { return event }
         // Match the physical key (keyCode), not the typed character: with a Korean input source
         // active, charactersIgnoringModifiers is "ㅡ"/"ㄴ" rather than "m"/"s", so a character
@@ -1533,7 +1811,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyMuteToSurfaces()
         ActionLog.shared.append(actionEvent(session.isMuted ? "mute" : "unmute",
             detail: session.isMuted ? "음소거 켬" : "음소거 해제"))
-        AppLog.log("⌘M mute -> \(session.isMuted) (windowOpen=\(appWindow.isOpen) nativeMuted=\(audio.muted))")
+        AppLog.log("mute toggle (⌘M / 전역 ⌃⌘M) -> \(session.isMuted) (windowOpen=\(appWindow.isOpen) nativeMuted=\(audio.muted))")
     }
 
     // The one place that writes audio.muted for the mute axis. Native output reflects the user's
@@ -1570,6 +1848,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let path = ProcessInfo.processInfo.environment["CM_SCAN_DIR"] ?? Settings.shared.musicFolderPath
         guard let path else { return }
         library.load(folderPath: path)
+        // Per-track authoring tags live NEXT TO the scanned folder (read-only join
+        // by relative path), so any rescan re-reads them from the same root.
+        bgmTags.load(musicRoot: path)
         if ProcessInfo.processInfo.environment["CM_DEBUG"] != nil {
             let range = library.bpmRange.map { " range \(Int($0.min))-\(Int($0.max))" } ?? ""
             FileHandle.standardError.write(
@@ -1627,6 +1908,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func toggleMusic() {
         Settings.shared.musicEnabled.toggle()
         if !Settings.shared.musicEnabled { director.stop() }
+    }
+
+    // 메뉴바 위젯의 드로우 전체 on/off. Same source of truth as the plugin card's
+    // sub-switch (POST /api/draw/enabled): flips Settings.drawEnabled and resyncs the
+    // plugin workers, so turning it off stops the key poller immediately and wipes any
+    // strokes off the screen (잘못된 조작이 잦아 위젯에서 바로 끄고 켜기 위한 것).
+    func toggleDraw() {
+        Settings.shared.drawEnabled.toggle()
+        let on = Settings.shared.drawEnabled
+        ActionLog.shared.append(actionEvent(on ? "drawOn" : "drawOff",
+            detail: on ? "드로우 켬 (메뉴)" : "드로우 끔 (메뉴)"))
+        syncPluginWorkers()
+    }
+
+    // 메뉴바 위젯의 카메라 지킴이 on/off. Same source of truth as the plugin card's
+    // sub-switch (POST /api/camera/enabled): flips Settings.cameraGuardOn and resyncs
+    // the plugin workers, so the guard (개더 자리비움 카메라-끄기 방지) starts/stops
+    // immediately without uninstalling the plugin.
+    func toggleCameraGuard() {
+        Settings.shared.cameraGuardOn.toggle()
+        let on = Settings.shared.cameraGuardOn
+        ActionLog.shared.append(actionEvent(on ? "cameraGuardOn" : "cameraGuardOff",
+            detail: on ? "카메라 지킴이 켬 (메뉴)" : "카메라 지킴이 끔 (메뉴)"))
+        syncPluginWorkers()
     }
 
     // Explicit on/off for the BGM system, used by the dashboard BGM view's remote control
@@ -2199,6 +2504,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               var ctrl='';
               if(w.toggleable) ctrl+=' <button class="btn" onclick="toggleWorker(\\''+esc(w.id)+'\\','+off+')">'+(off?'켜기':'끄기')+'</button>';
               if(w.runnable) ctrl+=' <button class="btn" title="지금 한 번 실행" onclick="runWorker(this,\\''+esc(w.id)+'\\')"'+(off?' disabled':'')+'>즉시 실행</button>';
+              // 앱 밖 프로세스(Slack 수집 데몬, 자동 빌더)는 여기서 직접 되살릴 수 있어야
+              // 한다 — 앱이 자동으로 복구하지만, 사용자가 지금 당장 확인하고 싶을 때의 수동 경로.
+              if(w.restartable) ctrl+=' <button class="btn" title="이 워커를 다시 시작합니다 (앱이 자동 복구에 실패했을 때)" onclick="restartDaemon(this,\\''+esc(w.id)+'\\')"'+(off?' disabled':'')+'>다시 연결</button>';
               return '<tr'+(w.error&&!off?' style="background:rgba(226,102,125,0.08)"':'')+(off?' style="opacity:0.6"':'')+'><td><b>'+esc(w.name)+'</b></td>'
                 +'<td>'+ownerLabel(w.owner,w.manual)+'</td>'
                 +'<td class="muted">'+esc(w.detail)+'</td>'
@@ -2213,6 +2521,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           function toggleWorker(id,wasOff){ post('/api/worker/toggle',{id:id,enabled:wasOff}).then(function(){ setTimeout(load,300); }); }
           function runWorker(btn,id){ if(btn){ btn.disabled=true; btn.textContent='실행 중…'; }
             post('/api/worker/run',{id:id}).then(function(){ setTimeout(load,1500); }); }
+          function restartDaemon(btn,id){ if(btn){ btn.disabled=true; btn.textContent='다시 시작 중…'; }
+            post('/api/worker/restart',{id:id}).then(function(){ setTimeout(load,2500); }); }
           function tickWorkers(){ if(!_workers.length) return;
             var elapsed=Math.floor((performance.now()-_workersBase)/1000);
             _workers.forEach(function(w,i){
@@ -2566,7 +2876,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // the heavier /data.json so any page (dashboard, goal) can poll it cheaply.
     func sessionStateJSON() -> String {
         DispatchQueue.main.sync {
-            // Current sprint's wall-clock window (epoch secs) so the dial's 스프린트 mode can count
+            // Current sprint's wall-clock window (epoch secs) so the dial's 루프 mode can count
             // down to the sprint target; 0 when no sprint exists.
             let sp = self.reviewStore.currentSprint
             let spStart = sp?.startAt.map { Int($0.timeIntervalSince1970) } ?? 0
@@ -2625,6 +2935,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             + "\"dev\":\(AppPaths.isDev)}"
     }
 
+    // GET /api/memo — the one global 메모장 text (MemoStore). `chars` is a convenience for
+    // the pad's "n자 · 저장됨" meta so the client doesn't have to recount on load.
+    // `rev` is the revision the pad must echo back as `base` when it saves — the stale-
+    // writer gate that keeps one long-lived webview from wiping another's lines.
+    func memoJSON() -> String {
+        let m = MemoStore.shared.current
+        return "{\"text\":\(jsonString(m.text)),\"updatedAt\":\(Int(m.updatedAt)),"
+            + "\"rev\":\(m.rev),\"chars\":\(m.text.count)}"
+    }
+
+    // GET /api/memo/history — 메모장의 지난 판 목록(memo-history.jsonl, 최신순). 패드의
+    // 히스토리 메뉴가 이 목록으로 "지워진 장문"을 눈으로 찾아 복원한다. 복원 자체는 별도
+    // API 가 아니라 평범한 POST /api/memo(판번호 게이트 포함)로 돌아간다 — 길이 하나면 충분.
+    func memoHistoryJSON() -> String {
+        let rows = MemoStore.shared.history().map {
+            "{\"t\":\(Int($0.t)),\"rev\":\($0.rev),\"kind\":\(jsonString($0.kind)),"
+                + "\"chars\":\($0.text.count),\"text\":\(jsonString($0.text))}"
+        }
+        return "{\"items\":[\(rows.joined(separator: ","))]}"
+    }
+
+    // GET /api/memo/tags?k=담당&q=isma — 메모장 칸의 태그 후보(MemoTagStore).
+    // `canCreate` 는 "이 글자로 만들 태그가 아직 없다" 는 뜻 — 패드는 그때만 만들기 버튼을
+    // 내민다. 알 수 없는 칸 이름은 빈 목록으로 조용히 돌려보낸다(실패 배너 없음 — 앱 규칙).
+    func memoTagsJSON(kind: String, query: String) -> String {
+        guard MemoTagStore.isKind(kind) else { return "{\"tags\":[],\"canCreate\":false}" }
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hits = MemoTagStore.shared.search(kind: kind, query: q)
+        let rows = hits.map { "{\"name\":\(jsonString($0.name)),\"count\":\($0.count)}" }
+        let canCreate = !q.isEmpty && !MemoTagStore.shared.exists(kind: kind, name: q)
+        return "{\"tags\":[\(rows.joined(separator: ","))],\"canCreate\":\(canCreate)}"
+    }
+
+    // GET /api/memo/parent-suggest?title=…&no=N — 메모장 부모 칸 드롭다운의 데이터.
+    // `recent` = 최근 쓴 부모 번호(MRU, 최신이 먼저). 보드 부모# 와 같은 Settings 목록을
+    // 공유한다 — 골번호 공간이 하나이므로 "무엇 아래에 모으는가" 라는 습관도 하나다.
+    // `sug` = 이 줄 제목에 대한 AI 후보(ParentSuggest.rank). 자동 부착이 아니라 사용자가
+    // 열어 읽는 목록이므로 보드 고스트의 침묵 게이트는 걸지 않는다(rank 의 주석 참조).
+    // 보드에 없는 번호(메모 줄 번호)는 t 가 비어 온다 — 패드가 메모 안 제목으로 채운다.
+    // 폴더 토큰 스캔은 하지 않는다: 칸 포커스마다 동기로 도는 길이라 디스크를 걷지 않는
+    // 것이 우선이고, 제목+자식 프로필만으로도 후보는 선다. `no` = 이 줄 자신의 골번호 —
+    // 자기 자신을 부모로 권하지 않기 위해 양쪽 목록에서 뺀다.
+    func memoParentSuggestJSON(title: String, no: Int) -> String {
+        var goals: [ReviewStore.Goal] = []
+        DispatchQueue.main.sync { goals = self.reviewStore.goals }
+        let bySeq = Dictionary(goals.map { ($0.seq, $0) }, uniquingKeysWith: { a, _ in a })
+        let recent = Settings.shared.recentParentSeqs.filter { $0 != no }
+        let recentRows = recent.map {
+            "{\"n\":\($0),\"t\":\(jsonString(bySeq[$0]?.text ?? ""))}"
+        }
+        var sugRows: [String] = []
+        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !t.isEmpty {
+            let input = goals.map {
+                ParentSuggest.GoalIn(seq: $0.seq, id: $0.id, title: $0.text, parentId: $0.parent,
+                                     sprint: $0.sprint, archived: $0.archived, released: $0.released)
+            }
+            sugRows = ParentSuggest.rank(title: t, goals: input, recentParentSeqs: recent)
+                .filter { $0.parentSeq != no }
+                .map { "{\"n\":\($0.parentSeq),\"t\":\(jsonString(bySeq[$0.parentSeq]?.text ?? "")),"
+                    + "\"why\":\(jsonString($0.why))}" }
+        }
+        return "{\"recent\":[\(recentRows.joined(separator: ","))],"
+            + "\"sug\":[\(sugRows.joined(separator: ","))]}"
+    }
+
     // GET /api/settings/timezone — the display-timezone setting for the rail's 설정 menu.
     // `tz` is the stored value ("system" | IANA id), `effective` the resolved zone, `label`
     // the human form ("KST (UTC+9)"). Timestamps are stored as epoch (UTC-based) throughout;
@@ -2642,6 +3018,149 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             + "\"label\":\(jsonString(label))}"
     }
 
+    // GET/POST /api/settings/gateway — how the app authenticates the `claude` CLI it spawns.
+    // "auto" injects nothing (the CLI uses its own local login / OAuth); "gateway" injects
+    // ANTHROPIC_BASE_URL plus a token read from the named Keychain item. Only `hasKey` (a
+    // bool) leaves the app — never the token itself.
+    func settingsGatewayJSON() -> String {
+        let s = Settings.shared
+        let mode = s.gatewayMode == "gateway" ? "gateway" : "auto"
+        let hasKey = mode == "gateway" && Self.gatewayToken() != nil
+        let baseSet = !s.gatewayBaseURL.trimmingCharacters(in: .whitespaces).isEmpty
+        let status: String
+        if mode == "auto" {
+            status = "자동 · 로컬 Claude 로그인 사용"
+        } else if !baseSet {
+            status = "게이트웨이 · URL 미설정"
+        } else if hasKey {
+            status = "게이트웨이 · 토큰 확인됨"
+        } else {
+            status = "게이트웨이 · 키체인 항목을 찾지 못함"
+        }
+        // Carry the last 연결 확인 result so a freshly opened 설정 패널 shows 연결됨/문제
+        // immediately instead of a blank row until the user presses 확인.
+        var last = ""
+        if let l = Self.lastGatewayState {
+            last = ",\"state\":\(jsonString(l.state)),\"detail\":\(jsonString(l.detail)),"
+                + "\"hint\":\(jsonString(l.hint)),\"checkedAgo\":\(Int(Date().timeIntervalSince(l.at)))"
+        }
+        return "{\"mode\":\(jsonString(mode)),\"baseURL\":\(jsonString(s.gatewayBaseURL)),"
+            + "\"scheme\":\(jsonString(s.gatewayScheme)),"
+            + "\"keyService\":\(jsonString(s.gatewayKeyService)),"
+            + "\"keyAccount\":\(jsonString(s.gatewayKeyAccount)),"
+            + "\"keyAccountEffective\":\(jsonString(s.gatewayKeyAccount.isEmpty ? NSUserName() : s.gatewayKeyAccount)),"
+            + "\"hasKey\":\(hasKey),\"status\":\(jsonString(status))"
+            + last + "}"
+    }
+
+    // POST /api/settings/gateway/test — a real end-to-end check of the 연결 settings, run in
+    // the order the failures actually happen so the user is told WHICH link broke rather than
+    // a generic "실패": CLI present → gateway host reachable (this is where a VPN that is not
+    // up shows itself) → Keychain token readable → one headless `claude -p` round trip.
+    //
+    // `state` drives the UI: ok(연결됨) / needLogin(로그인 필요) / unreachable(네트워크·VPN) /
+    // noKey / noCLI / badAuth / error. Only the CLI's own output is echoed back — a token can
+    // never appear in it, and nothing here is logged beyond the state.
+    func gatewayTestJSON() -> String {
+        let s = Settings.shared
+        let gateway = s.gatewayMode == "gateway"
+
+        func result(_ state: String, _ detail: String, _ hint: String = "") -> String {
+            Self.lastGatewayState = (state, detail, hint, Date())
+            AppLog.log("gateway check state=\(state) mode=\(s.gatewayMode)")
+            return "{\"state\":\(jsonString(state)),\"ok\":\(state == "ok"),"
+                + "\"detail\":\(jsonString(detail)),\"hint\":\(jsonString(hint))}"
+        }
+
+        guard let claude = Self.resolveClaude() else {
+            return result("noCLI", "claude CLI를 찾지 못했습니다",
+                          "터미널에서 claude 를 설치한 뒤 다시 확인하세요")
+        }
+        if gateway {
+            let base = s.gatewayBaseURL.trimmingCharacters(in: .whitespaces)
+            if base.isEmpty {
+                return result("error", "게이트웨이 URL이 비어 있습니다", "게이트웨이 URL을 입력하세요")
+            }
+            // Reachability first: on a machine that needs the VPN, an un-connected VPN fails
+            // here (DNS or TLS), and saying so is far more useful than the CLI's auth error.
+            // Reuses the 네트워크 진단 probe so both surfaces judge reachability identically.
+            let snap = DiagProbe.run(hosts: [base])
+            let host = (snap["hosts"] as? [[String: Any]])?.first
+            let dnsOk = (host?["dnsOk"] as? Bool) ?? false
+            let httpOk = (host?["httpOk"] as? Bool) ?? false
+            if !dnsOk || !httpOk {
+                let vpnActive = (snap["vpnActive"] as? Bool) ?? false
+                let why = (host?["error"] as? String) ?? "연결 실패"
+                let hint = vpnActive
+                    ? "VPN은 연결돼 있습니다 — 게이트웨이 URL과 네트워크를 확인하세요"
+                    : "VPN이 연결돼 있지 않습니다 — VPN을 연결한 뒤 다시 확인하세요"
+                return result("unreachable", "게이트웨이에 연결할 수 없습니다 (\(why))", hint)
+            }
+            guard let token = Self.gatewayToken(), !token.isEmpty else {
+                return result("noKey", "키체인 항목 '\(s.gatewayKeyService)'에서 토큰을 읽지 못했습니다",
+                              "키체인 항목 이름과 계정을 확인하세요 (계정: \(s.gatewayKeyAccount.isEmpty ? NSUserName() : s.gatewayKeyAccount))")
+            }
+        }
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-lc", "\(Self.shellQuote(claude)) -p --output-format text 2>&1"]
+        p.environment = Self.claudeEnv()
+        let inPipe = Pipe(), outPipe = Pipe()
+        p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
+        do { try p.run() } catch {
+            return result("error", "claude 를 실행하지 못했습니다")
+        }
+        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 40, execute: killer)
+        inPipe.fileHandleForWriting.write(Data("Reply with the single word OK.".utf8))
+        try? inPipe.fileHandleForWriting.close()
+        let d = outPipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit(); killer.cancel()
+        let out = String(decoding: d, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let low = out.lowercased()
+        let firstLine = String(String(out.split(separator: "\n").first ?? "").prefix(160))
+
+        if out.isEmpty {
+            return result("error", "응답이 없습니다", "잠시 후 다시 확인하세요")
+        }
+        if low.contains("not logged in") || low.contains("please run /login") || low.contains("/login") {
+            return result("needLogin", "Claude CLI에 로그인돼 있지 않습니다",
+                          gateway ? "게이트웨이 토큰이 거부됐거나 로그인이 필요합니다"
+                                  : "아래 '로그인 열기'를 눌러 터미널에서 로그인하세요")
+        }
+        if low.contains("invalid api key") || low.contains("authentication_error")
+            || low.contains("unauthorized") || low.contains("401") {
+            return result("badAuth", "인증이 거부됐습니다 — \(firstLine)",
+                          gateway ? "키체인 토큰이 만료됐는지 확인하세요" : "로그인 상태를 확인하세요")
+        }
+        if p.terminationStatus != 0 {
+            return result("error", firstLine, "잠시 후 다시 확인하세요")
+        }
+        return result("ok", "연결됨 — 응답 \"\(firstLine)\"")
+    }
+
+    // Last check outcome, so the 설정 패널이 열릴 때 즉시 지난 결과(연결됨/문제)를 보여줄 수
+    // 있다. In-memory only — a fresh launch starts at "unknown" and the panel re-checks.
+    static var lastGatewayState: (state: String, detail: String, hint: String, at: Date)?
+
+    // POST /api/settings/gateway/login — the "로그인 필요" action. Opens Terminal.app running
+    // `claude /login`: the CLI's OAuth flow is interactive, so it cannot run headless inside
+    // the app. The command is a fixed literal (no caller input) — the page cannot make this
+    // run anything else.
+    func gatewayLoginJSON() -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        p.arguments = ["-e", "tell application \"Terminal\" to activate",
+                       "-e", "tell application \"Terminal\" to do script \"claude /login\""]
+        do { try p.run() } catch {
+            return "{\"ok\":false,\"detail\":\(jsonString("터미널을 열지 못했습니다 — 직접 claude /login 을 실행하세요"))}"
+        }
+        // Any later check should re-probe rather than show the stale pre-login state.
+        Self.lastGatewayState = nil
+        return "{\"ok\":true,\"detail\":\(jsonString("터미널에서 claude /login 을 실행했습니다 — 로그인 후 다시 확인하세요"))}"
+    }
+
     // GET/POST /api/settings/diag-hosts — the 네트워크 진단 target host list. Returns the
     // effective list (defaults applied), so the 진단 tab always shows at least the HRIS host.
     func diagHostsJSON() -> String {
@@ -2657,11 +3176,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // go to update.log and the action log only, never to the rail UI.
     private var updateFailedSrcAt: TimeInterval?
 
+    // The staged-build handshake: <data>/updates/staged.json, written by
+    // Scripts/build-app.sh --stage (driven by the autobuild watcher). Absent = no
+    // background builder installed, and everything falls back to the original
+    // build-on-demand model below.
+    struct StagedBuild {
+        let state: String        // building | ready | failed
+        let buildStart: TimeInterval  // the staged bundle's CMBuildStart
+        let srcAt: TimeInterval  // newest source mtime that build covers
+        let at: TimeInterval     // when the stager last wrote
+        let commit: String
+    }
+    static var stagedDir: URL { AppPaths.base.appendingPathComponent("updates", isDirectory: true) }
+    static func readStagedBuild() -> StagedBuild? {
+        let url = stagedDir.appendingPathComponent("staged.json")
+        guard let data = try? Data(contentsOf: url),
+              let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let state = o["state"] as? String
+        else { return nil }
+        let num: (String) -> TimeInterval = { k in
+            if let d = o[k] as? Double { return d }
+            if let i = o[k] as? Int { return TimeInterval(i) }
+            if let s = o[k] as? String { return TimeInterval(s) ?? 0 }
+            return 0
+        }
+        return StagedBuild(state: state, buildStart: num("buildStart"), srcAt: num("srcAt"),
+                           at: num("at"), commit: (o["commit"] as? String) ?? "")
+    }
+
     // GET /api/update/check — "is a newer build available?" for the rail's 업데이트 button.
-    // Local-source model, no update server: an update exists when any source file in the
-    // repo (its path stamped into the bundle as CMSourceRoot by Scripts/build-app.sh) is
-    // newer than this executable. Dev builds and raw runs have no stamp -> always false
-    // (dev-watch owns their rebuild loop).
+    //
+    // Two models, staged first:
+    //  (1) STAGED — a background builder (Scripts/autobuild-watch.sh) has already compiled
+    //      the new sources into <data>/updates/. Then "available" means a finished bundle
+    //      is sitting there, and pressing 업데이트 is a ~2s copy. While that build is still
+    //      running we report preparing:true so the rail can say 준비 중 instead of going
+    //      silent for 40 seconds — the point of the split is that the user never waits on a
+    //      compile they didn't ask for.
+    //  (2) SOURCE MTIME (fallback, the original model) — no builder installed, so the only
+    //      signal is "sources are newer than this binary" and pressing the button compiles
+    //      then and there.
+    // Dev builds and raw runs have no CMSourceRoot stamp -> always false (dev-watch owns
+    // their rebuild loop).
     func updateCheckJSON() -> String {
         guard let root = Bundle.main.object(forInfoDictionaryKey: "CMSourceRoot") as? String,
               !root.isEmpty,
@@ -2669,6 +3225,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let built = (try? FileManager.default.attributesOfItem(atPath: exe.path))?[.modificationDate] as? Date
         else { return "{\"available\":false}" }
         let src = Self.latestSourceMTime(root: root)
+        let ownBuildStart = (Bundle.main.object(forInfoDictionaryKey: "CMBuildStart") as? String)
+            .flatMap(TimeInterval.init) ?? (built.timeIntervalSince1970 + 2)
+
+        // (1) Staged model. Once a builder is installed it is the ONLY authority — the
+        // source-mtime path below would otherwise light the button the instant a file is
+        // saved and drag the user back into a blocking compile.
+        if let st = Self.readStagedBuild() {
+            let newer = st.buildStart > ownBuildStart
+            switch st.state {
+            case "ready" where newer:
+                // Ready, and possibly already behind again if edits continued after it
+                // started — say so rather than implying the button ships the latest save.
+                let behind = src > st.srcAt + 0.5
+                return "{\"available\":true,\"staged\":true,\"behind\":\(behind),"
+                    + "\"builtAt\":\(Int(st.at)),\"srcAt\":\(Int(src)),"
+                    + "\"commit\":\(jsonString(st.commit))}"
+            case "building":
+                return "{\"available\":false,\"staged\":true,\"preparing\":true,"
+                    + "\"since\":\(Int(st.at)),\"srcAt\":\(Int(src))}"
+            case "failed":
+                // Quiet for the user (no-user-facing-failure): no button, no banner. The
+                // 시스템 페이지 autobuild worker row carries the error, and the next save
+                // triggers a fresh attempt.
+                return "{\"available\":false,\"staged\":true,\"deferred\":true,\"srcAt\":\(Int(src))}"
+            default:
+                // ready-but-not-newer (already applied), or an unknown state: nothing to do.
+                return "{\"available\":false,\"staged\":true,\"srcAt\":\(Int(src))}"
+            }
+        }
         // A build already failed for this exact tree state: report unavailable (plus a
         // deferred flag so an in-flight "업데이트 중…" button can quietly stand down).
         // The moment any source changes the failure snapshot is stale — clear it and
@@ -2679,16 +3264,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             updateFailedSrcAt = nil
         }
-        // Compare against the BUILD START stamp when present: sources saved while the
-        // (multi-minute) build ran are not in this binary, and the exe mtime — stamped
-        // at the end of the build — would hide them until the next unrelated save. With
-        // the stamp, a relaunch offers those pending changes immediately, so the rail
-        // button is already visible during the 5s launch countdown.
-        // Fallback (older builds without the stamp): exe mtime +2s slack — assembly
-        // copies the binary moments after compiling the same sources.
-        let builtRef = (Bundle.main.object(forInfoDictionaryKey: "CMBuildStart") as? String)
-            .flatMap(TimeInterval.init) ?? (built.timeIntervalSince1970 + 2)
-        let available = src > builtRef
+        // (2) Source-mtime fallback. ownBuildStart is the BUILD START stamp when present:
+        // sources saved while the (multi-minute) build ran are not in this binary, and the
+        // exe mtime — stamped at the end of the build — would hide them until the next
+        // unrelated save. With the stamp, a relaunch offers those pending changes
+        // immediately, so the rail button is already visible during the 5s launch
+        // countdown. Older builds without the stamp fall back to exe mtime +2s slack.
+        let available = src > ownBuildStart
         return "{\"available\":\(available),\"builtAt\":\(Int(built.timeIntervalSince1970)),"
             + "\"srcAt\":\(Int(src))}"
     }
@@ -2790,7 +3372,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for f in inner where f.pathExtension == "jsonl" { files.append(f) }
         }
 
-        var totals: [String: Int] = [:]           // day -> tokens
+        var totals: [String: DayTok] = [:]        // day -> aggregated stats
         var sessionsPerDay: [String: Set<String>] = [:]  // day -> distinct session files that spent tokens
         for f in files {
             let rv = try? f.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
@@ -2800,9 +3382,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             let perDay = tokensByDay(file: f, mtime: mtime, size: size)
             let sid = f.deletingPathExtension().lastPathComponent
-            for (day, tok) in perDay {
-                totals[day, default: 0] += tok
-                sessionsPerDay[day, default: []].insert(sid)
+            for (day, st) in perDay {
+                var t = totals[day, default: DayTok()]
+                t.spent += st.spent; t.inTok += st.inTok; t.outTok += st.outTok
+                t.thinkTok += st.thinkTok; t.textTok += st.textTok; t.toolTok += st.toolTok
+                t.typedTok += st.typedTok; t.imgN += st.imgN; t.imgBytes += st.imgBytes
+                t.imgTok += st.imgTok; t.toolResTok += st.toolResTok; t.reloadTok += st.reloadTok
+                t.aiSec += st.aiSec
+                for (m, u) in st.models {
+                    var mu = t.models[m, default: ModelUse()]
+                    mu.inTok += u.inTok; mu.cacheRead += u.cacheRead
+                    mu.cache5m += u.cache5m; mu.cache1h += u.cache1h; mu.outTok += u.outTok
+                    t.models[m] = mu
+                }
+                t.leads.append(contentsOf: st.leads)
+                totals[day] = t
+                if st.spent > 0 { sessionsPerDay[day, default: []].insert(sid) }
             }
         }
 
@@ -2812,51 +3407,538 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Emit only in-window days (a long session can carry an out-of-window day), newest first.
         let minDay = dayFmt.string(from: cutoff)
         let rows = totals.keys.filter { $0 >= minDay }.sorted(by: >).map { day -> String in
-            let tokK = Int((Double(totals[day] ?? 0) / 1000.0).rounded())   // tokens -> K, matches UI unit
+            let st = totals[day] ?? DayTok()
+            let tokK = Int((Double(st.spent) / 1000.0).rounded())   // tokens -> K, matches UI unit
             let sess = sessionsPerDay[day]?.count ?? 0
-            return "{\"day\":\(jsonString(day)),\"tokens\":\(totals[day] ?? 0),\"k\":\(tokK),"
-                + "\"sessions\":\(sess),\"activeSec\":\(activeSec[day] ?? 0)}"
+            let leads = st.leads.sorted()
+            let leadN = leads.count
+            let leadSum = Int(leads.reduce(0, +).rounded())
+            let leadMed = leadN > 0 ? Int(leads[leadN / 2].rounded()) : 0
+            return "{\"day\":\(jsonString(day)),\"tokens\":\(st.spent),\"k\":\(tokK),"
+                + "\"sessions\":\(sess),\"activeSec\":\(activeSec[day] ?? 0),"
+                + "\"inTok\":\(st.inTok),\"outTok\":\(st.outTok),\"thinkTok\":\(st.thinkTok),"
+                + "\"textTok\":\(st.textTok),\"toolTok\":\(st.toolTok),"
+                + "\"typedTok\":\(st.typedTok),\"imgN\":\(st.imgN),\"imgBytes\":\(st.imgBytes),"
+                + "\"imgTok\":\(st.imgTok),\"toolResTok\":\(st.toolResTok),\"reloadTok\":\(st.reloadTok),"
+                + "\"aiSec\":\(st.aiSec),"
+                + "\"models\":\(modelsJSON(st.models)),"
+                + "\"leadN\":\(leadN),\"leadSum\":\(leadSum),\"leadMed\":\(leadMed)}"
         }
         return "{\"days\":[\(rows.joined(separator: ","))]}"
     }
 
-    // Parse one transcript into per-local-day token totals (input + output + cache-creation;
-    // cache_read excluded to avoid replayed-context inflation). Cached by (mtime,size) so an
-    // unchanged file is never re-parsed — the live/growing session re-parses, completed ones
-    // stay cached. Shared by the daily timeline and the per-session goal total.
-    private func tokensByDay(file: URL, mtime: Date, size: Int) -> [String: Int] {
+    // GET /tokens-sessions.json?day=YYYY-MM-DD — per-session breakdown for one day: each
+    // session's spend, composition, per-model usage (for $-cost), lead times, and a
+    // readable title. This is the drill-down under a day row in the token view, added
+    // because the day-level "컨텍스트 82%" number was distrusted — per-session numbers
+    // let the user verify where it comes from.
+    func dashboardTokenSessions(_ path: String) -> String {
+        guard let day = URLComponents(string: "http://x" + path)?.queryItems?
+            .first(where: { $0.name == "day" })?.value, day.count == 10 else { return "{\"sessions\":[]}" }
+        let fm = FileManager.default
+        var cal = Calendar.current
+        cal.timeZone = Settings.shared.displayTimeZone
+        let dayFmt = DateFormatter()
+        dayFmt.locale = Locale(identifier: "en_US_POSIX")
+        dayFmt.timeZone = Settings.shared.displayTimeZone
+        dayFmt.dateFormat = "yyyy-MM-dd"
+        // A file untouched since before this day began cannot contain the day.
+        guard let dayDate = dayFmt.date(from: day) else { return "{\"sessions\":[]}" }
+        let dayStart = cal.startOfDay(for: dayDate)
+        guard let subs = try? fm.contentsOfDirectory(at: claudeProjectsBase,
+                includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+            return "{\"sessions\":[]}"
+        }
+        var rows: [(spent: Int, json: String)] = []
+        for dir in subs where (try? dir.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            let proj = dir.lastPathComponent.split(separator: "-").suffix(2).joined(separator: "-")
+            let inner = (try? fm.contentsOfDirectory(at: dir,
+                includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey])) ?? []
+            for f in inner where f.pathExtension == "jsonl" {
+                let rv = try? f.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+                let mtime = rv?.contentModificationDate ?? .distantPast
+                if mtime < dayStart { continue }
+                let stats = transcriptStats(file: f, mtime: mtime, size: rv?.fileSize ?? 0)
+                guard let st = stats.days[day], st.spent > 0 else { continue }
+                let sid = f.deletingPathExtension().lastPathComponent
+                let leads = st.leads.sorted()
+                let leadMed = leads.isEmpty ? 0 : Int(leads[leads.count / 2].rounded())
+                let json = "{\"sid\":\(jsonString(String(sid.prefix(8)))),\"proj\":\(jsonString(proj)),"
+                    + "\"title\":\(jsonString(stats.title)),"
+                    + "\"tokens\":\(st.spent),\"k\":\(Int((Double(st.spent) / 1000.0).rounded())),"
+                    + "\"inTok\":\(st.inTok),\"outTok\":\(st.outTok),\"thinkTok\":\(st.thinkTok),"
+                    + "\"textTok\":\(st.textTok),\"toolTok\":\(st.toolTok),"
+                    + "\"typedTok\":\(st.typedTok),\"imgN\":\(st.imgN),\"imgBytes\":\(st.imgBytes),"
+                    + "\"imgTok\":\(st.imgTok),\"toolResTok\":\(st.toolResTok),\"reloadTok\":\(st.reloadTok),"
+                    + "\"aiSec\":\(st.aiSec),"
+                    + "\"models\":\(modelsJSON(st.models)),"
+                    + "\"leadN\":\(leads.count),\"leadMed\":\(leadMed)}"
+                rows.append((st.spent, json))
+            }
+        }
+        rows.sort { $0.spent > $1.spent }
+        return "{\"day\":\(jsonString(day)),\"sessions\":[\(rows.map(\.json).joined(separator: ","))]}"
+    }
+
+    // GET /tokens-detail.json?sid=XXXXXXXX&day=YYYY-MM-DD — 버킷 내용물 드릴다운. 세션 상세의
+    // 구성비를 클릭하면 그 세션·그날의 컨텍스트가 실제로 무엇이었는지 항목 단위로 나열한다:
+    // typed(친 프롬프트 원문 머리), img(첨부 이미지 — 형식·해상도·용량), toolres(도구 결과 —
+    // 어느 도구가 무엇을 읽어왔는지), reload(턴별 재캐시 크기 — 히스토리가 무거워진 지점).
+    // 목적: 세션을 열어 일일이 뒤지지 않고 "무엇이 토큰을 먹는지, 무엇을 잘라낼지" 판단.
+    func dashboardTokenDetail(_ path: String) -> String {
+        let q = URLComponents(string: "http://x" + path)?.queryItems
+        guard let sid = q?.first(where: { $0.name == "sid" })?.value, sid.count >= 6,
+              let day = q?.first(where: { $0.name == "day" })?.value, day.count == 10,
+              sid.allSatisfy({ $0.isHexDigit || $0 == "-" }) else { return "{\"items\":{}}" }
+        let fm = FileManager.default
+        var file: URL?
+        if let subs = try? fm.contentsOfDirectory(at: claudeProjectsBase,
+                includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
+            outer: for dir in subs where (try? dir.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                for f in (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+                    where f.pathExtension == "jsonl" && f.lastPathComponent.hasPrefix(sid) {
+                    file = f; break outer
+                }
+            }
+        }
+        guard let file, let data = try? Data(contentsOf: file) else { return "{\"items\":{}}" }
+
+        let dayFmt = DateFormatter(); dayFmt.locale = Locale(identifier: "en_US_POSIX")
+        dayFmt.timeZone = Settings.shared.displayTimeZone; dayFmt.dateFormat = "yyyy-MM-dd"
+        let hmFmt = DateFormatter(); hmFmt.locale = Locale(identifier: "en_US_POSIX")
+        hmFmt.timeZone = Settings.shared.displayTimeZone; hmFmt.dateFormat = "HH:mm"
+
+        var typed: [(tok: Int, json: String)] = []
+        var imgs: [(tok: Int, json: String)] = []
+        var toolres: [(tok: Int, json: String)] = []
+        var reload: [(tok: Int, json: String)] = []
+        var toolLabel: [String: String] = [:]   // tool_use id -> "Read …/file.swift"
+        var seenMid = Set<String>()
+        func clip(_ s: String, _ n: Int = 110) -> String {
+            let t = s.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+            return t.count > n ? String(t.prefix(n)) + "…" : t
+        }
+
+        String(decoding: data, as: UTF8.self).enumerateLines { line, _ in
+            guard let d = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                  let type = obj["type"] as? String,
+                  let msg = obj["message"] as? [String: Any] else { return }
+            let ts = (obj["timestamp"] as? String).flatMap { self.parseTS($0) }
+            guard let ts, dayFmt.string(from: ts) == day else {
+                // 라벨 맵은 날짜와 무관하게 채운다 — 도구 호출이 전날, 결과가 이날일 수 있다.
+                if type == "assistant", let content = msg["content"] as? [[String: Any]] {
+                    for b in content where (b["type"] as? String) == "tool_use" {
+                        let name = (b["name"] as? String) ?? "?"
+                        let inp = (b["input"] as? [String: Any]) ?? [:]
+                        let arg = (inp["file_path"] as? String) ?? (inp["command"] as? String)
+                            ?? (inp["url"] as? String) ?? (inp["pattern"] as? String)
+                            ?? (inp["query"] as? String) ?? (inp["prompt"] as? String) ?? ""
+                        if let bid = b["id"] as? String { toolLabel[bid] = clip(name + " " + arg, 90) }
+                    }
+                }
+                return
+            }
+            let hm = hmFmt.string(from: ts)
+
+            if type == "assistant" {
+                if let content = msg["content"] as? [[String: Any]] {
+                    for b in content where (b["type"] as? String) == "tool_use" {
+                        let name = (b["name"] as? String) ?? "?"
+                        let inp = (b["input"] as? [String: Any]) ?? [:]
+                        let arg = (inp["file_path"] as? String) ?? (inp["command"] as? String)
+                            ?? (inp["url"] as? String) ?? (inp["pattern"] as? String)
+                            ?? (inp["query"] as? String) ?? (inp["prompt"] as? String) ?? ""
+                        if let bid = b["id"] as? String { toolLabel[bid] = clip(name + " " + arg, 90) }
+                    }
+                }
+                // 턴 재캐시: 요청마다 usage 1회(같은 메시지의 후속 라인은 중복) — input+cache_creation.
+                let mid = (msg["id"] as? String) ?? (obj["requestId"] as? String) ?? (obj["uuid"] as? String) ?? line
+                guard !seenMid.contains(mid) else { return }
+                seenMid.insert(mid)
+                let usage = (msg["usage"] as? [String: Any]) ?? [:]
+                let tok = ((usage["input_tokens"] as? Int) ?? 0) + ((usage["cache_creation_input_tokens"] as? Int) ?? 0)
+                if tok > 0 {
+                    let model = ((msg["model"] as? String) ?? "").replacingOccurrences(of: "claude-", with: "")
+                    reload.append((tok, "{\"t\":\(self.jsonString(hm)),\"tok\":\(tok),\"label\":\(self.jsonString(model))}"))
+                }
+                return
+            }
+
+            guard type == "user" else { return }
+            let sidechain = (obj["isSidechain"] as? Bool) == true
+            if let arr = msg["content"] as? [[String: Any]] {
+                for b in arr where (b["type"] as? String) == "tool_result" {
+                    var tok = 0
+                    if let s = b["content"] as? String { tok = self.estTextTokens(s) }
+                    else if let inner = b["content"] as? [[String: Any]] {
+                        for ib in inner {
+                            switch ib["type"] as? String {
+                            case "text": tok += self.estTextTokens((ib["text"] as? String) ?? "")
+                            case "image":
+                                let src = (ib["source"] as? [String: Any]) ?? [:]
+                                tok += self.estImage(base64: (src["data"] as? String) ?? "").tok
+                            default: break
+                            }
+                        }
+                    }
+                    guard tok > 0 else { continue }
+                    let label = (b["tool_use_id"] as? String).flatMap { toolLabel[$0] } ?? "도구 결과"
+                    toolres.append((tok, "{\"t\":\(self.jsonString(hm)),\"tok\":\(tok),\"label\":\(self.jsonString(label))}"))
+                }
+            }
+            // 사람 프롬프트 + 첨부 이미지 (transcriptStats의 isHuman 판정과 동일 게이트)
+            if !sidechain, (obj["isMeta"] as? Bool) != true, obj["toolUseResult"] == nil {
+                var isHuman = false
+                if let origin = obj["origin"] as? [String: Any] { isHuman = (origin["kind"] as? String) == "human" }
+                else if let s = msg["content"] as? String { isHuman = !s.isEmpty }
+                else if let arr = msg["content"] as? [[String: Any]] {
+                    let kinds = arr.compactMap { $0["type"] as? String }
+                    isHuman = kinds.contains("text") && !kinds.contains("tool_result")
+                }
+                guard isHuman else { return }
+                if let s = msg["content"] as? String {
+                    let tok = self.estTextTokens(s)
+                    if tok > 0 { typed.append((tok, "{\"t\":\(self.jsonString(hm)),\"tok\":\(tok),\"label\":\(self.jsonString(clip(s)))}")) }
+                } else if let arr = msg["content"] as? [[String: Any]] {
+                    for b in arr {
+                        switch b["type"] as? String {
+                        case "text":
+                            let s = (b["text"] as? String) ?? ""
+                            let tok = self.estTextTokens(s)
+                            if tok > 0 { typed.append((tok, "{\"t\":\(self.jsonString(hm)),\"tok\":\(tok),\"label\":\(self.jsonString(clip(s)))}")) }
+                        case "image":
+                            let src = (b["source"] as? [String: Any]) ?? [:]
+                            let b64 = (src["data"] as? String) ?? ""
+                            let est = self.estImage(base64: b64)
+                            let media = ((src["media_type"] as? String) ?? "image").replacingOccurrences(of: "image/", with: "")
+                            let prefix = String(b64.prefix(86400 - 86400 % 4))
+                            let dims = Data(base64Encoded: prefix, options: .ignoreUnknownCharacters).flatMap { self.imageDims($0) }
+                            let label = media + (dims.map { " \($0.w)×\($0.h)" } ?? "")
+                            imgs.append((est.tok, "{\"t\":\(self.jsonString(hm)),\"tok\":\(est.tok),\"bytes\":\(est.bytes),\"label\":\(self.jsonString(label))}"))
+                        default: break
+                        }
+                    }
+                }
+            }
+        }
+
+        // 큰 항목 먼저, 종류별 상한 — 초과분은 개수·토큰 합계로만 알린다(조용한 절단 금지).
+        func pack(_ items: [(tok: Int, json: String)], cap: Int) -> String {
+            let sorted = items.sorted { $0.tok > $1.tok }
+            let kept = sorted.prefix(cap)
+            let dropped = sorted.dropFirst(cap)
+            let more = dropped.isEmpty ? "" : ",\"moreN\":\(dropped.count),\"moreTok\":\(dropped.reduce(0) { $0 + $1.tok })"
+            return "{\"list\":[\(kept.map(\.json).joined(separator: ","))]\(more)}"
+        }
+        return "{\"day\":\(self.jsonString(day)),\"sid\":\(self.jsonString(sid)),\"items\":{"
+            + "\"typed\":\(pack(typed, cap: 100)),\"img\":\(pack(imgs, cap: 100)),"
+            + "\"toolres\":\(pack(toolres, cap: 150)),\"reload\":\(pack(reload, cap: 100))}}"
+    }
+
+    // Parse one transcript into per-local-day token stats (input + output + cache-creation;
+    // cache_read excluded to avoid replayed-context inflation). One API response is written
+    // as several JSONL lines (one per content block) each repeating the SAME usage object,
+    // so usage is counted once per message id — the old per-line sum inflated totals 2-4x.
+    // Also splits output into thinking/text/tool by block character weight, and collects
+    // human prompt lead times. Cached by (mtime,size) so an unchanged file is never
+    // re-parsed. Shared by the daily timeline and the per-session goal total.
+    private func tokensByDay(file: URL, mtime: Date, size: Int) -> [String: DayTok] {
+        return transcriptStats(file: file, mtime: mtime, size: size).days
+    }
+
+    // Rough token estimate for prompt-side text. CJK runs ~1.5-2 chars/token, ASCII ~4;
+    // exact per-block input tokens are not in the transcript, so this is a display estimate.
+    private func estTextTokens(_ s: String) -> Int {
+        var cjk = 0, other = 0
+        for u in s.unicodeScalars {
+            switch u.value {
+            case 0xAC00...0xD7AF, 0x1100...0x11FF, 0x3130...0x318F,   // Hangul
+                 0x3040...0x30FF, 0x4E00...0x9FFF, 0xF900...0xFAFF:   // Kana + CJK ideographs
+                cjk += 1
+            default:
+                other += 1
+            }
+        }
+        return Int((Double(cjk) / 1.6 + Double(other) / 3.9).rounded())
+    }
+
+    // Pixel dimensions from a PNG/JPEG header (nil for other formats or corrupt data).
+    private func imageDims(_ data: Data) -> (w: Int, h: Int)? {
+        let b = [UInt8](data.prefix(65536))
+        if b.count > 24, b[0] == 0x89, b[1] == 0x50 {   // PNG: IHDR width/height at 16..23
+            let w = Int(b[16]) << 24 | Int(b[17]) << 16 | Int(b[18]) << 8 | Int(b[19])
+            let h = Int(b[20]) << 24 | Int(b[21]) << 16 | Int(b[22]) << 8 | Int(b[23])
+            if w > 0, h > 0 { return (w, h) }
+        }
+        if b.count > 4, b[0] == 0xFF, b[1] == 0xD8 {    // JPEG: first SOF segment
+            var i = 2
+            while i + 9 < b.count {
+                guard b[i] == 0xFF else { i += 1; continue }
+                let m = b[i + 1]
+                if m == 0xD8 || (0xD0...0xD7).contains(m) || m == 0x01 { i += 2; continue }
+                if (0xC0...0xCF).contains(m), m != 0xC4, m != 0xC8, m != 0xCC {
+                    let h = Int(b[i + 5]) << 8 | Int(b[i + 6])
+                    let w = Int(b[i + 7]) << 8 | Int(b[i + 8])
+                    return (w > 0 && h > 0) ? (w, h) : nil
+                }
+                i += 2 + (Int(b[i + 2]) << 8 | Int(b[i + 3]))
+            }
+        }
+        return nil
+    }
+
+    // Estimated tokens + raw bytes for one base64 image block. Token formula is the API's
+    // w*h/750 (capped ~1600, the >1568px downscale ceiling); unparseable formats fall back
+    // to a byte-based guess so an image never counts as zero.
+    private func estImage(base64 b64: String) -> (tok: Int, bytes: Int) {
+        let bytes = b64.count * 3 / 4
+        // Decode only a header-sized prefix (multiple of 4 chars) — dims live up front.
+        let prefix = String(b64.prefix(86400 - 86400 % 4))
+        if let d = Data(base64Encoded: prefix, options: .ignoreUnknownCharacters),
+           let dims = imageDims(d) {
+            return (min(1600, dims.w * dims.h / 750), bytes)
+        }
+        return (min(1600, max(300, bytes / 1500)), bytes)
+    }
+
+    // Full per-transcript stats: per-day aggregates + a human-readable session title
+    // (last custom-title line, else the first human prompt's first line).
+    private func transcriptStats(file: URL, mtime: Date, size: Int) -> (days: [String: DayTok], title: String) {
         // Cache key carries the display timezone: switching KST↔UTC moves day boundaries,
         // so per-day splits cached under another zone must not be reused.
         let key = file.path + "|" + Settings.shared.displayTimeZone.identifier
         tokenDayLock.lock()
         let cached = tokenDayCache[key]
         tokenDayLock.unlock()
-        if let c = cached, c.mtime == mtime, c.size == size { return c.days }
+        if let c = cached, c.mtime == mtime, c.size == size { return (c.days, c.title) }
 
-        var perDay: [String: Int] = [:]
+        var perDay: [String: DayTok] = [:]
         let dayFmt = DateFormatter()
         dayFmt.locale = Locale(identifier: "en_US_POSIX")
         dayFmt.timeZone = Settings.shared.displayTimeZone
         dayFmt.dateFormat = "yyyy-MM-dd"   // 표시 타임존 — same day boundary as the rest of the UI
+
+        // Per-message accumulator: usage once, block chars summed across the message's lines.
+        struct MsgAgg { var day = ""; var model = ""; var input = 0; var output = 0; var cc = 0
+                        var cr = 0; var c5m = 0; var c1h = 0
+                        var th = 0; var tx = 0; var tool = 0; var blockSeen = Set<Int>() }
+        var msgs: [String: MsgAgg] = [:]
+        var msgOrder: [String] = []
+        var lastAssistantTS: Date?   // end of the assistant's turn, for prompt lead time
+        var customTitle = ""         // last custom-title line wins
+        var firstPrompt = ""         // first human prompt, fallback title
+        // AI-runtime turn tracking: a turn spans human prompt -> last AI/tool line before
+        // the next human prompt. Idle time after the AI stops is charged to nobody (the
+        // user walking away for 8h must not inflate this), so the turn is closed at
+        // lastAITS, not at the next prompt's timestamp. Sidechain (subagent) lines count —
+        // that's real AI work inside the turn.
+        var turnStart: Date?
+        var turnDay = ""
+        var lastAITS: Date?
+        func closeTurn(_ perDay: inout [String: DayTok]) {
+            if let s = turnStart, let e = lastAITS, e > s {
+                perDay[turnDay, default: DayTok()].aiSec += Int(e.timeIntervalSince(s).rounded())
+            }
+            turnStart = nil
+        }
+
         if let data = try? Data(contentsOf: file) {
             String(decoding: data, as: UTF8.self).enumerateLines { line, _ in
                 guard let d = line.data(using: .utf8),
                       let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-                      (obj["type"] as? String) == "assistant",
-                      let msg = obj["message"] as? [String: Any],
-                      let usage = msg["usage"] as? [String: Any],
-                      let tsStr = obj["timestamp"] as? String,
-                      let ts = self.parseTS(tsStr) else { return }
-                let input = (usage["input_tokens"] as? Int) ?? 0
-                let output = (usage["output_tokens"] as? Int) ?? 0
-                let cc = (usage["cache_creation_input_tokens"] as? Int) ?? 0
-                let spent = input + output + cc
-                if spent == 0 { return }
-                perDay[dayFmt.string(from: ts), default: 0] += spent
+                      let type = obj["type"] as? String else { return }
+                let sidechain = (obj["isSidechain"] as? Bool) == true
+
+                if type == "custom-title" {
+                    if let t = obj["customTitle"] as? String, !t.isEmpty { customTitle = t }
+                    return
+                }
+
+                if type == "assistant" {
+                    guard let msg = obj["message"] as? [String: Any],
+                          let tsStr = obj["timestamp"] as? String,
+                          let ts = self.parseTS(tsStr) else { return }
+                    // A subagent (sidechain) line spends real tokens but does not end the
+                    // human's turn, so it never anchors a lead-time measurement.
+                    if !sidechain { lastAssistantTS = ts }
+                    lastAITS = ts   // any assistant line (sidechain too) extends the AI turn
+                    let mid = (msg["id"] as? String) ?? (obj["requestId"] as? String)
+                        ?? (obj["uuid"] as? String) ?? line
+                    if msgs[mid] == nil {
+                        var a = MsgAgg()
+                        a.day = dayFmt.string(from: ts)
+                        a.model = (msg["model"] as? String) ?? ""
+                        let usage = (msg["usage"] as? [String: Any]) ?? [:]
+                        a.input = (usage["input_tokens"] as? Int) ?? 0
+                        a.output = (usage["output_tokens"] as? Int) ?? 0
+                        a.cc = (usage["cache_creation_input_tokens"] as? Int) ?? 0
+                        a.cr = (usage["cache_read_input_tokens"] as? Int) ?? 0
+                        // Cache-write TTL split (5m=1.25x vs 1h=2x input rate). Older
+                        // transcripts lack the detail — fall back to counting it all as 5m.
+                        if let ccd = usage["cache_creation"] as? [String: Any] {
+                            a.c5m = (ccd["ephemeral_5m_input_tokens"] as? Int) ?? 0
+                            a.c1h = (ccd["ephemeral_1h_input_tokens"] as? Int) ?? 0
+                            if a.c5m + a.c1h == 0 { a.c5m = a.cc }
+                        } else {
+                            a.c5m = a.cc
+                        }
+                        msgs[mid] = a; msgOrder.append(mid)
+                    }
+                    if var a = msgs[mid], let content = msg["content"] as? [[String: Any]] {
+                        for b in content {
+                            // The same block can be re-emitted on a later line of the same
+                            // message; hash the payload so its chars count once.
+                            switch b["type"] as? String {
+                            case "thinking":
+                                let s = (b["thinking"] as? String) ?? ""
+                                if a.blockSeen.insert(("th" + s).hashValue).inserted { a.th += s.count }
+                            case "text":
+                                let s = (b["text"] as? String) ?? ""
+                                if a.blockSeen.insert(("tx" + s).hashValue).inserted { a.tx += s.count }
+                            case "tool_use":
+                                let bid = (b["id"] as? String) ?? ""
+                                var n = 16
+                                if let inp = b["input"],
+                                   let bd = try? JSONSerialization.data(withJSONObject: inp) { n = max(n, bd.count) }
+                                if a.blockSeen.insert(("tool" + bid).hashValue).inserted { a.tool += n }
+                            default: break
+                            }
+                        }
+                        msgs[mid] = a
+                    }
+                    return
+                }
+
+                if type == "user", let msg = obj["message"] as? [String: Any] {
+                    let ts0 = (obj["timestamp"] as? String).flatMap { self.parseTS($0) }
+                    // Tool results fed back to the model (any user line, sidechain included):
+                    // measure their text/images into the 도구 결과 bucket, and let the line
+                    // extend the AI turn — tool execution time is the AI working.
+                    if let arr = msg["content"] as? [[String: Any]] {
+                        var trTok = 0
+                        for b in arr where (b["type"] as? String) == "tool_result" {
+                            if let s = b["content"] as? String { trTok += self.estTextTokens(s) }
+                            else if let inner = b["content"] as? [[String: Any]] {
+                                for ib in inner {
+                                    switch ib["type"] as? String {
+                                    case "text": trTok += self.estTextTokens((ib["text"] as? String) ?? "")
+                                    case "image":
+                                        let src = (ib["source"] as? [String: Any]) ?? [:]
+                                        trTok += self.estImage(base64: (src["data"] as? String) ?? "").tok
+                                    default: break
+                                    }
+                                }
+                            }
+                        }
+                        if trTok > 0, let ts = ts0 {
+                            perDay[dayFmt.string(from: ts), default: DayTok()].toolResTok += trTok
+                            lastAITS = ts
+                        }
+                    }
+                }
+
+                // Human-typed prompt (not a tool_result, not meta, not a subagent feed):
+                // its distance from the assistant's last line is the "read + think + type
+                // the next prompt" lead time. >30 min means the user walked away — skip.
+                if type == "user", !sidechain, (obj["isMeta"] as? Bool) != true,
+                   obj["toolUseResult"] == nil,
+                   let msg = obj["message"] as? [String: Any] {
+                    var isHuman = false
+                    if let origin = obj["origin"] as? [String: Any] {
+                        isHuman = (origin["kind"] as? String) == "human"
+                    } else if let s = msg["content"] as? String {
+                        isHuman = !s.isEmpty
+                    } else if let arr = msg["content"] as? [[String: Any]] {
+                        let kinds = arr.compactMap { $0["type"] as? String }
+                        isHuman = kinds.contains("text") && !kinds.contains("tool_result")
+                    }
+                    guard isHuman, let tsStr = obj["timestamp"] as? String,
+                          let ts = self.parseTS(tsStr) else { return }
+                    // Typed text + attached images -> their prompt-side buckets.
+                    let hDay = dayFmt.string(from: ts)
+                    var st = perDay[hDay, default: DayTok()]
+                    if let s = msg["content"] as? String {
+                        st.typedTok += self.estTextTokens(s)
+                    } else if let arr = msg["content"] as? [[String: Any]] {
+                        for b in arr {
+                            switch b["type"] as? String {
+                            case "text":
+                                st.typedTok += self.estTextTokens((b["text"] as? String) ?? "")
+                            case "image":
+                                let src = (b["source"] as? [String: Any]) ?? [:]
+                                let est = self.estImage(base64: (src["data"] as? String) ?? "")
+                                st.imgN += 1; st.imgBytes += est.bytes; st.imgTok += est.tok
+                            default: break
+                            }
+                        }
+                    }
+                    perDay[hDay] = st
+                    // New human prompt = previous AI turn is over; start the next one.
+                    closeTurn(&perDay)
+                    turnStart = ts; turnDay = hDay
+                    if firstPrompt.isEmpty {
+                        var text = msg["content"] as? String ?? ""
+                        if text.isEmpty, let arr = msg["content"] as? [[String: Any]] {
+                            text = arr.compactMap { ($0["type"] as? String) == "text" ? $0["text"] as? String : nil }
+                                .first ?? ""
+                        }
+                        let line1 = text.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
+                        firstPrompt = String(line1.trimmingCharacters(in: .whitespaces).prefix(80))
+                    }
+                    if let prev = lastAssistantTS {
+                        let lead = ts.timeIntervalSince(prev)
+                        if lead > 0, lead <= 1800 {
+                            perDay[dayFmt.string(from: ts), default: DayTok()].leads.append(lead)
+                        }
+                    }
+                    lastAssistantTS = nil   // one lead per assistant turn
+                }
             }
         }
-        tokenDayLock.lock(); tokenDayCache[key] = (mtime, size, perDay); tokenDayLock.unlock()
-        return perDay
+        closeTurn(&perDay)   // a transcript ending mid-turn still charges its AI runtime
+
+        // Fold per-message aggregates into per-day stats, apportioning output_tokens
+        // across thinking/text/tool by character weight (estimate; exact split is not
+        // recorded in the transcript).
+        for mid in msgOrder {
+            guard let a = msgs[mid] else { continue }
+            let spent = a.input + a.output + a.cc
+            if spent == 0 { continue }
+            var st = perDay[a.day, default: DayTok()]
+            st.spent += spent
+            st.inTok += a.input + a.cc
+            st.outTok += a.output
+            var mu = st.models[a.model, default: ModelUse()]
+            mu.inTok += a.input; mu.cacheRead += a.cr
+            mu.cache5m += a.c5m; mu.cache1h += a.c1h; mu.outTok += a.output
+            st.models[a.model] = mu
+            let chars = a.th + a.tx + a.tool
+            if a.output > 0 {
+                if chars > 0 {
+                    let th = Int((Double(a.output) * Double(a.th) / Double(chars)).rounded())
+                    let tool = Int((Double(a.output) * Double(a.tool) / Double(chars)).rounded())
+                    st.thinkTok += th
+                    st.toolTok += tool
+                    st.textTok += max(0, a.output - th - tool)
+                } else {
+                    st.textTok += a.output
+                }
+            }
+            perDay[a.day] = st
+        }
+
+        // Prompt-side residual: what inTok holds beyond the measured typed/image/tool-result
+        // estimates = conversation re-cache + system prompt. Estimates can overshoot on a
+        // sparse day; clamp at zero rather than showing a negative bucket.
+        for (day, var st) in perDay {
+            st.reloadTok = max(0, st.inTok - st.typedTok - st.imgTok - st.toolResTok)
+            perDay[day] = st
+        }
+
+        let title = customTitle.isEmpty ? firstPrompt : customTitle
+        tokenDayLock.lock(); tokenDayCache[key] = (mtime, size, perDay, title); tokenDayLock.unlock()
+        return (perDay, title)
     }
 
     // Real token total (in K) for a goal's linked Claude session, summed from its transcript.
@@ -2866,7 +3948,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let rv = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
         let mtime = rv?.contentModificationDate ?? .distantPast
         let size = rv?.fileSize ?? 0
-        let total = tokensByDay(file: url, mtime: mtime, size: size).values.reduce(0, +)
+        let total = tokensByDay(file: url, mtime: mtime, size: size).values.reduce(0) { $0 + $1.spent }
         return Int((Double(total) / 1000.0).rounded())
     }
 
@@ -2887,6 +3969,94 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // Goals + today's review pipeline state.
+    // MARK: - 부모 자동 추천 (ParentSuggest)
+    // Cached suggestions + the goal-set signature they were computed for. Recomputing is
+    // cheap but not free (it scans goal folders on disk), and /data.json is polled on a
+    // loop, so the work runs on a background queue and only when the goal set actually
+    // changed. The lock is what makes that safe: the HTTP thread reads the cache while the
+    // background job writes it.
+    private let psugLock = NSLock()
+    private var psugItems: [ParentSuggest.Suggestion] = []
+    private var psugSig = ""       // signature the cached items belong to ("" = none yet)
+    private var psugPending = ""   // signature being computed right now ("" = idle)
+    private var psugAt: Double = 0
+    private let psugQueue = DispatchQueue(label: "cm.parentsuggest", qos: .utility)
+
+    // Everything the score depends on. Anything NOT in here can change without triggering
+    // a recompute — deliberately excludes status/time so a running timer doesn't thrash it.
+    private func psugSignature(_ goals: [ReviewStore.Goal]) -> String {
+        var h = Hasher()
+        h.combine(goals.count)
+        for g in goals {
+            h.combine(g.seq); h.combine(g.text); h.combine(g.parent)
+            h.combine(g.sprint); h.combine(g.archived); h.combine(g.released)
+        }
+        return "g\(h.finalize())"
+    }
+
+    // Drop the cache so the next read recomputes (the user just changed a parent, which
+    // both moves a goal out of the orphan pool and shifts the MRU boost).
+    private func psugInvalidate() {
+        psugLock.lock(); psugSig = ""; psugPending = ""; psugLock.unlock()
+    }
+
+    // Kick a recompute if the goal set moved. Returns immediately; callers read whatever
+    // is cached and see state "running" until the job lands.
+    private func psugRefresh() {
+        let goals = reviewStore.goals
+        let sig = psugSignature(goals)
+        psugLock.lock()
+        if sig == psugSig || sig == psugPending { psugLock.unlock(); return }
+        psugPending = sig
+        psugLock.unlock()
+
+        let input = goals.map {
+            ParentSuggest.GoalIn(seq: $0.seq, id: $0.id, title: $0.text, parentId: $0.parent,
+                                 sprint: $0.sprint, archived: $0.archived, released: $0.released)
+        }
+        let recent = Settings.shared.recentParentSeqs
+        psugQueue.async { [weak self] in
+            guard let self else { return }
+            // Disk I/O stays inside the background job. Only candidate PARENTS are scanned —
+            // scanning every goal folder on a large tracker would dominate the cost.
+            var folders: [Int: [String]] = [:]
+            for g in input where g.parentId.isEmpty && !g.archived && !g.released {
+                guard let dir = IssuePaths.goalDir(seq: g.seq),
+                      let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path)
+                else { continue }
+                let toks = ParentSuggest.folderTokens(names: names)
+                if !toks.isEmpty { folders[g.seq] = toks }
+            }
+            let items = ParentSuggest.compute(goals: input, recentParentSeqs: recent,
+                                              folderTokens: folders)
+            self.psugLock.lock()
+            // A parent change during the run already cleared psugPending; in that case this
+            // result is stale, so publish the items but leave the signature empty to force
+            // one more pass rather than caching an answer for a goal set that moved on.
+            let stillCurrent = (self.psugPending == sig)
+            self.psugItems = items
+            self.psugSig = stillCurrent ? sig : ""
+            if stillCurrent { self.psugPending = "" }
+            self.psugAt = Date().timeIntervalSince1970
+            self.psugLock.unlock()
+        }
+    }
+
+    // `"psug":{state,at,items:[{seq,p,score,why}]}` for the dashboard's ghost number.
+    private func psugJSON() -> String {
+        psugRefresh()
+        psugLock.lock()
+        let items = psugItems
+        let at = psugAt
+        let running = !psugPending.isEmpty
+        psugLock.unlock()
+        let body = items.map {
+            "{\"seq\":\($0.seq),\"p\":\($0.parentSeq),"
+                + "\"score\":\((($0.score * 100).rounded()) / 100),\"why\":\(jsonString($0.why))}"
+        }.joined(separator: ",")
+        return "{\"state\":\(jsonString(running ? "running" : "ready")),\"at\":\(at),\"items\":[\(body)]}"
+    }
+
     private func reviewJSON() -> String {
         let day = reviewStore.todayKey
         let r = reviewStore.review(day)
@@ -2941,10 +4111,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .map { rel -> String in
                 let titles = rel.titles.map { jsonString($0) }.joined(separator: ",")
                 let gids = rel.goalIds.map { jsonString($0) }.joined(separator: ",")
+                // 메모장 수확분 — 로그에서 '노트' 태그로 구분 렌더된다(session 작업과 대비).
+                let notes = rel.notes.map { jsonString($0) }.joined(separator: ",")
                 let started = rel.startedAt.map { String($0.timeIntervalSince1970) } ?? "0"
                 return "{\"id\":\(jsonString(rel.id)),\"sprint\":\(rel.sprint),\"code\":\(jsonString(rel.code)),"
                     + "\"releasedAt\":\(rel.releasedAt.timeIntervalSince1970),\"startedAt\":\(started),\"value\":\(rel.value),"
-                    + "\"goalIds\":[\(gids)],\"titles\":[\(titles)]}"
+                    + "\"goalIds\":[\(gids)],\"titles\":[\(titles)],\"notes\":[\(notes)]}"
             }
             .joined(separator: ",")
         // Sprint definitions: code(YY-n) + 결과물 + 기간 + 시작/목표 날짜. closed = released.
@@ -2998,8 +4170,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .map { "\(jsonString($0.key)):\(jsonString($0.value))" }
             .joined(separator: ",")
         func optInt(_ v: Int?) -> String { v.map(String.init) ?? "null" }
+        // 부모# 지원 데이터: 자동 부모 추천(회색 고스트 번호)과 최근 사용한 부모(드롭다운 '최근 사용').
+        let psug = psugJSON()
+        let recentParents = Settings.shared.recentParentSeqs.map(String.init).joined(separator: ",")
         return "{\"goals\":[\(goals)],\"releases\":[\(releases)],\"sprints\":[\(sprints)],"
             + "\"aiQueue\":[\(aiQueue)],\"queueHistory\":[\(queueHistory)],"
+            + "\"psug\":\(psug),\"recentParents\":[\(recentParents)],"
             + "\"selfScore\":\(optInt(r.selfScore)),\"submittedSelf\":\(r.submittedSelf),"
             + "\"contributions\":{\(contribs)},\"notes\":{\(notes)},"
             + "\"aiScore\":\(optInt(r.aiScore)),\"aiNote\":\(jsonString(r.aiNote)),"
@@ -3627,12 +4803,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "/api/session/control",                   // handler logs sessionStart/Stop
             "/api/session/mute",                      // handler logs mute/unmute
             "/api/equipment/pomodoro",                // handler logs equipment.devAward
+            "/api/equipment/tap",                     // 쓰다듬기 +1 XP — high-frequency, noise not workflow
             "/api/sfx",                               // handler logs harvest/chime
             "/api/bgm/rain", "/api/equipment/rain",   // handlers log rainSummon
+            "/api/bgm/venue",                         // director logs venueChange (richer)
             "/api/update/run",                        // handler logs updateRun
             "/api/goal/aiAdd",                        // dup pre-check inside the add flow
             "/api/session/event",                     // Claude session hooks, not the user
             "/api/goal/cli/io", "/api/goal/cli/resize", // terminal keystrokes (noise)
+            "/api/memo",                              // 자동 저장 도배 방지 + 메모 내용 로그 유출 방지
+            "/api/memo/seq",                          // 메모장 골번호 자동 채번 — 유저 액션이 아니다
         ]
         guard path.hasPrefix("/api/"), !skip.contains(path),
               !path.hasPrefix("/api/debug/") else { return }
@@ -3839,6 +5019,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                          model: (obj["model"] as? String) ?? "")
             return Settings.shared.gaComposerJSON()
         }
+        // 세션 뷰 하단 컴포저의 실행 설정 변경 — chat2Say/sessionSay read the GOAL's stored
+        // effort/mode/model each turn (they win over the request), so a mid-session change
+        // must land on the goal record to take effect from the next turn. Only the fields
+        // present in the body change; invalid values are ignored ('' = CLI default is valid).
+        if path == "/api/goal/exec" {
+            let seq = (obj["seq"] as? NSNumber)?.intValue ?? 0
+            guard seq > 0 else { return "{\"ok\":false,\"error\":\"seq\"}" }
+            let validModes: Set<String> = ["acceptEdits", "auto", "bypassPermissions", "default", "plan"]
+            var effort: String? = nil, mode: String? = nil, model: String? = nil
+            if let e = obj["effort"] as? String, e.isEmpty || Self.validEffortLevels.contains(e) { effort = e }
+            if let m = obj["mode"] as? String, validModes.contains(m) { mode = m }
+            if let mo = obj["model"] as? String, mo.isEmpty || Self.validComposerModels.contains(mo) { model = mo }
+            guard effort != nil || mode != nil || model != nil else { return "{\"ok\":false,\"error\":\"empty\"}" }
+            DispatchQueue.main.sync {
+                reviewStore.setGoalExecSettings(seq: seq, effort: effort, mode: mode, model: model)
+            }
+            return "{\"ok\":true}"
+        }
         // 담김 히스토리(simple-큐) 서버 영속 — localStorage 는 dynamic 포트 리셋으로 업데이트/재시작
         // 때 사라지므로 여기 저장한다. 페이지가 보내는 목록을 알려진 필드만 골라 담는다(상한 100).
         if path == "/api/goal/tally" {
@@ -3858,6 +5056,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // completions are judged server-side (heartbeat wall-clock → completePomodoro),
         // which grants EXP itself and logs pomodoro.complete; this endpoint only exercises
         // the award pipeline and must NOT log a complete or touch the durable N/2 history.
+        // 쓰다듬기 — the equipment page's pixel avatar click: +1 XP to the weakest gear
+        // (EquipmentStore.tap). Returns the full equipment state so the page re-renders
+        // its gauges in place. Not action-logged (skip list above).
+        if path == "/api/equipment/tap" {
+            equipment.tap()
+            return equipmentJSON()
+        }
         if path == "/api/equipment/pomodoro" {
             let usage = equipmentUsage(within: TimeInterval(Self.pomodoroWallSeconds))
             equipment.recordPomodoro(usage: usage)
@@ -3909,6 +5114,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Settings.shared.timeZoneID = raw
             return timezoneJSON()
         }
+        // Claude CLI 연결 설정 (rail ⚙️설정). 부분 갱신 — 보낸 필드만 반영한다. 비밀 값은
+        // 받지 않는다: 토큰은 유저의 기존 키체인 항목에 그대로 두고 항목 이름만 저장한다.
+        if path == "/api/settings/gateway" {
+            let s = Settings.shared
+            if let m = obj["mode"] as? String, m == "auto" || m == "gateway" { s.gatewayMode = m }
+            if let b = obj["baseURL"] as? String {
+                let t = b.trimmingCharacters(in: .whitespaces)
+                if t.isEmpty { s.gatewayBaseURL = "" }
+                else if let u = URL(string: t), u.scheme?.lowercased() == "https", (u.host ?? "").isEmpty == false {
+                    s.gatewayBaseURL = t
+                } else {
+                    return "{\"ok\":false,\"error\":\(jsonString("https URL이 필요합니다: " + t))}"
+                }
+            }
+            if let sc = obj["scheme"] as? String, sc == "bearer" || sc == "apiKey" { s.gatewayScheme = sc }
+            if let ks = obj["keyService"] as? String {
+                s.gatewayKeyService = ks.trimmingCharacters(in: .whitespaces)
+            }
+            if let ka = obj["keyAccount"] as? String {
+                s.gatewayKeyAccount = ka.trimmingCharacters(in: .whitespaces)
+            }
+            Self.invalidateGatewayEnv()
+            Self.lastGatewayState = nil   // settings changed: the old verdict no longer applies
+            return settingsGatewayJSON()
+        }
+        // 연결 테스트 — 현재 설정 그대로 headless `claude -p` 한 번을 실행해 응답이 오는지 본다.
+        // detail은 CLI 출력의 앞부분만 (토큰은 포함될 수 없다).
+        if path == "/api/settings/gateway/test" {
+            return gatewayTestJSON()
+        }
+        // 로그인 필요 상태에서의 액션 — 터미널에서 `claude /login`(대화형 OAuth)을 띄운다.
+        if path == "/api/settings/gateway/login" {
+            return gatewayLoginJSON()
+        }
+        // 메모장 저장 (전역 1개 공유). MemoPad 가 타이핑 중 400ms 디바운스로, blur/pagehide 에서
+        // 즉시 한 번 더 부른다. 액션 로그에는 남기지 않는다 — 자동 저장이라 actions.jsonl 을
+        // 도배하고, 메모 내용이 로그로 흘러나가는 것도 원치 않는다.
+        // 메모장 칸 태그 만들기 / 사용 기록. 후보를 골랐을 때도, 없는 이름을 "만들기" 로
+        // 새로 세울 때도 같은 길로 온다 — 고르는 것 자체가 그 태그를 한 번 더 쓴 것이다.
+        // 이미 있는 이름이면 새로 만들지 않고 횟수만 오른다(`name` 에 사전의 표기가 돌아온다).
+        if path == "/api/memo/tags" {
+            let kind = (obj["k"] as? String) ?? ""
+            guard let stored = MemoTagStore.shared.touch(kind: kind, name: (obj["name"] as? String) ?? "")
+            else { return "{\"ok\":false}" }
+            return "{\"ok\":true,\"name\":\(jsonString(stored))}"
+        }
+        // 메모장 부모 칸 사용 기록 — 드롭다운에서 고르든 손으로 적든, 확정된 부모 번호가
+        // MRU 로 올라 다음에 맨 위에 뜬다. 보드 부모# 드롭다운의 '최근 사용' 과 같은 목록.
+        if path == "/api/memo/parent-used" {
+            Settings.shared.noteParentUse((obj["n"] as? NSNumber)?.intValue ?? 0)
+            return "{\"ok\":true}"
+        }
+        // 메모장 골번호 채번 — 체크리스트 줄이 보드와 같은 골 번호 공간에서 유일 번호를
+        // 예약한다(ReviewStore.reserveSeqs, 번호만 예약 — Goal 은 만들지 않는다). 패드가
+        // 번호 없는 줄 수만큼 묶어 한 번에 요청하고, 받은 번호를 '@골: N' 으로 줄에 박는다.
+        // ReviewStore 는 메인 스레드 소유물이므로 여기서 잠깐 건너간다.
+        if path == "/api/memo/seq" {
+            let count = (obj["count"] as? NSNumber)?.intValue ?? 1
+            var seqs: [Int] = []
+            DispatchQueue.main.sync { seqs = self.reviewStore.reserveSeqs(count) }
+            return "{\"ok\":true,\"seqs\":[\(seqs.map(String.init).joined(separator: ","))]}"
+        }
+        // `base` = the revision the pad last saw. Mismatch = a stale webview trying to
+        // overwrite newer text: the store refuses (journaling the refused text), and we
+        // return the CURRENT text so the pad can merge and retry with a fresh base.
+        // A body without `base` (old client, e2e stubs) keeps the legacy always-accept path.
+        if path == "/api/memo" {
+            let saved = MemoStore.shared.save((obj["text"] as? String) ?? "",
+                                              base: (obj["base"] as? NSNumber)?.intValue)
+            if saved.conflict {
+                return "{\"ok\":true,\"conflict\":true,\"text\":\(jsonString(saved.text)),"
+                    + "\"rev\":\(saved.rev),\"updatedAt\":\(Int(saved.updatedAt))}"
+            }
+            return "{\"ok\":true,\"rev\":\(saved.rev),\"updatedAt\":\(Int(saved.updatedAt)),"
+                + "\"chars\":\(saved.text.count)}"
+        }
+        // 전역 디버그 버튼 노출 토글 (rail ⚙️설정) — off면 각 페이지의 디버그성
+        // 버튼이 아예 렌더링되지 않는다. 페이지 폴링이 다음 주기에 바로 반영.
+        if path == "/api/settings/debug-buttons" {
+            Settings.shared.debugButtons = (obj["on"] as? NSNumber)?.boolValue ?? true
+            return "{\"on\":\(Settings.shared.debugButtons)}"
+        }
         // 설정 menu "Finder에서 열기" — reveal one of the app's storage folders. Target is a
         // fixed key (data|bgm|claude), NEVER a caller-supplied path, so the loopback page
         // cannot open arbitrary filesystem locations.
@@ -3944,7 +5231,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   !root.isEmpty else {
                 return "{\"ok\":false,\"error\":\"소스 경로가 없는 빌드입니다 (dev 빌드는 dev-watch가 갱신)\"}"
             }
-            let script = root + "/Scripts/build-app.sh"
+            // Fast path: a background build is already staged, so applying it is a copy +
+            // relaunch (~2s) instead of a release compile (~40s+). Falls through to the
+            // build-then-install script when nothing is staged (no builder installed, or
+            // the staged bundle is older than this one).
+            let ownBuildStart = (Bundle.main.object(forInfoDictionaryKey: "CMBuildStart") as? String)
+                .flatMap(TimeInterval.init) ?? 0
+            let staged = Self.readStagedBuild()
+            let useStaged = staged?.state == "ready" && (staged?.buildStart ?? 0) > ownBuildStart
+            let script = root + (useStaged ? "/Scripts/apply-update.sh" : "/Scripts/build-app.sh")
             guard FileManager.default.isExecutableFile(atPath: script) else {
                 return "{\"ok\":false,\"error\":\"빌드 스크립트를 찾을 수 없습니다: \(script)\"}"
             }
@@ -3975,17 +5270,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard proc.terminationStatus != 0 else { return }
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    self.updateFailedSrcAt = Self.latestSourceMTime(root: root)
+                    // Only the BUILD path gets the source snapshot suppression — it means
+                    // "these exact sources won't compile". A failed apply is about the
+                    // staged bundle, not the tree, so leave the button alone: staged.json
+                    // still says ready and pressing again is a reasonable retry.
+                    if !useStaged { self.updateFailedSrcAt = Self.latestSourceMTime(root: root) }
                     ActionLog.shared.append(self.actionEvent("updateFail", kind: "system",
-                        detail: "업데이트 빌드 실패 (exit \(proc.terminationStatus)) — 현재 버전 유지, 상세는 update.log"))
+                        detail: useStaged
+                            ? "업데이트 적용 실패 (exit \(proc.terminationStatus)) — 현재 버전 유지, 상세는 update.log"
+                            : "업데이트 빌드 실패 (exit \(proc.terminationStatus)) — 현재 버전 유지, 상세는 update.log"))
                 }
             }
             do { try p.run() } catch {
                 return "{\"ok\":false,\"error\":\"업데이트 실행 실패: \(error.localizedDescription)\"}"
             }
             ActionLog.shared.append(actionEvent("updateRun",
-                detail: "설정 메뉴 업데이트 — build-app.sh 실행 (빌드 후 자동 재시작)"))
-            return "{\"ok\":true}"
+                detail: useStaged
+                    ? "업데이트 — 미리 준비된 빌드 적용 (apply-update.sh, 교체 후 재시작)"
+                    : "업데이트 — build-app.sh 실행 (빌드 후 자동 재시작)"))
+            return "{\"ok\":true,\"staged\":\(useStaged)}"
         }
         // 경험치로 폭우소환 — the 장비 page's manual nature-sound summon. The idea: when the
         // BGM has become tiring, spend accumulated EXP to swap it for 30–60분 of rain and
@@ -4047,6 +5350,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.director?.triggerRain(stop: action == "stop")
             }
             return "{\"ok\":true}"
+        }
+        // 전략7 장소·컨디션 선택 — the user's one-tap "where am I / how do I feel".
+        // Persists via Settings (settings.json) so the last pick survives restarts and
+        // updates; the director re-pools with an audible switch when music is live.
+        if path == "/api/bgm/venue" {
+            guard let key = obj["key"] as? String,
+                  VenueContext.all.contains(where: { $0.key == key }) else {
+                return "{\"ok\":false,\"error\":\"unknown venue key\"}"
+            }
+            DispatchQueue.main.sync {
+                if let d = self.director { d.setVenue(key: key) }
+                else { Settings.shared.bgmVenueKey = key }
+            }
+            return "{\"ok\":true,\"key\":\(jsonString(key))}"
         }
         // 전략3 plan-map replace — the 관리자 AI's safe write path (agents never edit
         // bgm-plan.json directly, mirroring the goals convention). The body is the full
@@ -4587,6 +5904,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 } else if let id = obj["id"] as? String {
                     reviewStore.setParent(id: id, parent: parentId)
                 }
+                // Remember what the user files things under, so the dropdown's 최근 사용 list
+                // reflects real habits. Detach ("") records nothing.
+                if !parentId.isEmpty,
+                   let pseq = reviewStore.goals.first(where: { $0.id == parentId })?.seq {
+                    Settings.shared.noteParentUse(pseq)
+                }
+                psugInvalidate()
+            case "/api/goal/parent-suggest/refresh":
+                // Force a recompute (debug / after editing titles outside the app).
+                psugInvalidate()
             case "/api/goal/reorder":
                 if let order = obj["order"] as? [String] {
                     reviewStore.reorderGoals(order: order)
@@ -4706,6 +6033,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // 드로우 card's draw on/off sub-switch. Persist + resync so the overlay
                 // poller starts/stops immediately (turning off also wipes the canvas).
                 Settings.shared.drawEnabled = (obj["on"] as? NSNumber)?.boolValue ?? false
+                syncPluginWorkers()
+            case "/api/camera/enabled":
+                // 카메라 지킴이 card's on/off sub-switch (default on). Persist + resync so
+                // the guard starts/stops immediately without uninstalling the plugin.
+                Settings.shared.cameraGuardOn = (obj["on"] as? NSNumber)?.boolValue ?? true
                 syncPluginWorkers()
             case "/api/draw/clear":
                 // Programmatic wipe (QA/debug parity with the left-⌃ gesture).
@@ -4914,10 +6246,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                    let flag = ["qa-agent": Self.qaDisabledFlag, "qa-fix": Self.qaFixDisabledFlag,
                                "bug-hunt": Self.bugHuntDisabledFlag,
                                "uxui-sitemap": Self.uxuiSitemapDisabledFlag,
-                               "nss-report": Self.nssReportDisabledFlag][id] {
+                               "nss-report": Self.nssReportDisabledFlag,
+                               "autobuild": Self.autobuildDisabledFlag,
+                               "slack-eyes": Self.slackEyesDisabledFlag][id] {
                     let name = ["qa-fix": "QA 수정", "bug-hunt": "버그 헌트",
                                 "uxui-sitemap": "UXUI 관리",
-                                "nss-report": "NSS 리포트"][id] ?? "QA 점검"
+                                "nss-report": "NSS 리포트",
+                                "autobuild": "자동 빌드",
+                                "slack-eyes": "Slack 번역"][id] ?? "QA 점검"
                     let enabled = (obj["enabled"] as? Bool) ?? ((obj["enabled"] as? NSNumber)?.boolValue ?? false)
                     WorkerRegistry.shared.setEnabled(id, enabled)
                     if enabled {
@@ -4927,6 +6263,128 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         try? Data().write(to: flag)
                         WorkerLog.shared.append(id, why: "사용자 토글", effect: "\(name) 꺼짐")
                     }
+                }
+            case "/api/slack/config":
+                // 번역 모델 선택 — config.json에 기록, 데몬이 호출마다 읽는다.
+                if let model = obj["model"] as? String,
+                   ["auto", "gemini-flash-lite", "gemini-flash", "haiku-api", "haiku"].contains(model) {
+                    let t0 = DispatchTime.now()
+                    SlackTranslateStore.setModel(model)
+                    SlackActionLog.log("config.model", ok: true,
+                                       ms: SlackTranslateStore.ms(since: t0), detail: model)
+                    return "{\"ok\":true}"
+                }
+                // 번역 목표 언어 — config.json {"lang": …}, 데몬이 호출마다 읽는다.
+                // 이미 그 언어인 메시지는 번역하지 않는다 (원문 그대로).
+                if let lang = obj["lang"] as? String,
+                   ["ko", "en", "vi", "ja", "zh"].contains(lang) {
+                    let t0 = DispatchTime.now()
+                    SlackTranslateStore.setLang(lang)
+                    SlackActionLog.log("config.lang", ok: true,
+                                       ms: SlackTranslateStore.ms(since: t0), detail: lang)
+                    return "{\"ok\":true}"
+                }
+                // 수집 기준 체크박스 — {"sources":{"eyes":…,"mention":…,"team":…}}
+                // (부분 업데이트 가능). 해제된 소스는 데몬이 앞으로 수집하지 않는다.
+                if let sources = obj["sources"] as? [String: Bool], !sources.isEmpty {
+                    let t0 = DispatchTime.now()
+                    SlackTranslateStore.setSources(sources)
+                    let detail = sources.map { "\($0.key)=\($0.value ? "on" : "off")" }
+                        .sorted().joined(separator: " ")
+                    SlackActionLog.log("config.sources", ok: true,
+                                       ms: SlackTranslateStore.ms(since: t0), detail: detail)
+                    return "{\"ok\":true}"
+                }
+                SlackActionLog.log("config.model", ok: false, ms: 0, error: "bad model",
+                                   detail: (obj["model"] as? String) ?? "")
+                return "{\"ok\":false,\"error\":\"bad model\"}"
+            case "/api/slack/speak":
+                // 스피킹 시작 — 플러그인이 브리핑 조립 + 클립보드 + ChatGPT 열기까지 수행.
+                return SlackTranslateStore.speakBriefing()
+            case "/api/slack/reply":
+                // Slack 번역함 스레드 답장 — 사용자가 페이지에서 직접 전송을 눌렀을
+                // 때만 호출된다. 본인 계정(xoxp)으로 원 메시지 스레드에 그대로 전송.
+                if let id = obj["id"] as? String, let text = obj["text"] as? String,
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    // mention 기본 true — 원 작성자 <@멘션>을 붙여 알림이 가게 한다
+                    // (페이지 체크박스로 해제 가능).
+                    let mention = (obj["mention"] as? Bool)
+                        ?? ((obj["mention"] as? NSNumber)?.boolValue ?? true)
+                    return SlackTranslateStore.reply(id: id, text: text, mention: mention)
+                }
+                return "{\"ok\":false,\"error\":\"bad request\"}"
+            case "/api/slack/gui/link":
+                // GUI세션 연결 기록 — goal-add 가 이 메시지 컨텍스트로 목표를 만든 직후
+                // (?slackId= 로 넘어온 id) 호출한다. 이후 번역함의 버튼은 "세션 이어가기"가
+                // 되고 그 목표의 세션 뷰로 되돌아간다.
+                if let id = obj["id"] as? String {
+                    var seq = 0
+                    if let n = obj["seq"] as? NSNumber { seq = n.intValue }
+                    return SlackTranslateStore.linkGui(id: id, seq: seq)
+                }
+                return "{\"ok\":false,\"error\":\"bad request\"}"
+            case "/api/slack/reply/edit":
+                // 내가 보낸 답장 수정 — chat.update로 슬랙 원문을 고치고 ledger 동기화.
+                if let id = obj["id"] as? String, let ts = obj["ts"] as? String,
+                   let text = obj["text"] as? String,
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return SlackTranslateStore.editReply(id: id, ts: ts, text: text)
+                }
+                return "{\"ok\":false,\"error\":\"bad request\"}"
+            case "/api/slack/reply/delete":
+                // 내가 보낸 답장 삭제 — chat.delete로 슬랙 메시지를 지우고 ledger에서 제거.
+                // 수정 중 내용을 모두 비우고 저장해도 여기로 온다 (슬랙 UX 패리티).
+                if let id = obj["id"] as? String, let ts = obj["ts"] as? String {
+                    return SlackTranslateStore.deleteReply(id: id, ts: ts)
+                }
+                return "{\"ok\":false,\"error\":\"bad request\"}"
+            case "/api/slack/done":
+                // Slack 번역함 처리완료 toggle — app-owned done.json only; the
+                // daemon's items.jsonl is never rewritten (append-only ownership).
+                // Also mirrors the state to Slack: 완료 removes the 👀 reaction from
+                // the original message, 해제 re-adds it (best-effort, off-thread).
+                // sync:false = caller is the daemon reacting to an emoji removal
+                // that ALREADY happened in Slack — skip the mirror (loop guard).
+                if let id = obj["id"] as? String {
+                    let t0 = DispatchTime.now()
+                    let done = (obj["done"] as? Bool) ?? ((obj["done"] as? NSNumber)?.boolValue ?? false)
+                    SlackTranslateStore.setDone(id: id, done: done)
+                    let sync = (obj["sync"] as? Bool) ?? ((obj["sync"] as? NSNumber)?.boolValue ?? true)
+                    SlackActionLog.log(done ? "done.set" : "done.unset", id: id, ok: true,
+                                       ms: SlackTranslateStore.ms(since: t0),
+                                       detail: sync ? "리액션 동기화 시작" : "동기화 생략 (데몬 발신)")
+                    if sync {
+                        DispatchQueue.global(qos: .utility).async {
+                            SlackTranslateStore.syncReaction(id: id, done: done)
+                        }
+                    }
+                }
+            case "/api/slack/health":
+                // 데몬(slack-eyes-daemon.mjs)의 30초 살아있음 보고. 이게 끊기면
+                // SlackHealth 워치독이 스스로 launchctl kickstart로 되살린다.
+                let out = SlackHealth.record(obj)
+                // 워커 상태 행이 실제 데몬 생존을 반영하게 한다 (로그는 남기지 않는
+                // 저비용 스탬프 — 30초마다 오므로 로그를 쓰면 도배된다).
+                WorkerRegistry.shared.recordRun("slack-eyes")
+                return out
+            case "/api/slack/daemon/restart":
+                // 사용자가 '다시 연결'을 눌렀다 — 자동 시도 카운터를 초기화하고 재시작.
+                return SlackHealth.restartNow()
+            case "/api/worker/restart":
+                // 시스템 페이지의 '다시 연결' — 앱 밖 launchd 워커를 사용자가 직접 되살린다.
+                // 화이트리스트 매핑: 임의의 라벨이 launchctl 인자로 흘러가면 안 된다.
+                switch obj["id"] as? String {
+                case "slack-eyes": return SlackHealth.restartNow()
+                case "autobuild":
+                    let p = Process()
+                    p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+                    p.arguments = ["kickstart", "-k",
+                                   "gui/\(getuid())/com.condition-manager.autobuild"]
+                    try? p.run()
+                    WorkerLog.shared.append("autobuild", why: "사용자 다시 시작",
+                        effect: "launchctl kickstart — 감시 프로세스 재시작")
+                    return "{\"ok\":true}"
+                default: return "{\"ok\":false,\"error\":\"restart 대상이 아닙니다\"}"
                 }
             case "/api/qa-audit":
                 // The dashboard's self-audit (deterministic UI overflow/wrapping check)
@@ -4951,7 +6409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     Settings.shared.doneCutoff = n
                 }
             case "/api/prefs/ui":
-                // Persist the dashboard UI layout (보기 상태 필터 · 상위 항상 표시 · 스프린트
+                // Persist the dashboard UI layout (보기 상태 필터 · 상위 항상 표시 · 루프
                 // 선택 · 접기/펼치기) so it survives an app restart. The client sends its
                 // already-serialized prefs JSON in `data`; store it verbatim and re-inject
                 // it on the next launch. An empty/missing value clears the saved layout.
@@ -5353,14 +6811,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
         p.arguments = ["-lc", "\(Self.shellQuote(claude)) -p --output-format text 2>/dev/null"]
-        var env = ProcessInfo.processInfo.environment
-        let home = NSHomeDirectory()
-        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        // This is an internal headless `claude -p` worker, not user work. Flag it so the
-        // session hook (Scripts/cc-session-hook.sh) skips mirroring it as a dashboard goal —
-        // otherwise the worker's fixed system prompt shows up as an echo goal.
-        env["CM_SUPPRESS_SESSION_GOAL"] = "1"
-        p.environment = env
+        p.environment = Self.claudeEnv()
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
         do { try p.run() } catch { return DedupVerdict(ok: false, duplicate: false, note: "", matches: []) }
@@ -5517,14 +6968,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
         p.arguments = ["-lc", "\(Self.shellQuote(claude)) \(args) 2>/dev/null"]
-        var env = ProcessInfo.processInfo.environment
-        let home = NSHomeDirectory()
-        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        // This is an internal headless `claude -p` worker, not user work. Flag it so the
-        // session hook (Scripts/cc-session-hook.sh) skips mirroring it as a dashboard goal —
-        // otherwise the worker's fixed system prompt shows up as an echo goal.
-        env["CM_SUPPRESS_SESSION_GOAL"] = "1"
-        p.environment = env
+        p.environment = Self.claudeEnv()
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
         do { try p.run() } catch { return (false, "", "", resumeSession) }
@@ -5590,14 +7034,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
         p.arguments = ["-lc", "\(Self.shellQuote(claude)) -p --output-format text 2>/dev/null"]
-        var env = ProcessInfo.processInfo.environment
-        let home = NSHomeDirectory()
-        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        // This is an internal headless `claude -p` worker, not user work. Flag it so the
-        // session hook (Scripts/cc-session-hook.sh) skips mirroring it as a dashboard goal —
-        // otherwise the worker's fixed system prompt shows up as an echo goal.
-        env["CM_SUPPRESS_SESSION_GOAL"] = "1"
-        p.environment = env
+        p.environment = Self.claudeEnv()
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
         do { try p.run() } catch { return "{\"ok\":false,\"error\":\"spawn-failed\"}" }
@@ -5692,14 +7129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var args = "-p --output-format json --add-dir \(Self.shellQuote(chatStore.attachmentsDir.path)) --allowedTools Read"
         if let m = Self.claudeModelAlias(model) { args += " --model \(Self.shellQuote(m))" }
         p.arguments = ["-lc", "\(Self.shellQuote(claude)) \(args) 2>/dev/null"]
-        var env = ProcessInfo.processInfo.environment
-        let home = NSHomeDirectory()
-        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        // This is an internal headless `claude -p` worker, not user work. Flag it so the
-        // session hook (Scripts/cc-session-hook.sh) skips mirroring it as a dashboard goal —
-        // otherwise the worker's fixed system prompt shows up as an echo goal.
-        env["CM_SUPPRESS_SESSION_GOAL"] = "1"
-        p.environment = env
+        p.environment = Self.claudeEnv()
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
         do { try p.run() } catch { return "{\"ok\":false,\"error\":\"spawn-failed\"}" }
@@ -5749,6 +7179,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let s = String(decoding: d, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         return s.isEmpty ? nil : s
     }
+    // Environment for every `claude` spawn. A GUI app inherits a minimal PATH, so the common
+    // install dirs are prepended; CM_SUPPRESS_SESSION_GOAL marks these as internal workers so
+    // the session hook doesn't mirror them as dashboard goals (Scripts/cc-session-hook.sh).
+    //
+    // Auth: the user's terminal `claude` may be a shell function that injects gateway env from
+    // the Keychain — a `bash -lc <abs path>` spawn never sees that. When 연결 is set to
+    // "gateway" (rail ⚙️설정), inject ANTHROPIC_BASE_URL plus the token here. In "auto" the env
+    // is left untouched so the CLI uses its own local login (OAuth), and any ANTHROPIC_* we
+    // inherited from our own parent still passes through unchanged.
+    static func claudeEnv(suppressSessionGoal: Bool = true) -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let home = NSHomeDirectory()
+        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        if suppressSessionGoal { env["CM_SUPPRESS_SESSION_GOAL"] = "1" }
+        let gw = gatewayEnv()
+        // A gateway token and a leftover inherited key of the other kind would conflict; the
+        // configured scheme wins.
+        if gw["ANTHROPIC_AUTH_TOKEN"] != nil { env.removeValue(forKey: "ANTHROPIC_API_KEY") }
+        if gw["ANTHROPIC_API_KEY"] != nil { env.removeValue(forKey: "ANTHROPIC_AUTH_TOKEN") }
+        for (k, v) in gw { env[k] = v }
+        return env
+    }
+
+    // Cached gateway env so a burst of spawns doesn't hit the Keychain (and its access prompt)
+    // once per process. Invalidated when the settings are saved.
+    private static var gatewayEnvCache: (at: Date, env: [String: String])?
+    private static let gatewayEnvLock = NSLock()
+    private static let gatewayEnvTTL: TimeInterval = 300
+
+    static func invalidateGatewayEnv() {
+        gatewayEnvLock.lock(); gatewayEnvCache = nil; gatewayEnvLock.unlock()
+    }
+
+    // The ANTHROPIC_* pairs to inject, or empty in "auto" mode / when the token is unavailable.
+    // NEVER logged or returned to the page — only the fact that it resolved.
+    static func gatewayEnv() -> [String: String] {
+        gatewayEnvLock.lock()
+        if let c = gatewayEnvCache, Date().timeIntervalSince(c.at) < gatewayEnvTTL {
+            gatewayEnvLock.unlock(); return c.env
+        }
+        gatewayEnvLock.unlock()
+
+        var out: [String: String] = [:]
+        let s = Settings.shared
+        let base = s.gatewayBaseURL.trimmingCharacters(in: .whitespaces)
+        if s.gatewayMode == "gateway", !base.isEmpty, let token = gatewayToken(), !token.isEmpty {
+            out["ANTHROPIC_BASE_URL"] = base
+            out[s.gatewayScheme == "apiKey" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"] = token
+        }
+        gatewayEnvLock.lock(); gatewayEnvCache = (Date(), out); gatewayEnvLock.unlock()
+        return out
+    }
+
+    // Read the configured Keychain generic-password. We never store the secret ourselves —
+    // only the item's service/account name — so the user's existing item stays the one source.
+    static func gatewayToken() -> String? {
+        let s = Settings.shared
+        let svc = s.gatewayKeyService.trimmingCharacters(in: .whitespaces)
+        guard !svc.isEmpty else { return nil }
+        let acct = s.gatewayKeyAccount.trimmingCharacters(in: .whitespaces).isEmpty
+            ? NSUserName() : s.gatewayKeyAccount.trimmingCharacters(in: .whitespaces)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        p.arguments = ["find-generic-password", "-s", svc, "-a", acct, "-w"]
+        let out = Pipe()
+        p.standardOutput = out; p.standardError = nil
+        guard (try? p.run()) != nil else { return nil }
+        let d = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { return nil }
+        let t = String(decoding: d, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
+
     // Single-quote a path for safe interpolation into a `bash -lc` command line.
     private static func shellQuote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -5960,14 +7464,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
         p.arguments = ["-lc", "\(Self.shellQuote(claude)) \(args) 2>/dev/null"]
-        var env = ProcessInfo.processInfo.environment
-        let home = NSHomeDirectory()
-        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        // This is an internal headless `claude -p` worker, not user work. Flag it so the
-        // session hook (Scripts/cc-session-hook.sh) skips mirroring it as a dashboard goal —
-        // otherwise the worker's fixed system prompt shows up as an echo goal.
-        env["CM_SUPPRESS_SESSION_GOAL"] = "1"
-        p.environment = env
+        p.environment = Self.claudeEnv()
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
         do { try p.run() } catch {
@@ -6330,7 +7827,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let (cwd, command, sessionId) = cliCommand(scope, seed: seed) else {
             return "{\"ok\":false,\"error\":\"no-goal-or-claude\"}"
         }
-        guard let s = PtySession(command: command, cwd: cwd, cols: max(cols, 20), rows: max(rows, 4)) else {
+        guard let s = PtySession(command: command, cwd: cwd, cols: max(cols, 20), rows: max(rows, 4),
+                                extraEnv: Self.gatewayEnv()) else {
             return "{\"ok\":false,\"error\":\"pty-failed\"}"
         }
         // Record the session id now (we know it up front), so even an immediate close keeps
@@ -6634,13 +8132,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty, let claude = Self.resolveClaude(),
               let workDir = scope.workDir else { return "{\"ok\":false}" }
-        guard let sess = latestSession(scope) else { return "{\"ok\":false,\"error\":\"no-session\"}" }
+        // No associated session yet is NOT an error: start a NEW session whose first turn
+        // carries the goal context (제목·핵심/디테일 파일) as preamble. chat2RunTurn(linkScope:)
+        // links the new session id back to the goal on finish, so the next turn resumes it.
+        let sess = latestSession(scope)
         let validModes: Set<String> = ["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"]
         var m = validModes.contains(mode) ? mode : "bypassPermissions"
-        // Apply the goal's stored composer settings (실행 연동). cwd is NOT overridden here — a
-        // resumed session is project-scoped and must run in the folder it was created in
-        // (sessionCwd below), so only effort/mode/images carry over.
-        var execEffort = "", execModel = "", imagePaths: [String] = []
+        // Apply the goal's stored composer settings (실행 연동). For a RESUMED session cwd is
+        // NOT overridden — resume is project-scoped and must run in the folder the session
+        // was created in (sessionCwd below). A NEW session uses the goal's stored cwd.
+        var execEffort = "", execModel = "", execCwd: String? = nil, imagePaths: [String] = []
         DispatchQueue.main.sync {
             // Continuing a session means work has (re)started — same promotion as chat2Say.
             if let g = reviewStore.goals.first(where: { $0.seq == scope.seq }) {
@@ -6650,20 +8151,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if Self.validEffortLevels.contains(g.effort) { execEffort = g.effort }
                 if validModes.contains(g.mode) { m = g.mode }
                 if Self.validComposerModels.contains(g.model) { execModel = g.model }
+                if sess == nil, !g.cwd.isEmpty, FileManager.default.fileExists(atPath: g.cwd) { execCwd = g.cwd }
                 if !g.images.isEmpty, let adir = IssuePaths.attachmentsDir(seq: scope.seq) {
                     imagePaths = g.images.map { adir.appendingPathComponent($0).path }
                 }
             }
         }
+        let preamble = sess == nil ? sessionStartPreamble(scope) : ""
         let key = scope.key + "|sess"
-        let cwd = sessionCwd(sessionId: sess.id)   // resume is project-scoped (see chat2RunTurn)
+        let cwd = sess != nil ? sessionCwd(sessionId: sess!.id) : execCwd   // resume is project-scoped (see chat2RunTurn)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.chat2RunTurn(key: key, store: nil, claude: claude, goalDir: workDir.path,
-                               prompt: body, preamble: "", mode: m, model: execModel, allow: allow,
-                               resumeOverride: sess.id, linkScope: scope, cwd: cwd,
+                               prompt: body, preamble: preamble, mode: m, model: execModel, allow: allow,
+                               resumeOverride: sess?.id, linkScope: scope, cwd: cwd,
                                effort: execEffort, imagePaths: imagePaths)
         }
-        return "{\"ok\":true,\"session\":\(jsonString(sess.id))}"
+        if let sess { return "{\"ok\":true,\"session\":\(jsonString(sess.id))}" }
+        return "{\"ok\":true,\"new\":true}"
     }
 
     // POST /api/goal/chat2/stop — terminate the scope's running turn. sess targets the
@@ -6781,14 +8285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if resumeOverride != nil {
             AppLog.log("chat2 sess spawn cwd=\(cwd ?? "nil") resume=\(resumeOverride ?? "")")
         }
-        var env = ProcessInfo.processInfo.environment
-        let home = NSHomeDirectory()
-        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        // This is an internal headless `claude -p` worker, not user work. Flag it so the
-        // session hook (Scripts/cc-session-hook.sh) skips mirroring it as a dashboard goal —
-        // otherwise the worker's fixed system prompt shows up as an echo goal.
-        env["CM_SUPPRESS_SESSION_GOAL"] = "1"
-        p.environment = env
+        p.environment = Self.claudeEnv()
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
 
@@ -7189,7 +8686,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // last, then renders its tail (the recent turns) so the user sees what it is doing now.
     private func renderCurrentContent(seq: Int) -> String {
         guard let b = latestSession(Scope(seq: seq, task: nil)) else {
-            return "<p class=\"empty\">연결된 세션이 없습니다. 오른쪽 메신저·CLI로 시작하거나 “세션 정보”에서 세션을 연결하면 최신 진행 내용이 여기에 표시됩니다.</p>"
+            return "<p class=\"empty\">연결된 세션이 없습니다. 아래 입력창에 지시하면 목표 내용으로 새 세션이 시작됩니다. (오른쪽 메신저·CLI, “+ 세션 연결”도 가능)</p>"
         }
         let title = transcriptTitle(b.url)
         let secs = Int(max(0, Date().timeIntervalSince(b.when)))
@@ -7231,6 +8728,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         {"q":[{"ask":"질문 한 줄","opts":[{"label":"짧은 선택지","why":"추천 이유 한 줄","rec":true},{"label":"다른 선택지"}]}]}
         ```
         규칙: 물어볼 질문을 q 배열에 모두 담고, 각 질문의 opts는 2~4개로 한다. 가장 가능성 높은 선택지 하나에만 rec를 true로 두고 why에 한 줄 근거를 적는다. label은 짧게 쓴다. 사용자는 직접 입력으로도 답할 수 있으니 모든 경우를 선택지로 나열할 필요는 없다. 질문이 아닌 일반 설명·답변은 평소대로 마크다운으로 답한다.
+        """
+    }
+
+    // First-turn context when the 세션 정보 composer starts a NEW session (no associated
+    // session existed). Unlike goalChatPreamble this is a WORK session, not a clarification
+    // chat: the goal body is the brief and the user's message is an instruction to execute.
+    private func sessionStartPreamble(_ scope: Scope) -> String {
+        let label: String
+        let title: String
+        if let task = scope.task {
+            label = "goal-\(scope.seq) / \(task)"
+            title = subtaskTitle(scope)
+        } else {
+            label = "goal-\(scope.seq)"
+            title = DispatchQueue.main.sync { reviewStore.goals.first { $0.seq == scope.seq }?.text ?? "" }
+        }
+        let core = scope.coreURL?.path ?? ""
+        let detail = scope.detailURL?.path ?? ""
+        return """
+        아래 목표(골)의 작업 세션입니다. 목표 내용을 컨텍스트로 삼아, 이어지는 사용자 지시를 바로 수행하세요.
+        - 골 번호: \(label)
+        - 목표 내용: \(title)
+        - 핵심 버전 파일: \(core)
+        - 디테일 버전 파일: \(detail)
+        지시가 목표 내용을 가리키면("내용을 보고", "위 목표대로" 등) 위 목표 내용과 두 파일을 근거로 작업하세요. 산출물은 파일로 남기고, 한국어로 간결하게 답하세요.
         """
     }
 
@@ -7447,9 +8969,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: BGM view (library manager + venue player)
 
+    // Server-owned Korean copy for the bgm태깅관리 audit section: what each theme
+    // folder is FOR in the selection strategies (선곡 목적). Themes not listed here
+    // render with an empty purpose. Keyed by the first subfolder name under bgm/.
+    static let bgmThemePurpose: [String: String] = [
+        "office": "업무 적응 본진 — 넓은 템포 폭, 오후 집중",
+        "joseon": "여유·고요한 몰입 — 점심·심야 저강도 집중",
+        "ship": "하루 시동·항해감 — 아침 시작, 심야 정박",
+        "england": "대항해 시동·야간 몰입 — 아침/깊은 밤",
+        "mongolia": "광활한 개방감 — 아침 시동",
+        "samurai": "절제된 긴장·몰입 시동 — 아침 집중",
+        "lounge": "가장 낮은 템포대 — 저녁 라운지, 이완",
+        "fantagy": "판타지 기분전환 — 주말 원정",
+        "challenge": "마감 스퍼트 추진 — 초집중",
+        "gold": "결실·보상 톤 — 금요일 아침 시동",
+        "house": "고템포 추진 보조 — 마감 스퍼트",
+        "steel": "묵직한 초집중 마감 — 제련 스퍼트",
+        "heavy_rain": "폭우 앰비언트(무비트) — 활동 저하 시 소환, BPM 태깅 대상 아님",
+        "desert": "이국적 휴식 — 오아시스 점심",
+        "magic": "판타지 기분전환 — 주말 원정",
+        "snow": "상쾌한 리프레시·휴식 — 저녁 스트레스 완화",
+        "return": "마무리·개선 행진 — 귀환 저녁",
+        "china": "옥정원 휴식 — 점심·저녁 이완",
+        "peace": "평온·내려놓기 — 점심 휴식, 저녁 마무리",
+        "last_goal": "최후의 목표 돌진 — 초집중 마감",
+    ]
+
     // GET /api/bgm/list — the BGM library (BPMLibrary, scanned from the music folder)
     // as JSON for the BGM view's player. id is the index into library.tracks; the player
     // streams that file from /bgm-audio/<id>. Snapshots on main so we never race the load.
+    // Each track also carries theme + bpmResolved, and the response includes a themes[]
+    // summary (count / resolved / fallback / BPM range over resolved tracks / 선곡 목적)
+    // for the 액티비티 tab's bgm태깅관리 audit card.
+    //
+    // Per-track authoring tags (BGMTags, <musicRoot>/bgm-tags.json) are joined by the
+    // track's music-root-relative path (theme + "/" + filename; root files by filename
+    // alone): each tracks[] item additionally carries arc/tier/purpose ("" when the
+    // tags file is absent or the track is untagged — quiet, backward compatible), and
+    // each themes[] item carries an "arc" distribution object
+    // {intro,build,peak,resolve,ambient} for the theme-row mini summary.
     func bgmListJSON() -> String {
         func esc(_ s: String) -> String {
             var o = ""
@@ -7467,12 +9025,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return o
         }
-        let tracks = DispatchQueue.main.sync { library.tracks }
+        let (tracks, tagMap) = DispatchQueue.main.sync { (library.tracks, bgmTags.byPath) }
+        // Music-root-relative path — the bgm-tags.json join key (see BGMTags header).
+        func relPath(_ t: BPMLibrary.Track) -> String {
+            let file = t.url.lastPathComponent
+            return t.theme.isEmpty ? file : t.theme + "/" + file
+        }
         let items = tracks.enumerated().map { (i, t) -> String in
             let bpm = t.bpm > 0 ? String(Int(t.bpm.rounded())) : "0"
-            return "{\"id\":\(i),\"title\":\"\(esc(t.title))\",\"bpm\":\(bpm)}"
+            let theme = t.theme.isEmpty ? "(root)" : t.theme
+            let tag = tagMap[relPath(t)]
+            return "{\"id\":\(i),\"title\":\"\(esc(t.title))\",\"bpm\":\(bpm)"
+                + ",\"theme\":\"\(esc(theme))\",\"bpmResolved\":\(t.bpmResolved)"
+                + ",\"arc\":\"\(esc(tag?.arc ?? ""))\",\"tier\":\"\(esc(tag?.tier ?? ""))\""
+                + ",\"purpose\":\"\(esc(tag?.purpose ?? ""))\"}"
         }
-        return "{\"tracks\":[\(items.joined(separator: ","))]}"
+        // Per-theme audit summary: BPM range is computed over RESOLVED tracks only
+        // (fallback tracks all sit at defaultBPM and would fake a range); 0 if none.
+        // The arc distribution counts only joined tags — with no tags file it is all
+        // zeros and the card's mini summary quietly disappears.
+        var order: [String] = []
+        var agg: [String: (count: Int, resolved: Int, minB: Double, maxB: Double)] = [:]
+        var arcAgg: [String: [String: Int]] = [:]   // theme -> arc -> count
+        for t in tracks {
+            let name = t.theme.isEmpty ? "(root)" : t.theme
+            if agg[name] == nil { order.append(name); agg[name] = (0, 0, 0, 0); arcAgg[name] = [:] }
+            var a = agg[name]!
+            a.count += 1
+            if t.bpmResolved {
+                a.minB = a.resolved == 0 ? t.bpm : min(a.minB, t.bpm)
+                a.maxB = a.resolved == 0 ? t.bpm : max(a.maxB, t.bpm)
+                a.resolved += 1
+            }
+            agg[name] = a
+            if let arc = tagMap[relPath(t)]?.arc, !arc.isEmpty {
+                arcAgg[name]![arc, default: 0] += 1
+            }
+        }
+        let themes = order.map { name -> String in
+            let a = agg[name]!
+            let purpose = Self.bgmThemePurpose[name] ?? ""
+            let arcs = arcAgg[name] ?? [:]
+            let arcObj = ["intro", "build", "peak", "resolve", "ambient"]
+                .map { "\"\($0)\":\(arcs[$0] ?? 0)" }.joined(separator: ",")
+            return "{\"name\":\"\(esc(name))\",\"count\":\(a.count),\"resolved\":\(a.resolved)"
+                + ",\"fallback\":\(a.count - a.resolved)"
+                + ",\"minBpm\":\(Int(a.minB.rounded())),\"maxBpm\":\(Int(a.maxB.rounded()))"
+                + ",\"purpose\":\"\(esc(purpose))\",\"arc\":{\(arcObj)}}"
+        }
+        return "{\"tracks\":[\(items.joined(separator: ","))],\"themes\":[\(themes.joined(separator: ","))]}"
     }
 
     // GET /api/bgm/stats[?strategy=N] — per-track cumulative play time, ranked
@@ -7587,6 +9188,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // GET /api/bgm/venue — 전략7 장소·컨디션 preset catalog plus the current pick, with
+    // each preset's playable track count so the selector can flag empty pools.
+    func bgmVenueJSON() -> String {
+        DispatchQueue.main.sync {
+            let current = director?.venue.key ?? Settings.shared.bgmVenueKey ?? VenueContext.defaultKey
+            var themeCounts: [String: Int] = [:]
+            for t in library.tracks where !t.theme.isEmpty { themeCounts[t.theme, default: 0] += 1 }
+            let items = VenueContext.all.map { v -> String in
+                let count = v.themes.reduce(0) { $0 + (themeCounts[$1] ?? 0) }
+                let themesJSON = "[" + v.themes.map { jsonString($0) }.joined(separator: ",") + "]"
+                return "{\"key\":\(jsonString(v.key)),\"label\":\(jsonString(v.label)),"
+                    + "\"emoji\":\(jsonString(v.emoji)),\"desc\":\(jsonString(v.desc)),"
+                    + "\"themes\":\(themesJSON),\"tracks\":\(count),"
+                    + "\"isDefault\":\(v.key == VenueContext.defaultKey)}"
+            }
+            return "{\"current\":\(jsonString(current)),\"venues\":[" + items.joined(separator: ",") + "]}"
+        }
+    }
+
     func bgmNowJSON() -> String {
         func esc(_ s: String) -> String {
             var o = ""
@@ -7627,8 +9247,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 plan = self.bgmPlan.slot()?.label ?? "-"
             }
             let bpm = Int(director.targetBPM.rounded())
+            // 전략7: surface the venue pick so the status card shows what re-pooled selection.
+            let venue = director.venue
             return "{\"on\":\(on),\"playing\":\(playing),\"working\":\(self.isWorking),\"muted\":\(self.session.isMuted),\"id\":\(id),\"title\":\"\(esc(title))\","
-                + "\"bpm\":\(bpm),\"phase\":\"\(esc(phase))\",\"profile\":\"\(esc(profile))\",\"plan\":\"\(esc(plan))\"}"
+                + "\"bpm\":\(bpm),\"phase\":\"\(esc(phase))\",\"profile\":\"\(esc(profile))\",\"plan\":\"\(esc(plan))\","
+                + "\"venue\":\"\(esc(venue.emoji + " " + venue.label))\",\"venueKey\":\"\(esc(venue.key))\"}"
         }
     }
 
@@ -8165,11 +9788,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
         p.arguments = ["-lc", "\(Self.shellQuote(claude)) -p --output-format text 2>/dev/null"]
-        var env = ProcessInfo.processInfo.environment
-        let home = NSHomeDirectory()
-        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
-        env["CM_SUPPRESS_SESSION_GOAL"] = "1"
-        p.environment = env
+        p.environment = Self.claudeEnv()
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = nil
         do { try p.run() } catch { return nil }
@@ -8978,7 +10597,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             else { sessStart=0; sessTokens=0; sessLabel=''; }
             var paint=function(){
               var tx=document.getElementById('sessStxt'); if(!tx) return;
-              if(!sessStart){ tx.textContent='대기 중 — 입력하면 최근 세션으로 이어집니다'; return; }
+              if(!sessStart){ tx.textContent='대기 중 — 입력하면 최근 세션으로 이어집니다 (없으면 새 세션 시작)'; return; }
               var s=sessLabel||'작업 중…';
               var el=Math.floor((Date.now()-sessStart)/1000);
               if(el>=1) s+=' · '+(el>=60?Math.floor(el/60)+'분 ':'')+(el%60)+'초';
@@ -9004,8 +10623,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               .then(function(r){return r.json();}).then(function(d){
                 if(!d||!d.ok){ sessWorking(false);
                   var e=document.createElement('div'); e.className='sa';
-                  e.textContent=(d&&d.error==='no-session')?'⚠️ 연결된 세션이 없습니다. 위 "+ 세션 연결"로 세션을 붙인 뒤 다시 시도하세요.':'⚠️ 전송 실패';
+                  e.textContent='⚠️ 전송 실패';
                   live.appendChild(e); }
+                else if(d['new']){ sessWorking(true,'새 세션 시작 중…'); }
               }).catch(function(){ sessWorking(false); });
           }
           function sessStop(){
@@ -9362,7 +10982,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               fetch('/api/goal/sessions?seq='+SEQ+TQ).then(function(r){return r.json();}).then(function(d){
                 var box=document.getElementById('sessList'); if(!box) return;
                 var now=(d&&d.now)||0, list=(d&&d.sessions)||[];
-                if(!list.length){ box.innerHTML='<span class="mut">연결된 세션이 없습니다. 오른쪽 메신저·CLI로 시작하거나 “+ 세션 연결”로 추가하세요.</span>'; return; }
+                if(!list.length){ box.innerHTML='<span class="mut">연결된 세션이 없습니다. 아래 입력창에 지시하면 새 세션이 시작됩니다. (“+ 세션 연결”로 기존 세션 연결도 가능)</span>'; return; }
                 box.innerHTML='';
                 list.forEach(function(s){
                   var row=document.createElement('div'); row.className='sessitem'+(s.exists?'':' gone');
@@ -9432,6 +11052,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           header{position:relative;flex:none;background:rgba(14,17,22,.92);border-bottom:1px solid var(--line);padding:36px 76px 14px 20px}
           header a.back{color:var(--accent);text-decoration:none;font-size:12px}
           header h1{margin:6px 0 2px;font-size:17px}
+          /* 긴 목표 프롬프트: 기본 2줄로 접고, 넘칠 때만 펼치기/줄이기 토글을 보여준다 */
+          header h1.clamped{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+          header .titletgl{display:none;background:none;border:1px solid var(--line);color:var(--mut);border-radius:999px;padding:2px 10px;font-size:11px;cursor:pointer;margin:2px 0 6px}
+          header .titletgl:hover{color:var(--fg);border-color:var(--accent)}
           header .num{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--line);color:var(--accent);font-variant-numeric:tabular-nums;margin-right:6px}
           header .sub{color:var(--mut);font-size:12px}
           header .slink{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
@@ -9752,7 +11376,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           \(SessionRail.html())
           <header>
             <a class="back" href="\(htmlEscape(backHref))">\(htmlEscape(backLabel))</a>
-            <h1><span class="num">\(htmlEscape(numChip))</span>\(htmlEscape(title))</h1>
+            <h1 id="pgTitle" class="clamped"><span class="num">\(htmlEscape(numChip))</span>\(htmlEscape(title))</h1>
+            <button id="titleTgl" class="titletgl" onclick="titleToggle()">펼치기 ▾</button>
             <div class="sub">\(meta)</div>
             \(sessionLink)
             <div class="pagetools">\(uiSeg)<button class="ptool" id="chatTool" onclick="chatToggle()" title="채팅 패널 열기/닫기">💬</button></div>
@@ -9760,13 +11385,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           <div class="layout">
             <div class="goalcol"><div class="goalinner">
               <div class="verswitch">
-                <button id="btnCore" class="on" onclick="showVer('core')">핵심 버전</button>
+                <button id="btnCore" onclick="showVer('core')">핵심 버전</button>
                 <button id="btnDetail" onclick="showVer('detail')">디테일 버전</button>
-                <button id="btnSession" onclick="showVer('session')">세션 정보</button>
+                <button id="btnSession" class="on" onclick="showVer('session')">세션 정보</button>
               </div>
-              <div id="ver-core" class="verbody">\(coreEditHead)<div id="coreDisplay"\(coreDispAttr)>\(coreHTML)</div>\(coreEditor)</div>
+              <div id="ver-core" class="verbody" style="display:none">\(coreEditHead)<div id="coreDisplay"\(coreDispAttr)>\(coreHTML)</div>\(coreEditor)</div>
               <div id="ver-detail" class="verbody" style="display:none">\(detailHTML)</div>
-              <div id="ver-session" class="verbody" style="display:none">\(sessionSummary)<h2>최신 진행 내용</h2>\(currentHTML)<div id="sessLive"></div><div class="sessstat" id="sessStat"><span class="sstar">✳</span><span id="sessStxt">대기 중 — 입력하면 최근 세션으로 이어집니다</span></div><div class="sesscomposer"><textarea id="sessIn" rows="2" placeholder="이어서 지시하기… (Enter 전송 · ⇧Enter 줄바꿈)"></textarea><button id="sessSend" onclick="sessSay()">보내기</button><button id="sessStopBtn" onclick="sessStop()" style="display:none">중단</button></div></div>
+              <div id="ver-session" class="verbody">\(sessionSummary)<h2>최신 진행 내용</h2>\(currentHTML)<div id="sessLive"></div><div class="sessstat" id="sessStat"><span class="sstar">✳</span><span id="sessStxt">대기 중 — 입력하면 최근 세션으로 이어집니다 (없으면 새 세션 시작)</span></div><div class="sesscomposer"><textarea id="sessIn" rows="2" placeholder="이어서 지시하기… (Enter 전송 · ⇧Enter 줄바꿈)"></textarea><button id="sessSend" onclick="sessSay()">보내기</button><button id="sessStopBtn" onclick="sessStop()" style="display:none">중단</button></div></div>
               <h2 class="atth" onclick="toggleAtt()">첨부 <span id="attToggle" class="att-toggle">▸ 펼치기</span></h2>
               <div id="attWrap" style="display:none">
                 \(attachments)
@@ -9802,6 +11427,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               <div class="pickfoot"><button onclick="closeSessPicker()">취소</button><button class="save" onclick="confirmSessLink()">연결</button></div>
             </div>
           </div>
+          <script>
+          /* Long goal-prompt titles: clamp to 2 lines by default and show a
+             펼치기/줄이기 toggle only when the title actually overflows. */
+          (function(){
+            var t=document.getElementById('pgTitle'),b=document.getElementById('titleTgl');
+            if(!t||!b)return;
+            function chk(){
+              var clamped=t.classList.contains('clamped');
+              b.style.display=(!clamped||t.scrollHeight>t.clientHeight+2)?'inline-block':'none';
+            }
+            window.titleToggle=function(){
+              var clamped=t.classList.toggle('clamped');
+              b.textContent=clamped?'펼치기 ▾':'줄이기 ▴';
+              chk();
+            };
+            chk();
+            window.addEventListener('resize',chk);
+          })();
+          </script>
           \(chatScript)
           \(cliScript)
           \(sessScript)

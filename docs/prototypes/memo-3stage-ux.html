@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>메모장 + 사이드바 3단계 — UX 프로토타입</title>
+<!--
+  UX prototype — 대화 페이지(/goal-add) 맨 위 메모장 + 사이드바 토글 3단계.
+
+  Today SessionRail's sbtoggle is BINARY: cmRailToggle() flips body.cmrail-collapsed
+  (레일 열림 ↔ 접힘), persisted in localStorage['cmRailCollapsed'].
+  This prototype explores a THIRD stage on the same button: 메모장만 — rail hidden AND the
+  대화 surface hidden, leaving only the memo pad. Nothing here touches the running app;
+  it is a standalone page so the interaction can be FELT before we commit.
+
+  Stage cycle (same button):
+    0 레일 + 대화 + 메모장  →  1 레일 접힘 (대화 전체폭)  →  2 메모장만  →  0
+  Reverse: ⌥+click. Escape from stage 2 returns to stage 0.
+-->
+<style>
+  :root{
+    --rail-w:240px;
+    --bg:#0b0e14; --rail:#0d1017; --line:#1c2230; --panel:#111722; --panel2:#0f141d;
+    --txt:#e7ecf4; --dim:#8b93a7; --dim2:#5d6678;
+    --accent:#3d6df0; --accent2:#7c5cff; --ok:#33c98a; --wait:#8b5cf6;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--txt);
+    font:13px/1.5 -apple-system,BlinkMacSystemFont,system-ui,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+    padding-left:var(--rail-w); overflow-x:hidden;
+    transition:padding-left .22s cubic-bezier(.4,0,.2,1);
+  }
+
+  /* ===== stage machine =====
+     Stage lives on <body> as .st0 / .st1 / .st2 — one class drives rail, chat and memo. */
+  body.st1, body.st2{ padding-left:0 }
+
+  /* ===== rail (mirrors SessionRail.swift geometry/colors) ===== */
+  .rail{ position:fixed; top:0; left:0; bottom:0; width:var(--rail-w); z-index:40;
+    background:var(--rail); border-right:1px solid var(--line); display:flex; flex-direction:column;
+    transition:transform .22s cubic-bezier(.4,0,.2,1) }
+  body.st1 .rail, body.st2 .rail{ transform:translateX(-100%) }
+
+  .brand{ display:flex; align-items:center; gap:2px; padding:2px 10px 6px 84px; min-height:30px }
+  .sbtoggle{ display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px;
+    border-radius:6px; background:none; border:0; color:#8b93a7; cursor:pointer; padding:0 }
+  .sbtoggle:hover{ background:rgba(255,255,255,.08); color:var(--txt) }
+  .sbtoggle svg{ width:16px; height:16px; display:block; pointer-events:none }
+  /* Floating copy lands on the exact spot the in-rail toggle occupied (top:2px, left:84px)
+     so the control never jumps as stages change. */
+  .toggle-float{ position:fixed; top:2px; left:84px; z-index:41; display:none }
+  body.st1 .toggle-float, body.st2 .toggle-float{ display:inline-flex }
+  /* Stage dots on the button: which of the three stages we are in, without a label. */
+  .dots{ position:fixed; top:9px; left:116px; z-index:41; display:flex; gap:4px; pointer-events:none;
+    opacity:0; transition:opacity .18s }
+  body:hover .dots{ opacity:1 }
+  .dots i{ width:5px; height:5px; border-radius:50%; background:#2b3448; display:block }
+  .dots i.on{ background:var(--accent) }
+
+  .nav{ display:grid; grid-template-columns:repeat(3,1fr); gap:4px; padding:6px;
+    margin:0 8px 6px; background:var(--panel2); border:1px solid var(--line); border-radius:12px }
+  .nav a{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+    padding:9px 4px; border-radius:8px; color:#c8cfdb; text-decoration:none; font-size:12px; cursor:pointer }
+  .nav a:hover{ background:#161c2a }
+  .nav a.on{ background:#152036; color:var(--txt) }
+  .nav a.off{ color:#454d5e; cursor:default }
+  .nav .ico{ font-size:15px; line-height:1; height:18px; display:flex; align-items:center; color:#8b93a7 }
+  .nav a.on .ico{ color:#6f9bff }
+
+  .sechd{ padding:8px 14px 4px; color:var(--dim2); font-size:11px }
+  .sesslist{ flex:1; overflow:auto; padding:0 8px 10px }
+  .sess{ display:flex; gap:8px; align-items:flex-start; padding:7px 8px; border-radius:8px; cursor:pointer }
+  .sess:hover{ background:#161c2a }
+  .sess .dot{ flex:none; width:7px; height:7px; border-radius:50%; background:#4b5670; margin-top:5px }
+  .sess.live .dot{ background:var(--ok); box-shadow:0 0 8px rgba(51,201,138,.6) }
+  .sess .t{ min-width:0 }
+  .sess .t b{ display:block; font-weight:500; font-size:12.5px; color:#d8dfea;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:178px }
+  .sess .t span{ font-size:11px; color:var(--dim2) }
+
+  /* ===== main surface (대화 페이지) ===== */
+  .page{ max-width:880px; margin:0 auto; padding:34px 18px 60px; display:flex; flex-direction:column;
+    min-height:100vh }
+  body.st2 .page{ padding-top:44px; height:100vh; min-height:0 }
+
+  .card{ background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:16px }
+
+  /* ===== 메모장 — 대화창 맨 위 ===== */
+  .memo{ display:flex; flex-direction:column; margin-bottom:14px; transition:box-shadow .2s }
+  .memo-hd{ display:flex; align-items:center; gap:8px; margin-bottom:8px }
+  .memo-hd .ttl{ font-size:12.5px; font-weight:600; color:#cfd6e2; letter-spacing:.2px }
+  .memo-hd .meta{ margin-left:auto; font-size:11px; color:var(--dim2) }
+  .memo-hd .meta.saved{ color:var(--ok) }
+  .memo-hd .esc{ display:none; font-size:11px; color:var(--dim2); border:1px solid #232c3e;
+    border-radius:6px; padding:1px 6px }
+  body.st2 .memo-hd .esc{ display:inline-block }
+  .memo textarea{ width:100%; resize:none; background:#0c1119; color:#dfe6f1; border:1px solid #1b2231;
+    border-radius:11px; padding:12px 13px; font:13.5px/1.72 -apple-system,BlinkMacSystemFont,system-ui,"Apple SD Gothic Neo",sans-serif;
+    outline:none; height:132px; transition:height .22s cubic-bezier(.4,0,.2,1), border-color .15s }
+  .memo textarea:focus{ border-color:#2c3d68 }
+  .memo textarea::placeholder{ color:#4d566a }
+  /* Stage 2: the pad IS the page — grow into the freed height. */
+  body.st2 .memo{ flex:1; min-height:0 }
+  body.st2 .memo textarea{ flex:1; height:auto; min-height:0; font-size:15px; line-height:1.85; padding:18px 20px }
+  /* variant B: 문서형 — narrower measure, centered, for long-form writing */
+  body.st2.vb .page{ max-width:720px }
+  body.st2.vb .memo{ background:transparent; border-color:transparent; padding:0 }
+  body.st2.vb .memo textarea{ background:transparent; border-color:transparent; padding:8px 2px }
+
+  /* ===== 대화 (composer + 큐) — hidden in stage 2 ===== */
+  .chat{ transition:opacity .18s }
+  body.st2 .chat{ display:none }
+
+  .row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px }
+  .row .k{ font-size:11.5px; color:var(--dim) }
+  .pill{ display:inline-flex; align-items:center; gap:6px; background:#151b27; border:1px solid #232c3e;
+    border-radius:9px; padding:5px 9px; font-size:12px; color:#cbd3e0; cursor:pointer }
+  .pill:hover{ border-color:#33406a }
+  .composer{ background:#0c1119; border:1px solid #1b2231; border-radius:12px; padding:12px 13px;
+    color:#4d566a; font-size:12.5px; min-height:104px }
+  .segs{ display:flex; gap:5px; flex-wrap:wrap }
+  .seg{ padding:5px 11px; border-radius:8px; border:1px solid #232c3e; background:#141a26;
+    font-size:12px; color:#c2cad8; cursor:pointer }
+  .seg.on{ background:var(--accent); border-color:var(--accent); color:#fff }
+  .acts{ display:flex; gap:7px; justify-content:flex-end; margin-top:12px; flex-wrap:wrap }
+  .btn{ padding:7px 14px; border-radius:9px; border:1px solid #232c3e; background:#151b27;
+    color:#d3dae6; font-size:12.5px; cursor:pointer }
+  .btn.pri{ background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600 }
+  .hint{ margin-top:12px; font-size:11.5px; line-height:1.8; color:var(--dim) }
+  .hint b{ color:#cfd6e2 }
+
+  .queue{ margin-top:14px }
+  .queue .qhd{ font-size:12.5px; color:#cfd6e2; margin-bottom:10px }
+  .queue .qhd span{ color:var(--dim2); font-size:11.5px; font-weight:400 }
+  .qrow{ display:flex; align-items:center; gap:8px; padding:8px 4px; border-top:1px solid #171d29;
+    font-size:12.5px; color:#c8cfdb }
+  .tag{ font-size:10.5px; border-radius:6px; padding:2px 6px; border:1px solid #2b3448; color:#9fb0cf }
+  .tag.wait{ color:#c4b5fd; border-color:#4c3f7a }
+  .tag.done{ color:var(--ok); border-color:#25553f }
+  .qrow .d{ margin-left:auto; color:var(--dim2); font-size:11px }
+
+  /* ===== UX 테스트 패널 (프로토타입 전용, 제품 UI 아님) ===== */
+  .lab{ position:fixed; right:16px; bottom:16px; z-index:60; width:262px;
+    background:#12172080; backdrop-filter:blur(12px); border:1px solid #263149; border-radius:14px;
+    padding:12px; font-size:11.5px; color:#c3cbd9; box-shadow:0 14px 44px rgba(0,0,0,.5) }
+  .lab h4{ margin:0 0 8px; font-size:11px; letter-spacing:.5px; text-transform:uppercase; color:#6e7789;
+    cursor:pointer; display:flex; align-items:center; gap:6px }
+  .lab h4 .fold{ margin-left:auto; color:#4f5871 }
+  /* Folded — the panel must not sit on top of the buttons it is here to test. */
+  .lab.min{ width:auto; padding:7px 11px }
+  .lab.min h4{ margin:0 }
+  .lab.min .now, .lab.min .desc, .lab.min .steps, .lab.min .vars, .lab.min .lbl, .lab.min .keys{ display:none }
+  .lab .now{ font-size:13px; color:var(--txt); font-weight:600; margin-bottom:2px }
+  .lab .desc{ color:var(--dim); line-height:1.65; margin-bottom:10px; min-height:32px }
+  .lab .lbl{ color:var(--dim2); margin:8px 0 5px }
+  .lab .keys{ line-height:1.9; color:var(--dim) }
+  .lab kbd{ background:#1b2231; border:1px solid #2b3448; border-radius:5px; padding:1px 5px;
+    font:inherit; font-size:11px; color:#cbd3e0 }
+  .lab .steps{ display:flex; gap:5px; margin-bottom:4px }
+  .lab .steps button{ flex:1; padding:5px 0; border-radius:7px; border:1px solid #263149;
+    background:#151b27; color:#aab3c4; font:inherit; cursor:pointer }
+  .lab .steps button.on{ background:var(--accent2); border-color:var(--accent2); color:#fff }
+  .lab .vars{ display:flex; gap:5px }
+  .lab .vars button{ flex:1; padding:5px 0; border-radius:7px; border:1px solid #263149;
+    background:#151b27; color:#aab3c4; font:inherit; cursor:pointer }
+  .lab .vars button.on{ background:#1d2a44; border-color:#33406a; color:var(--txt) }
+
+  /* stage toast — brief confirmation of where the press landed */
+  .toast{ position:fixed; top:44px; left:50%; transform:translate(-50%,-6px); z-index:70;
+    background:#161d2b; border:1px solid #2b3448; border-radius:10px; padding:6px 13px;
+    font-size:12px; color:#dbe2ee; opacity:0; pointer-events:none; transition:.18s }
+  .toast.on{ opacity:1; transform:translate(-50%,0) }
+</style>
+</head>
+<body class="st0">
+
+<!-- floating toggle (visible while the rail is away) -->
+<button class="sbtoggle toggle-float" id="tgFloat" title="사이드바"></button>
+<div class="dots"><i id="d0"></i><i id="d1"></i><i id="d2"></i></div>
+
+<aside class="rail">
+  <div class="brand">
+    <button class="sbtoggle" id="tgRail" title="접기"></button>
+    <button class="sbtoggle" title="목표 검색">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round">
+        <circle cx="7.2" cy="7.2" r="4.2"/><line x1="10.4" y1="10.4" x2="13.4" y2="13.4"/></svg>
+    </button>
+  </div>
+  <nav class="nav">
+    <a class="on"><span class="ico">💬</span>대화</a>
+    <a><span class="ico">🧩</span>스킬</a>
+    <a><span class="ico">🕒</span>크론</a>
+    <a><span class="ico">👤</span>위임</a>
+    <a><span class="ico">👥</span>팀위임</a>
+    <a><span class="ico">🗂</span>작업</a>
+    <a><span class="ico">🌐</span>번역</a>
+    <a class="off"><span class="ico">⋯</span>미정</a>
+    <a class="off"><span class="ico">⋯</span>미정</a>
+  </nav>
+  <div class="sechd">세션</div>
+  <div class="sesslist">
+    <div class="sess live"><i class="dot"></i><div class="t"><b>MPC정리 &amp; 시즌1 정리 &amp; …</b><span>goal-1 · 진행 중</span></div></div>
+    <div class="sess"><i class="dot"></i><div class="t"><b>주보상패키지 지급</b><span>goal-130 · 진행 중</span></div></div>
+    <div class="sess"><i class="dot"></i><div class="t"><b>인도 출장 준비(미국출장) 1…</b><span>goal-646 · 진행 중</span></div></div>
+    <div class="sess"><i class="dot"></i><div class="t"><b>MPC 개발팀 리스트와 gith…</b><span>goal-659 · 진행 중</span></div></div>
+    <div class="sess"><i class="dot"></i><div class="t"><b>Slack 스레드 대응: ##prj-…</b><span>goal-676 · 진행 중</span></div></div>
+    <div class="sess"><i class="dot"></i><div class="t"><b>KRW 주정산</b><span>goal-683 · 진행 중</span></div></div>
+    <div class="sess"><i class="dot"></i><div class="t"><b>Slack 스레드 대응: ##cha…</b><span>goal-685 · 진행 중</span></div></div>
+    <div class="sess"><i class="dot"></i><div class="t"><b>이렇게나옴</b><span>goal-690 · 진행 중</span></div></div>
+  </div>
+</aside>
+
+<main class="page">
+
+  <!-- 대화창 맨 위 메모장 -->
+  <section class="card memo">
+    <div class="memo-hd">
+      <span class="ttl">메모장</span>
+      <span class="esc">Esc → 대화로 복귀</span>
+      <span class="meta" id="memoMeta">자동 저장</span>
+    </div>
+    <textarea id="memo" placeholder="지금 머릿속에 있는 것들 — 목표로 만들기 전 초안, 붙여둘 링크, 잊으면 안 되는 숫자.&#10;대화와 같은 화면에 있어서 옮겨 적을 필요가 없습니다. (자동 저장)"></textarea>
+  </section>
+
+  <div class="chat">
+    <section class="card">
+      <div class="row">
+        <span class="k">작업 폴더</span>
+        <span class="pill">📁 condition-manager (직접) ▾</span>
+        <span class="pill">⤳ feat/dashboard-value-pipeline ▾</span>
+      </div>
+      <div class="composer">목표/디테일 입력 후 Enter (AI추가로 계속 추가) · Shift+Enter 줄바꿈 · 이미지 붙여넣기·끌어놓기 가능</div>
+      <div class="row" style="margin:10px 0 0">
+        <span class="k">작업 모드</span><span class="pill">자동 · 건너뛰기 ▾</span>
+      </div>
+      <div class="row" style="margin:10px 0 0">
+        <span class="k">모델</span>
+        <div class="segs">
+          <span class="seg on">자동</span><span class="seg">Fable 5</span><span class="seg">Opus 4.8</span>
+          <span class="seg">Sonnet</span><span class="seg">Haiku</span>
+        </div>
+      </div>
+      <div class="acts">
+        <button class="btn pri">AI추가</button><button class="btn">추가</button>
+        <button class="btn">검색</button><button class="btn">AI검색</button><button class="btn">GUI시작</button>
+      </div>
+      <div class="hint"><b>Enter</b>를 누르면 <b>AI추가</b>로 담깁니다 — 비슷한 목표가 있는지 먼저 확인하며,
+        페이지는 열린 채 계속 추가할 수 있습니다. 바로 추가하려면 <b>추가</b>.</div>
+    </section>
+
+    <section class="card queue">
+      <div class="qhd">큐 6건 <span>— 행을 펼치면(+) AI 분석 결과를 검토·확정할 수 있습니다 · GUI열기는 바로 세션까지</span></div>
+      <div class="qrow"><span class="tag">AI 검색</span>7월6일 작업한 session을 모두 확인하면 김순기 53529902<span class="d">7/29</span><span class="tag done">완료</span></div>
+      <div class="qrow"><span class="tag">AI 큐</span>MPC 팀 커리어 업데이트<span class="d">7/27</span><span class="tag done">완료</span></div>
+      <div class="qrow"><span class="tag wait">대기</span>주간 개런티 리스트 재생성<span class="d">7/29</span></div>
+      <div class="qrow"><span class="tag wait">대기</span>Slack 👀 번역 큐 정리<span class="d">7/30</span></div>
+    </section>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<div class="lab" id="lab">
+  <h4 id="labFold">UX 테스트 패널 <span class="fold">▾</span></h4>
+  <div class="now" id="labNow">1/3 · 레일 + 대화</div>
+  <div class="desc" id="labDesc">기본 상태. 메모장은 대화창 맨 위에 고정되어 있습니다.</div>
+  <div class="steps">
+    <button data-s="0">1단계</button><button data-s="1">2단계</button><button data-s="2">3단계</button>
+  </div>
+  <div class="lbl">3단계 표현 방식</div>
+  <div class="vars">
+    <button data-v="a">A 전체폭 패널</button><button data-v="b">B 문서형</button>
+  </div>
+  <div class="lbl">조작</div>
+  <div class="keys">
+    <kbd>클릭</kbd> 다음 단계 · <kbd>⌥</kbd>+클릭 이전 단계<br>
+    <kbd>Esc</kbd> 3단계 → 1단계 복귀
+  </div>
+</div>
+
+<script>
+// ===== stage machine =====
+// 0 = 레일 + 대화 + 메모장 (기본)
+// 1 = 레일 접힘 — 오늘의 cmrail-collapsed 와 동일
+// 2 = 메모장만 — 레일도 대화도 비우고 메모 패드만 남긴다
+var STAGES = [
+  ['1/3 · 레일 + 대화', '기본 상태. 메모장은 대화창 맨 위에 고정되어 있습니다.', '사이드바 접기'],
+  ['2/3 · 레일 접힘', '레일이 사라져 대화가 전체폭을 씁니다 (현재 앱의 2단계와 동일).', '메모장만 보기'],
+  ['3/3 · 메모장만', '대화 화면까지 걷어내고 메모 패드만 남습니다 — 생각만 적는 상태.', '원래대로']
+];
+var stage = 0, variant = 'a';
+
+function applyStage(next, announce){
+  stage = (next + 3) % 3;
+  var b = document.body;
+  b.classList.remove('st0','st1','st2');
+  b.classList.add('st' + stage);
+  b.classList.toggle('vb', variant === 'b');
+
+  var s = STAGES[stage];
+  document.getElementById('labNow').textContent = s[0];
+  document.getElementById('labDesc').textContent = s[1];
+  document.getElementById('tgRail').title = s[2];
+  document.getElementById('tgFloat').title = s[2];
+  for (var i = 0; i < 3; i++) document.getElementById('d' + i).className = (i === stage ? 'on' : '');
+  var btns = document.querySelectorAll('.lab .steps button');
+  for (var j = 0; j < btns.length; j++) btns[j].className = (+btns[j].dataset.s === stage ? 'on' : '');
+
+  if (announce) toast(s[0].split('· ')[1]);
+  // Stage 2 exists to be written in — put the caret where the user is headed.
+  if (stage === 2) setTimeout(function(){ document.getElementById('memo').focus(); }, 220);
+  try { localStorage.setItem('memo3.stage', stage); } catch (e) {}
+}
+
+function applyVariant(v){
+  variant = v;
+  document.body.classList.toggle('vb', variant === 'b');
+  var vb = document.querySelectorAll('.lab .vars button');
+  for (var i = 0; i < vb.length; i++) vb[i].className = (vb[i].dataset.v === v ? 'on' : '');
+  try { localStorage.setItem('memo3.variant', v); } catch (e) {}
+}
+
+var tmr;
+function toast(msg){
+  var t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('on');
+  clearTimeout(tmr); tmr = setTimeout(function(){ t.classList.remove('on'); }, 1200);
+}
+
+// Both toggle copies (in-rail + floating) share the cycle. ⌥ reverses, so getting back
+// from 메모장만 does not require walking the whole loop.
+function onToggle(ev){ applyStage(stage + (ev.altKey ? -1 : 1), true); }
+document.getElementById('tgRail').addEventListener('click', onToggle);
+document.getElementById('tgFloat').addEventListener('click', onToggle);
+
+var sb = document.querySelectorAll('.lab .steps button');
+for (var i = 0; i < sb.length; i++) sb[i].addEventListener('click', function(){ applyStage(+this.dataset.s, true); });
+var vb = document.querySelectorAll('.lab .vars button');
+for (var k = 0; k < vb.length; k++) vb[k].addEventListener('click', function(){ applyVariant(this.dataset.v); });
+
+// Fold the lab panel away when it covers the buttons under test.
+document.getElementById('labFold').addEventListener('click', function(){
+  var lab = document.getElementById('lab');
+  var min = lab.classList.toggle('min');
+  lab.querySelector('.fold').textContent = min ? '▸' : '▾';
+  try { localStorage.setItem('memo3.lab', min ? '1' : ''); } catch (e) {}
+});
+try {
+  if (localStorage.getItem('memo3.lab') === '1'){
+    document.getElementById('lab').classList.add('min');
+    document.querySelector('.lab .fold').textContent = '▸';
+  }
+} catch (e) {}
+
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape' && stage === 2){ applyStage(0, true); }
+});
+
+// ===== 메모 자동 저장 =====
+var memo = document.getElementById('memo'), meta = document.getElementById('memoMeta'), save;
+memo.addEventListener('input', function(){
+  meta.className = 'meta'; meta.textContent = '입력 중…';
+  clearTimeout(save);
+  save = setTimeout(function(){
+    try { localStorage.setItem('memo3.text', memo.value); } catch (e) {}
+    var n = memo.value.length;
+    meta.className = 'meta saved';
+    meta.textContent = (n ? n + '자 · ' : '') + '저장됨';
+  }, 400);
+});
+
+// restore
+try {
+  var t = localStorage.getItem('memo3.text'); if (t) memo.value = t;
+  applyVariant(localStorage.getItem('memo3.variant') || 'a');
+  applyStage(parseInt(localStorage.getItem('memo3.stage') || '0', 10) || 0, false);
+} catch (e) { applyVariant('a'); applyStage(0, false); }
+
+// The sidebar glyph — macOS "sidebar.left" (rectangle + divider), same as SessionRail.
+(function(){
+  var svg = '<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">'
+    + '<rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.3"/>'
+    + '<line x1="6" y1="2.5" x2="6" y2="13.5" stroke="currentColor" stroke-width="1.3"/></svg>';
+  document.getElementById('tgRail').innerHTML = svg;
+  document.getElementById('tgFloat').innerHTML = svg;
+})();
+</script>
+</body>
+</html>

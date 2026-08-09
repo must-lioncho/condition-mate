@@ -122,6 +122,28 @@ final class EquipmentStore {
         return amount
     }
 
+    // 쓰다듬기 — the equipment page's pixel avatar click: +1 XP to the weakest gear
+    // (lowest level, ties by lowest XP, then category order), so petting nudges the
+    // roster toward balanced growth (overall level is the average). Returns the
+    // receiving category and the new level if it leveled, or nil when everything is
+    // already mastered. Taps are not appended to the awards ledger — 200 entries of
+    // +1 would drown the pomodoro history.
+    @discardableResult
+    func tap(now: Date = Date()) -> (category: String, leveledTo: Int)? {
+        lock.lock()
+        var target: (c: String, p: Prof)? = nil
+        for c in Self.categories {
+            let p = prof[c] ?? Prof(lv: 0, xp: 0)
+            guard p.lv < Self.maxLevel else { continue }
+            if let t = target {
+                if p.lv < t.p.lv || (p.lv == t.p.lv && p.xp < t.p.xp) { target = (c, p) }
+            } else { target = (c, p) }
+        }
+        lock.unlock()
+        guard let t = target else { return nil }
+        return (t.c, addXP(t.c, 1, now: now))
+    }
+
     // A successful pomodoro: the full reward goes to the most-used category.
     // Ties break by the categories order (chat first); no usage at all → 대화 (기본기).
     @discardableResult

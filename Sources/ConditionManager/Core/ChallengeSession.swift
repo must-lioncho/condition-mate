@@ -12,8 +12,10 @@ import Foundation
 /// the sound while the challenge keeps going. These two flags are what the "start" button and the
 /// "mute dot" drive.
 ///
-/// Neither flag is persisted — both reset to false on launch, matching the prior behavior (only the
-/// accumulated time in TimeStore is durable). Mutating either flag fires `onChange` so native
+/// `isRunning` is not persisted — it resets to false on launch. `isMuted` IS persisted
+/// (`Settings.muted`): if the sound was muted when the app went down (quit, relaunch, update), it
+/// comes back muted, so an update never resurrects audio the user had silenced. Mutating either
+/// flag fires `onChange` so native
 /// surfaces (menu/gauge) can refresh immediately; the webviews pick the new state up on their next
 /// poll via the JSON these flags feed (`/data.json` now.working/now.muted, `/api/bgm/now`,
 /// `/api/session/state`).
@@ -24,8 +26,8 @@ import Foundation
 final class ChallengeSession {
     /// The challenge / work session is live.
     private(set) var isRunning = false
-    /// The user has muted the sound (the challenge keeps running).
-    private(set) var isMuted = false
+    /// The user has muted the sound (the challenge keeps running). Restored from the last run.
+    private(set) var isMuted = Settings.shared.muted
 
     /// Fired after either flag actually changes value (no-op writes don't fire).
     var onChange: (() -> Void)?
@@ -42,6 +44,7 @@ final class ChallengeSession {
     func setMuted(_ value: Bool) -> Bool {
         guard isMuted != value else { return false }
         isMuted = value
+        Settings.shared.muted = value
         onChange?()
         return true
     }

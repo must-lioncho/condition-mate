@@ -1,13 +1,17 @@
 import AppKit
 
 // Screen-drawing overlay ("드로우" plugin engine). Hold the LEFT OPTION key to sketch
-// on top of everything with the mouse; double-tap the LEFT COMMAND key to type 30pt
-// text at the cursor; tap the LEFT CONTROL key to wipe the canvas.
+// on top of everything with the mouse; triple-tap the LEFT COMMAND key to type 30pt
+// text at the cursor; tap the FN key to wipe the canvas. (Wipe was left ⌃ originally,
+// but ⌃ collides with the macOS screenshot-to-clipboard chords the user presses a lot,
+// which kept erasing the canvas mid-capture. Text was a double-tap originally, but
+// rapid ⌘C→⌘V copy-paste bursts produced two close-together ⌘ down edges and kept
+// popping the editor, so it moved to three taps.)
 //
 // WHY polling instead of event taps: global keyboard monitors (NSEvent global monitor
 // for .flagsChanged, CGEventTap) require the Accessibility permission. This app never
 // asks for it, so the engine polls CGEventSource.keyState() — a pure state query that
-// needs no permission and distinguishes LEFT option/control by hardware keycode, which
+// needs no permission and distinguishes LEFT option/command by hardware keycode, which
 // NSEvent.modifierFlags cannot. The poll runs slow (15 Hz) while idle and ramps to
 // 90 Hz only while a stroke is in progress, so the resident cost stays negligible.
 //
@@ -19,21 +23,24 @@ import AppKit
 // wires liveness reporting via `onActivity`.
 public final class DrawOverlayController {
 
-    // Hardware keycodes (ANSI layout-independent): 58 = left ⌥, 59 = left ⌃, 55 = left ⌘.
+    // Hardware keycodes (ANSI layout-independent): 58 = left ⌥, 63 = fn, 55 = left ⌘.
     private static let leftOptionKey: CGKeyCode = 58
-    private static let leftControlKey: CGKeyCode = 59
+    private static let fnKey: CGKeyCode = 63
     private static let leftCommandKey: CGKeyCode = 55
 
     private static let idleInterval: TimeInterval = 1.0 / 15.0   // watching for ⌥
     private static let fastInterval: TimeInterval = 1.0 / 90.0   // sampling a stroke
-    // Two left-⌘ down edges within this window count as a double-tap. Shortcut usage
-    // (⌘C→⌘V …) normally holds ⌘ across keys = ONE down edge, so it won't trigger.
-    private static let cmdDoubleTapWindow: TimeInterval = 0.4
+    // Left-⌘ down edges chain into a multi-tap while each gap stays within this
+    // window; three chained taps trigger the text editor. Shortcut usage (⌘C→⌘V …)
+    // normally holds ⌘ across keys = ONE down edge, and even a quick copy-paste
+    // burst rarely produces three separate taps this fast.
+    private static let cmdTapWindow: TimeInterval = 0.4
+    private static let cmdTapsRequired = 3
 
     // Stroke look — the sketchy purple marker from the mock.
     public var strokeColor = NSColor(calibratedRed: 0.80, green: 0.42, blue: 0.93, alpha: 1)
     public var lineWidth: CGFloat = 5
-    // Text look for the double-⌘ writer (사이즈 요청값 30pt).
+    // Text look for the triple-⌘ writer (사이즈 요청값 30pt).
     public var textFontSize: CGFloat = 30
 
     // Throttled liveness tick (~every 5s while running) so the host app can stamp a
@@ -47,9 +54,10 @@ public final class DrawOverlayController {
     private var windows: [DrawOverlayWindow] = []
     private var activeCanvas: DrawCanvasView?
     private var drawing = false
-    private var prevControlDown = false
+    private var prevFnDown = false
     private var prevCommandDown = false
     private var lastCommandDownAt = Date.distantPast
+    private var commandTapCount = 0
     private var textEditor: DrawTextEditorWindow?
     private var textAnchor = NSPoint.zero
     private weak var appToRestore: NSRunningApplication?
@@ -106,22 +114,28 @@ public final class DrawOverlayController {
 
     private func poll() {
         let optionDown = CGEventSource.keyState(.combinedSessionState, key: Self.leftOptionKey)
-        let controlDown = CGEventSource.keyState(.combinedSessionState, key: Self.leftControlKey)
+        let fnDown = CGEventSource.keyState(.combinedSessionState, key: Self.fnKey)
         let commandDown = CGEventSource.keyState(.combinedSessionState, key: Self.leftCommandKey)
 
-        // Left control: wipe on the down EDGE only, so holding it doesn't spin.
-        if controlDown && !prevControlDown { clear() }
-        prevControlDown = controlDown
+        // fn: wipe on the down EDGE only, so holding it doesn't spin.
+        if fnDown && !prevFnDown { clear() }
+        prevFnDown = fnDown
 
-        // Left command: two down edges within the double-tap window open the text
-        // editor at the cursor (another double-tap commits and closes it).
+        // Left command: three down edges, each within the tap window of the previous
+        // one, open the text editor at the cursor (another triple-tap commits and
+        // closes it). A longer gap resets the chain to tap #1.
         if commandDown && !prevCommandDown {
             let now = Date()
-            if now.timeIntervalSince(lastCommandDownAt) <= Self.cmdDoubleTapWindow {
+            if now.timeIntervalSince(lastCommandDownAt) <= Self.cmdTapWindow {
+                commandTapCount += 1
+            } else {
+                commandTapCount = 1
+            }
+            lastCommandDownAt = now
+            if commandTapCount >= Self.cmdTapsRequired {
+                commandTapCount = 0
                 lastCommandDownAt = .distantPast
                 toggleTextEditor(at: NSEvent.mouseLocation)
-            } else {
-                lastCommandDownAt = now
             }
         }
         prevCommandDown = commandDown
@@ -162,10 +176,10 @@ public final class DrawOverlayController {
         }
     }
 
-    // MARK: Text (double left-⌘)
+    // MARK: Text (triple left-⌘)
 
     // Open the 30pt text editor at the cursor, or — if one is already up — commit
-    // what's typed and close it (double-tap works as an open/commit toggle).
+    // what's typed and close it (triple-tap works as an open/commit toggle).
     private func toggleTextEditor(at global: NSPoint) {
         if let editor = textEditor { editor.finishNow(); return }
         textAnchor = global

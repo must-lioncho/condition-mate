@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>대화+작업 통합 — 3단계 레이아웃 목업</title>
+<!--
+  클릭 가능한 목업. 실제 앱 배선 전에 3단계 전환과 좌우 분할 폭을 눈으로 확인하기 위한 것.
+  더미 데이터만 쓰며 서버를 호출하지 않는다.
+
+    1단계 메모장만        (기본) — 레일·보드 없음, 720px 중앙 문서형 메모
+    2단계 메모 + 컴포저   — 레일 등장, 본문 위=메모 / 아래=AI 검색·추가 컴포저 + 큐
+    3단계 작업 + 대화     — 레일 + 왼쪽·가운데 작업 보드 / 오른쪽 대화 패널
+
+  전환: ⊞ 클릭(순환) · ⌥+클릭(역방향) · ⌃⌘N · Esc(1단계에서 3단계로 복귀)
+-->
+<style>
+  :root{ --bg:#0f1115; --panel:#171a21; --line:#232733; --mut:#8b93a7; --fg:#e7ebf3;
+         --accent:#5b8cff; --green:#36c08a; --rail-w:242px; --split:58%; }
+  *{ box-sizing:border-box }
+  html,body{ height:100% }
+  body{ margin:0; background:var(--bg); color:var(--fg); overflow:hidden;
+        font:14px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",system-ui,sans-serif }
+
+  /* ===== 전체 골격: [레일][보드][대화] 3열. 단계는 body 클래스로만 바꾼다 =====
+     실제 배선 때 이 규칙들이 body.cmmemo-only / body.cmrail-collapsed 자리로 옮겨간다. */
+  .app{ display:grid; height:100vh; grid-template-columns:var(--rail-w) minmax(0,var(--split)) 6px minmax(0,1fr) }
+  body.st1 .app{ grid-template-columns:0 0 0 minmax(0,1fr) }
+  body.st2 .app{ grid-template-columns:var(--rail-w) 0 0 minmax(0,1fr) }
+  /* 열을 명시 배치한다 — 보드가 display:none 이 되면 자동 배치가 뒤 칸을 앞으로 당겨
+     대화 패널이 0폭 칸에 떨어진다. */
+  .rail{ grid-column:1 } .board{ grid-column:2 } .split{ grid-column:3 } .chat{ grid-column:4 }
+
+  /* ===== 레일 ===== */
+  .rail{ position:relative; overflow:hidden; background:#0d1118; border-right:1px solid #1b2230;
+         display:flex; flex-direction:column; transition:transform .2s ease }
+  body.st1 .rail{ transform:translateX(-100%) }
+  .rail-brand{ display:flex; align-items:center; gap:2px; padding:2px 8px 0 84px; height:30px }
+
+  /* ⊞ 토글 + 단계 점. 레일이 숨은 1단계에선 같은 자리에 fixed 로 남는다. */
+  .sbtoggle{ display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px;
+    border-radius:6px; background:none; border:0; color:#8b93a7; cursor:pointer; padding:0 }
+  .sbtoggle:hover{ background:rgba(255,255,255,.08); color:#e7ecf4 }
+  .sbtoggle svg{ width:16px; height:16px; display:block; pointer-events:none }
+  .dots{ display:inline-flex; align-items:center; gap:3px; padding-left:1px }
+  .dots i{ width:4px; height:4px; border-radius:50%; background:#39415a }
+  .dots i.at{ background:var(--accent) }
+  .float-toggle{ position:fixed; top:2px; left:84px; z-index:41; display:none; align-items:center; gap:2px }
+  body.st1 .float-toggle{ display:inline-flex }
+
+  .rail-nav{ display:flex; flex-wrap:wrap; gap:2px; padding:8px 8px 10px }
+  .rail-item{ width:calc(33.333% - 2px); display:flex; flex-direction:column; align-items:center; gap:4px;
+    padding:8px 2px; border-radius:9px; color:#8b93a7; cursor:pointer; font-size:11px; user-select:none }
+  .rail-item:hover{ background:#161d2a; color:#c8cfdb }
+  .rail-item.on{ background:#18223a; color:#cdddff }
+  .rail-item svg{ width:17px; height:17px; stroke:currentColor; fill:none; stroke-width:1.4;
+    stroke-linecap:round; stroke-linejoin:round }
+
+  /* 챌린지 다이얼 (더미 — 눌러도 상태만 토글) */
+  .dial-wrap{ display:flex; flex-direction:column; align-items:center; gap:9px; padding:14px 14px 8px }
+  .dial{ position:relative; width:116px; height:116px }
+  .dial svg{ position:absolute; inset:0 }
+  .dial .track{ fill:none; stroke:#1b2432; stroke-width:5 }
+  .dial .prog{ fill:none; stroke:var(--accent); stroke-width:5; stroke-linecap:round;
+    stroke-dasharray:333; stroke-dashoffset:250; transform:rotate(-90deg); transform-origin:58px 58px }
+  .dial-btn{ position:absolute; inset:18px; border-radius:50%; border:0; cursor:pointer;
+    background:linear-gradient(135deg,#3b82f6,#2563eb); display:grid; place-items:center;
+    box-shadow:0 10px 24px -8px rgba(59,130,246,.55) }
+  .dial-btn .tri{ width:0; height:0; border-style:solid; border-width:13px 0 13px 21px;
+    border-color:transparent transparent transparent #fff; margin-left:5px }
+  .dial-btn.on{ background:linear-gradient(135deg,#ef4444,#dc2626) }
+  .dial-btn.on .tri{ width:22px; height:22px; border:0; border-radius:5px; background:#fff; margin:0 }
+  .dial-lbl{ font-size:13px; font-weight:700; color:#e7ecf4 }
+  .dial-sub{ font-size:11px; color:#6b7589 }
+
+  .rail-sec{ padding:6px 12px 4px; font-size:11px; color:#5d6678; letter-spacing:.02em }
+  .rail-list{ flex:1; overflow:auto; padding:0 6px }
+  .sess{ display:flex; align-items:center; gap:9px; padding:8px 8px; border-radius:9px; cursor:pointer }
+  .sess:hover{ background:#161d2a }
+  .sess .dot{ width:9px; height:9px; border-radius:50%; flex:none; background:#8b93a7 }
+  .sess .dot.pulse{ animation:pulse 1.4s ease-in-out infinite }
+  .sess .dot.hollow{ background:transparent; border:1.5px solid #8b93a7 }
+  @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.3} }
+  .sess .meta{ min-width:0; flex:1 }
+  .sess .ttl{ display:block; color:#dbe2ee; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .sess .sub{ display:block; color:#6b7589; font-size:11px }
+  .cond-bar{ display:flex; align-items:center; gap:9px; margin:6px 8px 10px; padding:9px 10px;
+    border-radius:10px; cursor:pointer; border:1px solid #1c2230; background:#0f141d }
+  .cond-bar:hover{ background:#141b28 }
+  .cond-bar .hp{ width:11px; height:11px; border-radius:50%; background:var(--green); flex:none }
+  .cond-bar .t{ font-size:12.5px; color:#dbe2ee; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .cond-bar .s{ font-size:11px; color:#6b7589 }
+
+  /* ===== 작업 보드 (가운데) ===== */
+  .board{ overflow:auto; padding:34px 20px 24px; min-width:0 }
+  body.st1 .board, body.st2 .board{ display:none }
+  .b-head{ display:flex; align-items:center; gap:10px; margin-bottom:14px }
+  .b-head h2{ margin:0; font-size:15px; font-weight:700 }
+  .b-tabs{ display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; margin-left:auto }
+  .b-tabs button{ background:transparent; border:0; border-right:1px solid var(--line); color:var(--mut);
+    padding:0 11px; height:28px; font-size:12px; cursor:pointer }
+  .b-tabs button:last-child{ border-right:0 }
+  .b-tabs button.on{ background:var(--accent); color:#fff; font-weight:600 }
+  .tier{ margin-bottom:18px }
+  .tier-hd{ display:flex; align-items:center; gap:8px; font-size:12px; color:var(--mut); margin:0 2px 7px }
+  .tier-hd b{ color:var(--fg); font-size:12.5px }
+  .row{ display:flex; align-items:center; gap:10px; padding:9px 12px; border:1px solid var(--line);
+    border-radius:10px; background:var(--panel); margin-bottom:7px; cursor:pointer }
+  .row:hover{ border-color:#2f3a54 }
+  .row .seq{ font-variant-numeric:tabular-nums; color:var(--mut); font-size:11.5px; flex:none; width:56px }
+  .row .t{ flex:1; min-width:0; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .row .tag{ flex:none; font-size:10.5px; color:#9fb4d8; background:#16233c; border:1px solid #24365c;
+    border-radius:999px; padding:2px 8px }
+  .row .st{ flex:none; width:8px; height:8px; border-radius:50%; background:#8b93a7 }
+  .row .st.run{ background:#a78bfa }
+  .row .st.done{ background:transparent; border:1.5px solid #8b93a7 }
+
+  /* ===== 분할 핸들 ===== */
+  .split{ cursor:col-resize; background:transparent; position:relative }
+  .split::after{ content:""; position:absolute; inset:0 2px; background:var(--line) }
+  .split:hover::after{ background:#33507f }
+  body.st1 .split, body.st2 .split{ display:none }
+
+  /* ===== 대화 패널 (오른쪽) ===== */
+  .chat{ display:flex; flex-direction:column; min-width:0; overflow:auto;
+         padding:34px 20px 24px; border-left:1px solid transparent }
+  body.st3 .chat{ background:#101420 }
+  body.st1 .chat{ padding:0 }
+
+  /* 메모 카드 (MemoPad 모사) */
+  .memo{ display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; padding:12px 14px; margin-bottom:14px }
+  .memo-hd{ display:flex; align-items:baseline; gap:8px; margin-bottom:7px }
+  .memo-hd .t{ font-size:12px; font-weight:600 }
+  .memo-hd .esc{ display:none; font-size:11px; color:var(--mut) }
+  .memo-hd .sp{ flex:1 }
+  .memo-hd .meta{ font-size:11px; color:var(--mut) }
+  .memo textarea{ width:100%; min-height:92px; resize:vertical; border:1px solid transparent;
+    border-radius:10px; background:#0e1320; color:var(--fg); padding:10px 12px; outline:none;
+    font:14px/1.75 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif }
+  .memo textarea:focus{ border-color:var(--accent) }
+  /* 1단계 문서형: 크롬을 걷어내고 720px 중앙, 남은 높이 전부 */
+  body.st1 .memo-host{ display:flex; flex-direction:column; min-height:100vh; max-width:720px;
+    width:100%; margin:0 auto; padding:30px 22px 26px }
+  body.st1 .memo{ flex:1; min-height:0; margin:0; padding:0; background:transparent; border-color:transparent }
+  body.st1 .memo-hd{ margin-bottom:12px }
+  body.st1 .memo-hd .esc{ display:inline }
+  body.st1 .memo textarea{ flex:1; resize:none; background:transparent; border-color:transparent;
+    font-size:15px; line-height:1.85; padding:8px 2px }
+  body.st1 .composer, body.st1 .queue{ display:none }
+
+  /* 컴포저 (goal-add 모사) */
+  .composer{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 15px }
+  .chips{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:10px; font-size:11.5px; color:var(--mut) }
+  .chip{ display:inline-flex; align-items:center; gap:5px; border:1px solid var(--line); background:#0e1320;
+    color:var(--fg); border-radius:8px; padding:4px 9px; font-size:12px; cursor:pointer }
+  .chip:hover{ border-color:var(--accent) }
+  .composer textarea{ width:100%; min-height:84px; resize:vertical; border:1px solid var(--line);
+    border-radius:10px; background:#0e1320; color:var(--fg); padding:10px 12px; outline:none;
+    font:14px/1.7 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif }
+  .composer textarea:focus{ border-color:var(--accent) }
+  .acts{ display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:10px }
+  .btn{ border:1px solid var(--line); background:#1b2130; color:var(--fg); border-radius:9px;
+    padding:6px 12px; font-size:12.5px; cursor:pointer }
+  .btn:hover{ border-color:#33507f }
+  .btn.primary{ background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600 }
+  .btn.start{ background:#16332a; border-color:#245640; color:#8ee0b6 }
+  .hint{ margin-top:8px; font-size:11.5px; color:var(--mut); line-height:1.6 }
+
+  /* 큐 */
+  .queue{ margin-top:14px }
+  .q-head{ font-size:12px; font-weight:700; margin:0 2px 7px }
+  .q-head span{ color:var(--mut); font-weight:400; font-size:11px }
+  .q-row{ display:flex; align-items:center; gap:9px; padding:8px 11px; border:1px solid var(--line);
+    border-radius:10px; background:#12161f; margin-bottom:6px; font-size:12.5px }
+  .q-row .ar{ color:var(--mut); font-size:11px }
+  .q-row .t{ flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .q-row .mini{ border:1px solid var(--line); background:#1b2130; color:var(--mut); border-radius:7px;
+    padding:3px 8px; font-size:11px; cursor:pointer }
+  .q-row .mini:hover{ color:var(--fg); border-color:#33507f }
+
+  /* 단계 안내 토스트 */
+  .toast{ position:fixed; left:50%; bottom:22px; transform:translateX(-50%) translateY(8px);
+    background:#1a2130; border:1px solid #2a3450; color:#c8cfdb; font-size:12.5px;
+    padding:8px 14px; border-radius:999px; opacity:0; pointer-events:none; transition:.18s; z-index:90 }
+  .toast.on{ opacity:1; transform:translateX(-50%) translateY(0) }
+</style>
+</head>
+<body class="st1">
+
+<!-- 레일이 숨었을 때(1단계) 좌상단에 남는 ⊞ 클러스터 -->
+<div class="float-toggle">
+  <button class="sbtoggle" data-tg title="다음 단계">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="2"/><path d="M6.2 2.8v10.4"/></svg>
+  </button>
+  <span class="dots" data-dots><i></i><i></i><i></i></span>
+</div>
+
+<div class="app">
+
+  <!-- ===== 레일 ===== -->
+  <aside class="rail">
+    <div class="rail-brand">
+      <button class="sbtoggle" data-tg title="다음 단계">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="2"/><path d="M6.2 2.8v10.4"/></svg>
+      </button>
+      <span class="dots" data-dots><i></i><i></i><i></i></span>
+    </div>
+
+    <nav class="rail-nav">
+      <div class="rail-item on"><svg viewBox="0 0 16 16"><path d="M2.5 7.5c0-2.2 2.3-4 5.5-4s5.5 1.8 5.5 4-2.3 4-5.5 4c-.7 0-1.4-.08-2-.23L3.2 12.7l.7-2.1C3 9.85 2.5 8.73 2.5 7.5Z"/></svg>대화</div>
+      <div class="rail-item"><svg viewBox="0 0 16 16"><path d="M6.3 2.6h3.4v1.5a1.1 1.1 0 1 0 2.2 0V2.6h1.5v3.4h-1.5a1.1 1.1 0 1 0 0 2.2h1.5v3.4h-3.4v-1.5a1.1 1.1 0 1 0-2.2 0v1.5H3.9V10.2h1.5a1.1 1.1 0 1 0 0-2.2H3.9V4.6"/></svg>스킬</div>
+      <div class="rail-item"><svg viewBox="0 0 16 16"><circle cx="8" cy="8.4" r="5"/><path d="M8 5.6V8.4l1.9 1.2"/></svg>크론</div>
+      <div class="rail-item"><svg viewBox="0 0 16 16"><circle cx="5.6" cy="5.4" r="2.1"/><path d="M2.4 12.8c0-1.9 1.5-3.2 3.2-3.2 1.1 0 2 .5 2.6 1.2"/><path d="M9.4 8.4h4M11.7 6.5l1.9 1.9-1.9 1.9"/></svg>위임</div>
+      <div class="rail-item"><svg viewBox="0 0 16 16"><circle cx="6" cy="5.8" r="2"/><path d="M2.6 12.4c0-1.9 1.5-3.1 3.4-3.1s3.4 1.2 3.4 3.1"/><circle cx="11" cy="6.3" r="1.6"/><path d="M10.4 9.4c1.7 0 3 1 3 2.8"/></svg>팀위임</div>
+      <div class="rail-item"><svg viewBox="0 0 16 16"><path d="M2.6 5.2c0-.6.5-1.1 1.1-1.1h2.1l1.1 1.3h4.4c.6 0 1.1.5 1.1 1.1v4.9c0 .6-.5 1.1-1.1 1.1H3.7c-.6 0-1.1-.5-1.1-1.1V5.2Z"/></svg>작업</div>
+    </nav>
+
+    <div class="dial-wrap">
+      <div class="dial">
+        <svg viewBox="0 0 116 116"><circle class="track" cx="58" cy="58" r="53"/><circle class="prog" cx="58" cy="58" r="53"/></svg>
+        <button class="dial-btn" id="dialBtn" title="더미 — 상태만 토글"><span class="tri"></span></button>
+      </div>
+      <div class="dial-lbl" id="dialLbl">챌린지</div>
+      <div class="dial-sub" id="dialSub">25분 · 오늘 1/2</div>
+    </div>
+
+    <div class="rail-sec">세션</div>
+    <div class="rail-list">
+      <div class="sess"><span class="dot pulse"></span><span class="meta"><span class="ttl">goal-612 대화·작업 화면 통합</span><span class="sub">진행 중 · 방금</span></span></div>
+      <div class="sess"><span class="dot"></span><span class="meta"><span class="ttl">goal-609 BGM 태깅 재생성</span><span class="sub">보는 중 · 12분 전</span></span></div>
+      <div class="sess"><span class="dot hollow"></span><span class="meta"><span class="ttl">goal-604 주간 개런티 리스트</span><span class="sub">완료 · 어제</span></span></div>
+    </div>
+
+    <div class="cond-bar">
+      <span class="hp"></span>
+      <span class="meta" style="min-width:0;flex:1">
+        <span class="t" style="display:block">Deep Focus — Slow Drift</span>
+        <span class="s">집중 · 2인 사무실</span>
+      </span>
+      <span style="color:#5d6678;font-size:11px">⌄</span>
+    </div>
+  </aside>
+
+  <!-- ===== 작업 보드 ===== -->
+  <section class="board">
+    <div class="b-head">
+      <h2>작업</h2>
+      <div class="b-tabs">
+        <button class="on">보드</button><button>토큰</button><button>릴리즈</button><button>리뷰</button>
+      </div>
+    </div>
+
+    <div class="tier">
+      <div class="tier-hd"><b>스프린트 1</b> — 이번 주</div>
+      <div class="row"><span class="seq">goal-612</span><span class="t">대화 페이지와 작업 페이지 통합 — 3단계 레이아웃</span><span class="tag">진행</span><span class="st run"></span></div>
+      <div class="row"><span class="seq">goal-609</span><span class="t">BGM 곡단위 태그 재생성 파이프라인 점검</span><span class="tag">대기</span><span class="st"></span></div>
+      <div class="row"><span class="seq">goal-607</span><span class="t">스테이징 업데이트 자동 빌드 워처 안정화</span><span class="tag">대기</span><span class="st"></span></div>
+    </div>
+
+    <div class="tier">
+      <div class="tier-hd"><b>Dump out</b> — 정리 전 인박스</div>
+      <div class="row"><span class="seq">goal-618</span><span class="t">메모장에서 바로 목표로 승격하는 단축 동작</span><span class="st"></span></div>
+      <div class="row"><span class="seq">goal-617</span><span class="t">큐 히스토리 검색 필터</span><span class="st"></span></div>
+      <div class="row"><span class="seq">goal-616</span><span class="t">슬랙 번역함 읽음 처리 일괄</span><span class="st"></span></div>
+      <div class="row"><span class="seq">goal-615</span><span class="t">네트워크 진단 CSV 주간 롤업</span><span class="st"></span></div>
+    </div>
+
+    <div class="tier">
+      <div class="tier-hd"><b>완료</b> — 최근</div>
+      <div class="row"><span class="seq">goal-604</span><span class="t">주간 개런티 전송 리스트 재생성</span><span class="st done"></span></div>
+      <div class="row"><span class="seq">goal-598</span><span class="t">NSS 주정산 온체인 실측 반영</span><span class="st done"></span></div>
+    </div>
+  </section>
+
+  <!-- ===== 분할 핸들 ===== -->
+  <div class="split" id="split" title="드래그해서 보드/대화 폭 조절"></div>
+
+  <!-- ===== 대화 패널 ===== -->
+  <section class="chat">
+    <div class="memo-host">
+      <div class="memo">
+        <div class="memo-hd">
+          <span class="t">메모장</span>
+          <span class="esc">Esc 로 작업 화면 복귀</span>
+          <span class="sp"></span>
+          <span class="meta">방금 저장됨</span>
+        </div>
+        <textarea id="memo" placeholder="생각나는 대로 적어두세요 — 전역 메모 한 장">· 대화/작업 왕복이 잦다 → 한 화면 좌우로
+· 기본은 메모장만, 필요할 때만 보드를 꺼낸다
+· 2단계에서 레일(플레이·세션)이 같이 올라온다</textarea>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="chips">
+        <button class="chip">📁 condition-manager <span style="color:var(--mut)">▾</span></button>
+        <button class="chip">⎇ feat/dashboard-value-pipeline <span style="color:var(--mut)">▾</span></button>
+        <button class="chip">모드 자동 <span style="color:var(--mut)">▾</span></button>
+        <button class="chip">모델 자동 <span style="color:var(--mut)">▾</span></button>
+        <button class="chip">작업량 기본 <span style="color:var(--mut)">▾</span></button>
+      </div>
+      <textarea placeholder="목표/디테일 입력 후 Enter (AI추가로 계속 추가) · Shift+Enter 줄바꿈 · 이미지 붙여넣기 가능"></textarea>
+      <div class="acts">
+        <button class="btn primary">AI추가</button>
+        <button class="btn">추가</button>
+        <button class="btn">검색</button>
+        <button class="btn">AI검색</button>
+        <button class="btn start">GUI시작</button>
+      </div>
+      <div class="hint"><b>Enter</b> = AI추가(비슷한 목표 먼저 확인). <b>검색</b>은 번호·제목 즉시 조회, <b>AI검색</b>은 의미로 찾기.</div>
+    </div>
+
+    <div class="queue">
+      <div class="q-head">큐 3건 <span>— 행을 펼치면(▸) AI 분석 결과를 검토·확정할 수 있습니다</span></div>
+      <div class="q-row"><span class="ar">▸</span><span class="t">메모장에서 바로 목표로 승격하는 단축 동작</span><button class="mini">GUI열기</button></div>
+      <div class="q-row"><span class="ar">▸</span><span class="t">큐 히스토리 검색 필터</span><button class="mini">GUI열기</button></div>
+      <div class="q-row"><span class="ar">▸</span><span class="t">AI 검색 — "레이아웃 통합" 결과 2건</span><button class="mini">보기</button></div>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== 3단계 상태 머신 (SessionRail.swift 의 cmRailStage 규칙을 그대로 옮긴 목업판) =====
+//   1 메모장만 · 2 메모+컴포저(레일) · 3 작업+대화 분할
+var TIPS = { 1:'메모장만 보기', 2:'메모 + 컴포저', 3:'작업 + 대화 분할' };
+var want = 1;          // 사용자가 고른 단계(영속)
+var now  = 0;          // 화면에 적용된 단계
+var forced = false;    // 좁은 창이 강제한 1단계인가
+
+try{ var s0 = localStorage.getItem('protoStage');
+     if(s0 !== null) want = Math.min(3, Math.max(1, parseInt(s0,10)||1)); }catch(e){}
+
+function paint(st){
+  var b = document.body;
+  b.classList.toggle('st1', st===1);
+  b.classList.toggle('st2', st===2);
+  b.classList.toggle('st3', st===3);
+  var next = st % 3 + 1;
+  document.querySelectorAll('[data-tg]').forEach(function(el){ el.title = TIPS[next] + ' · ⌃⌘N'; });
+  document.querySelectorAll('[data-dots]').forEach(function(el){
+    var ch = el.children;
+    for(var k=0;k<ch.length;k++) ch[k].classList.toggle('at', k === st-1);
+  });
+  if(st !== now){ toast(st + '단계 — ' + TIPS[st]); }
+  now = st;
+}
+function sync(){ var st = forced ? 1 : want; if(st !== now) paint(st); }
+function setStage(st, persist){
+  forced = false;
+  want = Math.min(3, Math.max(1, st));
+  if(persist !== false){ try{ localStorage.setItem('protoStage', String(want)); }catch(e){} }
+  sync();
+}
+function toggle(ev){
+  var n = now < 1 ? 1 : now;
+  n = (ev && ev.altKey) ? (n + 1) % 3 + 1 : n % 3 + 1;   // ⌥ = 역방향
+  setStage(n);
+  if(n === 1) document.getElementById('memo').focus();
+}
+document.querySelectorAll('[data-tg]').forEach(function(el){
+  el.addEventListener('click', function(ev){ toggle(ev); });
+});
+
+// Esc: 1단계(메모장만)에서 한 번에 작업 화면(3단계)으로 — textarea 안에서도 먹어야 하므로 캡처 단계.
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape' && document.body.classList.contains('st1')){ e.preventDefault(); setStage(3); }
+}, true);
+// ⌃⌘N: ⊞ 와 같은 순환. 한글 입력원에서 e.key 가 'ㅜ' 가 되므로 물리 키도 본다.
+document.addEventListener('keydown', function(e){
+  if(e.metaKey && e.ctrlKey && !e.shiftKey && (e.code === 'KeyN' || e.key === 'n' || e.key === 'ㅜ')){
+    e.preventDefault(); toggle();
+  }
+}, true);
+
+// 창을 최소한으로 줄이면(≤360px) 1단계 강제. 영속 단계는 그대로라 넓히면 복귀한다.
+(function(){
+  var mq = window.matchMedia('(max-width:360px)');
+  function onNarrow(){ var w = mq.matches; if(w === forced) return; forced = w; sync(); }
+  if(mq.addEventListener) mq.addEventListener('change', onNarrow); else mq.addListener(onNarrow);
+  window.addEventListener('resize', onNarrow);
+  onNarrow();
+})();
+
+// ===== 분할 핸들: 보드/대화 폭 비율 (3단계 전용, 비율도 영속) =====
+try{ var sp = localStorage.getItem('protoSplit');
+     if(sp) document.documentElement.style.setProperty('--split', sp); }catch(e){}
+(function(){
+  var el = document.getElementById('split'), dragging = false;
+  el.addEventListener('mousedown', function(e){ dragging = true; e.preventDefault();
+    document.body.style.cursor = 'col-resize'; });
+  window.addEventListener('mousemove', function(e){
+    if(!dragging) return;
+    var railW = 242, avail = window.innerWidth - railW;
+    var pct = Math.min(78, Math.max(26, ((e.clientX - railW) / avail) * 100));
+    var v = pct.toFixed(1) + '%';
+    document.documentElement.style.setProperty('--split', v);
+    try{ localStorage.setItem('protoSplit', v); }catch(err){}
+  });
+  window.addEventListener('mouseup', function(){ dragging = false; document.body.style.cursor = ''; });
+})();
+
+// 다이얼 더미 토글
+(function(){
+  var b = document.getElementById('dialBtn'), l = document.getElementById('dialLbl'),
+      s = document.getElementById('dialSub'), on = false;
+  b.addEventListener('click', function(){
+    on = !on; b.classList.toggle('on', on);
+    l.textContent = on ? '24:13' : '챌린지';
+    s.textContent = on ? '포모도로 진행 중 · 오늘 1/2' : '25분 · 오늘 1/2';
+  });
+})();
+
+// 단계 전환 토스트
+var _tt;
+function toast(msg){
+  var t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('on');
+  clearTimeout(_tt); _tt = setTimeout(function(){ t.classList.remove('on'); }, 1400);
+}
+
+paint(forced ? 1 : want);
+</script>
+</body>
+</html>

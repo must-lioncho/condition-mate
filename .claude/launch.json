@@ -9,7 +9,7 @@
         "http.server",
         "8931",
         "--directory",
-        "/private/tmp/claude-501/-Users-lioncho-Work-departtment-service-projects-condition-manager/6abb7bd2-c82b-414f-9e21-ee78b38ea61e/scratchpad"
+        "/private/tmp/claude-501/-Users-lioncho-Work-departtment-service-projects-condition-manager/0aaa85c3-3aa3-4f96-83b9-9b3949e70d96/scratchpad"
       ],
       "port": 8931
     },
@@ -24,6 +24,29 @@
         "/Users/lioncho/Work/departtment_service/projects/condition-manager"
       ],
       "port": 8932
+    },
+    {
+      "name": "parent-stub",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "/Users/lioncho/Work/departtment_service/projects/condition-manager/.e2e/parentstub.js"
+      ],
+      "port": 8934
+    },
+    {
+      "comment": "실행 중인 앱 대시보드에 붙기만 한다 — 명령이 없으니 앱 프로세스를 건드리지 않는다.",
+      "name": "app-dash",
+      "url": "http://127.0.0.1:57778",
+      "port": 57778
+    },
+    {
+      "name": "memo-stub",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "/Users/lioncho/Work/departtment_service/projects/condition-manager/.e2e/memostub.js"
+      ],
+      "port": 8933,
+      "autoPort": true
     }
   ]
 }

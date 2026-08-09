@@ -26,6 +26,10 @@ public struct MenuState {
 
     // Toggles / window block.
     public var bgmWindowEnabled = true
+    public var drawInstalled = false              // draw plugin connected (toggle hidden otherwise)
+    public var drawEnabled = true                 // Settings.drawEnabled (전체 드로우 on/off)
+    public var cameraGuardInstalled = false       // camera-guard plugin installed (toggle hidden otherwise)
+    public var cameraGuardOn = true               // Settings.cameraGuardOn (지킴이 on/off, 기본 켜짐)
     public var menuBarModeIsSports = true         // 스포츠(APM) vs 타임(clock)
     public var windowOpen = false
     public var windowModeIsBGM = false
@@ -45,6 +49,8 @@ public protocol MenuControllerActions: AnyObject {
     func toggleMute()
     func toggleMusic()
     func toggleMenuBarMode()
+    func toggleDraw()
+    func toggleCameraGuard()
     func dislikeCurrentTrack()
     func toggleAppWindowMode()
     func toggleBGMWindowAutoOpen()
@@ -80,8 +86,9 @@ public final class MenuController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
 
         // --- Manual Start / Stop Working (top, prominent like Hubstaff) ---
-        // ⌘S start/stop, ⌘M mute — app-wide shortcuts (active on any page while the app is frontmost),
-        // wired via a local key monitor in AppDelegate; shown here for discoverability.
+        // ⌘S start/stop — app-wide shortcut (active on any page while the app is frontmost), wired
+        // via a local key monitor in AppDelegate. Mute additionally carries a SYSTEM-WIDE ⌃⌘M
+        // (GlobalHotKey), which works from any app; ⌘M still works in-app. Shown for discoverability.
         if s.isWorking {
             addBigAction("■  챌린지 중단  ⌘S", action: #selector(onToggleWorking), color: .systemRed)
         } else {
@@ -90,12 +97,12 @@ public final class MenuController: NSObject, NSMenuDelegate {
         // Music mute toggle (음원 on/off) — same source of truth (session.isMuted) as ⌘M, the
         // dashboard mute dot, and the BGM player, so every surface shows and controls one state.
         if s.isMuted {
-            addItem("🔇  음소거 해제 (소리 켜기)  ⌘M", action: #selector(onToggleMuteMenu))
+            addItem("🔇  음소거 해제 (소리 켜기)  ⌃⌘M", action: #selector(onToggleMuteMenu))
         } else {
-            addItem("🔊  음소거 (챌린지는 계속)  ⌘M", action: #selector(onToggleMuteMenu))
+            addItem("🔊  음소거 (챌린지는 계속)  ⌃⌘M", action: #selector(onToggleMuteMenu))
         }
         addDisabled("\(s.liveStatus) · 세션 \(Formatting.clock(s.sessionSeconds))")
-        addDisabled("⌘M 음소거 · ⌘S 챌린지 (앱 활성 시 어느 페이지든)")
+        addDisabled("⌃⌘M 음소거 (전역 · 어느 앱에서든) · ⌘S 챌린지 (앱 활성 시)")
 
         menu.addItem(.separator())
 
@@ -138,6 +145,18 @@ public final class MenuController: NSObject, NSMenuDelegate {
         // --- Toggles ---
         addCheck("음악 (BGM)", checked: s.musicEnabled, action: #selector(onToggleMusic))
         addCheck("창 자동 열기 (BGM 자동재생)", checked: s.bgmWindowEnabled, action: #selector(onToggleBGMWindow))
+        // 드로우 전체 on/off — accidental left-⌥ strokes / triple-⌘ text pops are easy to
+        // trigger while working, so the widget gets a one-click kill switch. Same source of
+        // truth as the plugin card's sub-switch (Settings.drawEnabled); hidden when the draw
+        // plugin isn't installed (the toggle would be meaningless).
+        if s.drawInstalled {
+            addCheck("그리기 (왼쪽 ⌥ 드로우)", checked: s.drawEnabled, action: #selector(onToggleDraw))
+        }
+        // 카메라 지킴이 on/off — same source of truth as the plugin card's sub-switch
+        // (Settings.cameraGuardOn); hidden when the camera-guard plugin isn't installed.
+        if s.cameraGuardInstalled {
+            addCheck("카메라 지킴이 (개더 상시-ON)", checked: s.cameraGuardOn, action: #selector(onToggleCameraGuard))
+        }
         // Menu-bar gauge: 스포츠(라이브 APM) ↔ 타임(시간). Label shows the next state.
         let modeLabel = s.menuBarModeIsSports
             ? "메뉴바: ⚡APM (스포츠) → 시간으로"
@@ -261,6 +280,8 @@ public final class MenuController: NSObject, NSMenuDelegate {
     @objc private func onToggleMuteMenu() { actions?.toggleMute() }
     @objc private func onToggleMusic() { actions?.toggleMusic() }
     @objc private func onToggleMenuBarMode() { actions?.toggleMenuBarMode() }
+    @objc private func onToggleDraw() { actions?.toggleDraw() }
+    @objc private func onToggleCameraGuard() { actions?.toggleCameraGuard() }
     @objc private func onDislikeTrack() { actions?.dislikeCurrentTrack() }
     @objc private func onToggleAppWindowMode() { actions?.toggleAppWindowMode() }
     @objc private func onToggleBGMWindow() { actions?.toggleBGMWindowAutoOpen() }

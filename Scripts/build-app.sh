@@ -1,15 +1,72 @@
 #!/bin/bash
 # Assemble a self-contained ConditionManager.app from the SPM release binary.
 # Ad-hoc signs the bundle so SMAppService (login item) works locally.
+#
+# Two modes, and the difference is who waits:
+#   (default)  build, then quit/swap/relaunch the installed app right now. The user
+#              pressing 업데이트 waits out the whole release compile (~40s+).
+#   --stage    build and park the finished bundle in <data>/updates/ instead. The
+#              running app is NEVER touched. Scripts/autobuild-watch.sh calls this in
+#              the background whenever the sources go quiet, so by the time the user
+#              presses 업데이트 the build already exists and applying it is a copy
+#              (Scripts/apply-update.sh, ~2s). Progress/outcome is written to
+#              <data>/updates/staged.json, which is what GET /api/update/check reads.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 APP="ConditionManager.app"
 BIN_NAME="ConditionManager"
+
+# --stage: park the build instead of installing it. Everything up to (and including)
+# code signing is identical — only the tail differs.
+STAGE=0
+[ "${1:-}" = "--stage" ] && STAGE=1
+
+# Staging lives in the data dir, NOT the repo: it must survive `git clean`, and the app
+# has to find it without being told a repo path. Honour CM_DATA_DIR the same way
+# AppPaths does so a test/dev run stages into its own store.
+DATA_DIR="${CM_DATA_DIR:-$HOME/.condition-manager}"
+STAGE_DIR="$DATA_DIR/updates"
+STAGED_JSON="$STAGE_DIR/staged.json"
+
+# staged.json is the whole contract with the app — one small file, last write wins.
+#   state    building | ready | failed   (the app shows a button only for ready)
+#   buildStart  the staged bundle's CMBuildStart; the app compares it against its own,
+#               so "is this newer than me" needs no source scanning and no clock trust.
+#   srcAt    newest source mtime this build covers — lets the app tell "ready" from
+#            "ready but you've saved more since".
+# Written atomically (tmp + mv) because the app polls it every few seconds.
+write_staged() {   # state, error
+    mkdir -p "$STAGE_DIR"
+    local tmp="$STAGED_JSON.tmp.$$"
+    printf '{"state":"%s","buildStart":%s,"srcAt":%s,"at":%s,"commit":"%s","error":%s}\n' \
+        "$1" "$BUILD_START" "${SRC_AT:-0}" "$(date +%s)" "$(git rev-parse --short HEAD 2>/dev/null || echo '')" \
+        "$(printf '%s' "${2:-}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+        > "$tmp"
+    mv -f "$tmp" "$STAGED_JSON"
+}
+
+# Newest mtime across everything a rebuild depends on — mirrors AppDelegate's
+# latestSourceMTime so both sides agree on what "the sources changed" means.
+newest_src_mtime() {
+    { find Sources -name '*.swift' -not -path '*/node_modules/*' -print0
+      printf '%s\0' Package.swift Info.plist Scripts/build-app.sh
+    } | xargs -0 stat -f '%m' 2>/dev/null | sort -n | tail -1
+}
 # Captured BEFORE the (multi-minute) compile: sources saved while the build runs are
 # NOT in this binary, so /api/update/check must treat them as a pending update. The
 # executable's own mtime is stamped at the END of the build and would hide them.
 BUILD_START=$(date +%s)
+
+if [ "$STAGE" = "1" ]; then
+    SRC_AT=$(newest_src_mtime)
+    # Announce "building" before the compile so the rail can say 준비 중 instead of
+    # looking like nothing is happening for 40 seconds. Any failure from here on
+    # lands in staged.json as state=failed — quiet for the user, visible on the
+    # 시스템 페이지 worker row.
+    write_staged building
+    trap 'write_staged failed "빌드 실패 (exit $?) — 현재 버전 유지, 상세는 autobuild.log"' ERR
+fi
 
 echo "==> Building release binary"
 swift build -c release
@@ -62,6 +119,22 @@ else
 fi
 
 echo "==> Done: $(pwd)/$APP"
+
+# --stage: park it and stop. The running app keeps running; it will notice the new
+# staged.json on its next /api/update/check poll and offer the 업데이트 button.
+# ditto (not cp) because it preserves the code signature we just applied.
+if [ "$STAGE" = "1" ]; then
+    trap - ERR
+    mkdir -p "$STAGE_DIR"
+    rm -rf "$STAGE_DIR/$APP.tmp"
+    ditto "$APP" "$STAGE_DIR/$APP.tmp"
+    # Swap into place last: a half-copied bundle must never be visible as "ready".
+    rm -rf "$STAGE_DIR/$APP"
+    mv "$STAGE_DIR/$APP.tmp" "$STAGE_DIR/$APP"
+    write_staged ready
+    echo "==> Staged: $STAGE_DIR/$APP (앱은 그대로 실행 중 — 업데이트 버튼을 누르면 적용됩니다)"
+    exit 0
+fi
 
 # In-place update, desktop-auto-updater style: once the app lives in /Applications
 # (recommended — stable path for the SMAppService login item), every build quits the
