@@ -120,6 +120,10 @@ public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigation
         public var zenWidth: CGFloat = 242     // rail 240 + right border
         public var defaultExpandedWidth: CGFloat = 1040
         public var zenMessageName = "cmzen"
+        // Smallest size the user can drag the window to — a post-it. The page's own 360px
+        // breakpoint fires below this, so "shrink it all the way" lands on the memo pad alone.
+        // Relaxed to zenWidth while zen-folded (242 < 340) and restored on expand.
+        public var minContentSize = NSSize(width: 340, height: 420)
         public var initialContentSize = NSSize(width: 1040, height: 720)
         // JS source injected at documentStart into EVERY page both webviews load (e.g. the
         // 0.5s view-trace heartbeat). Empty = nothing injected.
@@ -193,6 +197,34 @@ public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigation
     private var zenProgrammaticResize = false  // our own narrow animation must not read as a user drag
     private var didFirstOpen = false
     private var zenWidth: CGFloat { config.zenWidth }
+
+    // ===== 메모장 모드 창 (post-it fold) =====
+    // 메모장만 보기(SessionRail 1단계)로 들어가면 창을 포스트잇으로 줄인다: 가로는 최소폭
+    // (config.minContentSize.width), 세로는 유저가 메모장 모드에서 마지막으로 고른 높이.
+    // 메모장 모드를 나가면 들어오기 직전 프레임(가로)으로 되돌린다. 페이지가
+    // webkit.messageHandlers.cmzen 로 "memo" / "memoExit" 를 보내 구동한다.
+    // zen(레일 폭 창)과는 따로 논다 — zen 이 켜져 있으면 메모 폴드는 건너뛴다.
+    private var memoActive = false
+    private var memoSavedFrame: NSRect?          // 메모장 모드 진입 직전 프레임(복귀 목표)
+    private var memoProgrammaticResize = false   // 우리가 만든 리사이즈는 유저 드래그로 읽지 않는다
+    private var memoWidth: CGFloat { config.minContentSize.width }
+    // 유저가 메모장 모드에서 마지막으로 잡은 세로 크기. 앱을 다시 켜도 그 높이로 열리도록
+    // UserDefaults 에 남긴다. 값이 없으면 진입 시점의 창 높이를 그대로 쓴다.
+    private var memoSavedHeight: CGFloat? {
+        get {
+            let v = UserDefaults.standard.double(forKey: memoHeightKey)
+            return v > 0 ? CGFloat(v) : nil
+        }
+        set { UserDefaults.standard.set(Double(newValue ?? 0), forKey: memoHeightKey) }
+    }
+    private var memoHeightKey: String { "\(config.frameAutosaveName).memoHeight" }
+
+    // The user-draggable minimum, and the loosened one used while zen-folded (the 242pt fold
+    // would otherwise be clamped by the 340pt post-it minimum).
+    private func setContentMinWidth(_ w: CGFloat) {
+        guard let win = window else { return }
+        win.contentMinSize = NSSize(width: w, height: config.minContentSize.height)
+    }
 
     // ===== 화면 카탈로그 (ScreenCatalog) =====
     // Every ~2s while the window is open+visible, probe the VISIBLE webview for its screen-state
@@ -342,6 +374,39 @@ public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigation
         }
     }
 
+    // Ask both webviews to flush unsaved page state (메모장's debounced text, etc.) BEFORE the
+    // process dies. Termination is the one path where the pad's own nets all fail at once:
+    // pagehide never fires (closeForQuit blanks the page with loadHTMLString), the loopback
+    // server dies with the process so a late keepalive fetch has nowhere to land, and the
+    // localStorage draft is stranded because the next launch binds a new port = new origin.
+    // (2026-08-06: an update-relaunch ate the last minute of memo typing exactly this way.)
+    //
+    // Call BEFORE DashboardServer.stop() — the flush POST must still find a live server.
+    // Completion fires exactly once, on main, after the pages had time to fire their saves
+    // (the pad's debounce is 400ms; the wait covers debounce + loopback round-trip) or after
+    // the backstop timeout if a webview never answers.
+    public func drainForQuit(completion: @escaping () -> Void) {
+        var done = false
+        let finish = {
+            if Thread.isMainThread { if !done { done = true; completion() } }
+            else { DispatchQueue.main.async { if !done { done = true; completion() } } }
+        }
+        let views = [bgmWebView, dashboardWebView].compactMap { $0 }.filter { $0.url != nil }
+        guard !views.isEmpty else { finish(); return }
+        log("app-window drainForQuit — flushing \(views.count) webview(s)")
+        let group = DispatchGroup()
+        for wv in views {
+            group.enter()
+            wv.evaluateJavaScript("window.CMMemo && CMMemo.flush ? (CMMemo.flush(), 1) : 0") { _, _ in
+                group.leave()
+            }
+        }
+        // flush() may only START a save here (a keystroke <400ms old sits in the debounce, an
+        // in-flight save defers to its completion) — give the follow-up POST time to land.
+        group.notify(queue: .main) { DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: finish) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: finish)   // absolute backstop
+    }
+
     // Called from applicationWillTerminate: stop both webviews' audio and hide the window
     // explicitly, so nothing keeps playing during the brief window before the process actually dies.
     public func closeForQuit() {
@@ -457,6 +522,18 @@ public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigation
         bgmWebView?.evaluateJavaScript("try{window.__setMute(\(muted))}catch(e){}", completionHandler: nil)
     }
 
+    // Keyboard route to the rail's sidebar button (⌃⌘N): run the page's OWN 3-stage cycle
+    // (cmRailToggle) rather than reimplementing it here, so the shortcut and the click can never
+    // drift apart. Dashboard webview only — the rail lives there; cycling it while the BGM view is
+    // showing would look like nothing happened and then surprise the user on the next visit.
+    // Returns false when there's nothing to toggle, so the caller can let the key fall through.
+    @discardableResult
+    public func cycleRailStage() -> Bool {
+        guard isOpen, mode == .dashboard, let wv = dashboardWebView, wv.url != nil else { return false }
+        wv.evaluateJavaScript("try{window.cmRailToggle&&cmRailToggle()}catch(e){}", completionHandler: nil)
+        return true
+    }
+
     // QA-only: render whichever webview is asked for (regardless of which is currently the visible
     // subview) as a PNG, for SPEC.html's per-page screenshots. `tab` (only meaningful for mode=="bgm")
     // switches the in-page 액티비티/디버그 sub-tab via the page's own `setMode()` JS function
@@ -500,6 +577,7 @@ public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigation
         // Detach frame autosave while narrow: AppKit auto-saves on every frame change, and the
         // 242pt zen frame must never overwrite the user's real saved window size.
         win.setFrameAutosaveName("")
+        setContentMinWidth(zenWidth)   // 242 < the 340 post-it minimum; let the fold through
         var f = win.frame
         f.size.width = zenWidth
         win.setFrame(f, display: true)
@@ -513,6 +591,7 @@ public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigation
         zenActive = false
         var target = zenSavedFrame ?? win.frame
         if target.width < 400 { target.size.width = config.defaultExpandedWidth }   // never "expand" into another sliver
+        setContentMinWidth(config.minContentSize.width)   // back to the post-it floor
         win.setFrame(target, display: true, animate: true)
         win.setFrameAutosaveName(windowAutosaveName)
         log("app-window zen expand -> \(NSStringFromRect(target))")
@@ -529,6 +608,7 @@ public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigation
         zenSavedFrame = win.frame
         zenActive = true
         win.setFrameAutosaveName("")   // the narrow frame must never overwrite the real saved one
+        setContentMinWidth(zenWidth)
         var f = win.frame
         f.size.width = zenWidth
         // Animated fold, with windowDidResize told this is OUR resize: the shrink passes through
@@ -542,13 +622,114 @@ public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigation
         trace("zenNarrow", detail: "session stopped")
     }
 
+    // MARK: - 메모장 모드 창 (see the property block above)
+
+    // 페이지가 메모장만 보기(1단계)로 들어갔다 → 포스트잇 창으로 접는다. 가로는 최소폭,
+    // 세로는 유저가 메모장 모드에서 마지막으로 고른 높이(없으면 지금 높이 유지). 위쪽 모서리는
+    // 그대로 두고 화면 오른쪽 끝에 딱 붙인다. zen 이 켜져 있으면 그쪽이 창을 소유하므로
+    // 아무것도 하지 않는다.
+    private func enterMemoFold() {
+        guard !memoActive, !zenActive, mode == .dashboard, let win = window, win.isVisible else { return }
+        memoSavedFrame = win.frame
+        memoActive = true
+        win.setFrameAutosaveName("")   // 포스트잇 프레임이 진짜 창 크기를 덮어쓰면 안 된다
+        var f = win.frame
+        let top = f.maxY
+        f.size.width = memoWidth
+        if let h = memoSavedHeight { f.size.height = h }
+        f.origin.y = top - f.size.height
+        // 포스트잇은 화면 오른쪽 끝에 딱 붙인다 (위쪽 모서리는 그대로 유지).
+        if let vis = win.screen?.visibleFrame ?? NSScreen.main?.visibleFrame {
+            f.origin.x = vis.maxX - f.size.width
+        }
+        memoProgrammaticResize = true
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.22
+            win.animator().setFrame(f, display: true)
+        }, completionHandler: { [weak self] in self?.memoProgrammaticResize = false })
+        log("app-window memo fold -> \(NSStringFromRect(f)) (saved: \(NSStringFromRect(memoSavedFrame ?? .zero)))")
+        trace("memoFold")
+    }
+
+    // 메모장 모드를 나갔다 → 들어오기 직전 가로로 되돌린다. 세로는 지금 값(메모장에서 유저가
+    // 잡은 높이)을 그대로 두면 창이 두 축으로 동시에 튀므로, 저장된 프레임의 세로도 함께 복원한다.
+    //
+    // 우리가 접지 않았어도(memoActive=false) 창이 포스트잇 폭에 머물러 있으면 넓혀 준다. 유저가
+    // 손으로 창을 좁혀 메모장이 강제된 경우가 그렇다 — 그 상태에서 2·3단계로 나가면 레일 + 보드가
+    // 340pt 안에 우겨넣어져 화면이 깨진다. 다른 단계는 넓은 창을 전제로 한 레이아웃이므로,
+    // 나가는 순간 쓸 만한 폭으로 되돌리는 것이 옳다. 이미 충분히 넓으면 손대지 않는다.
+    // stage: 나가서 가려는 단계(2 = 메모 + 컴포저, 3 = 작업 + 대화 분할, 0 = 레일 접힘). 단계마다
+    // 성립하는 최소 폭이 달라서(3단계 분할이 가장 넓다) 그만큼은 보장해 준다.
+    private func exitMemoFold(stage: Int) {
+        guard let win = window, !zenActive else { return }
+        // 3단계(작업 + 대화 분할)는 화면 전체를 쓴다 — 보드와 대화를 좌우로 나누는 화면이라
+        // 어중간한 폭에서는 두 판이 모두 좁아진다. 그래서 최소 폭을 맞추는 대신 창을 그 화면의
+        // 사용 가능 영역(메뉴바·Dock 제외) 전체로 편다. 다른 단계는 종전대로 최소 폭만 보장한다.
+        if stage == 3, let vis = win.screen?.visibleFrame ?? NSScreen.main?.visibleFrame {
+            memoActive = false
+            memoSavedFrame = nil
+            guard win.frame != vis else { return }
+            memoProgrammaticResize = true
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.22
+                win.animator().setFrame(vis, display: true)
+            }, completionHandler: { [weak self] in
+                self?.memoProgrammaticResize = false
+                self?.window?.setFrameAutosaveName(self?.windowAutosaveName ?? "")
+            })
+            log("app-window stage3 fullscreen -> \(NSStringFromRect(vis))")
+            trace("memoUnfold", detail: "stage3 full")
+            return
+        }
+        let usableWidth: CGFloat = 720
+        guard memoActive || win.frame.width < usableWidth else { return }
+        memoActive = false
+        var target = memoSavedFrame ?? win.frame
+        if target.width < usableWidth {
+            // 되돌릴 만한 프레임이 없다(또는 그것도 좁다) → 이 단계가 필요로 하는 폭. 세로는 지금
+            // 유저가 보고 있는 높이를 유지해 한 축만 움직인다.
+            target = win.frame
+            target.size.width = usableWidth
+        }
+        // 넓히다가 화면 밖으로 나가지 않게 물린다 — 좁은 창은 보통 화면 오른쪽 끝에 붙어 있다.
+        if let vis = win.screen?.visibleFrame {
+            target.size.width = min(target.width, vis.width)
+            target.origin.x = min(max(target.minX, vis.minX), vis.maxX - target.width)
+        }
+        memoSavedFrame = nil
+        memoProgrammaticResize = true
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.22
+            win.animator().setFrame(target, display: true)
+        }, completionHandler: { [weak self] in
+            self?.memoProgrammaticResize = false
+            self?.window?.setFrameAutosaveName(self?.windowAutosaveName ?? "")
+        })
+        log("app-window memo unfold -> \(NSStringFromRect(target))")
+        trace("memoUnfold")
+    }
+
     // While zen-narrow, the user dragging the window wider means "show me the board without
     // starting": exit zen, reveal the page's hidden board, and let the drag own the frame
     // (no programmatic resize fighting the user's hand).
     public func windowDidResize(_ notification: Notification) {
+        // 메모장 모드에서 유저가 세로를 잡으면 그 높이를 기억해 다음 진입에 쓴다. 가로를 최소폭
+        // 위로 크게 끌면 "메모장이지만 넓게 보겠다"는 뜻이므로 폴드 상태에서 빠져나온다 —
+        // 그래야 나중에 모드를 나갈 때 창을 유저 손에서 다시 뺏지 않는다.
+        if memoActive, !memoProgrammaticResize, let win = window {
+            memoSavedHeight = win.frame.height
+            if win.frame.width > memoWidth + 80 {
+                memoActive = false
+                win.setFrameAutosaveName(windowAutosaveName)
+                log("app-window memo fold exit via user resize \(NSStringFromRect(win.frame))")
+            }
+        }
         guard zenActive, !zenProgrammaticResize, let win = window, win.frame.width > 320 else { return }
         zenActive = false
         win.setFrameAutosaveName(windowAutosaveName)
+        // Restore the post-it floor only once the drag has cleared it — snapping the minimum
+        // back to 340 mid-drag would yank the window out from under the user's hand.
+        if win.frame.width >= config.minContentSize.width { setContentMinWidth(config.minContentSize.width) }
         dashboardWebView?.evaluateJavaScript("try{window.cmZenReveal&&cmZenReveal()}catch(e){}",
                                              completionHandler: nil)
         log("app-window zen exit via user resize \(NSStringFromRect(win.frame))")
@@ -556,13 +737,21 @@ public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigation
     }
 
     // JS → native: SessionRail posts "reveal" when the board becomes visible (challenge started /
-    // 둘러보기) and "narrow" when a stop folds the board away again.
+    // 둘러보기) and "narrow" when a stop folds the board away again. 같은 채널로 메모장 모드
+    // 진입/이탈("memo" / "memoExit")도 온다 — 포스트잇 창 접기(enterMemoFold/exitMemoFold).
     public func userContentController(_ userContentController: WKUserContentController,
                                       didReceive message: WKScriptMessage) {
         guard message.name == config.zenMessageName else { return }
         let cmd = (message.body as? String) ?? "reveal"
         DispatchQueue.main.async { [weak self] in
-            if cmd == "narrow" { self?.narrowFromPage() } else { self?.expandFromZen() }
+            if cmd == "narrow" { self?.narrowFromPage() }
+            else if cmd == "memo" { self?.enterMemoFold() }
+            else if cmd.hasPrefix("memoExit") {
+                // "memoExit:<stage>" — 단계 번호는 그 단계가 필요로 하는 최소 폭을 고른다.
+                let stage = Int(cmd.split(separator: ":").last.map(String.init) ?? "") ?? 3
+                self?.exitMemoFold(stage: stage)
+            }
+            else { self?.expandFromZen() }
         }
     }
 
@@ -614,7 +803,7 @@ public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigation
             wv.navigationDelegate = self
             wv.uiDelegate = self   // without this, JS confirm()/alert()/prompt() resolve to their
                                    // default (confirm→false) and every confirm-guarded action
-                                   // (e.g. "Complete sprint") silently no-ops.
+                                   // (e.g. "Complete loop") silently no-ops.
             if #available(macOS 12.0, *) { wv.underPageBackgroundColor = bg }
             return wv
         }
@@ -666,6 +855,7 @@ public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigation
         win.titlebarAppearsTransparent = true
         win.titleVisibility = .hidden
         win.contentView = contentContainer
+        win.contentMinSize = config.minContentSize
         win.isReleasedWhenClosed = false
         win.delegate = self
 
@@ -736,6 +926,12 @@ public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigation
         // Quitting while still zen-narrow must persist the REAL frame, not the 242pt sliver —
         // otherwise the next launch would restore (and zen-save) an already-narrow window.
         if zenActive, let f = zenSavedFrame { window.setFrame(f, display: false) }
+        // 같은 이유로 메모장 포스트잇 상태에서 끝나도 진짜 프레임을 남긴다. 다만 메모장에서
+        // 유저가 잡은 세로는 다음 진입을 위해 그대로 보관한다(memoSavedHeight).
+        else if memoActive, let f = memoSavedFrame {
+            memoSavedHeight = window.frame.height
+            window.setFrame(f, display: false)
+        }
         window.saveFrame(usingName: windowAutosaveName)
         // Force an immediate flush: the process may be killed (NSApp.terminate finishing, or the
         // OS reclaiming it) shortly after this call, before NSUserDefaults' normal write-behind

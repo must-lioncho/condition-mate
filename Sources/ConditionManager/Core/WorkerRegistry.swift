@@ -162,8 +162,12 @@ final class WorkerRegistry {
             // "qa" = the QA/UXUI 자동화 family; "sut" = the daily NSS 리포트 (Supertrust) worker.
             // "즉시 실행" only applies to the periodic inspection worker — the fix worker
             // is event-driven (fired when a goal is filed), so it's toggleable but not runnable.
-            let toggleable = (w.owner == "qa" || w.owner == "sut")
+            // Slack 수집 데몬과 자동 빌더는 앱 밖 launchd 프로세스라 사용자가 여기서
+            // 켜고/끄고 되살릴 수 있어야 한다 (restartable → '다시 연결' 버튼).
+            let toggleable = (w.owner == "qa" || w.owner == "sut"
+                              || w.id == "slack-eyes" || w.id == "autobuild")
             let runnable = (w.id == "qa-agent")
+            let restartable = (w.id == "slack-eyes" || w.id == "autobuild")
             // bug-hunt is launched BY HAND at end of day (Scripts/bug-hunt.sh), not by a
             // scheduler. Its `interval` is the per-round cadence inside one multi-hour run,
             // not a fire schedule — flag it so the dashboard labels it 수동, not 자동화.
@@ -172,7 +176,8 @@ final class WorkerRegistry {
                 + "\"owner\":\(Self.j(w.owner)),\"interval\":\(Int(w.interval.rounded())),\"active\":\(active),"
                 + "\"agoSec\":\(agoSec),\"nextSec\":\(nextSec),\"runs\":\(w.runCount),"
                 + "\"error\":\(w.lastError != nil),\"errorMsg\":\(errJSON),"
-                + "\"enabled\":\(w.enabled),\"toggleable\":\(toggleable),\"runnable\":\(runnable),\"manual\":\(manual)}"
+                + "\"enabled\":\(w.enabled),\"toggleable\":\(toggleable),\"runnable\":\(runnable),"
+                + "\"restartable\":\(restartable),\"manual\":\(manual)}"
         }
         return "[" + entries.joined(separator: ",") + "]"
     }

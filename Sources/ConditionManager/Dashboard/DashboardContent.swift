@@ -87,7 +87,9 @@ enum DashboardContent {
   .gtbl th .arr{opacity:.5;font-size:10px;margin-left:3px}
   .gtbl td{font-variant-numeric:tabular-nums}
   .gtbl tr.done td{opacity:.62}
-  .gtbl .nm{white-space:normal;word-break:break-word}
+  /* 이름 열도 한 줄 고정 — max-width:0 + table width:100% 조합이 셀 폭을 남은 공간으로
+     묶어 주어야 ellipsis가 실제로 걸린다. 전문은 title(hover)·CSV에서 본다. */
+  .gtbl .nm{max-width:0;width:55%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .gtbl .child .nm{color:var(--mut)}
   /* Sprint badge + release button + sprint view */
   .btn.rel{background:rgba(54,192,138,.14);border-color:var(--green);color:#9be9c9;font-weight:600}
@@ -111,6 +113,11 @@ enum DashboardContent {
   .relbody.open{display:block}
   .relrow{padding:4px 2px;font-size:13px}
   .relrow .gn{color:var(--mut);font-variant-numeric:tabular-nums;margin-right:6px}
+  /* 출처 태그 — 루프에 담긴 항목이 AI 세션 작업(session)인지 메모장 체크(노트)인지.
+     상태 신호등이 아니라 출처의 낯빛: session=앱색, 노트=중립 회색. */
+  .relrow .srct{margin-right:6px;font-size:11px;border-radius:6px;padding:1px 6px;
+    border:1px solid var(--line);color:var(--mut);white-space:nowrap}
+  .relrow .srct.sess{color:#7fa6e8;border-color:rgba(127,166,232,.4);background:rgba(127,166,232,.10)}
   /* Parent indicator in release log: gray = has a parent (shows parent's number), purple = is top-level. */
   .relrow .pn{font-variant-numeric:tabular-nums;margin-right:6px;font-size:11px;border-radius:6px;padding:1px 6px;border:1px solid var(--line);color:var(--mut)}
   .relrow .pn.top{color:#9b7bff;border-color:rgba(155,123,255,.4);background:rgba(155,123,255,.12)}
@@ -159,23 +166,53 @@ enum DashboardContent {
   .bgoal:last-child{border-bottom:none}
   .bgoal.dragging{opacity:.4}
   .bgoal.dropTarget{border-top:2px solid var(--accent)}
+  /* 행 가운데에 놓으면 '자식으로 붙이기' — 순서 변경(윗선)과 다른 신호를 준다 */
+  .bgoal.dropChild{background:rgba(91,140,255,.14);box-shadow:inset 3px 0 0 var(--accent);border-radius:6px}
   .bgoal.child{padding-left:24px;background:rgba(255,255,255,.015)}
   .bgoal .grip{color:#3a4150}
-  .bgoal .t{flex:1;min-width:60px}
+  .bgoal .t{flex:1;min-width:60px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .bgchev{cursor:pointer;color:var(--mut);width:14px;text-align:center;display:inline-block;font-size:11px;user-select:none}
   .bgsp{display:inline-block;width:14px}
   .bgoal .pref{margin-left:8px;font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:999px;padding:1px 7px;white-space:nowrap}
-  /* 상태 콤보 왼쪽의 부모 번호 입력칸 (예: 02 입력 → goal-02 의 자식으로). */
-  .bgoal .pin{width:54px;flex:none;text-align:center;font-size:12px;color:var(--fg);background:#0e1320;border:1px solid var(--line);border-radius:6px;padding:2px 0;margin-right:6px}
-  .bgoal .pin::placeholder{color:#4a5163}
-  .bgoal .pin:focus{outline:none;border-color:var(--accent)}
-  .bgoal .pin-sp{width:54px;flex:none;margin-right:6px;display:inline-block}
+  /* 상태 콤보 왼쪽의 부모 번호 칸 (예: 02 입력 → goal-02 의 자식으로).
+     칸의 겉모양(테두리/배경/폭)은 .pinwrap 이 갖고, 그 안에 [회색 추천][입력] 이 나란히 앉는다.
+     WARN: 추천을 입력칸 위에 겹쳐 띄우지 않는다 — goal-680 같은 세 자리 부모 번호가 오면 겹친
+     영역이 칸의 절반을 넘어, 타이핑하려고 칸 가운데를 누른 클릭까지 링크가 삼켜 페이지를
+     이동시킨다. 나란히 두면 히트 영역이 겹칠 수 없다. */
+  .pinwrap{display:inline-flex;flex:none;align-items:center;width:84px;background:#0e1320;
+    border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .pinwrap:focus-within{border-color:var(--accent)}
+  .bgoal .pinwrap{margin-right:6px}
+  /* 겉모양은 wrap 이 그린다 — 여기서는 전역 input[type=text] 규칙(:366)을 벗겨낸다
+     (그 규칙이 더 구체적이라 클래스 하나짜리 선택자로는 못 이긴다). */
+  .pinwrap .pin{flex:1 1 auto;min-width:0;text-align:center;font-size:12px;color:var(--fg);
+    background:transparent;border:0;border-radius:0;outline:none;padding:2px 0}
+  .pinwrap .pin::placeholder{color:#4a5163}
+  .bgoal .pin-sp{width:84px;flex:none;margin-right:6px;display:inline-block}
+  /* 회색 추천 번호. 값처럼 보이지만 링크다(클릭=그 부모 goal 열기). 확정은 오직 타이핑 경로. */
+  .pghost{flex:0 0 auto;display:flex;align-items:center;gap:3px;padding:0 3px 0 5px;font-size:12px;
+    font-variant-numeric:tabular-nums;color:#5b6274;text-decoration:none;white-space:nowrap;
+    cursor:pointer;align-self:stretch;border-right:1px solid rgba(255,255,255,.06)}
+  .pghost:hover{color:#9fc0ff;background:rgba(91,140,255,.12)}
+  .pinwrap.focus .pghost{display:none}      /* 타이핑 중에는 칸 전체를 입력에 내준다 */
+  .bgoal.parfill .pghost{display:none}      /* Cmd+드래그로 방금 칠한 값이 추천에 가리지 않게 */
+  /* 추천 상태 점: 색=추천 부모의 실효 상태(행의 상태 칩과 같은 팔레트), 계산 중=보라 pulse */
+  .psdot{width:6px;height:6px;border-radius:50%;background:var(--mut);flex:0 0 auto}
+  .psdot.calc{background:#9b7bff;animation:psblink 1.2s ease-in-out infinite}
+  .psdot.in_progress{background:#5b8cff}
+  .psdot.on_track{background:#4cc9f0}
+  .psdot.waiting{background:#e8a33d}
+  .psdot.done{background:var(--green)}
+  .psdot.cancelled{background:#7a2233}
+  @keyframes psblink{0%,100%{opacity:1}50%{opacity:.28}}
+  .popup .popitem .pswhy{display:block;font-size:11px;color:var(--mut);margin-top:2px}
+  .popup .popitem .ppfresh.sug{color:#c3b0ff;border-color:#6b5aa8}
   /* 부모 채우기(fill-down): Cmd 누르면 부모칸이 채우기 소스로 무장(hover 강조), 드래그 중 대상 행 강조 */
   body.armparent .bgoal .pin{cursor:cell}
-  body.armparent .bgoal .pin:hover{border-color:var(--accent);box-shadow:0 0 0 2px rgba(91,140,255,.4)}
+  body.armparent .bgoal .pinwrap:hover{border-color:var(--accent);box-shadow:0 0 0 2px rgba(91,140,255,.4)}
   body.parfilling,body.parfilling *{cursor:cell !important;user-select:none}
   .bgoal.parfill{background:rgba(91,140,255,.12);box-shadow:inset 2px 0 0 var(--accent)}
-  .bgoal.parsrc .pin{border-color:var(--accent);box-shadow:0 0 0 2px rgba(91,140,255,.55)}
+  .bgoal.parsrc .pinwrap{border-color:var(--accent);box-shadow:0 0 0 2px rgba(91,140,255,.55)}
   /* 우선순위 화살표 (Jira식 셰브론, 색은 currentColor) — 클릭=피커, Cmd+드래그=같은 값 페인트 */
   .pri{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;line-height:0;cursor:pointer;transition:transform .06s}
   .pri svg{display:block;pointer-events:none}
@@ -230,7 +267,7 @@ enum DashboardContent {
   .vnoti.ready{color:#cfc3f7;border-color:#4b3d78;background:rgba(167,139,250,.10)}
   .vnoti.ready .nd{background:#a78bfa}
   .vnoti .narr{color:var(--mut);font-size:11px}
-  /* 스프린트 메뉴: 라벨이 길어 줄바꿈 허용 + 폭 확대 */
+  /* 루프 메뉴: 라벨이 길어 줄바꿈 허용 + 폭 확대 */
   .ckmenu.spmenu{min-width:220px;max-width:340px}
   .popup .spmenu .popitem.chk{white-space:normal;align-items:flex-start}
   .popup .popitem.chk{display:flex;align-items:center;gap:9px}
@@ -243,7 +280,7 @@ enum DashboardContent {
   .infotip{display:none;position:absolute;top:calc(100% + 6px);right:0;z-index:55;width:280px;background:#171c28;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:12px;line-height:1.55;color:var(--mut);box-shadow:0 10px 28px rgba(0,0,0,.5);white-space:normal;text-align:left;cursor:default}
   .infotip b{color:var(--fg)}
   .infowrap:hover .infotip,.infotip.show{display:block}
-  /* 스프린트 편집 모달 */
+  /* 루프 편집 모달 */
   .spmodal{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.55);align-items:center;justify-content:center}
   .modal-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;width:min(560px,92vw);max-height:86vh;overflow:auto}
   .modal-box h3{margin:0 0 14px;font-size:15px}
@@ -263,7 +300,7 @@ enum DashboardContent {
   .asgn input:focus{outline:none;border-color:var(--accent)}
   .asgn input.title{width:100%}
   .asgn input.par,.asgn input.spn{width:48px;text-align:center}
-  /* 스프린트 관리: 생성 폼 + 기간 칩 + 스프린트 카드 */
+  /* 루프 관리: 생성 폼 + 기간 칩 + 루프 카드 */
   .durchip{display:inline-block;padding:4px 11px;border-radius:999px;border:1px solid var(--line);background:#0e1320;color:var(--mut);cursor:pointer;font-size:12px;margin:0 4px 0 0}
   .durchip:hover{border-color:var(--accent)}
   .durchip.on{background:var(--accent);border-color:var(--accent);color:#091022;font-weight:600}
@@ -297,7 +334,7 @@ enum DashboardContent {
   .gsec.collapsed .gsec-body{display:none}
   .gchild{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
   .gchild:last-of-type{border-bottom:none}
-  .gchild .gt{flex:1;min-width:80px}
+  .gchild .gt{flex:1;min-width:0}
   .gsec-add{display:flex;gap:6px;margin-top:6px}
   .hdr{display:flex;align-items:center;justify-content:space-between;gap:12px}
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto;z-index:50}
@@ -338,14 +375,18 @@ enum DashboardContent {
   input[type=text],input[type=number]{background:#0d1016;border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:6px 9px;font-size:13px}
   input[type=range]{vertical-align:middle}
   .goal{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line)}
-  .goal .g{flex:1;position:relative}
+  .goal .g{flex:1;min-width:0;position:relative;display:flex;align-items:center;gap:0}
   /* 부분과제(task) 행: 유형 필터에 task를 켰을 때 goal 아래 붙는 컴팩트 읽기 전용 행. */
   .goal.taskrow{padding:3px 0 3px 22px;background:rgba(255,255,255,.015)}
   .goal.taskrow .gt{font-size:12.5px;cursor:default}
   .goal.taskrow .gt:hover{background:none}
   .goal.taskrow .tlead{font-size:12px}
   /* Editable goal title: double-click to rename in place (목록 + 그룹 자식 행). */
-  .gt{cursor:text;border-radius:5px;padding:1px 4px;margin:0 -4px}
+  /* 목표 제목은 어느 뷰에서든 한 줄 — 넘치면 …로 자르고 전문은 title(hover)로 본다.
+     (목록 .goal .g / 그룹 .gchild / 일정 .schrow .st / 토큰 뷰가 모두 이 .gt를 쓴다.) */
+  .gt{cursor:text;border-radius:5px;padding:1px 4px;margin:0 -4px;
+      flex:1;min-width:0;max-width:100%;display:block;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .gt:hover{background:rgba(255,255,255,.05)}
   .gt input.gedit{width:100%;box-sizing:border-box;padding:3px 6px;font-size:13px}
   /* Concurrency-gated AI-work row: shown only when 2+ goals run at once (= AI).
@@ -397,7 +438,7 @@ enum DashboardContent {
   .schsec.done .schsec-hd{background:rgba(54,192,138,.10);color:#9be9c9}
   .schrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--line)}
   .schrow:last-child{border-bottom:none}
-  .schrow .st{flex:1;min-width:120px}
+  .schrow .st{flex:1;min-width:0;overflow:hidden}
   .schrow .dlab{color:var(--mut);font-size:11px}
   .schrow input[type=datetime-local]{background:#0d1016;border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:5px 8px;font-size:12px;color-scheme:dark}
   .dday{font-variant-numeric:tabular-nums;font-size:11px;border-radius:6px;padding:1px 7px;border:1px solid var(--line);color:var(--mut);white-space:nowrap}
@@ -474,6 +515,12 @@ enum DashboardContent {
   .ot.waiting{background:rgba(240,180,76,.14);border-color:#f0b44c;color:#f5d79b}
   .ot.cancelled{opacity:.55}
   .otTag{display:inline-block;border:1px solid #4cc9f0;color:#9be3fb;background:rgba(76,201,240,.12);border-radius:999px;font-size:11px;padding:1px 8px;margin-left:8px;vertical-align:middle}
+  /* 리포트는 1초 안에 훑을 수 있어야 한다 — 제목/항목은 절대 줄바꿈하지 않고 넘치면 …로 자른다.
+     전체 문장은 title 속성(hover)과 CSV 다운로드에서 확인한다. */
+  #report h3{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #report ul{margin:4px 0;padding-left:18px}
+  #report li.rli{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  #report li.rli .evrep{display:inline-flex;gap:8px;margin-left:8px;vertical-align:middle}
   .stage{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
   .stage .n{width:22px;height:22px;border-radius:50%;background:#1d2230;display:flex;align-items:center;justify-content:center;font-size:12px;flex:0 0 auto}
   .stage .s{flex:1} .stage .st{font-size:12px}
@@ -574,7 +621,9 @@ enum DashboardContent {
   @media (max-width: 720px){
     /* Auto-collapse the fixed left rail so its reserved 240px doesn't eat the narrow
        viewport; the existing ☰ toggle still lets the user pull it back out. */
-    body:not(.cmrail-force-open){ padding-left:0 }
+    /* Zero the reserved width itself (not just body's padding) so everything anchored to
+       --cmrail-w — the overlays, the zen peek bar — follows the auto-collapse too. */
+    body:not(.cmrail-force-open){ --cmrail-w:0px; padding-left:0 }
     body:not(.cmrail-force-open) .cmrail{ transform:translateX(-100%) }
     body:not(.cmrail-force-open) .cmrail-toggle{ display:block }
 
@@ -618,13 +667,90 @@ enum DashboardContent {
     .card{ min-width:100%; flex:0 0 100% }
     .hdr h1{ font-size:15px }
   }
+
+  /* ===== 좁은 "판" 대응 (body.cmnarrow / body.cmxnarrow) =====
+     위의 @media 는 뷰포트 폭을 본다. 그런데 3단계(작업 보드 + 대화 분할)에서는 창이 넓어도
+     보드가 실제로 쓰는 폭은 뷰포트에서 레일(--cmrail-w)과 대화 패널(--cmchat-w)을 뺀 나머지다.
+     그래서 창 1400px 에서도 보드는 600px 남짓이고, 데스크톱 규칙이 그대로 적용돼 목표 줄이
+     잘리고 가로로 넘쳤다. 보드(.wrap)의 실제 폭을 재서 클래스를 붙이고(아래 cmNarrowWatch),
+     같은 완화 규칙을 그 클래스에도 건다 — 뷰포트가 아니라 판이 기준. */
+  body.cmnarrow .wrap{ padding:16px 12px }
+  body.cmnarrow .hdr{ flex-wrap:wrap; row-gap:8px }
+  body.cmnarrow .hdr, body.cmnarrow .hdr > div{ min-width:0 }
+  body.cmnarrow .hdr h1{ font-size:16px; overflow-wrap:break-word; word-break:keep-all }
+  body.cmnarrow .hdr .sub{ overflow-wrap:break-word }
+  body.cmnarrow .cards{ gap:8px }
+  body.cmnarrow .card{ min-width:calc(50% - 4px); flex:0 0 calc(50% - 4px) }
+  body.cmnarrow .viewtabs{ flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:2px }
+  body.cmnarrow .vtab{ flex:0 0 auto; white-space:nowrap }
+  body.cmnarrow .spgrp-hd{ flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch }
+  body.cmnarrow .spgrp-hd > *{ flex:0 0 auto; white-space:nowrap }
+  body.cmnarrow .bar .name{ width:auto; max-width:38% }
+  body.cmnarrow .bardwrap{ min-width:0 }
+  body.cmnarrow .schrow .st{ min-width:0 }
+  body.cmnarrow .gchild .gt{ min-width:0 }
+  body.cmnarrow .aiwork input.agents{ width:100%; min-width:0 }
+  body.cmnarrow .modal-box .spmgoal, body.cmnarrow .spmgoal{ min-width:0 }
+  /* 목표/작업 줄: 이름은 남는 폭을 먹고 넘치면 말줄임, 뒤의 상태·시간 배지는 줄바꿈 없이 유지.
+     (한 줄이 두 줄로 접히거나 글자가 세로로 쪼개지는 증상의 원인은 min-width 를 못 줄이는 flex 자식) */
+  body.cmnarrow .gchild .gt{ overflow:hidden; text-overflow:ellipsis }
+  body.cmnarrow .gchild > *:not(.gt){ flex:0 0 auto; white-space:nowrap }
+  body.cmnarrow .exth{ min-width:0 }
+  /* 아주 좁을 때(대화 패널을 크게 끌어다 놓은 경우) 카드는 한 줄에 하나. */
+  body.cmxnarrow .card{ min-width:100%; flex:0 0 100% }
+  body.cmxnarrow .hdr h1{ font-size:15px }
+
+  /* 창을 더 넓힐 수 없는 경우(작은 화면)의 안전판: 3단계에서 대화 패널이 화면의 절반 이상을
+     가져가지 못하게 묶는다. 여기서 body 에 다시 선언하므로 드래그가 :root 에 넣어 둔 값보다
+     본문 안쪽 요소에는 이 값이 먼저 적용된다. */
+  @media (max-width: 1000px){
+    body.cmchat-side{ --cmchat-w:min(42vw, 420px) }
+  }
+
+  /* ===== 대화 패널 (2026-07-31 작업+대화 통합) =====
+     레일 ⊞ 3단계와 짝을 이룬다 — 1 메모장만 / 2 메모+AI 컴포저 / 3 작업 보드 + 대화 분할.
+     메모는 네이티브로 붙이고(1단계가 iframe 로딩에 안 묶이도록), 컴포저·큐·세션 뷰는
+     /goal-add?embed=1 을 iframe 으로 얹는다 — 두 페이지의 전역 심볼(post/esc/$ 등)이 겹쳐서
+     서버측 병합은 불가능했다. */
+  /* 기본 분할 비율: 레일(240px)을 뺀 나머지를 작업 보드와 대화가 거의 반반씩 나눈다 —
+     화면 전체로 편 3단계에서 사진과 같은 비율이 나오는 값이다. 드래그(cmchat-grip)는 :root 에
+     인라인으로 값을 넣으므로 이 기본값을 덮고, 그 선택이 그대로 유지된다. */
+  :root{ --cmchat-w:clamp(420px, calc((100vw - 240px) / 2), 1000px) }
+  .cmchat{ position:fixed; top:0; right:0; bottom:0; width:var(--cmchat-w);
+           display:flex; flex-direction:column; background:var(--bg);
+           border-left:1px solid var(--line); z-index:40 }
+  .cmchat-memo{ padding:14px 16px 0 }
+  .cmchat-frame{ flex:1; min-height:0; border:0; width:100%; background:transparent }
+  /* 분할 손잡이 — 3단계에서만. 실제 폭은 --cmchat-w 로 흘러간다(localStorage 영속). */
+  .cmchat-grip{ position:absolute; left:-3px; top:0; bottom:0; width:7px; cursor:col-resize; z-index:1 }
+  .cmchat-grip:hover{ background:rgba(91,140,255,.35) }
+  body{ transition:padding-right .14s ease }
+  body.cmchat-side{ padding-right:var(--cmchat-w) }
+  /* 2단계: 보드가 없으니 대화 패널이 레일 오른쪽 전부를 차지한다. */
+  body.cmchat-full .cmchat{ left:var(--cmrail-w); width:auto }
+  body.cmchat-full .cmchat-grip{ display:none }
+  /* 1단계: 레일도 접히고 메모장만. iframe(컴포저·큐)은 내린다. */
+  body.cmmemo-only .cmchat{ left:0; width:auto; border-left:0 }
+  body.cmmemo-only .cmchat-frame,
+  body.cmmemo-only .cmchat-grip{ display:none }
+  body.cmmemo-only .cmchat-memo{ flex:1; min-height:0; padding:0 }
+  /* 보드 숨김(1·2단계) — grid/flex 가 아니라 단일 블록이라 display:none 으로 충분하다. */
+  body.cmboard-off .wrap{ display:none !important }
 </style>
 </head>
 <body>
 \#(SessionRail.html())
 <!-- Zen-start escape: browse the board without starting a challenge (body.cm-zen CSS above). -->
 <div class="cmzen-peek"><button onclick="if(window.cmZenReveal)cmZenReveal()" title="챌린지를 시작하지 않고 보드만 봅니다">그냥 둘러보기 →</button></div>
-<div class="wrap">
+<!-- 대화 패널 — 메모는 네이티브, 컴포저·큐·세션 뷰는 /goal-add 임베드. -->
+<aside class="cmchat">
+  <div class="cmchat-grip" id="cmChatGrip" title="드래그해서 작업/대화 폭을 조절합니다"></div>
+  <div class="cmchat-memo">\#(MemoPad.html())</div>
+  <iframe class="cmchat-frame" id="cmChatFrame" src="/goal-add?embed=1" title="대화"></iframe>
+</aside>
+<!-- data-cmboard: 레일 단계 머신이 "이 페이지에는 작업 보드가 있다"고 인식하는 표식.
+     이게 있어야 ⊞ 가 1→2→3 세 단계로 순환한다(없으면 기존 접기/펴기 2단계). -->
+<div class="wrap" data-cmboard>
   <div class="hdr">
     <div>
       <h1>오늘 활동 · BGM 디버그 <span id="devBadge" class="devbadge" style="display:none"></span></h1>
@@ -655,7 +781,7 @@ enum DashboardContent {
     <!-- SHARED STATUS FILTER — one bar drives 목록·그룹·프리뷰 alike -->
     <div class="row" style="margin:0 0 8px;gap:6px">
       <button class="btn combo" id="flt_status_combo" onclick="openStatusFilter(event)" title="표시할 상태를 선택 (다중 선택)">보기<span class="cbadge" id="flt_status_cnt" style="display:none">0</span> <span class="cv">▾</span></button>
-      <button class="btn combo" id="flt_sprint_combo" onclick="openSprintFilter(event)" title="스프린트로 목록 필터 (다중 선택 · 릴리즈된 목표는 숨김)">스프린트<span class="cbadge" id="flt_sprint_cnt" style="display:none">0</span> <span class="cv">▾</span></button>
+      <button class="btn combo" id="flt_sprint_combo" onclick="openSprintFilter(event)" title="루프로 목록 필터 (다중 선택 · 릴리즈된 목표는 숨김)">루프<span class="cbadge" id="flt_sprint_cnt" style="display:none">0</span> <span class="cv">▾</span></button>
       <button class="btn combo" id="flt_type_combo" onclick="openTypeFilter(event)" title="유형으로 필터 (부모 · 자식 · task 다중 선택 — task를 켜면 부분과제 행이 목록에 나타납니다)">유형<span class="cbadge" id="flt_type_cnt" style="display:none">0</span> <span class="cv">▾</span></button>
       <span class="muted" id="flt_summary" style="font-size:12px">— 모두 표시</span>
     </div>
@@ -694,7 +820,10 @@ enum DashboardContent {
     <div id="previewView" style="display:none">
       <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
         <div id="reportFilter"></div>
-        <button class="btn" onclick="copyMd(this)">마크다운 복사</button>
+        <div class="row" style="margin:0;gap:6px">
+          <button class="btn" onclick="copyMd(this)">마크다운 복사</button>
+          <button class="btn" onclick="downloadCsv(this)" title="화면은 한 줄 요약, CSV는 전 필드 원문 — 팀·수신자별로 필요한 열만 골라 쓰세요">CSV 다운로드</button>
+        </div>
       </div>
       <div id="report"></div>
     </div>
@@ -725,9 +854,9 @@ enum DashboardContent {
       <div id="tableHost"></div>
     </div>
 
-    <!-- TOKEN VIEW (토큰 — 완료 항목의 토큰 사용량을 완료일·스프린트로 묶어 본다) -->
+    <!-- TOKEN VIEW (토큰 — 완료 항목의 토큰 사용량을 완료일·루프로 묶어 본다) -->
     <div id="tokenView" style="display:none">
-      <div class="muted" style="font-size:12px;margin:0 0 6px"><b>일별 토큰 사용량</b> — 모든 Claude 세션 트랜스크립트(~/.claude/projects)에서 그날 실제로 쓴 토큰을 날짜별로 합산합니다. 신규 입력·출력·캐시 생성만 셉니다(캐시 재사용 제외). 아래 <b>완료 목표별</b> 섹션은 각 목표의 연결 세션 토큰입니다.</div>
+      <div class="muted" style="font-size:12px;margin:0 0 6px"><b>일별 토큰 사용량</b> — 모든 Claude 세션 트랜스크립트(~/.claude/projects)에서 그날 실제로 쓴 토큰을 날짜별로 합산합니다. 신규 입력·출력·캐시 생성만 셉니다(캐시 재사용 제외, 같은 응답이 블록별로 중복 기재된 라인은 1회만). 막대는 구성비 — <b>컨텍스트</b>(프롬프트 쪽 전부)를 다시 4분할합니다: <span style="color:#3a4356">■ 재적재</span>(이전 턴 히스토리 재캐시+시스템 프롬프트) · <span style="color:#54627f">■ 도구결과</span>(파일 읽기·명령 출력·도구 스크린샷) · <span style="color:#96a5c8">■ 타이핑</span>(직접 친 프롬프트) · <span style="color:#c8b1e8">■ 사진</span>(첨부 이미지 — 장수·용량 병기). 출력 쪽은 <span style="color:#e8a13a">■ 생각</span>(thinking) · <span style="color:#8f6fe3">■ 응답</span>(보이는 텍스트) · <span style="color:#4f79c9">■ 도구</span>(도구 호출 인자). 하위 분할은 추정(텍스트=글자 가중, 이미지=w×h÷750 공식)이며 재적재는 잔차입니다. <b>비용($)</b>은 메시지별 모델(도중 교체 포함)에 공시 단가를 적용한 추정 — 캐시 읽기(×0.1)·캐시 쓰기(5분 ×1.25, 1시간 ×2)까지 반영하므로 토큰 K와 비례하지 않습니다. <b>AI 가동</b> = 프롬프트를 보낸 뒤 AI가 실제로 돌아간 시간의 합(응답이 끝난 뒤 방치한 시간은 포함 안 됨). <b>리드</b> = 응답이 끝난 뒤 다음 프롬프트 입력까지(이해+작성, 30분 초과 이탈 제외). <b>일 행을 클릭하면 세션별 상세</b>(토큰·$·구성비·모델·AI 가동·리드)가 펼쳐집니다.</div>
       <div class="row" style="margin:0 0 6px;gap:6px;align-items:center;flex-wrap:wrap">
         <button class="btn primary" id="tkm_tok" onclick="setTkMode('tok')" title="세션이 실제로 쓴 토큰(K)">토큰량</button>
         <button class="btn" id="tkm_val" onclick="setTkMode('val')" title="토큰효율·시간효율을 반영한 투입 지수(무단위 pt). 성과(가치)가 아니라 투입(비용) 측 지표">투입 지수</button>
@@ -750,7 +879,7 @@ enum DashboardContent {
       </div>
       <div id="tokenDailyRange" class="muted" style="font-size:11px;margin:0 0 8px">불러오는 중…</div>
       <div id="tokenDailyHost"></div>
-      <div class="muted" style="font-size:12px;margin:14px 0 6px;border-top:1px solid #222a36;padding-top:10px">완료된 목표를 <b>스프린트 번호</b>로 묶습니다. 각 목표의 <b>세션 전체</b> 토큰이라, 위 일별 타임라인(그날 <b>소비량</b>)과는 기준이 다릅니다. 위의 <b>스프린트</b>·<b>완료 컷오프</b> 필터가 그대로 적용됩니다.</div>
+      <div class="muted" style="font-size:12px;margin:14px 0 6px;border-top:1px solid #222a36;padding-top:10px">완료된 목표를 <b>완료일</b>로 묶습니다. 위의 <b>기간</b> 필터가 완료일 기준으로 그대로 적용됩니다 — <b>어제</b>를 누르면 어제 완료된 목표만 나옵니다. 각 목표의 <b>세션 전체</b> 토큰이라, 위 일별 타임라인(그날 <b>소비량</b>)과는 기준이 다릅니다.</div>
       <div id="tokenHost"></div>
     </div>
 
@@ -760,7 +889,7 @@ enum DashboardContent {
       <div id="scheduleSections"></div>
     </div>
 
-    <!-- SPRINT VIEW (스프린트 관리 — Jira식 백로그 보드 + 완료 로그) -->
+    <!-- SPRINT VIEW (루프 관리 — Jira식 백로그 보드 + 완료 로그) -->
     <div id="sprintView" style="display:none">
       <div id="sprintHost"></div>
       <div id="spModal" class="spmodal" style="display:none"><div class="modal-box" id="spModalBox"></div></div>
@@ -772,12 +901,44 @@ enum DashboardContent {
       <div class="row" style="margin:0 0 8px">
         <input type="text" id="archSearch" placeholder="내용을 입력하고 AI 검색 — 비슷한 목표를 모두 찾습니다 (Enter)" oninput="onArchInput(this.value)" onkeydown="archKey(event)" style="flex:1;min-width:200px">
         <button class="btn primary" id="archAiBtn" onclick="archAiSearch()" oncontextmenu="archToggleHelp();return false" title="내용을 입력하면 표현이 달라도 의미가 비슷한 목표를 AI가 모두 찾아줍니다 (우클릭: 검색 사용법)">AI 검색</button>
-        <button class="btn" id="archPlainBtn" onclick="archPlainSearch()" title="번호·내용·스프린트 코드의 글자 일치 검색 (즉시)">일반 검색</button>
+        <button class="btn" id="archPlainBtn" onclick="archPlainSearch()" title="번호·내용·루프 코드의 글자 일치 검색 (즉시)">일반 검색</button>
         <button class="btn" id="archClearBtn" onclick="archClear()" title="검색을 지우고 전체 목록 표시">전체</button>
         <span class="muted" id="archSummary" style="font-size:12px"></span>
       </div>
-      <div id="archHelp" class="muted" style="display:none;font-size:12px;margin:0 0 8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px">스프린트 릴리즈로 비워진 것까지 포함해 <b>모든 목표</b>를 한곳에서 봅니다. <b>AI 검색</b>은 내용을 입력하면 표현이 달라도 의미가 비슷한 목표를 모두 찾아줍니다(기본). <b>일반 검색</b>은 번호·내용·스프린트 코드의 글자 일치입니다. 아카이브 항목은 <b>복원</b>으로 활성 목록에 되돌립니다.</div>
+      <div id="archHelp" class="muted" style="display:none;font-size:12px;margin:0 0 8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px">루프 릴리즈로 비워진 것까지 포함해 <b>모든 목표</b>를 한곳에서 봅니다. <b>AI 검색</b>은 내용을 입력하면 표현이 달라도 의미가 비슷한 목표를 모두 찾아줍니다(기본). <b>일반 검색</b>은 번호·내용·루프 코드의 글자 일치입니다. 아카이브 항목은 <b>복원</b>으로 활성 목록에 되돌립니다.</div>
       <div id="archivedList"></div>
+    </div>
+
+    <!-- HERO VIEW (팀 칭찬 기록 — agent-mustcompany /hero 스킬이 쌓는 heroes.db 읽기 전용 뷰).
+         기록은 Claude Code의 /hero 스킬로 하고, 여기서는 관리 편의(훑어보기·사람별 횟수·
+         표준 포맷 복사)만 담당한다. 서버는 GET /api/hero/list (HeroStore.swift) 하나만 쓴다. -->
+    <div id="heroView" style="display:none">
+      <style>
+        .hero-card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:0 0 10px;background:var(--panel)}
+        .hero-no{color:var(--mut);font-size:12px}
+        .hero-skill{border:1px solid var(--accent);color:var(--accent);border-radius:999px;padding:1px 8px;font-size:11px;white-space:nowrap}
+        .hero-reason{margin:8px 0 0;line-height:1.55}
+        .hero-next{margin:8px 0 0;padding:5px 10px;border-left:3px solid var(--accent);font-size:13px;line-height:1.5}
+        .hero-next2{margin:4px 0 0 13px;font-size:12px;color:var(--mut)}
+        .hero-stat{display:inline-block;border:1px solid var(--line);border-radius:6px;padding:2px 8px;margin:0 6px 6px 0;font-size:12px}
+        #heroView .btn.on{border-color:var(--accent);color:var(--accent)}
+        /* 리더보드 — 순위는 굵기·막대 길이로만 표현한다 (상태 신호등 색 금지 규칙) */
+        .hero-lb{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:0 0 14px;background:var(--panel)}
+        .hero-lbrow{display:flex;align-items:center;gap:8px;padding:4px 0;flex-wrap:wrap}
+        .hero-rank{width:20px;text-align:right;font-size:12px;color:var(--mut)}
+        .hero-lbrow:nth-child(-n+3) .hero-rank{color:var(--accent);font-weight:700}
+        .hero-lbname{min-width:150px}
+        .hero-bar{flex:1;min-width:60px;height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+        .hero-bar>i{display:block;height:100%;background:var(--accent);opacity:.75}
+        .hero-lbn{font-size:12px;min-width:38px;text-align:right}
+        .hero-lbskills{display:flex;gap:4px;flex-wrap:wrap}
+        .hero-src{border:1px solid var(--line);border-radius:999px;padding:1px 8px;font-size:11px;color:var(--mut);text-decoration:none}
+        a.hero-src:hover{color:var(--accent);border-color:var(--accent)}
+        .hero-rawbox{border:1px solid var(--line);border-radius:8px;margin:14px 0 0;background:var(--panel)}
+        .hero-rawhead{padding:8px 12px;font-size:12px;color:var(--mut);cursor:pointer;user-select:none}
+        .hero-rawitem{border-top:1px solid var(--line);padding:8px 12px;font-size:12px;line-height:1.5;white-space:pre-wrap}
+      </style>
+      <div id="heroHost"><div class="empty">불러오는 중…</div></div>
     </div>
 
     <!-- 액션로그 뷰는 컨디션 관리 페이지(/bgm-player)의 액션로그 탭으로 이동했다 —
@@ -964,11 +1125,18 @@ function renderPlugins(){
         ?'<button class="btn" onclick="uninstallPlugin(\''+esc(p.id)+'\')">제거</button>'
         :'<button class="btn primary" onclick="installPlugin(\''+esc(p.id)+'\')">설치</button>';
       // 드로우: detail menu on the installed card — draw on/off pauses the overlay
-      // (left ⌥ draw / left ⌃ wipe) without uninstalling the plugin.
+      // (left ⌥ draw / fn wipe) without uninstalling the plugin.
       if(p.id==='draw'&&p.installed){
         actions+='<label style="display:inline-flex;align-items:center;gap:6px;margin-left:10px;font-size:12px;cursor:pointer">'
           +'<input type="checkbox" '+(p.drawOn?'checked':'')+' onchange="setDrawOn(this.checked)"> draw on/off'
-          +'<span class="muted">(왼쪽 ⌥ 그리기 · 왼쪽 ⌘⌘ 글씨 · 왼쪽 ⌃ 지우기)</span></label>';
+          +'<span class="muted">(왼쪽 ⌥ 그리기 · 왼쪽 ⌘⌘⌘ 글씨 · fn 지우기)</span></label>';
+      }
+      // 카메라 지킴이: on/off pauses the guard (개더 자리비움 카메라-끄기 방지)
+      // without uninstalling the plugin. Default on.
+      if(p.id==='camera-guard'&&p.installed){
+        actions+='<label style="display:inline-flex;align-items:center;gap:6px;margin-left:10px;font-size:12px;cursor:pointer">'
+          +'<input type="checkbox" '+(p.cameraOn?'checked':'')+' onchange="setCameraOn(this.checked)"> 지킴이 on/off'
+          +'<span class="muted">(개더 실행 중 카메라 상시-ON 유지)</span></label>';
       }
     } else {
       actions='<button class="btn primary" onclick="connectPlugin(\''+esc(p.id)+'\')">'+(p.folder?'폴더 변경':'연결')+'</button>';
@@ -1030,6 +1198,8 @@ function verifyPlugin(id){ post('/api/plugin/verify',{id}); pluginRefresh(); }
 function installPlugin(id){ post('/api/plugin/install',{id}); pluginRefresh(); }
 // 드로우 sub-switch: pause/resume the screen-draw overlay without uninstalling.
 function setDrawOn(on){ post('/api/draw/enabled',{on:!!on}); pluginRefresh(); }
+// 카메라 지킴이 sub-switch: pause/resume the Gather camera guard without uninstalling.
+function setCameraOn(on){ post('/api/camera/enabled',{on:!!on}); pluginRefresh(); }
 function uninstallPlugin(id){ if(confirm('이 플러그인을 제거할까요? (컨디션 메이트는 BGM도 함께 꺼집니다)')){ post('/api/plugin/uninstall',{id}); pluginRefresh(); } }
 function hhmm(t){ return CMTimeFilter.hhmm(t); }   // 표시 타임존 기준 HH:MM
 
@@ -1130,7 +1300,7 @@ function goalKey(e){ if(e.key!=='Enter')return; if(_composing){_pendingAdd=true;
 (function(){ bindImeEnter(document.getElementById('gAddText'), function(){ gAdd(); }); })();
 // (목표 추가 모달의 입력 배선은 전용 페이지 /goal-add 로 이주 — GoalAddContent.swift.)
 // --- 목표 추가/검색은 전용 페이지(/goal-add)로 이주 — GoalAddContent.swift. ---
-// 스프린트 보드의 모든 추가 진입점·레일의 목표 만들기/검색이 openGoalAdd()를 거쳐 그 페이지로
+// 루프 보드의 모든 추가 진입점·레일의 목표 만들기/검색이 openGoalAdd()를 거쳐 그 페이지로
 // 이동한다. 모달을 없앤 이유: 완전히 새 문서(깨끗한 JS 힙·최소 DOM)에서 목표 생성에 집중.
 // 페이지가 초안(cm.gaDraft)과 마지막 대상(cm.gaCtx)을 localStorage 에 남기므로, 담지 않고
 // 나온 입력은 아래 이어쓰기 칩이 같은 맥락으로 다시 연다.
@@ -1153,7 +1323,7 @@ function updateGaDraftChip(){
 // 이어쓰기 칩 클릭 → 마지막 대상(cm.gaCtx) 그대로 /goal-add 를 다시 열어 초안을 복원한다.
 function resumeGoalDraft(){ location.href='/goal-add?resume=1'; }
 // ===== 재사용 목표 추가 모듈 (single source of truth) =====
-// 입력창(상단 항상 보이는 바)·스프린트 보드(Backlog·각 스프린트)의 모든 "목표 추가"가
+// 입력창(상단 항상 보이는 바)·루프 보드(Backlog·각 루프)의 모든 "목표 추가"가
 // 이 두 코어 함수를 통해서만 추가한다. 진입점마다 미세하게 다른 add 로직을 두지 않는다.
 // ctx: {sprint, parent} — 비어 있으면(0/'') 그 필드는 보내지 않아 기존 Backlog 추가와 동일.
 // exec: 컴포저 실행 설정 {effort,mode,cwd,images} — 있으면 payload에 실어 goal에 영속화된다.
@@ -1326,7 +1496,7 @@ function dupConfirm(){ const p=_dupPending; if(!p){closeDup();return;}
   // 큐 항목 모드: 다듬은 문구로 그 항목을 목표로 승격(add). 새 목표 모드: 그냥 추가.
   if(p.queueId){ post('/api/goal/queue/resolve',{id:p.queueId,action:'add',text:text}); return; }
   const gt=$('goalText'); if(gt){ gt.value=''; gt.focus(); }
-  const o={text:text,parent:p.parent||''}; if(p.sprint) o.sprint=p.sprint;   // 스프린트 보드에서 시작한 추가면 대상 유지
+  const o={text:text,parent:p.parent||''}; if(p.sprint) o.sprint=p.sprint;   // 루프 보드에서 시작한 추가면 대상 유지
   post('/api/goal/add',o); }
 function dupLater(){ const p=_dupPending; if(!p){closeDup();return;}
   const text=$('dupGoalText').value.trim()||p.text;
@@ -1383,7 +1553,7 @@ let _statusFilter={backlog:true,in_progress:true,waiting:true,stopped:true,cance
 // hierarchy never collapses out from under a child. Default off = parents follow their
 // rolled-up status like any other goal (디폴트는 부모도 안 보이도록).
 let _showParents=false;
-// 스프린트 콤보박스 선택값(다중 선택). 비어 있으면 '모두'(전체), 아니면 선택된 스프린트 번호 집합.
+// 루프 콤보박스 선택값(다중 선택). 비어 있으면 '모두'(전체), 아니면 선택된 루프 번호 집합.
 let _sprintSel=new Set();
 // 유형 콤보박스 선택값(다중 선택): 'parent'(최상위 goal)·'child'(하위 goal)·'task'(부분과제).
 // 비어 있으면 '모두' — 기존 그대로 부모+자식 goal을 보이고 task 행은 숨긴다. 'task'를 켜면
@@ -1499,7 +1669,7 @@ function passesDoneCutoff(g,goals){
 }
 // Effective sprint number. A goal's own sprint wins; a DONE goal with no own sprint
 // inherits its parent's (이미 완료한 건 부모 상속으로 입력 비용↓). Active goals never
-// inherit — 이번 스프린트에서 자식이 빠질 수 있으므로 개별 배정한다.
+// inherit — 이번 루프에서 자식이 빠질 수 있으므로 개별 배정한다.
 function effSprint(g,goals){
   if(g.sprint>0) return g.sprint;
   if(effStatus(g,goals)==='done' && g.parent){ const p=byId(goals,g.parent); return p?(p.sprint||0):0; }
@@ -1507,14 +1677,14 @@ function effSprint(g,goals){
 }
 function byId(goals,id){ return (goals||[]).find(x=>x.id===id)||null; }
 // 보드 그룹 판정: 자신의 sprint가 있으면 그것, 없으면 부모를 따라간다(부모-자식이 한 그룹에
-// 묶여 보이도록). 자식을 다른 스프린트로 명시 배정하면 그 그룹으로 분리된다.
+// 묶여 보이도록). 자식을 다른 루프로 명시 배정하면 그 그룹으로 분리된다.
 function boardSprint(g,goals){
   if(g.sprint>0) return g.sprint;
   if(g.sprint<0) return 0;            // 명시적 Backlog 분리 — 부모를 따라가지 않는다
   if(g.parent){ const p=byId(goals,g.parent); return p?boardSprint(p,goals):0; }
   return 0;
 }
-// 스프린트 콤보박스 통과 여부: '모두'면 전부, 숫자면 그 스프린트만.
+// 루프 콤보박스 통과 여부: '모두'면 전부, 숫자면 그 루프만.
 function passesSprintFilter(g,goals){ return _sprintSel.size===0 ? true : _sprintSel.has(effSprint(g,goals)); }
 // 유형 콤보박스 통과 여부: 비어 있으면 모두. '부모'=최상위(parent 없음), '자식'=하위(parent 있음).
 // 'task'만 골라도 부분과제를 가진 goal은 남긴다 — task 행이 붙을 컨텍스트가 필요하므로.
@@ -1528,15 +1698,15 @@ function passesTypeFilter(g){
 function goalPasses(g,goals){
   if(g.archived) return false;                    // 보관된 목표는 활성 목록에서 숨김(아카이브 뷰에만 노출)
   if(g.released) return false;                    // 릴리즈(커밋)된 목표는 활성 목록에서 숨김
-  if(!passesSprintFilter(g,goals)) return false;  // 스프린트 콤보박스 (하드 게이트)
+  if(!passesSprintFilter(g,goals)) return false;  // 루프 콤보박스 (하드 게이트)
   if(!passesTypeFilter(g)) return false;          // 유형 콤보박스 (하드 게이트)
   if(!passesDoneCutoff(g,goals)) return false;    // 완료 컷오프는 상위 항상 표시보다 우선하는 하드 게이트
   if(_showParents && hasKids(goals,g)) return true;
   return !!_statusFilter[effStatus(g,goals)];
 }
 function getFilteredGoals(goals){ return goals.filter(g=>goalPasses(g,goals)); }
-// 스프린트 보드용 필터: 상태 토글·완료 컷오프는 적용하되, 스프린트 콤보박스는 적용하지 않는다
-// (보드 자체가 스프린트별로 그루핑하므로). 그래서 완료를 끄면 보드에서도 완료가 숨겨진다.
+// 루프 보드용 필터: 상태 토글·완료 컷오프는 적용하되, 루프 콤보박스는 적용하지 않는다
+// (보드 자체가 루프별로 그루핑하므로). 그래서 완료를 끄면 보드에서도 완료가 숨겨진다.
 function goalPassesBoard(g,goals){
   if(g.archived) return false;
   if(g.released) return false;
@@ -1609,10 +1779,10 @@ function openStatusFilter(e){
 // 토글 후 팝업은 열어 둔 채 내용만 갱신 — 연속 선택을 위해.
 function sfPick(s){ toggleStatusFilter(s); setPopupHTML(statusMenuHTML()); }
 function sfParents(){ toggleShowParents(); setPopupHTML(statusMenuHTML()); }
-// 스프린트 콤보박스(다중 선택): 상태 콤보와 같은 체크박스 드롭다운 패턴. 비어 있으면 '모두'.
-// 옵션 산출: 닫히지 않은(진행 중) 스프린트는 골이 아직 없어도 보여준다 — 만들자마자 배정할 수
-// 있게. 릴리즈로 닫힌 스프린트는 숨긴다. 여기에 활성 골이 붙은 번호도 합쳐, 닫혔지만 미완료
-// 골이 남은 스프린트의 잔여 작업도 놓치지 않는다. 정렬해 라벨로 고를 때 헷갈리지 않게.
+// 루프 콤보박스(다중 선택): 상태 콤보와 같은 체크박스 드롭다운 패턴. 비어 있으면 '모두'.
+// 옵션 산출: 닫히지 않은(진행 중) 루프는 골이 아직 없어도 보여준다 — 만들자마자 배정할 수
+// 있게. 릴리즈로 닫힌 루프는 숨긴다. 여기에 활성 골이 붙은 번호도 합쳐, 닫혔지만 미완료
+// 골이 남은 루프의 잔여 작업도 놓치지 않는다. 정렬해 라벨로 고를 때 헷갈리지 않게.
 function sprintNums(){
   const goals=(_review&&_review.goals)||[];
   const defined=(_review&&_review.sprints)||[];
@@ -1624,11 +1794,11 @@ function sprintMenuHTML(){
   const defined=(_review&&_review.sprints)||[];
   const labelOf={}; defined.forEach(s=>{ labelOf[s.number]=(s.code||('#'+s.number))+(s.goalText?(' · '+s.goalText):''); });
   const nums=sprintNums();
-  [..._sprintSel].forEach(n=>{ if(!nums.includes(n)) _sprintSel.delete(n); });   // 사라진 스프린트는 선택에서 제거
-  let h='<div class="ckmenu spmenu"><div class="pophdr">스프린트 (다중 선택)</div>';
+  [..._sprintSel].forEach(n=>{ if(!nums.includes(n)) _sprintSel.delete(n); });   // 사라진 루프는 선택에서 제거
+  let h='<div class="ckmenu spmenu"><div class="pophdr">루프 (다중 선택)</div>';
   h+='<button class="popitem chk'+(_sprintSel.size===0?' on':'')+'" onclick="spAll()"><span class="cbx"></span>모두</button>';
   if(nums.length) h+='<div class="popdiv"></div>';
-  nums.forEach(function(n){ const on=_sprintSel.has(n); const lab=labelOf[n]||('스프린트 '+n);
+  nums.forEach(function(n){ const on=_sprintSel.has(n); const lab=labelOf[n]||('루프 '+n);
     h+='<button class="popitem chk'+(on?' on':'')+'" onclick="spPick('+n+')"><span class="cbx"></span>'+lab.replace(/</g,'&lt;')+'</button>'; });
   return h+'</div>';
 }
@@ -1640,7 +1810,7 @@ function openSprintFilter(e){
 // 토글 후 팝업은 열어 둔 채 내용만 갱신 — 연속 선택을 위해. '모두'는 선택을 비운다.
 function spPick(n){ if(_sprintSel.has(n)) _sprintSel.delete(n); else _sprintSel.add(n); reapplyFilter(); syncURL(); setPopupHTML(sprintMenuHTML()); }
 function spAll(){ _sprintSel.clear(); reapplyFilter(); syncURL(); setPopupHTML(sprintMenuHTML()); }
-// 유형 콤보박스(다중 선택): 상태·스프린트 콤보와 같은 체크박스 드롭다운 패턴. 비어 있으면 '모두'.
+// 유형 콤보박스(다중 선택): 상태·루프 콤보와 같은 체크박스 드롭다운 패턴. 비어 있으면 '모두'.
 // 'task'를 켜면 목록의 각 goal 아래에 부분과제(tasks/<taskN>) 행이 나타난다.
 const TYPE_LABELS={parent:'부모 (최상위)',child:'자식 (하위)',task:'task (부분과제)'};
 function typeMenuHTML(){
@@ -1667,7 +1837,7 @@ function updateTypeCombo(){
   if(cnt){ if(n>0){ cnt.textContent=n; cnt.style.display=''; } else cnt.style.display='none'; }
   if(combo) combo.classList.toggle('active', n>0);
 }
-// 콤보 버튼 카운트 배지 갱신 (Jira식): 라벨은 '스프린트' 고정, 선택 개수만 배지 숫자로.
+// 콤보 버튼 카운트 배지 갱신 (Jira식): 라벨은 '루프' 고정, 선택 개수만 배지 숫자로.
 function updateSprintCombo(){
   const cnt=$('flt_sprint_cnt'), combo=$('flt_sprint_combo');
   const n=_sprintSel.size;
@@ -1698,14 +1868,14 @@ function updateFilterButtons(){
   updateSprintCombo();
   updateTypeCombo();
   const spArr=[..._sprintSel].sort((a,b)=>a-b);
-  const sp=spArr.length?(' · 스프린트 '+spArr.map(sprintCode).join(', ')+' 만'):'';
+  const sp=spArr.length?(' · 루프 '+spArr.map(sprintCode).join(', ')+' 만'):'';
   const tyNames={parent:'부모',child:'자식',task:'task'};
   const ty=_typeSel.size?(' · 유형 '+TYPE_KEYS.filter(k=>_typeSel.has(k)).map(k=>tyNames[k]).join(', ')+' 만'):'';
   const cut=_doneSince?' · '+fmtDate(_doneSince)+' 이전 완료 숨김':'';
   const s=$('flt_summary'); if(s) s.textContent='— '+filterSummary()+sp+ty+(_showParents?' · 상위 항상 표시':'')+cut;
 }
 // ===== URL 상태 영속화 — 뷰·필터 설정을 location.hash에 보관 =====
-// 목적: 스프린트 작업 중 새로고침해도 뷰/필터가 초기화되지 않게 한다(완료 토글 해제 등도 보존).
+// 목적: 루프 작업 중 새로고침해도 뷰/필터가 초기화되지 않게 한다(완료 토글 해제 등도 보존).
 // 해시만 사용하므로 서버로는 전송되지 않고, 북마크·공유로도 같은 화면이 재현된다.
 // 기본값과 같은 항목은 기록을 생략해 해시를 깔끔하게 유지한다.
 const _ST_DEFAULT='backlog,in_progress,done';   // 토글 4종(대기·진행·완료·취소) 중 기본 ON 조합
@@ -1720,7 +1890,7 @@ function syncURL(){
   if(_sprintSel.size) q.set('sp',[..._sprintSel].sort((a,b)=>a-b).join(','));
   if(_typeSel.size) q.set('ty',TYPE_KEYS.filter(k=>_typeSel.has(k)).join(','));
   if(_doneSince!==DC_DEFAULT) q.set('dc',String(_doneSince));   // 0 = 컷오프 해제
-  // 보드 접기 상태도 보존 — 그룹(스프린트 번호·'bg' Backlog)과 자식 접은 부모 id.
+  // 보드 접기 상태도 보존 — 그룹(루프 번호·'bg' Backlog)과 자식 접은 부모 id.
   // 새로고침/5초 폴 재렌더 후에도 접어둔 섹션이 다시 펼쳐지지 않게 한다.
   if(_spCollapsed.size) q.set('spc',[..._spCollapsed].join(','));
   if(_bgCollapsed.size) q.set('bgc',[..._bgCollapsed].join(','));
@@ -1732,7 +1902,7 @@ function syncURL(){
   savePrefs();
 }
 // 서버 저장용 UI 레이아웃 블롭. syncURL이 호출되는 모든 변경 지점(보기 토글·상위 표시·
-// 스프린트 선택·보드 접기)에서 함께 저장된다. 펼침 상태를 정확히 복원하려면 _bgSeen·_gSeen
+// 루프 선택·보드 접기)에서 함께 저장된다. 펼침 상태를 정확히 복원하려면 _bgSeen·_gSeen
 // (사용자가 이미 본 부모들)도 저장해야 한다 — 그래야 복원 후 첫 렌더의 기본-접기 로직이
 // 펼쳐둔 부모를 다시 접지 않는다.
 function savePrefs(){
@@ -1762,7 +1932,7 @@ function applyPrefs(p){
   if('par' in p) _showParents=!!p.par;
   if(Array.isArray(p.sp)) p.sp.forEach(n=>{ const v=parseInt(n,10); if(v>0) _sprintSel.add(v); });
   if(Array.isArray(p.ty)) p.ty.forEach(k=>{ if(TYPE_KEYS.includes(k)) _typeSel.add(k); });
-  // 스프린트 그룹 키는 숫자(스프린트 번호)면 Number로 되돌려 _spCollapsed.has(s.number)와 일치시킨다.
+  // 루프 그룹 키는 숫자(루프 번호)면 Number로 되돌려 _spCollapsed.has(s.number)와 일치시킨다.
   if(Array.isArray(p.spc)) p.spc.forEach(k=>_spCollapsed.add(/^\d+$/.test(String(k))?parseInt(k,10):k));
   if(Array.isArray(p.bgc)) p.bgc.forEach(k=>_bgCollapsed.add(k));
   // 펼침 보존의 핵심: 이미 본 부모를 시드해 첫 렌더의 기본-접기가 펼쳐둔 부모를 다시 접지 않게 한다.
@@ -1787,7 +1957,7 @@ function restoreFromURL(){
     if(q.has('sp')) q.get('sp').split(',').filter(Boolean).forEach(function(x){ const v=parseInt(x,10); if(v>0) _sprintSel.add(v); });
     if(q.has('ty')){ _typeSel.clear(); q.get('ty').split(',').filter(Boolean).forEach(k=>{ if(TYPE_KEYS.includes(k)) _typeSel.add(k); }); }
     if(q.has('dc')) _doneSince=parseInt(q.get('dc'),10)||0;
-    // 접기 상태 복원: 그룹 키는 숫자(스프린트 번호)면 Number로 되돌려 _spCollapsed.has(s.number)와 일치시킨다.
+    // 접기 상태 복원: 그룹 키는 숫자(루프 번호)면 Number로 되돌려 _spCollapsed.has(s.number)와 일치시킨다.
     if(q.has('spc')) q.get('spc').split(',').filter(Boolean).forEach(k=>_spCollapsed.add(/^\d+$/.test(k)?parseInt(k,10):k));
     if(q.has('bgc')) q.get('bgc').split(',').filter(Boolean).forEach(k=>_bgCollapsed.add(k));
   }
@@ -2046,7 +2216,7 @@ function pad2(n){ return (n<10?'0':'')+n; }
 const VIEW_DEFS=[
   {k:'input',t:'목록'},{k:'group',t:'그룹'},{k:'table',t:'테이블'},
   {k:'token',t:'토큰'},{k:'schedule',t:'일정'},{k:'preview',t:'리포트'},
-  {k:'sprint',t:'스프린트'},{k:'archived',t:'아카이브'}
+  {k:'sprint',t:'루프'},{k:'archived',t:'아카이브'},{k:'hero',t:'Hero'}
   // 큐는 더 이상 대시보드 탭이 아니다 — chat(/goal-add)의 detail-큐로 완전히 이전 (QueuePanel.swift).
   // 탭바 우측 큐 상태 노티(qNoti)가 /goal-add?q=detail 로 안내한다. 옛 'queue' 해시/저장값은
   // restoreFromURL이 그 주소로 리다이렉트한다.
@@ -2136,7 +2306,7 @@ function setView(v){ _view=v; if(_review) fillActiveView(_review); applyView(); 
   updateQueueNoti(_lastAiQueue);   // 뷰 전환 시 노티를 즉시 갱신
 }
 function applyView(){
-  const inp=$('inputView'), pv=$('previewView'), gv=$('groupView'), sv=$('scheduleView'), tv=$('tableView'), tkv=$('tokenView'), spv=$('sprintView'), av=$('archivedView');
+  const inp=$('inputView'), pv=$('previewView'), gv=$('groupView'), sv=$('scheduleView'), tv=$('tableView'), tkv=$('tokenView'), spv=$('sprintView'), av=$('archivedView'), hv=$('heroView');
   inp.style.display=(_view==='input')?'':'none';
   gv.style.display =(_view==='group')?'':'none';
   sv.style.display =(_view==='schedule')?'':'none';
@@ -2144,8 +2314,10 @@ function applyView(){
   tkv.style.display=(_view==='token')?'':'none';
   spv.style.display=(_view==='sprint')?'':'none';
   av.style.display =(_view==='archived')?'':'none';
+  hv.style.display =(_view==='hero')?'':'none';
   pv.style.display =(_view==='preview')?'':'none';
   if(_view==='preview') initReportFilter();   // 리포트 기간 필터를 최초 진입 시 마운트
+  if(_view==='hero') heroLoad();              // Hero 탭은 진입 시 heroes.db를 읽는다(1회 캐시)
   // Page view (컨디션): in-flow panel below the tab bar instead of the goal panel.
   // 스킬·에이전트는 더 이상 대시보드 탭이 아니라 레일이 소유하는 독립 오버레이다
   // (SessionRail cmNav('skills') / cmNav('delegate') 참고).
@@ -2168,6 +2340,152 @@ function fillActiveView(r){
   else if(_view==='sprint'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderSprintView(r); }
   else if(_view==='archived'){ $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; renderArchivedView(r); }
   else { $('goals').innerHTML=''; $('groupSections').innerHTML=''; $('scheduleSections').innerHTML=''; $('tableHost').innerHTML=''; }   // preview: report only
+}
+
+// ===== Hero 뷰 (팀 칭찬 기록 — 읽기 전용) =====
+// GET /api/hero/list 는 두 소스를 머지해서 준다 (HeroStore.swift):
+//   source:'slack' — Slack #hero 채널 원문 (slack-eyes 데몬이 백필·실시간 수집).
+//                    parsed:false면 구조화 실패 → 원문만 있는 항목.
+//   source:'db'    — Claude Code /hero 스킬의 heroes.db 엔트리.
+// 이 팀의 칭찬 문화: 디테일 없는 칭찬은 조롱이며, 바로 다음 단계(next todo)가 없으면 성장이
+// 멈춘다 — 그래서 카드에서 next todo를 항상 강조해 보여준다. 기록은 /hero 스킬이 담당하고,
+// 이 탭은 리더보드(셀프 모티베이션)·훑어보기·표준 포맷 복사만 맡는다.
+let _heroEntries=[];
+let _heroPeriod='all';      // all | quarter | month
+let _heroRaw=false;         // 미파싱 원문 섹션 펼침 여부
+function heroEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// 표준 칭찬 포맷 — 스킬(hero_db.py)의 format_entry와 같은 모양을 유지한다.
+function heroFormat(e){
+  const kr=e.nominee_korean?(' ('+e.nominee_korean+')'):'';
+  let body=e.skill+' (lv'+e.level+') / '+e.reason+' / next todo: '+e.next_todo;
+  if(e.next_level_goal) body+=' (next level: '+e.next_level_goal+')';
+  return '['+(e.no||'')+'] @'+e.nominee+kr+'\n'+body;
+}
+function heroFlash(btn){ const t=btn.textContent; btn.textContent='복사됨'; setTimeout(function(){btn.textContent=t;},1200); }
+function heroCopy(key,btn){
+  const e=_heroEntries.find(function(x){return x.key===key;}); if(!e) return;
+  navigator.clipboard.writeText(e.parsed?heroFormat(e):e.text).then(function(){heroFlash(btn);});
+}
+function heroCopyAll(btn){
+  const list=heroInPeriod().filter(function(e){return e.parsed;});
+  if(!list.length) return;
+  const txt=list.slice().reverse().map(heroFormat).join('\n\n---\n\n');
+  navigator.clipboard.writeText(txt).then(function(){heroFlash(btn);});
+}
+// 기간 필터 — 표시 타임존 벽시계 기준(CMTimeFilter). raw Date getter를 쓰지 않는다.
+function heroInPeriod(){
+  if(_heroPeriod==='all') return _heroEntries;
+  const now=CMTimeFilter.parts(Date.now());
+  const q=Math.floor((now.mo-1)/3);
+  return _heroEntries.filter(function(e){
+    if(!e.at) return false;
+    const p=CMTimeFilter.parts(e.at*1000);
+    if(p.y!==now.y) return false;
+    if(_heroPeriod==='month') return p.mo===now.mo;
+    return Math.floor((p.mo-1)/3)===q;
+  });
+}
+function heroSetPeriod(k){ _heroPeriod=k; renderHeroView(); }
+function heroToggleRaw(){ _heroRaw=!_heroRaw; renderHeroView(); }
+function heroLoad(force){
+  const host=$('heroHost'); if(!host) return;
+  if(_heroEntries.length && !force) return;   // 탭 재진입 시 재요청하지 않음 — 새로고침 버튼으로 갱신
+  fetch('/api/hero/list').then(function(r){return r.json();})
+    .then(function(d){ _heroEntries=(d&&d.entries)||[]; _heroMeta=d||{}; renderHeroView(); })
+    .catch(function(){ host.innerHTML='<div class="empty">칭찬 기록을 불러오지 못했습니다.</div>'; });
+}
+let _heroMeta={};
+// 리더보드 — 셀프 모티베이션용. 사람별 누적 횟수와 스킬별 최고 레벨을 보여준다.
+// 순위 색은 신호등(빨강/녹색) 금지 규칙에 따라 강조 = 액센트 굵기로만 준다.
+function heroLeaderboard(list){
+  const by={};
+  list.forEach(function(e){
+    if(!e.parsed || !e.nominee) return;
+    const k=e.nominee;
+    if(!by[k]) by[k]={n:0, kr:e.nominee_korean||'', best:{}, last:0};
+    by[k].n++;
+    if(e.at>by[k].last) by[k].last=e.at;
+    if(e.skill) by[k].best[e.skill]=Math.max(by[k].best[e.skill]||0, e.level||0);
+    if(!by[k].kr && e.nominee_korean) by[k].kr=e.nominee_korean;
+  });
+  const names=Object.keys(by).sort(function(a,b){ return by[b].n-by[a].n || by[b].last-by[a].last; });
+  if(!names.length) return '';
+  const top=by[names[0]].n;
+  return '<div class="hero-lb">'
+    +names.map(function(k,i){
+      const v=by[k];
+      const skills=Object.keys(v.best).sort(function(a,b){return v.best[b]-v.best[a];}).slice(0,3)
+        .map(function(s){return '<span class="hero-skill">'+heroEsc(s)+' lv'+v.best[s]+'</span>';}).join(' ');
+      const pct=top?Math.round(v.n*100/top):0;
+      return '<div class="hero-lbrow">'
+        +'<span class="hero-rank">'+(i+1)+'</span>'
+        +'<span class="hero-lbname"><b>'+heroEsc(k)+'</b>'
+        +(v.kr?(' <span class="muted">('+heroEsc(v.kr)+')</span>'):'')+'</span>'
+        +'<span class="hero-bar"><i style="width:'+pct+'%"></i></span>'
+        +'<span class="hero-lbn">'+v.n+'회</span>'
+        +'<span class="hero-lbskills">'+skills+'</span>'
+        +'</div>';
+    }).join('')
+    +'</div>';
+}
+function renderHeroView(){
+  const host=$('heroHost'); if(!host) return;
+  if(!_heroEntries.length){
+    host.innerHTML='<div class="empty">아직 칭찬 기록이 없습니다.'
+      +'<div style="margin-top:6px">Slack <b>#hero</b> 채널 수집은 slack-eyes 데몬이, 직접 기록은 Claude Code의 <b>/hero</b> 스킬이 담당합니다.</div>'
+      +'<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+heroEsc(_heroMeta.slack||'')+'</div></div>';
+    return;
+  }
+  const list=heroInPeriod();
+  const parsed=list.filter(function(e){return e.parsed;});
+  const raw=list.filter(function(e){return !e.parsed;});
+  const seg=[['all','전체'],['quarter','이번 분기'],['month','이번 달']]
+    .map(function(p){ return '<button class="btn'+(_heroPeriod===p[0]?' on':'')+'" onclick="heroSetPeriod(\''+p[0]+'\')">'+p[1]+'</button>'; }).join('');
+  let h='<div class="row" style="margin:0 0 10px;align-items:center;gap:6px">'
+    +seg
+    +'<span class="muted" style="font-size:12px;margin-left:6px">칭찬 '+parsed.length+'건'
+    +(raw.length?(' · 미분류 '+raw.length+'건'):'')
+    +' · Slack #hero + /hero 스킬</span>'
+    +'<span style="flex:1"></span>'
+    +'<button class="btn" onclick="heroCopyAll(this)" title="이 기간의 엔트리를 표준 포맷으로 복사">전체 복사</button>'
+    +'<button class="btn" onclick="heroLoad(true)" title="다시 읽기">새로고침</button>'
+    +'</div>'
+    +heroLeaderboard(parsed);
+  h+=parsed.map(function(e){
+    const kr=e.nominee_korean?(' <span class="muted">('+heroEsc(e.nominee_korean)+')</span>'):'';
+    const nx=e.next_level_goal?('<div class="hero-next2">next level: '+heroEsc(e.next_level_goal)+'</div>'):'';
+    const no=e.no?('<span class="hero-no">['+e.no+']</span>'):'';
+    const src=e.source==='slack'
+      ? (e.permalink?('<a class="hero-src" href="'+heroEsc(e.permalink)+'" target="_blank" title="슬랙 원문 열기">#hero</a>'):'<span class="hero-src">#hero</span>')
+      : '<span class="hero-src">/hero</span>';
+    return '<div class="hero-card">'
+      +'<div class="row" style="align-items:baseline;gap:8px;flex-wrap:wrap">'
+      +no
+      +'<b>@'+heroEsc(e.nominee)+'</b>'+kr
+      +(e.skill?('<span class="hero-skill">'+heroEsc(e.skill)+' lv'+e.level+'</span>'):'')
+      +'<span style="flex:1"></span>'+src
+      +'<span class="muted" style="font-size:11px">'+heroEsc(e.created_at)+(e.nominator?(' · by '+heroEsc(e.nominator)):'')+'</span>'
+      +'<button class="btn" style="font-size:11px;padding:2px 8px" onclick="heroCopy(\''+heroEsc(e.key)+'\',this)" title="이 엔트리를 표준 포맷으로 복사">복사</button>'
+      +'</div>'
+      +'<div class="hero-reason">'+heroEsc(e.reason)+'</div>'
+      +(e.next_todo?('<div class="hero-next"><b>next todo</b> · '+heroEsc(e.next_todo)+'</div>'):'')
+      +nx
+      +'</div>';
+  }).join('');
+  // 구조화하지 못한 메시지는 버리지 않고 접어서 남긴다 — 파서 보정의 재료이자
+  // 채널 맥락(축하 코멘트 등)이라 목록에서 사라지면 안 된다.
+  if(raw.length){
+    h+='<div class="hero-rawbox"><div class="hero-rawhead" onclick="heroToggleRaw()">'
+      +(_heroRaw?'▾':'▸')+' 칭찬 포맷이 아닌 메시지 '+raw.length+'건</div>';
+    if(_heroRaw) h+=raw.map(function(e){
+      const src=e.permalink?('<a class="hero-src" href="'+heroEsc(e.permalink)+'" target="_blank">원문</a>'):'';
+      return '<div class="hero-rawitem"><span class="muted" style="font-size:11px">'+heroEsc(e.created_at)
+        +(e.nominator?(' · '+heroEsc(e.nominator)):'')+'</span> '+src
+        +'<div>'+heroEsc(e.text)+'</div></div>';
+    }).join('');
+    h+='</div>';
+  }
+  host.innerHTML=h;
 }
 // ===== Group-mode input: sticky add bar (active parent) + collapsible parent sections =====
 let _activeParent='';        // active parent goal id ('' = new top-level)
@@ -2281,7 +2599,7 @@ function gChildRow(g,r){
     +'<span class="grip" draggable="true" ondragstart="gChildStart(event,\''+g.parent+'\',\''+g.id+'\')" ondragend="gChildEnd(event)" title="드래그하여 순서 변경">⠿</span>'
     +gpill(g)+linkDot(g)
     +slinkBtn(g)
-    +'<span class="gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span>'
+    +'<span class="gt" id="gt_'+g.id+'" title="'+esc(g.text)+' — 더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span>'
     +'<span class="stat">'+statSel(g)+'</span>'
     +ttimeHTML(g)
     +noteBtn(g,r)
@@ -2380,7 +2698,7 @@ function schRow(g,r){
   return '<div class="schrow" oncontextmenu="goalCtx(event,\''+g.id+'\')">'
     +gpill(g)+linkDot(g)
     +slinkBtn(g)
-    +'<span class="st"><span class="gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span></span>'
+    +'<span class="st"><span class="gt" id="gt_'+g.id+'" title="'+esc(g.text)+' — 더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span></span>'
     +'<span>'+statCell+'</span>'
     +ddayBadge(g)
     +'<span class="dlab">목표</span><input type="datetime-local" value="'+localInput(g.targetAt)+'" onchange="setTarget(\''+g.id+'\',this.value)">'
@@ -2466,8 +2784,7 @@ function renderGoalsInput(r){
   const onlyDone=_statusFilter.done&&!_statusFilter.backlog&&!_statusFilter.in_progress;
   if(onlyDone) list.forEach(g=>_evOpen.add(g.id));
   if(!list.length){ gv.innerHTML='<div class="muted" style="padding:4px 0">'+(anyStatusActive()?'해당 상태의 목표가 없습니다.':'표시할 상태를 선택하세요 (대기 · 진행 · 완료).')+'</div>'; return; }
-  const idToNum={}; all.forEach(g=>{ idToNum[g.id]=g.seq; });   // stable seq, not position
-  gv.innerHTML=energyGauge(all)+list.map(g=>goalRow(g,all.indexOf(g),r,idToNum)+taskRows(g)).join('');
+  gv.innerHTML=energyGauge(all)+list.map(g=>goalRow(g,all.indexOf(g),r)+taskRows(g)).join('');
   applyEvOpen(); applyNoteOpen();
 }
 // 부분과제(task) 행: 유형 필터에 'task'가 켜졌을 때만 goal 행 바로 아래에 붙는 읽기 전용 행.
@@ -2489,7 +2806,7 @@ function taskRows(g){
     return '<div class="goal taskrow">'
       +'<span class="tlead muted">└</span>'
       +'<a class="pill gp" href="'+href+'" title="task 페이지 열기">'+esc(t.id)+'</a>'
-      +'<span class="g"><span class="gt">'+esc(t.title||t.folder)+'</span></span>'
+      +'<span class="g"><span class="gt" title="'+esc(t.title||t.folder)+'">'+esc(t.title||t.folder)+'</span></span>'
       +'<span class="ot '+m.cls+'" style="font-size:11px">'+m.lab+'</span>'
       +'</div>';
   }).join('');
@@ -2505,11 +2822,11 @@ function energyGauge(goals){
     +'<div class="bar"><div class="fill" style="width:'+pct+'%"></div></div></div>';
 }
 // Clickable sprint badge for a goal row. Click → swaps to a tiny number input that
-// commits on blur/Enter (스프 배지를 눌러 일일 목록에서 바로 스프린트 변경).
+// commits on blur/Enter (스프 배지를 눌러 일일 목록에서 바로 루프 변경).
 function spBadge(g){
   const n=(g.sprint>0)?g.sprint:0;   // -1(분리)·0은 모두 미배정 표시
-  return '<span class="spbadge'+(n?'':' none')+'" id="sp_'+g.id+'" title="클릭해 스프린트 변경"'
-    +' onclick="editSpInline(\''+g.id+'\')">'+(n?esc(sprintCode(n)):'스프 –')+'</span>';
+  return '<span class="spbadge'+(n?'':' none')+'" id="sp_'+g.id+'" title="클릭해 루프 변경"'
+    +' onclick="editSpInline(\''+g.id+'\')">'+(n?esc(sprintCode(n)):'루프 –')+'</span>';
 }
 function editSpInline(id){
   const el=$('sp_'+id); if(!el) return;
@@ -2524,8 +2841,7 @@ function commitSpInline(id,v){
   const n=(String(v).trim()==='')?0:(parseInt(String(v).replace(/[^0-9]/g,''),10)||0);
   post('/api/goal/sprint',{id:id,sprint:n});
 }
-function goalRow(g,i,r,idToNum){
-  const pnum=(g.parent&&idToNum[g.parent])?idToNum[g.parent]:'';
+function goalRow(g,i,r){
   const isChild=!!g.parent;
   // Parent goals show a derived rollup status (not manual buttons); leaves stay manual.
   const ds=derivedStatus(r.goals,g);
@@ -2537,12 +2853,11 @@ function goalRow(g,i,r,idToNum){
     +'<span class="grip" draggable="true" ondragstart="dragStart(event,'+i+')" ondragend="dragEnd(event)" title="드래그하여 우선순위 변경">⠿</span>'
     +gpill(g)+linkDot(g)
     +slinkBtn(g)+spBadge(g)
-    +'<span class="g">'+(isChild?'<span class="muted">└ </span>':'')+'<span class="gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span></span>'
+    +'<span class="g">'+(isChild?'<span class="muted">└ </span>':'')+'<span class="gt" id="gt_'+g.id+'" title="'+esc(g.text)+' — 더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+'</span></span>'
     +'<span class="stat">'+statCell+'</span>'
     +ttimeHTML(g)+wbadgeHTML(g)
     +'<span class="muted" style="font-size:12px">부모#</span>'
-    +'<input type="text" inputmode="numeric" value="'+pnum+'" placeholder="–" title="부모 번호 입력 (비우면 최상위)" '
-    +'onchange="setParentByNumber(\''+g.id+'\',this.value)" style="width:46px;text-align:center">'
+    +parentCellHTML(g,false)
     +noteBtn(g,r)
     +'<button class="btn evbtn'+(evCount(g)>0?' has':'')+'" onclick="toggleEv(\''+g.id+'\')" title="증거(링크·파일) 첨부·보기">📎 '+evCount(g)+'</button>'
     +'<button class="btn" onclick="removeGoal(\''+g.id+'\')">삭제</button>'
@@ -2631,7 +2946,7 @@ function tblRow(g,all,idToNum){
     +'<td>'+gpill(g)+linkDot(g)+'</td>'
     +'<td>'+pnum+'</td>'
     +'<td>'+stCell+'</td>'
-    +'<td class="nm">'+(isChild?'<span class="muted">└ </span>':'')+esc(g.text)+'</td>'
+    +'<td class="nm" title="'+esc(g.text)+'">'+(isChild?'<span class="muted">└ </span>':'')+esc(g.text)+'</td>'
     +'<td>'+(g.sessionId?slinkBtn(g):'<span class="muted">–</span>')+'</td>'
     +'<td>'+ttimeHTML(g)+'</td>'
     +'<td>'+(g.targetAt?fmtDate(g.targetAt):'<span class="muted">–</span>')+'</td>'
@@ -2652,21 +2967,10 @@ function renderTable(r){
   host.innerHTML='<table class="gtbl"><thead><tr>'+head+'</tr></thead><tbody>'+list.map(g=>tblRow(g,all,idToNum)).join('')+'</tbody></table>';
 }
 
-// ===== 토큰 뷰 — 완료 항목의 토큰 사용량을 완료일·스프린트로 묶어 본다 =====
-// 목적: "어제(혹은 특정 기간)에 어느 스프린트로 토큰을 얼마나 썼나"를 한눈에. 완료된 목표만
-// 대상으로 삼아, 완료 시각(없으면 자식 롤업)을 기준으로 오늘/어제/이번 주/이전 그룹으로 나누고
-// 각 그룹·전체·스프린트별 토큰 합계를 보여준다. 상단의 스프린트 콤보·완료 컷오프 필터가 그대로
-// 적용되어, 컷오프를 '어제 0시'로 두면 자연히 "어제 이후 완료분"만 남는 식으로 좁힐 수 있다.
-// 0=오늘(미래 완료 포함), 1=어제, 2=이번 주(그제~6일 전), 3=이전, 9=완료 시각 미상.
-function tkDayKey(epochSec){
-  if(!epochSec) return 9;
-  const diff=Math.round((startOfDay(Date.now()/1000)-startOfDay(epochSec))/86400);
-  if(diff<=0) return 0;
-  if(diff===1) return 1;
-  if(diff<7) return 2;
-  return 3;
-}
-const TK_GROUPS=[[0,'오늘'],[1,'어제'],[2,'이번 주'],[3,'이전'],[9,'완료 시각 미상']];
+// ===== 토큰 뷰 — 완료 항목의 토큰 사용량을 완료일로 묶어 본다 =====
+// 목적: "어제(혹은 특정 기간)에 무엇을 끝내며 토큰을 얼마나 썼나"를 한눈에. 완료된 목표만
+// 대상으로, 완료 시각(없으면 자식 롤업)의 날짜가 상단 기간 필터(_tkStart~_tkEnd) 안에 드는
+// 것만 완료일별 그룹으로 보여준다. 날짜가 유일한 축 — 루프 그룹핑·완료 컷오프 연동은 폐기.
 // 일별 그룹용: 완료 시각(epoch초) → 'YYYY-MM-DD'(로컬), 그리고 그 날의 사람용 라벨(요일 포함).
 function tkDayStr(epochSec){ return histDayStr(new Date(epochSec*1000)); }
 function tkDayLabel(dayStr){
@@ -2675,10 +2979,10 @@ function tkDayLabel(dayStr){
   const rel=(diff===0)?' · 오늘':(diff===1?' · 어제':'');
   return dayStr+' ('+wd+')'+rel;
 }
-// 읽기 전용 스프린트 코드 태그 (스프 배지와 달리 클릭 편집 없음 — id 충돌 방지).
+// 읽기 전용 루프 코드 태그 (스프 배지와 달리 클릭 편집 없음 — id 충돌 방지).
 function tkSprintTag(g,goals){
   const n=effSprint(g,goals);
-  return '<span class="spbadge'+(n?'':' none')+'" style="cursor:default" title="스프린트">'+(n?esc(sprintCode(n)):'스프 –')+'</span>';
+  return '<span class="spbadge'+(n?'':' none')+'" style="cursor:default" title="루프">'+(n?esc(sprintCode(n)):'루프 –')+'</span>';
 }
 function tkRow(g,goals){
   const c=goalCompletedAt(g,goals);
@@ -2688,7 +2992,7 @@ function tkRow(g,goals){
   const amtTitle=(_tkMode==='val')?'투입 지수 (토큰효율×가중치, pt) — 투입이지 성과 아님':'이 목표에 연결된 세션 토큰';
   return '<div class="schrow">'
     +gpill(g)+slinkBtn(g)
-    +'<span class="st"><span class="gt">'+esc(g.text)+'</span></span>'
+    +'<span class="st"><span class="gt" title="'+esc(g.text)+'">'+esc(g.text)+'</span></span>'
     +tkSprintTag(g,goals)
     +'<span class="dday done">✓ '+(c?fmtDate(c):'완료')+'</span>'
     +breadth
@@ -2731,15 +3035,18 @@ function setTkRange(preset){
   _tkPreset=preset;
   _tkStart=histPresetStart(preset);
   _tkEnd=(preset==='yesterday') ? _tkStart : histDayStr(new Date());
-  syncTkInputs(); loadTokenDaily();
+  syncTkInputs(); loadTokenDaily(); refreshTokenGoals();
 }
 function onTkDate(){
   const a=$('tkFrom'),b=$('tkTo'); if(!a||!b) return;
   if(a.value) _tkStart=a.value; if(b.value) _tkEnd=b.value;
   if(_tkStart>_tkEnd){ const t=_tkStart; _tkStart=_tkEnd; _tkEnd=t; syncTkInputs(); }
   _tkPreset='';                    // 직접 입력하면 퀵버튼 선택 해제
-  loadTokenDaily();
+  loadTokenDaily(); refreshTokenGoals();
 }
+// 기간이 바뀌면 아래 완료 목표 섹션도 같은 범위로 다시 그린다 (renderTokenView가
+// loadTokenDaily를 다시 부르지만 캐시·로딩 가드가 있어 무비용).
+function refreshTokenGoals(){ if(_review) renderTokenView(_review); }
 function loadTokenDaily(force){
   if(!_tkStart){ _tkPreset='3m'; _tkEnd=histDayStr(new Date()); _tkStart=histPresetStart('3m'); syncTkInputs(); }  // 최초 진입 기본값: 3달
   reflectTkBtn();
@@ -2752,6 +3059,70 @@ function loadTokenDaily(force){
     _tkDaily=(j&&j.days)||[]; _tkFetchedDays=need; _tkDailyLoading=false; renderTokenDaily();
   }).catch(()=>{ _tkDailyLoading=false; const h=$('tokenDailyHost'); if(h) h.innerHTML='<div class="muted" style="padding:6px 0">일별 토큰을 불러오지 못했습니다</div>'; });
 }
+// 리드타임(초) 표시 — 60초 미만은 초, 그 위는 분. 케이브맨 효과가 한눈에 보이게 짧은 단위 유지.
+function tkFmtLead(s){ if(!(s>0)) return '-'; if(s<60) return Math.round(s)+'초'; const m=s/60; return (m<10? m.toFixed(1) : Math.round(m))+'분'; }
+// 하루 구성비 문자열. '컨텍스트'=input+cache_creation — 그 안을 다시 4분할해 보여준다:
+// 재적재(이전 턴 히스토리 재캐시+시스템 프롬프트, 잔차) · 도구결과(파일 읽기·명령 출력·
+// 도구 스크린샷) · 타이핑(직접 친 프롬프트) · 사진(첨부 이미지 — 장수·용량 병기).
+// 하위 %는 전체(spent) 기준이라 넷을 더하면 컨텍스트 %가 된다. 텍스트=글자 가중 추정,
+// 이미지=w×h÷750 공식. 서버가 아직 하위 필드를 안 주면(구버전 응답) 상위 4버킷만 표시.
+function tkCompStr(d,short){
+  const spent=d.tokens||0; if(!(spent>0) || d.inTok==null) return '';
+  const p=v=>{ const x=100*(v||0)/spent; return (x>0&&x<1)? x.toFixed(1) : String(Math.round(x)); };
+  const imgMeta=(d.imgN>0)? '·'+d.imgN+'장 '+tkFmtMB(d.imgBytes) : '';
+  const ctxSub=(d.reloadTok==null)? '' : (short
+    ? '(재 '+p(d.reloadTok)+'·결 '+p(d.toolResTok)+'·타 '+p(d.typedTok)+'·사 '+p(d.imgTok)+imgMeta+')'
+    : ' (재적재 '+p(d.reloadTok)+'% · 도구결과 '+p(d.toolResTok)+'% · 타이핑 '+p(d.typedTok)+'% · 사진 '+p(d.imgTok)+'%'+imgMeta+')');
+  return short
+    ? '컨 '+p(d.inTok)+ctxSub+'·생 '+p(d.thinkTok)+'·응 '+p(d.textTok)+'·도 '+p(d.toolTok)+'%'
+    : '컨텍스트 '+p(d.inTok)+'%'+ctxSub+' · 생각 '+p(d.thinkTok)+'% · 응답 '+p(d.textTok)+'% · 도구 '+p(d.toolTok)+'%';
+}
+// 첨부 이미지 용량 표시 (원본 바이트 기준)
+function tkFmtMB(b){ if(!(b>0)) return ''; const mb=b/1048576; return mb>=10? Math.round(mb)+'MB' : mb>=1? mb.toFixed(1)+'MB' : Math.max(1,Math.round(b/1024))+'KB'; }
+// AI 가동시간(초) — 사람 프롬프트→그 턴 마지막 AI/도구 라인의 합. 응답이 끝난 뒤 사용자가
+// 몇 시간을 방치해도 여기 포함되지 않는다(턴이 마지막 AI 라인에서 닫힘).
+function tkFmtAi(s){ if(!(s>0)) return ''; if(s<60) return Math.round(s)+'초'; if(s<5400) return Math.round(s/60)+'분'; return (s/3600).toFixed(1)+'h'; }
+// 막대의 컨텍스트 구간을 하위 4분할로 칠한다. 추정 합이 실측 inTok을 넘치면 비율 축소해
+// 막대 총길이는 항상 spent와 일치시킨다. 하위 필드가 없으면(구버전) 단색 유지.
+function tkCtxSegs(d,seg){
+  if(d.reloadTok==null) return seg(d.inTok,'#54627f');
+  let r=d.reloadTok||0,t=d.toolResTok||0,y=d.typedTok||0,i=d.imgTok||0;
+  const s=r+t+y+i;
+  if(s>0 && s>(d.inTok||0)){ const f=(d.inTok||0)/s; r*=f; t*=f; y*=f; i*=f; }
+  return seg(r,'#3a4356')+seg(t,'#54627f')+seg(y,'#96a5c8')+seg(i,'#c8b1e8');
+}
+// ===== 모델 단가($/MTok, 2026-08 Claude API 공시가) — 캐시 읽기=입력단가×0.1,
+// 캐시 쓰기 5분 TTL=×1.25, 1시간 TTL=×2, 출력=출력단가. 접두어 매칭(위에서 첫 일치).
+// 세션 도중 모델을 바꿔도(하이쿠→페이블 등) 메시지별 model 필드로 집계하므로 정확.
+const TK_PRICE=[
+  ['claude-fable-5',10,50],['claude-mythos',10,50],
+  ['claude-opus-4-1',15,75],['claude-opus-4-0',15,75],
+  ['claude-opus',5,25],                        // opus-5 · 4.8 · 4.7 · 4.6 · 4.5
+  ['claude-sonnet',3,15],                      // sonnet-5 · 4.6 · 4.5 (sonnet-5 인트로가 반영 전 정식가)
+  ['claude-3-5-haiku',0.8,4],['claude-3-haiku',0.25,1.25],
+  ['claude-haiku',1,5],
+];
+function tkRate(m){ for(const r of TK_PRICE){ if(m&&m.startsWith(r[0])) return r; } return null; }
+function tkModelCost(m,u){ const r=tkRate(m); if(!r) return 0;
+  return ((u.in||0)*r[1] + (u.cr||0)*r[1]*0.1 + (u.c5m||0)*r[1]*1.25 + (u.c1h||0)*r[1]*2 + (u.out||0)*r[2])/1e6; }
+function tkCost(models){ let c=0; for(const m in (models||{})) c+=tkModelCost(m,models[m]); return c; }
+function tkFmtCost(c){ if(!(c>0)) return '-'; return '$'+(c>=100? Math.round(c) : c>=10? c.toFixed(1) : c.toFixed(2)); }
+// 모델 칩: 비용 비중 상위 2개 — "fable-5 91% · opus-4-8 9%"
+function tkModelChips(models){
+  const list=[]; for(const m in (models||{})) list.push([m.replace(/^claude-/,''), tkModelCost(m,models[m])]);
+  if(!list.length) return '';
+  const tot=list.reduce((a,x)=>a+x[1],0);
+  list.sort((a,b)=>b[1]-a[1]);
+  if(!(tot>0)) return esc(list.map(x=>x[0]).join('·'));
+  return list.slice(0,2).map(x=>'<b>'+esc(x[0])+'</b> '+Math.round(100*x[1]/tot)+'%').join(' · ')+(list.length>2?' 외':'');
+}
+// 기간 합산용: 일별 models 맵 병합
+function tkMergeModels(days){
+  const out={};
+  days.forEach(d=>{ const ms=d.models||{}; for(const m in ms){ const u=ms[m], t=out[m]=out[m]||{in:0,cr:0,c5m:0,c1h:0,out:0};
+    t.in+=u.in||0; t.cr+=u.cr||0; t.c5m+=u.c5m||0; t.c1h+=u.c1h||0; t.out+=u.out||0; } });
+  return out;
+}
 function renderTokenDaily(){
   reflectTkBtn(); reflectTkMode();
   const host=$('tokenDailyHost'); if(!host) return;
@@ -2762,6 +3133,18 @@ function renderTokenDaily(){
   const totalK=days.reduce((a,d)=>a+(d.k||0),0);
   const totalIdx=tkIndex(totalK);
   const totalHrs=days.reduce((a,d)=>a+(d.activeSec||0),0)/3600;
+  // 기간 전체 구성비(컨텍스트 하위 4분할 포함) + 모델별 비용($) + AI 가동 + 프롬프트 리드 평균.
+  const sum=k=>days.reduce((a,d)=>a+(d[k]||0),0);
+  const anyCtx=days.some(d=>d.reloadTok!=null);   // 구버전 응답(하위 필드 없음) 가드
+  const perTot=tkCompStr({tokens:sum('tokens'),inTok:sum('inTok'),thinkTok:sum('thinkTok'),textTok:sum('textTok'),toolTok:sum('toolTok'),
+    reloadTok:anyCtx?sum('reloadTok'):null,toolResTok:sum('toolResTok'),typedTok:sum('typedTok'),
+    imgTok:sum('imgTok'),imgN:sum('imgN'),imgBytes:sum('imgBytes')},false);
+  const merged=tkMergeModels(days), totCost=tkCost(merged), chips=tkModelChips(merged);
+  const leadN=sum('leadN'), leadSum=sum('leadSum'), aiTot=sum('aiSec');
+  const tail=(perTot?'<br>'+perTot:'')
+    +(totCost>0? ' · 비용 <b>'+tkFmtCost(totCost)+'</b>'+(chips?' ('+chips+')':'') : '')
+    +(aiTot>0? ' · AI 가동 <b>'+tkFmtAi(aiTot)+'</b>' : '')
+    +(leadN>0?' · 프롬프트 리드 평균 <b>'+tkFmtLead(leadSum/leadN)+'</b> ('+leadN+'회)':'');
   if(rng){
     if(val){
       // [3] 시간효율 배수: (투입지수/시간) ÷ 기준선. 시간 기록이 있어야 계산.
@@ -2770,9 +3153,9 @@ function renderTokenDaily(){
       const adj=totalIdx*(F||1);
       rng.innerHTML=(days.length? (days.length+'일 · 투입 <b>'+fmtIdx(totalIdx)+'</b>') : '기간 내 기록 없음')
         +(totalHrs>0? (' · 활성 <b>'+totalHrs.toFixed(1)+'</b>h · 시간효율 <b>×'+F.toFixed(2)+'</b> → 시간보정 <b>'+fmtIdx(adj)+'</b>') : ' · 활성시간 기록 없음')
-        +' · 시각 '+tzLabel()+' 기준';
+        +' · 시각 '+tzLabel()+' 기준'+tail;
     }else{
-      rng.innerHTML=(days.length? (days.length+'일 기록 · 합계 <b>'+totalK+'</b> K') : '기간 내 토큰 기록 없음')+' · 시각 '+tzLabel()+' 기준';
+      rng.innerHTML=(days.length? (days.length+'일 기록 · 합계 <b>'+totalK+'</b> K') : '기간 내 토큰 기록 없음')+' · 시각 '+tzLabel()+' 기준'+tail;
     }
   }
   if(!days.length){ host.innerHTML='<div class="empty">선택한 기간('+_tkStart+' ~ '+_tkEnd+')에 토큰 기록이 없습니다</div>'; return; }
@@ -2780,60 +3163,173 @@ function renderTokenDaily(){
   const todayStr=histDayStr(new Date());
   host.innerHTML=days.map(d=>{
     const k=d.k||0, w=Math.round(100*k/mx);
-    const bar='<div style="position:relative;background:#2a2f3a;border-radius:4px;height:9px;width:180px;flex:0 0 auto">'
-      +'<div style="position:absolute;left:0;top:0;height:9px;border-radius:4px;width:'+w+'%;background:#8f6fe3"></div></div>';
+    // 스택 막대: 하루 길이는 기간 최대치 대비, 내부는 입력·생각·응답·도구 구성비.
+    const spent=d.tokens||0;
+    let inner;
+    if(spent>0 && d.inTok!=null){
+      const seg=(v,c)=>'<div style="height:9px;width:'+(100*(v||0)/spent)+'%;background:'+c+'"></div>';
+      inner='<div style="display:flex;height:9px;width:'+w+'%;border-radius:4px;overflow:hidden">'
+        +tkCtxSegs(d,seg)+seg(d.thinkTok,'#e8a13a')+seg(d.textTok,'#8f6fe3')+seg(d.toolTok,'#4f79c9')+'</div>';
+    }else{
+      inner='<div style="position:absolute;left:0;top:0;height:9px;border-radius:4px;width:'+w+'%;background:#8f6fe3"></div>';
+    }
+    const bar='<div style="position:relative;background:#2a2f3a;border-radius:4px;height:9px;width:180px;flex:0 0 auto">'+inner+'</div>';
     const hrs=(d.activeSec||0)/3600;
+    const ai=(d.aiSec>0)? ' · AI '+tkFmtAi(d.aiSec) : '';
     const meta=val
-      ? '<span class="muted" style="font-size:11px">세션 '+(d.sessions||0)+' · '+hrs.toFixed(1)+'h</span>'
-      : '<span class="muted" style="font-size:11px">세션 '+(d.sessions||0)+'개</span>';
+      ? '<span class="muted" style="font-size:11px">세션 '+(d.sessions||0)+' · '+hrs.toFixed(1)+'h'+ai+'</span>'
+      : '<span class="muted" style="font-size:11px">세션 '+(d.sessions||0)+'개'+ai+'</span>';
+    const comp=tkCompStr(d,true);
+    const cost=tkCost(d.models);
+    const lead=(d.leadN>0)? '리드 <b>'+tkFmtLead(d.leadMed)+'</b>·'+d.leadN+'회' : '';
+    const chips=tkModelChips(d.models);
+    const extra=(comp||lead)? '<span class="muted" style="font-size:11px" title="구성비(컨텍스트·생각·응답·도구)와 다음 프롬프트까지 리드 중앙값">'+comp+(comp&&lead?' · ':'')+lead+'</span>' : '';
+    const costCell=cost>0? '<b style="font-variant-numeric:tabular-nums;min-width:64px;text-align:right;color:#7fc98f" title="'+esc(chips.replace(/<[^>]+>/g,''))+'">'+tkFmtCost(cost)+'</b>' : '';
+    const open=_tkSessOpen.has(d.day);
     return '<div class="panel" style="margin:0 0 6px;padding:8px 14px">'
-      +'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+      +'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;cursor:pointer" onclick="tkDayToggle(\''+d.day+'\')" title="클릭하면 그날 세션별 상세를 펼칩니다">'
+      +'<span class="muted" style="width:10px;flex:0 0 auto">'+(open?'▾':'▸')+'</span>'
       +'<b style="font-variant-numeric:tabular-nums;min-width:150px'+(d.day===todayStr?';color:#e8a13a':'')+'">'+esc(tkDayLabel(d.day))+'</b>'
       +bar
       +'<b style="font-variant-numeric:tabular-nums;min-width:90px;text-align:right">'+tkAmount(k)+'</b>'
+      +costCell
       +meta
-      +'</div></div>';
+      +extra
+      +'</div>'
+      +(open? tkSessListHTML(d.day) : '')
+      +'</div>';
   }).join('');
+}
+
+// ===== 세션별 드릴다운 — 일 행 클릭 → /tokens-sessions.json?day= 로 그날 세션 전수 상세.
+// "컨텍스트 82%가 말이 되나"를 세션 단위로 검증하는 용도: 세션마다 토큰·$·구성비·모델·리드.
+let _tkSessOpen=new Set(), _tkSessCache={};   // day -> rows(배열) | 'loading'
+function tkDayToggle(day){
+  if(_tkSessOpen.has(day)){ _tkSessOpen.delete(day); renderTokenDaily(); return; }
+  _tkSessOpen.add(day);
+  if(!_tkSessCache[day]){
+    _tkSessCache[day]='loading';
+    fetch('/tokens-sessions.json?day='+day).then(x=>x.json())
+      .then(j=>{ _tkSessCache[day]=(j&&j.sessions)||[]; renderTokenDaily(); })
+      .catch(()=>{ _tkSessCache[day]=[]; renderTokenDaily(); });
+  }
+  renderTokenDaily();
+}
+function tkSessListHTML(day){
+  const rows=_tkSessCache[day];
+  if(rows==='loading'||!rows) return '<div class="muted" style="font-size:11px;padding:6px 0 0 22px">세션 불러오는 중…</div>';
+  if(!rows.length) return '<div class="muted" style="font-size:11px;padding:6px 0 0 22px">이 날짜의 세션 상세가 없습니다</div>';
+  const mx=Math.max(1,...rows.map(s=>s.tokens||0));
+  return '<div style="margin:8px 0 0 22px;border-top:1px solid #222a36;padding-top:6px">'
+    +rows.map(s=>{
+      const spent=s.tokens||0, w=Math.round(100*spent/mx);
+      const seg=(v,c)=>'<div style="height:7px;width:'+(100*(v||0)/(spent||1))+'%;background:'+c+'"></div>';
+      const bar='<div style="position:relative;background:#2a2f3a;border-radius:4px;height:7px;width:120px;flex:0 0 auto">'
+        +'<div style="display:flex;height:7px;width:'+w+'%;border-radius:4px;overflow:hidden">'
+        +tkCtxSegs(s,seg)+seg(s.thinkTok,'#e8a13a')+seg(s.textTok,'#8f6fe3')+seg(s.toolTok,'#4f79c9')+'</div></div>';
+      const cost=tkCost(s.models), chips=tkModelChips(s.models);
+      const title=(s.title||'').trim() || (s.proj+' · '+s.sid);
+      const lead=((s.aiSec>0)? ' · AI '+tkFmtAi(s.aiSec) : '')
+        +((s.leadN>0)? ' · 리드 '+tkFmtLead(s.leadMed)+'·'+s.leadN+'회' : '');
+      const detKey=day+'|'+s.sid, detOpen=_tkDetOpen.has(detKey);
+      return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:3px 0">'
+        +'<span style="font-size:11px;min-width:220px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(s.proj+' · '+s.sid+' — '+(s.title||''))+'">'+esc(title)+'</span>'
+        +bar
+        +'<b style="font-size:11px;font-variant-numeric:tabular-nums;min-width:56px;text-align:right">'+tkAmount(s.k||0)+'</b>'
+        +(cost>0? '<b style="font-size:11px;font-variant-numeric:tabular-nums;min-width:52px;text-align:right;color:#7fc98f">'+tkFmtCost(cost)+'</b>' : '')
+        +'<span class="muted" style="font-size:11px;cursor:pointer;text-decoration:underline dotted" onclick="event.stopPropagation();tkSessDetailToggle(\''+day+'\',\''+esc(s.sid)+'\')" title="클릭: 이 구성비의 실제 내용물(무엇이 토큰을 먹었는지)을 항목별로 펼칩니다">'+(detOpen?'▾ ':'')+tkCompStr(s,true)+(chips?' · '+chips:'')+lead+'</span>'
+        +'</div>'
+        +(detOpen? tkDetailHTML(day,s.sid) : '');
+    }).join('')
+    +'</div>';
+}
+
+// ===== 버킷 내용물 드릴다운 — 세션 행의 구성비를 클릭하면 그 세션·그날의 컨텍스트가 실제로
+// 무엇이었는지 항목 단위·큰 순서로 보여준다("컨텍스트 86%"의 정체). 재적재=턴별 재캐시(어느
+// 시점부터 히스토리가 무거워졌나), 도구결과=어느 도구가 무엇을 읽어왔나(파일 경로·명령),
+// 타이핑=친 프롬프트 원문 머리, 사진=형식·해상도·용량. 목적: 세션을 열어 뒤지지 않고도
+// "무엇이 토큰을 먹는지 → 무엇을 잘라낼지"를 여기서 판단.
+let _tkDetOpen=new Set(), _tkDetCache={}, _tkDetMore=new Set();
+function tkSessDetailToggle(day,sid){
+  const key=day+'|'+sid;
+  if(_tkDetOpen.has(key)){ _tkDetOpen.delete(key); renderTokenDaily(); return; }
+  _tkDetOpen.add(key);
+  if(!_tkDetCache[key]){
+    _tkDetCache[key]='loading';
+    fetch('/tokens-detail.json?sid='+encodeURIComponent(sid)+'&day='+day).then(x=>x.json())
+      .then(j=>{ _tkDetCache[key]=(j&&j.items)||{}; renderTokenDaily(); })
+      .catch(()=>{ _tkDetCache[key]={}; renderTokenDaily(); });
+  }
+  renderTokenDaily();
+}
+function tkFmtTok(t){ if(!(t>0)) return '0'; if(t<1000) return String(t); const k=t/1000; return (k>=100? Math.round(k) : k.toFixed(1))+'K'; }
+function tkDetMoreToggle(key){ if(_tkDetMore.has(key)) _tkDetMore.delete(key); else _tkDetMore.add(key); renderTokenDaily(); }
+function tkDetailHTML(day,sid){
+  const key=day+'|'+sid, d=_tkDetCache[key];
+  if(d==='loading'||!d) return '<div class="muted" style="font-size:11px;padding:4px 0 4px 34px">내용물 불러오는 중…</div>';
+  const SECS=[['reload','재적재 — 턴별 재캐시 (히스토리가 무거워진 지점·모델)','#8b98b8'],
+              ['toolres','도구결과 — 어느 도구가 무엇을 읽어왔나','#54627f'],
+              ['typed','타이핑 — 직접 친 프롬프트','#96a5c8'],
+              ['img','사진 — 첨부 이미지 (형식·해상도·용량)','#c8b1e8']];
+  let h='<div style="margin:4px 0 8px 34px;padding:6px 10px;border:1px solid #222a36;border-radius:6px">';
+  let any=false;
+  SECS.forEach(sec=>{
+    const k=sec[0], label=sec[1], color=sec[2];
+    const s=d[k]; const list=(s&&s.list)||[];
+    if(!list.length) return;
+    any=true;
+    const tot=list.reduce((a,x)=>a+(x.tok||0),0)+((s.moreTok)||0);
+    const mkey=key+'|'+k, moreOpen=_tkDetMore.has(mkey);
+    const shown=moreOpen? list : list.slice(0,12);
+    h+='<div style="margin:4px 0"><div class="muted" style="font-size:11px;margin:2px 0"><span style="color:'+color+'">■</span> <b>'+label+'</b> · '+(list.length+((s.moreN)||0))+'건 · '+tkFmtTok(tot)+'</div>'
+      +shown.map(x=>'<div style="display:flex;gap:8px;font-size:11px;padding:1px 0 1px 14px">'
+        +'<span class="muted" style="flex:0 0 34px">'+esc(x.t||'')+'</span>'
+        +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(x.label||'')+'">'+esc(x.label||'')
+        +(x.bytes? ' <span class="muted">('+tkFmtMB(x.bytes)+')</span>':'')+'</span>'
+        +'<b style="flex:0 0 52px;text-align:right;font-variant-numeric:tabular-nums">'+tkFmtTok(x.tok)+'</b></div>').join('');
+    const hidden=list.length-shown.length, extraN=(s.moreN)||0;
+    if(hidden>0||extraN>0) h+='<div class="muted" style="font-size:11px;padding:1px 0 1px 14px;cursor:pointer;text-decoration:underline dotted" onclick="event.stopPropagation();tkDetMoreToggle(\''+mkey+'\')">'
+      +(moreOpen? '접기' : ('외 '+(hidden+extraN)+'건 더보기'+((s.moreTok)? ' · '+tkFmtTok(s.moreTok):'')))+'</div>';
+    h+='</div>';
+  });
+  if(!any) h+='<div class="muted" style="font-size:11px">이 날짜의 내용물이 없습니다</div>';
+  h+='</div>';
+  return h;
 }
 function renderTokenView(r){
   const all=(r&&r.goals)||[]; _goals=all;
   updateFilterButtons();
   loadTokenDaily();   // 일별 실토큰 타임라인(트랜스크립트 합산) — 캐시되어 재호출은 무비용
   const host=$('tokenHost'); if(!host) return;
-  // 완료된 목표만: 상태 콤보와 무관하게 done만 본다(토큰 뷰의 본분). 단, 릴리즈 숨김·스프린트
-  // 콤보·완료 컷오프는 다른 뷰와 동일하게 적용해 "특정 스프린트·특정 기간"으로 좁힐 수 있게 한다.
-  const list=all.filter(g=>!g.released && effStatus(g,all)==='done'
-    && passesSprintFilter(g,all) && passesDoneCutoff(g,all));
-  if(!list.length){ host.innerHTML='<div class="muted" style="padding:8px 0">표시할 완료 목표가 없습니다 (스프린트·완료 컷오프 필터를 확인하세요).</div>'; return; }
+  // 완료된 목표만: 상태 콤보와 무관하게 done만 본다(토큰 뷰의 본분). 기간은 위 일별 타임라인과
+  // 같은 필터(_tkStart~_tkEnd)를 완료일 기준으로 그대로 적용한다 — "어제"를 누르면 어제 완료된
+  // 것만 나온다. 루프 콤보·완료 컷오프 같은 다른 뷰의 필터는 여기에 개입하지 않는다(2026-08-09:
+  // 루프 그룹핑은 날짜와 기준이 엇갈려 혼란만 줘서 폐기, 완료일이 유일한 축).
+  const inRange=c=>{ if(!c) return false; const d=tkDayStr(c); return d>=_tkStart && d<=_tkEnd; };
+  const list=all.filter(g=>!g.released && effStatus(g,all)==='done' && inRange(goalCompletedAt(g,all)));
+  if(!list.length){ host.innerHTML='<div class="muted" style="padding:8px 0">선택한 기간('+_tkStart+' ~ '+_tkEnd+')에 완료된 목표가 없습니다.</div>'; return; }
   const sumTok=gs=>gs.reduce((a,g)=>a+(g.tokens||0),0);
   const total=sumTok(list);
-  // 스프린트 번호별 분배 — 완료 목표를 스프린트로 묶는다. (완료일 그룹은 위 일별 타임라인의 "그날
-  // 소비량"과 기준이 달라 혼동을 주므로 폐기: 아래는 목표의 세션 전체 토큰을 스프린트 단위로 본다.)
-  const bySpr={};
-  list.forEach(g=>{ const n=effSprint(g,all); (bySpr[n]=bySpr[n]||[]).push(g); });
-  // 스프린트 번호 내림차순(최근 먼저), 스프린트 없음(0)은 맨 뒤.
-  const sprKeys=Object.keys(bySpr).map(Number).sort((a,b)=>{ if(a===0)return 1; if(b===0)return -1; return b-a; });
+  // 완료일별 분배 — 최근 날짜 먼저, 하루 안에서는 완료 최신순.
+  const byDay={};
+  list.forEach(g=>{ const d=tkDayStr(goalCompletedAt(g,all)); (byDay[d]=byDay[d]||[]).push(g); });
+  const dayKeys=Object.keys(byDay).sort().reverse();   // 'YYYY-MM-DD' 사전순=시간순
   const newestFirst=(a,b)=>(goalCompletedAt(b,all)-goalCompletedAt(a,all))||((b.seq||0)-(a.seq||0));
-  // 요약: 합계 + 완료 개수 + 스프린트 수. (날짜 비교는 위 일별 타임라인이 담당하므로 여기선 뺀다.)
   let h='<div class="tksum">'
-    +'<span><span class="k">합계</span> <span class="big">'+tkAmount(total)+'</span> <span class="k">· 완료 '+list.length+'개 · 스프린트 '+sprKeys.length+'개</span></span>'
+    +'<span><span class="k">합계</span> <span class="big">'+tkAmount(total)+'</span> <span class="k">· 완료 '+list.length+'개 · '+dayKeys.length+'일</span></span>'
     +'</div>';
-  // 스프린트별 섹션 — 한 스프린트당 한 그룹. 머리글에 스프린트 코드·완료 개수·토큰 합계. 진행 중(미종료)
-  // 스프린트는 강조. 그룹 안은 완료 최신순.
-  const openSet=new Set(((_review&&_review.sprints)||[]).filter(s=>!s.closed).map(s=>s.number));
-  sprKeys.forEach(n=>{
-    const gs=bySpr[n]; if(!gs.length) return;
-    gs.sort(newestFirst);
-    const label=n?sprintCode(n):'스프린트 없음';
-    h+='<div class="schsec'+(openSet.has(n)?' today':'')+'">'
-      +'<div class="schsec-hd">'+esc(label)+'<span class="cnt">'+gs.length+'개</span>'
+  const todayStr=histDayStr(new Date());
+  dayKeys.forEach(d=>{
+    const gs=byDay[d]; gs.sort(newestFirst);
+    h+='<div class="schsec'+(d===todayStr?' today':'')+'">'
+      +'<div class="schsec-hd">'+esc(tkDayLabel(d))+'<span class="cnt">'+gs.length+'개</span>'
       +'<span class="tot">'+tkAmount(sumTok(gs))+'</span></div>'
       +gs.map(g=>tkRow(g,all)).join('')+'</div>';
   });
   host.innerHTML=h;
 }
 
-// ===== 스프린트 뷰 — Jira식 백로그 보드 (스프린트 그룹 + Backlog + 완료 로그) =====
+// ===== 루프 뷰 — Jira식 백로그 보드 (루프 그룹 + Backlog + 완료 로그) =====
 const DUR_OPTS=[['1d','1일'],['2d','2일'],['3d','3일'],['1w','1주'],['2w','2주'],['1m','1달']];
 function durLabel(k){ const o=DUR_OPTS.find(x=>x[0]===k); return o?o[1]:k; }
 let _spCollapsed=new Set();  // collapsed groups (sprint number, 'bg' for Backlog, or 'bump' for Bump out)
@@ -2841,7 +3337,7 @@ let _bgCollapsed=new Set();  // collapsed parent goal ids (자식 접기) within
 let _bgSeen=new Set();       // parents already defaulted-collapsed (so the 5s re-render never re-collapses one the user opened)
 let _relOpen=new Set();      // expanded release ids (완료 로그는 기본 닫힘)
 let _relLogOpen=false;       // 완료 로그 섹션 전체 펼침 (기본 접힘 — 접히면 아이템 DOM을 아예 만들지 않아 노드 수를 줄인다)
-// 스프린트 코드(26-1) 조회 — 일일 목록의 스프 배지 등에서 사용.
+// 루프 코드(26-1) 조회 — 일일 목록의 스프 배지 등에서 사용.
 function sprintCode(n){ if(!n) return ''; const s=((_review&&_review.sprints)||[]).find(x=>x.number===n); return (s&&s.code)?s.code:('#'+n); }
 function statLabel2(s){ const m={backlog:'대기',in_progress:'진행',waiting:'응답 대기',stopped:'중지',cancelled:'취소',done:'완료'}; return m[s]||s; }
 function renameGoal(id,v){ const t=String(v||'').trim(); if(!t) return; post('/api/goal/title',{id:id,title:t}); }
@@ -2956,7 +3452,7 @@ function renderArchivedView(r){
     const why=(whyOf&&whyOf[g.seq])?('<div class="muted" style="font-size:12px;margin-top:2px">↳ '+esc(whyOf[g.seq])+'</div>'):'';
     return '<div class="goal" style="flex-wrap:wrap'+((g.released||g.archived)?';opacity:.72':'')+'">'
       +gpill(g)+spLab+stLab
-      +'<span class="g"><span class="gt">'+esc(g.text)+'</span>'+why+'</span>'
+      +'<span class="g"><span class="gt" title="'+esc(g.text)+'">'+esc(g.text)+'</span>'+why+'</span>'
       +tail
     +'</div>';
   }).join('');
@@ -3045,7 +3541,7 @@ function extModalForm(s){
   const mag=Math.abs(_extHours), dir=_extHours>0?'시간 연장':(_extHours<0?'시간 단축':'변경 없음');
   const sign=_extHours>0?'+':(_extHours<0?'−':'');
   const on=extDirty(), pv=extPreviewAt();
-  return '<h3>스프린트 '+esc(s.code||('#'+s.number))+' 마감 조정</h3>'
+  return '<h3>루프 '+esc(s.code||('#'+s.number))+' 마감 조정</h3>'
     +'<div class="extcur">현재 마감 <b>'+(t?fmtDate(t):'미정')+'</b></div>'
     +'<div class="extrow"><button class="extbtn" onclick="extStep(-1)">−</button>'
     +'<span class="exth"><b>'+sign+mag+'</b><small>'+dir+'</small></span>'
@@ -3081,22 +3577,13 @@ function bgoalRow(g,hasKids,collapsed,pref){
     +' ondragstart="return false" onmousedown="priDown(event,\''+g.id+'\')" onclick="priClick(event,\''+g.id+'\')">'+priSvg(pri)+'</span>';
   // 상태 콤보 왼쪽의 부모 번호 입력칸. 부모를 가질 수 없는 행(자식을 둔 부모 목표)은
   // 정렬용 빈칸만 둔다. Cmd+누른 채 여기서 시작하면 아래로 '채우기'(pinDown), 그냥 클릭은 타이핑.
-  const pcell = hasKids
-    ? '<span class="pin-sp"></span>'
-    : (function(){
-        const p=g.parent?byId(_goals,g.parent):null;
-        const psn=p?pad2(p.seq||0):'';
-        return '<input class="pin" type="text" inputmode="numeric" draggable="false" value="'+psn+'"'
-          +' placeholder="부모#" title="번호 입력 (예: 02 → goal-02의 자식) · Cmd+드래그로 아래 행에 채우기 · 비우면 최상위"'
-          +' onmousedown="pinDown(event,\''+g.id+'\')" onclick="event.stopPropagation()" ondblclick="event.stopPropagation()"'
-          +' onkeydown="if(event.key===\'Enter\')this.blur()" onchange="setParentByNumber(\''+g.id+'\',this.value)">';
-      })();
+  const pcell = hasKids ? '<span class="pin-sp"></span>' : parentCellHTML(g,true);
   return '<div class="bgoal'+(isChild?' child':'')+'" data-id="'+g.id+'" draggable="true"'
     +' oncontextmenu="goalCtx(event,\''+g.id+'\')" onmouseenter="priRowEnter(\''+g.id+'\');pinRowEnter(\''+g.id+'\')"'
     +' ondragstart="spDragStart(event,\''+g.id+'\')" ondragend="spDragEnd(event)"'
     +' ondragover="bgReorderOver(event,\''+g.id+'\')" ondrop="bgReorderDrop(event,\''+g.id+'\')" ondragleave="bgReorderLeave(event)">'
-    +lead+'<span class="grip" title="드래그=스프린트 이동 · 우클릭=메뉴 · 부모#칸에서 Cmd+드래그=부모 채우기">⠿</span>'+priDot+gpill(g)+linkDot(g)
-    +'<span class="t gt" id="gt_'+g.id+'" title="더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+pr+'</span>'
+    +lead+'<span class="grip" title="드래그=루프 이동 · 다른 행 가운데에 놓으면 그 목표의 자식 · 우클릭=메뉴 · 부모#칸에서 Cmd+드래그=부모 채우기">⠿</span>'+priDot+gpill(g)+linkDot(g)
+    +'<span class="t gt" id="gt_'+g.id+'" title="'+esc(g.text)+' — 더블클릭하여 제목 편집" ondblclick="startTitleEdit(event,\''+g.id+'\')">'+esc(g.text)+pr+'</span>'
     +pcell+statCell+'</div>';
 }
 // 그룹 본문: 같은 그룹 안의 부모-자식을 트리로 렌더(자식 접기 가능, 1단계 계층).
@@ -3114,7 +3601,7 @@ function groupBodyHTML(rows){
     return bgoalRow(g,true,col,pref)+(col?'':ch.map(c=>bgoalRow(c,false,false,0)).join(''));
   }).join('');
 }
-// 스프린트 그룹 (드롭 타깃). AI 큐 박스는 더 이상 여기 끼워 넣지 않는다 — 큐는 큐 탭이
+// 루프 그룹 (드롭 타깃). AI 큐 박스는 더 이상 여기 끼워 넣지 않는다 — 큐는 큐 탭이
 // 유일한 홈이고, 진행 상황은 탭바 우측 노티가, 행선지는 큐 카드의 목적지 라벨이 알린다.
 function sprintGroupHTML(s,shown,allLive){
   const rows=shown.filter(g=>!g.bump&&boardSprint(g,_goals)===s.number);
@@ -3128,14 +3615,14 @@ function sprintGroupHTML(s,shown,allLive){
       +'<span class="pill sp clk" onclick="openSprintModal('+s.number+')" title="클릭: 별칭·날짜 상세 설정" style="cursor:pointer">'+esc(s.code||('#'+s.number))+'</span>'
       +'<span class="ttl">'+(s.goalText?esc(s.goalText):'<span class="muted">예상 결과 미정</span>')+'</span>'
       +sprintCountdownHTML(s)+'<span style="flex:1"></span>'+countsHTML(members)
-      +'<button class="btn" onclick="addGoalToSprint('+s.number+')" title="이 스프린트에 목표 바로 추가">＋ 목표</button>'
-      +'<button class="btn rel" onclick="releaseSprintGroup('+s.number+')">Complete sprint</button>'
+      +'<button class="btn" onclick="addGoalToSprint('+s.number+')" title="이 루프에 목표 바로 추가">＋ 목표</button>'
+      +'<button class="btn rel" onclick="releaseSprintGroup('+s.number+')">Complete loop</button>'
       +'<button class="btn" onclick="spMenu(event,'+s.number+')" title="자세히 (편집·삭제)">⋯</button>'
     +'</div>'
     +'<div class="spgrp-body">'+body+'</div>'
   +'</div>';
 }
-// Backlog (미배정) — Create sprint 버튼 포함. Bump out 인박스 아이템은 여기서 제외.
+// Backlog (미배정) — Create loop 버튼 포함. Bump out 인박스 아이템은 여기서 제외.
 function backlogHTML(shown,allLive){
   const rows=shown.filter(g=>!g.bump&&boardSprint(g,_goals)===0);
   const members=allLive.filter(g=>!g.bump&&boardSprint(g,_goals)===0);
@@ -3147,8 +3634,8 @@ function backlogHTML(shown,allLive){
       +'<b>Backlog</b><span class="muted" style="font-size:12px">미배정</span>'
       +'<span style="flex:1"></span>'+countsHTML(members)
       +'<button class="btn" onclick="addGoalToBacklog()" title="목표를 추가합니다 (입력·AI추가 모듈)">＋ 목표</button>'
-      +'<button class="btn" onclick="cleanupSprintsNow()" title="열린 빈 스프린트(목표 0·예상 결과 없음)를 정리합니다">빈 스프린트 정리</button>'
-      +'<button class="btn primary" onclick="createSprintNow()">＋ Create sprint</button></div>'
+      +'<button class="btn" onclick="cleanupSprintsNow()" title="열린 빈 루프(목표 0·예상 결과 없음)를 정리합니다">빈 루프 정리</button>'
+      +'<button class="btn primary" onclick="createSprintNow()">＋ Create loop</button></div>'
     +'<div class="spgrp-body">'+body+'</div>'
   +'</div>';
 }
@@ -3163,27 +3650,27 @@ function bumpHTML(shown,allLive){
   const col=_spCollapsed.has('bump');
   return '<div class="spgrp bump'+(col?' collapsed':'')+'" ondragover="spOver(event)" ondragleave="spLeave(event)" ondrop="spDropBump(event)">'
     +'<div class="spgrp-hd"><span class="spchev" onclick="toggleSpCollapse(\'bump\')" title="펼치기/접기">▾</span>'
-      +'<b>Dump out</b><span class="muted" style="font-size:12px">아이디어</span>'
+      +'<b>Dump out</b><span class="muted" style="font-size:12px">머리속 비워내기</span>'
       +'<span style="flex:1"></span>'+countsHTML(members)
       +'<button class="btn" onclick="addGoalToBump()" title="머릿속 아이디어를 인박스에 담기 (정리 전)">＋ 목표</button></div>'
     +'<div class="spgrp-body">'+body+'</div>'
   +'</div>';
 }
-// 완료된 스프린트 (릴리즈 커밋 로그) — 기본 닫힘, 헤더 클릭으로 펼침.
+// 완료된 루프 (릴리즈 커밋 로그) — 기본 닫힘, 헤더 클릭으로 펼침.
 // 섹션이 접혀 있으면 릴리즈 아이템을, 아이템이 접혀 있으면 그 목표 행을 아예 만들지 않는다(지연 렌더링).
 // display:none 으로 숨기면 노드가 DOM에 그대로 남으므로, 실제 노드 수를 줄이려면 innerHTML 자체를 비워야 한다.
 function completedLogHTML(r){
   const rels=(r&&r.releases)||[]; if(!rels.length) return '';
   const hdr='<h3 class="rellog-hd'+(_relLogOpen?' open':'')
     +'" onclick="toggleRelLog()" style="font-size:13px;color:var(--mut);margin:18px 0 8px;border-top:1px solid var(--line);padding-top:14px">'
-    +'<span class="chev'+(_relLogOpen?' open':'')+'">▸</span>완료된 스프린트 (릴리즈 로그) '
+    +'<span class="chev'+(_relLogOpen?' open':'')+'">▸</span>완료된 루프 (릴리즈 로그) '
     +'<span class="muted" style="font-weight:400">('+rels.length+')</span></h3>';
   if(!_relLogOpen) return hdr;   // 섹션 접힘: 헤더만 렌더 — 릴리즈 아이템 DOM을 만들지 않는다
   const goalById={}; ((r&&r.goals)||[]).forEach(g=>{ goalById[g.id]=g; });
   const sgoalOf={}; ((r&&r.sprints)||[]).forEach(s=>{ sgoalOf[s.number]=s.goalText||''; });
   const codeOf={}; ((r&&r.sprints)||[]).forEach(s=>{ codeOf[s.number]=s.code||('#'+s.number); });
   const items=rels.map(function(rel){
-    // 마감 시각만 표기한다. 시작~완료 기간은 휴식까지 스프린트 시간으로 보이게 해서 오해를
+    // 마감 시각만 표기한다. 시작~완료 기간은 휴식까지 루프 시간으로 보이게 해서 오해를
     // 부르므로 (2026-07-09 결정) 로그에는 "언제 마감쳤는가"만 남긴다.
     const when=rel.releasedAt?fmtDate(rel.releasedAt):'—';
     // Prefer the release's own snapshot code (unique per release); fall back to the sprint's
@@ -3192,12 +3679,13 @@ function completedLogHTML(r){
     const gtext=(rel.sprint>0&&sgoalOf[rel.sprint])?(' · '+esc(sgoalOf[rel.sprint])):'';
     const head=code?(code+gtext):'미배정';
     const open=_relOpen.has(rel.id);
-    const ids=rel.goalIds||[], titles=rel.titles||[];
+    const ids=rel.goalIds||[], titles=rel.titles||[], notes=rel.notes||[];
     // 재오픈 표시: 릴리즈 기록은 불변이지만, 소속 goal 이 더는 released 가 아니면(검색의
     // '이 목표만 다시 열기') 그 사실을 역산해 헤더와 행에 주석으로 보여준다.
     const reopened=ids.filter(function(id){ const g=goalById[id]; return g&&!g.released; }).length;
     // 접힌 아이템은 행을 만들지 않는다 — 펼칠 때(open) 재렌더에서 생성되어 DOM 노드를 아낀다.
-    const rows=!open ? '' : (titles.length ? titles.map(function(t,i){
+    // 출처 태그: 보드 목표 = AI 세션으로 굴린 작업(session), 메모장 수확분 = 노트.
+    const goalRows=titles.map(function(t,i){
       const g=goalById[ids[i]]; const gn=g?('<span class="gn">goal-'+pad2(g.seq||0)+'</span>'):'';
       // Parent indicator: child goals show the parent's number (gray); top-level goals show a purple "부모" badge.
       let pn='';
@@ -3206,14 +3694,18 @@ function completedLogHTML(r){
         else { pn='<span class="pn top" title="최상위 목표">부모</span>'; }
       }
       const ro=(g&&!g.released)?' <span class="muted" style="font-size:11px">↩ 재오픈됨</span>':'';
-      return '<div class="relrow">'+pn+gn+'✓ '+esc(t)+ro+'</div>';
-    }).join('') : '<div class="muted" style="font-size:12px">목표 없음</div>');
+      return '<div class="relrow"><span class="srct sess" title="AI 세션으로 굴린 작업">session</span>'+pn+gn+'✓ '+esc(t)+ro+'</div>';
+    }).join('');
+    const noteRows=notes.map(function(t){
+      return '<div class="relrow"><span class="srct" title="메모장에서 완료한 줄">노트</span>✓ '+esc(t)+'</div>';
+    }).join('');
+    const rows=!open ? '' : ((goalRows+noteRows) || '<div class="muted" style="font-size:12px">목표 없음</div>');
     // 펼치기/닫기는 앞의 ▸ 버튼, 제목(코드·마감 시각 전체) 클릭은 편집 모달 — 두 상호작용을 분리한다.
     return '<div class="relitem">'
       +'<h4>'
         +'<span><span class="chev'+(open?' open':'')+' clk" onclick="toggleRel(\''+rel.id+'\')" title="펼치기/닫기" style="padding:2px 6px 2px 2px">▸</span>'
         +'<span class="clk" onclick="openRelModal(\''+rel.id+'\')" title="클릭: 제목·마감 시간 편집">'+head+' · '+when+'</span>'
-        +' <span class="muted" style="font-weight:400;font-size:12px">('+titles.length+'개'+(reopened?(' · '+reopened+'건 재오픈'):'')+')</span></span>'
+        +' <span class="muted" style="font-weight:400;font-size:12px">('+(titles.length+notes.length)+'개'+(reopened?(' · '+reopened+'건 재오픈'):'')+')</span></span>'
         +'<span class="row" style="gap:8px"><span class="valbadge">만든 가치 '+(rel.value||0)+'</span>'
         +'<button class="btn" onclick="event.stopPropagation();restoreRelease(\''+rel.id+'\')">복원</button></span></h4>'
       +'<div class="relbody'+(open?' open':'')+'">'+rows+'</div></div>';
@@ -3250,7 +3742,7 @@ function priApplyDom(id,val){
 function priDown(e,id){
   e.stopPropagation();
   if(!(e.metaKey||e.ctrlKey)) return;   // Cmd(또는 Ctrl)일 때만 페인트
-  e.preventDefault();                   // 행의 네이티브 드래그(스프린트 이동) 차단
+  e.preventDefault();                   // 행의 네이티브 드래그(루프 이동) 차단
   const g=byId(_goals,id); if(!g) return;
   _priPaint=g.priority||'medium';
   _priPainted=new Set([id]);
@@ -3286,31 +3778,55 @@ function priClick(e,id){
 }
 function setPriority(id,p){ priApplyDom(id,p); post('/api/goal/priority',{id:id,priority:p}); }
 
-// --- 드래그 배정 (스프린트/Backlog 그룹 이동) ---
+// --- 드래그 배정 (루프/Backlog 그룹 이동) ---
 let _spDrag=null;
 function spDragStart(e,id){ _spDrag=id; e.currentTarget.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; }
-function spDragEnd(e){ e.currentTarget.classList.remove('dragging'); document.querySelectorAll('.spgrp.dropOver').forEach(x=>x.classList.remove('dropOver')); document.querySelectorAll('.bgoal.dropTarget').forEach(x=>x.classList.remove('dropTarget')); _spDrag=null; }
+function spDragEnd(e){ e.currentTarget.classList.remove('dragging'); document.querySelectorAll('.spgrp.dropOver').forEach(x=>x.classList.remove('dropOver')); bgClearDrop(); _spDrag=null; }
 // Intra-group reorder on the sprint board. Dropping a row ONTO a sibling row in the SAME
 // bucket (same Bump/Backlog/sprint + same parent) reorders the two; the group-level drop
 // (spDrop/spDropBump) only moves BETWEEN buckets and can't change position. Cross-bucket
 // drags fall through (no preventDefault/stopPropagation) so the group handler still fires.
 function bgBucket(g){ return g.bump ? 'bump' : ('s'+boardSprint(g,_goals)); }
 function bgSameGroup(a,b){ return a&&b&&(a.parent||'')===(b.parent||'')&&bgBucket(a)===bgBucket(b); }
+// 드롭 대상 행을 '부모'로 해석한다. 보드는 1단계 트리이므로 자식 행 위에 놓으면 그 행의
+// 최상위 조상에 붙인다(부모#칸의 setParentByNumber 와 같은 규칙). 붙일 수 없으면 null.
+function bgParentTarget(src,tgt){
+  if(!src||!tgt||src.id===tgt.id) return null;
+  if((_goals||[]).some(k=>k.parent===src.id)) return null;      // 자식을 가진 목표는 자식이 될 수 없다(2단계 방지)
+  let p=tgt; const seen=new Set();
+  while(p&&p.parent&&!seen.has(p.id)){ seen.add(p.id); const up=byId(_goals,p.parent); if(!up) break; p=up; }
+  if(!p||p.id===src.id||p.released||p.archived) return null;
+  if(p.id===(src.parent||'')) return null;                      // 이미 그 부모의 자식
+  return p;
+}
+// 한 행 안에서 세로 위치로 의도를 가른다: 가운데 밴드=자식으로 붙이기(부모 변경),
+// 위·아래 가장자리=기존 동작(같은 그룹이면 순서 변경, 다른 버킷이면 그룹 드롭으로 통과).
+function bgDropIntent(e,id){
+  const src=byId(_goals,_spDrag), tgt=byId(_goals,id);
+  const r=e.currentTarget.getBoundingClientRect();
+  const rel=(e.clientY-r.top)/(r.height||1);
+  if(rel>0.3&&rel<0.7){ const p=bgParentTarget(src,tgt); if(p) return {kind:'child',parent:p}; }
+  return bgSameGroup(src,tgt)?{kind:'reorder'}:null;
+}
+function bgClearDrop(){ document.querySelectorAll('.bgoal.dropTarget,.bgoal.dropChild').forEach(x=>x.classList.remove('dropTarget','dropChild')); }
 function bgReorderOver(e,id){
   if(_spDrag==null||_spDrag===id) return;
-  const src=byId(_goals,_spDrag), tgt=byId(_goals,id);
-  if(!bgSameGroup(src,tgt)) return;   // different bucket -> let spOver/spDrop take it
+  const it=bgDropIntent(e,id);
+  if(!it) return;                    // 해석 불가 -> let spOver/spDrop take it
   e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect='move';
-  const row=e.currentTarget; document.querySelectorAll('.bgoal.dropTarget').forEach(x=>x.classList.remove('dropTarget')); row.classList.add('dropTarget');
+  const row=e.currentTarget; bgClearDrop(); row.classList.add(it.kind==='child'?'dropChild':'dropTarget');
 }
-function bgReorderLeave(e){ e.currentTarget.classList.remove('dropTarget'); }
+function bgReorderLeave(e){ e.currentTarget.classList.remove('dropTarget','dropChild'); }
 function bgReorderDrop(e,id){
   if(_spDrag==null||_spDrag===id) return;
   const src=byId(_goals,_spDrag), tgt=byId(_goals,id);
-  if(!bgSameGroup(src,tgt)) return;   // fall through to group drop (bucket move)
+  const it=bgDropIntent(e,id);
+  if(!it) return;                    // fall through to group drop (bucket move)
   e.preventDefault(); e.stopPropagation();
+  if(it.kind==='child'){ const from=_spDrag; _spDrag=null; bgClearDrop();
+    setParentById(from,it.parent.id); return; }
   const from=_spDrag; _spDrag=null;
-  document.querySelectorAll('.bgoal.dropTarget').forEach(x=>x.classList.remove('dropTarget'));
+  bgClearDrop();
   const pid=src.parent||'';
   if(pid){ const kids=gMove(_goals.filter(g=>g.parent===pid).map(g=>g.id), from, id); if(!kids) return;
     const ov={}; ov[pid]=kids; post('/api/goal/reorder',{order:gBuildOrder(_goals.filter(g=>!g.parent).map(g=>g.id), ov)}); }
@@ -3395,7 +3911,7 @@ function spMenu(e,n){ e.preventDefault(); e.stopPropagation();
   showPopup(e.clientX,e.clientY,html);
 }
 // --- 작업 항목 이동 (Move work item) — reorder a goal within its sibling group ---
-// Shared by EVERY view's right-click menu (목록·그룹·테이블·일정·스프린트). A top-level
+// Shared by EVERY view's right-click menu (목록·그룹·테이블·일정·루프). A top-level
 // goal reorders among the other top-level goals; a child reorders among its parent's
 // children only. Reuses gBuildOrder so the rest of the tree (other parents and their
 // kids) is left untouched, and the existing /api/goal/reorder endpoint persists the new
@@ -3421,7 +3937,7 @@ function moveGoalOrder(id,where){
     post('/api/goal/reorder',{order:gBuildOrder(_goals.filter(x=>!x.parent).map(x=>x.id),ov)}); }
   else { post('/api/goal/reorder',{order:gBuildOrder(sibs)}); }
 }
-// 우클릭: 작업 항목 이동(순서) · 스프린트/Backlog 이동 · 부모(계층) — 모든 뷰 공용
+// 우클릭: 작업 항목 이동(순서) · 루프/Backlog 이동 · 부모(계층) — 모든 뷰 공용
 function goalCtx(e,id){ e.preventDefault(); e.stopPropagation();
   const sprints=((_review&&_review.sprints)||[]).filter(s=>!s.closed).sort((a,b)=>a.number-b.number);
   const g=byId(_goals,id); const bg=(g&&g.parent)?-1:0;   // 자식은 -1로 분리(부모 상속 끊기)
@@ -3436,7 +3952,7 @@ function goalCtx(e,id){ e.preventDefault(); e.stopPropagation();
     +mv('up','위로 ↑',atTop)
     +mv('down','아래로 ↓',atBot)
     +mv('bottom','맨 아래로 ⤓',atBot);
-  html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">스프린트로 이동</div>'
+  html+='<div class="pophdr" style="border-top:1px solid var(--line);margin-top:2px">루프로 이동</div>'
     +'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToSprint(\''+id+'\','+bg+')">Backlog'+((g&&g.parent)?' (부모와 분리)':'')+'</button>';
   html+=sprints.map(s=>'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();moveGoalToSprint(\''+id+'\','+s.number+')">'+esc(s.code||('#'+s.number))+(s.goalText?(' · '+esc(s.goalText)):'')+'</button>').join('');
   // 정리 전 아이디어로 내리기 — 이미 Bump out에 있으면 숨긴다.
@@ -3485,30 +4001,139 @@ function openParentPicker(id){
   renderParentList('');
   const s=$('ppSearch'); if(s) s.focus();
 }
-function ppLastParent(){ try{ return localStorage.getItem('cm.lastParent')||''; }catch(e){ return ''; } }
+// 최근 사용한 부모(newest-first, 서버 보관). 브라우저 localStorage 가 아니라 서버에 두는 이유는
+// 대시보드 포트가 실행마다 바뀌어 origin 저장소가 매번 초기화되기 때문(lastView·doneCutoff 와 동일).
+function recentParentSeqs(){ return (_review&&_review.recentParents)||[]; }
+function recentParentIds(){
+  const m={}; (_goals||[]).forEach(function(g){ if(g.seq) m[g.seq]=g.id; });
+  return recentParentSeqs().map(function(n){ return m[n]||''; }).filter(Boolean);
+}
 function renderParentList(q){
   const el=$('ppList'); if(!el) return;
   q=String(q||'').toLowerCase().trim();
   // 후보: 최상위(부모 없음)·릴리즈 안 됨·자기 자신 제외 (백엔드가 2단계 중첩은 재차 검증)
   const cands=(_goals||[]).filter(g=>g.id!==_ppId && !g.parent && !g.released && !g.archived);
-  // 정렬 우선순위: ① 마지막 선택 부모(전역 1개) → ② 현재(열린) 스프린트 부모(스프린트 번호·보드 순)
+  // 정렬 우선순위: ① 최근 사용한 부모(서버 MRU, 최신순) → ② 현재(열린) 루프 부모(루프 번호·보드 순)
   //              → ③ 나머지. 동일 그룹 안에서는 원래 _goals 순서를 유지한다.
-  const pinned=ppLastParent();
+  const recents=recentParentIds();
+  const rpos={}; recents.forEach(function(id,i){ rpos[id]=i; });
   const openSp={}; ((_review&&_review.sprints)||[]).forEach(function(s){ if(!s.closed) openSp[s.number]=true; });
   const idx={}; cands.forEach(function(g,i){ idx[g.id]=i; });
-  function rank(g){ if(g.id===pinned) return 0; if(g.sprint>0 && openSp[g.sprint]) return 1; return 2; }
+  function rank(g){ if(rpos[g.id]!==undefined) return 0; if(g.sprint>0 && openSp[g.sprint]) return 1; return 2; }
   const ordered=cands.slice().sort(function(a,b){
     const ra=rank(a),rb=rank(b); if(ra!==rb) return ra-rb;
-    if(ra===1 && (a.sprint||0)!==(b.sprint||0)) return (a.sprint||0)-(b.sprint||0);   // 현재 스프린트 번호 순
+    if(ra===0) return rpos[a.id]-rpos[b.id];                                           // 최근 사용 순(최신 먼저)
+    if(ra===1 && (a.sprint||0)!==(b.sprint||0)) return (a.sprint||0)-(b.sprint||0);   // 현재 루프 번호 순
     return idx[a.id]-idx[b.id];                                                        // 그 외 보드(원래) 순
   });
   const f=ordered.filter(function(g){ if(!q) return true; const lab=('goal-'+pad2(g.seq||0)+' '+(g.text||'')).toLowerCase(); return lab.indexOf(q)>=0; });
   el.innerHTML = f.length
-    ? f.map(g=>'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();setParentById(\''+_ppId+'\',\''+g.id+'\')"><span class="gn">goal-'+pad2(g.seq||0)+'</span>'+esc(g.text)+(g.id===pinned?'<span class="ppfresh">최근</span>':'')+'</button>').join('')
+    ? f.map(g=>'<button class="popitem" onmousedown="event.stopPropagation();hidePopup();setParentById(\''+_ppId+'\',\''+g.id+'\')"><span class="gn">goal-'+pad2(g.seq||0)+'</span>'+esc(g.text)+(rpos[g.id]!==undefined?'<span class="ppfresh">최근</span>':'')+'</button>').join('')
     : '<div class="muted" style="padding:7px 10px;font-size:12px">결과 없음</div>';
 }
-// 부모 지정 시 전역 '마지막 선택' 1개를 브라우저에 저장(해제는 저장하지 않음).
-function setParentById(id,pid){ if(pid){ try{ localStorage.setItem('cm.lastParent',pid); }catch(e){} } post('/api/goal/parent',{id:id,parent:pid}); }
+// 부모 확정. 최근 사용 목록(MRU)은 서버가 /api/goal/parent 안에서 갱신한다.
+function setParentById(id,pid){ post('/api/goal/parent',{id:id,parent:pid}); }
+
+// ===== 부모# 칸 — 공용 셀 · 추천 고스트 · 최근/추천 드롭다운 =====
+// 한 칸 안에 세 겹이 겹쳐 있다.
+//   ① <input class="pin">  확정 경로. 부모가 실제로 바뀌는 길은 여기 하나뿐이다.
+//   ② <a class="pghost">   서버가 계산한 추천 번호를 회색으로 보여준다. 클릭=그 부모 goal 열기.
+//      고스트는 input.value 를 절대 건드리지 않는다 — 추천을 확정으로 바꾸는 것은 사용자가
+//      숫자를 직접 입력할 때뿐이라, 잘못된 추천이 조용히 계층을 바꾸는 일이 없다.
+//   ③ <i class="psdot">    추천 상태 점. 계산 중=보라 pulse, 추천 있음=추천 부모의 실효 상태색.
+const PIN_TIP='번호 입력 (예: 02 → goal-02의 자식) · Cmd+드래그로 아래 행에 채우기 · 비우면 최상위';
+function escAttr(s){ return esc(s).replace(/"/g,'&quot;'); }
+function psugItems(){ const ps=_review&&_review.psug; return (ps&&ps.items)||[]; }
+function psugRunning(){ const ps=_review&&_review.psug; return !!(ps&&ps.state==='running'); }
+function psugFor(g){
+  if(!g||!g.seq) return null;
+  const it=psugItems(); for(let i=0;i<it.length;i++){ if(it[i].seq===g.seq) return it[i]; }
+  return null;
+}
+function bySeq(n){ return (_goals||[]).find(x=>x.seq===n)||null; }
+// 점 색·문구는 새 팔레트를 만들지 않고 그 행이 이미 쓰는 상태 표현을 그대로 재사용한다
+// (자식을 둔 목표는 롤업 상태, 잎 목표는 자기 상태).
+function psugStatusOf(p){ const ds=derivedStatus(_goals,p); return ds||(p.status||'backlog'); }
+function psugStatusLabel(p){ const ds=derivedStatus(_goals,p); return ds?statLabel(ds):statLabel2(p.status||'backlog'); }
+function psugGhostHTML(g){
+  const s=psugFor(g);
+  if(!s){
+    // 계산 중이고 아직 결론이 없을 때만 점 하나로 알린다(추천이 이미 있으면 그 쪽이 이긴다).
+    return psugRunning()
+      ? '<span class="pghost" title="부모 추천 계산 중"><i class="psdot calc"></i></span>' : '';
+  }
+  const p=bySeq(s.p); if(!p) return '';
+  const num=pad2(p.seq||0);
+  const cls=psugRunning()?'calc':psugStatusOf(p);
+  const tip='추천 부모 goal-'+num+' · '+(psugRunning()?'다시 계산 중':psugStatusLabel(p))
+    +' · 근거: '+(s.why||'제목 키워드 일치')+' — 클릭하면 goal-'+num+'을(를) 엽니다 (확정은 번호를 직접 입력)';
+  return '<a class="pghost" href="/goal?n='+(p.seq||0)+'" title="'+escAttr(tip)+'"'
+    +' onmousedown="event.stopPropagation()" onclick="event.stopPropagation()"><i class="psdot '+cls+'"></i>'+num+'</a>';
+}
+// 루프 보드(board=true)와 목록 뷰가 같은 셀을 쓴다. 보드에서 자식을 둔 행은 애초에
+// 부모가 될 수 없어 호출되지 않는다(정렬용 빈칸이 대신 들어간다).
+function parentCellHTML(g,board){
+  const p=g.parent?byId(_goals,g.parent):null;
+  const pv=p?pad2(p.seq||0):'';
+  const gh=g.parent?'':psugGhostHTML(g);
+  // Cmd+드래그 채우기는 행이 세로로 늘어선 보드에서만 의미가 있다(목록 뷰에는 채울 행 좌표가 없다).
+  const md=board?(' onmousedown="pinDown(event,\''+g.id+'\')"'):' onmousedown="event.stopPropagation()"';
+  const tip=board?PIN_TIP:'부모 번호 입력 (비우면 최상위)';
+  // 추천이 입력칸 앞에 나란히 온다(겹치지 않는다 — .pinwrap 주석 참고).
+  return '<span class="pinwrap">'+gh
+    +'<input class="pin" type="text" inputmode="numeric" draggable="false" value="'+pv+'"'
+    +' placeholder="'+(gh?'':'부모#')+'" title="'+escAttr(gh?('추천은 회색 번호 · '+tip):tip)+'"'+md
+    +' onclick="event.stopPropagation()" ondblclick="event.stopPropagation()"'
+    +' onfocus="pinFocus(event,\''+g.id+'\')" onblur="pinBlur(event)" oninput="renderPinList(this.value)"'
+    +' onkeydown="if(event.key===\'Enter\')this.blur()" onchange="setParentByNumber(\''+g.id+'\',this.value)">'
+    +'</span>';
+}
+
+// --- 칸을 누르면 뜨는 드롭다운: 추천 → 최근 사용 → 후보 ---
+// 포커스는 입력칸에 그대로 둔다(항목은 mousedown 에서 preventDefault). 그래서 타이핑하면
+// 목록이 실시간으로 걸러지고, 그대로 숫자를 쳐서 확정하는 기존 경로도 막히지 않는다.
+let _pinId=null;
+function pinFocus(e,id){
+  const w=e.target.closest('.pinwrap'); if(w) w.classList.add('focus');
+  if(_fill) return;                       // Cmd+드래그 채우기 중에는 열지 않는다
+  _pinId=id;
+  // 칸 전체(.pinwrap) 기준으로 연다 — 입력칸은 추천이 있으면 칸의 오른쪽 일부만 차지한다.
+  const r=(w||e.target).getBoundingClientRect();
+  showPopup(r.left, r.bottom+4, '<div class="pophdr">부모 연결</div><div id="pinList"></div>');
+  renderPinList(e.target.value);
+}
+function pinBlur(e){
+  const w=e.target.closest('.pinwrap'); if(w) w.classList.remove('focus');
+  if(_pinId){ _pinId=null; hidePopup(); }
+}
+function pinPick(pid){ const id=_pinId; _pinId=null; hidePopup(); if(id) setParentById(id,pid); }
+function pinItemHTML(g,badge,why){
+  return '<button class="popitem" onmousedown="event.preventDefault();event.stopPropagation();pinPick(\''+g.id+'\')">'
+    +'<span class="gn">goal-'+pad2(g.seq||0)+'</span>'+esc(g.text)
+    +(badge?'<span class="ppfresh'+(badge==='추천'?' sug':'')+'">'+badge+'</span>':'')
+    +(why?'<span class="pswhy">'+esc(why)+'</span>':'')+'</button>';
+}
+function renderPinList(q){
+  const el=$('pinList'); if(!el) return;
+  const me=byId(_goals,_pinId); if(!me) return;
+  q=String(q||'').toLowerCase().trim();
+  function hit(g){ if(!q) return true; return ('goal-'+pad2(g.seq||0)+' '+(g.text||'')).toLowerCase().indexOf(q)>=0; }
+  // 후보 = 최상위·살아있는 목표(백엔드가 2단계 중첩을 재차 검증한다)
+  const cands=(_goals||[]).filter(g=>g.id!==_pinId && !g.parent && !g.released && !g.archived);
+  const used={};
+  let html='';
+  const s=psugFor(me), sp=s?cands.find(x=>x.seq===s.p):null;
+  if(sp&&hit(sp)){ used[sp.id]=1; html+='<div class="pophdr">추천</div>'+pinItemHTML(sp,'추천',s.why); }
+  const rec=recentParentIds().map(id=>cands.find(x=>x.id===id)).filter(g=>g&&!used[g.id]&&hit(g)).slice(0,5);
+  if(rec.length){ rec.forEach(g=>{ used[g.id]=1; }); html+='<div class="pophdr">최근 사용</div>'+rec.map(g=>pinItemHTML(g,'최근','')).join(''); }
+  // 나머지 후보. 검색 전에는 목록이 화면을 덮지 않게 잘라 보여주고, 타이핑하면 더 넓게 찾는다.
+  const rest=cands.filter(g=>!used[g.id]&&hit(g));
+  const cap=q?24:8;
+  if(rest.length) html+='<div class="pophdr">후보'+(rest.length>cap?' (상위 '+cap+'/'+rest.length+' · 검색으로 좁히기)':'')+'</div>'
+    +rest.slice(0,cap).map(g=>pinItemHTML(g,'','')).join('');
+  if(me.parent) html='<button class="popitem unlink" onmousedown="event.preventDefault();event.stopPropagation();pinPick(\'\')">Unlink (부모 해제)</button>'+html;
+  el.innerHTML = html||'<div class="muted" style="padding:7px 10px;font-size:12px">결과 없음</div>';
+}
 
 // --- 링크 대상 선택기 (검색 + 후보 목록) — 부모 선택기와 같은 팝업 UX ---
 // 부모 선택기(openParentPicker/renderParentList)와 동일한 패턴. 다만 링크는 최상위가
@@ -3568,36 +4193,36 @@ function confirmLink(srcId,tgtId){
 function closeLinkConfirm(){ const el=$('lkConfirm'); if(el) el.remove(); }
 function doLink(srcId,tgtId){ closeLinkConfirm(); post('/api/goal/link',{id:srcId,target:tgtId}); }
 
-// --- 스프린트 편집 모달 ---
+// --- 루프 편집 모달 ---
 let _spModalNum=null;
 function spModalForm(s){
   const chips=DUR_OPTS.map(o=>'<span class="durchip'+(o[0]===s.durationKind?' on':'')+'" onclick="setSprintDur('+s.number+',\''+o[0]+'\')">'+o[1]+'</span>').join('');
-  return '<h3>스프린트 '+esc(s.code||('#'+s.number))+' 편집</h3>'
+  return '<h3>루프 '+esc(s.code||('#'+s.number))+' 편집</h3>'
     +'<div class="line"><span class="lab">별칭</span><input value="'+esc(s.code||'').replace(/"/g,'&quot;')+'" placeholder="예: 26-15 · 자유 별칭 가능" onchange="setSprintCode('+s.number+',this.value)"></div>'
-    +'<div class="line"><span class="lab">예상 결과</span><input class="spmgoal" value="'+esc(s.goalText).replace(/"/g,'&quot;')+'" placeholder="이 스프린트가 끝나면 완성될 것" onchange="updateSprintGoal('+s.number+',this.value)"></div>'
+    +'<div class="line"><span class="lab">예상 결과</span><input class="spmgoal" value="'+esc(s.goalText).replace(/"/g,'&quot;')+'" placeholder="이 루프가 끝나면 완성될 것" onchange="updateSprintGoal('+s.number+',this.value)"></div>'
     +'<div class="line"><span class="lab">기간</span><span class="chips">'+chips+'</span></div>'
     +'<div class="line"><span class="lab">시작</span><input type="datetime-local" value="'+localInput(s.startAt)+'" onchange="setSprintDate('+s.number+',\'startAt\',this.value)"></div>'
     +'<div class="line"><span class="lab">목표</span><input type="datetime-local" value="'+localInput(s.targetAt)+'" onchange="setSprintDate('+s.number+',\'targetAt\',this.value)"></div>'
-    +'<div class="line" style="margin-top:4px"><button class="btn danger" style="border-color:#5a2738;color:#ff9db0" onclick="deleteSprintNow('+s.number+')">스프린트 삭제</button><span style="flex:1"></span><button class="btn primary" onclick="closeSprintModal()">닫기</button></div>';
+    +'<div class="line" style="margin-top:4px"><button class="btn danger" style="border-color:#5a2738;color:#ff9db0" onclick="deleteSprintNow('+s.number+')">루프 삭제</button><span style="flex:1"></span><button class="btn primary" onclick="closeSprintModal()">닫기</button></div>';
 }
 function openSprintModal(n){ _spModalNum=n; _relModalId=null; fillSprintModal(); const m=$('spModal'); if(m) m.style.display='flex'; }
 function fillSprintModal(){ if(_spModalNum==null) return; const s=((_review&&_review.sprints)||[]).find(x=>x.number===_spModalNum); if(!s){ closeSprintModal(); return; } const b=$('spModalBox'); if(b) b.innerHTML=spModalForm(s); }
 function closeSprintModal(){ _spModalNum=null; _relModalId=null; const m=$('spModal'); if(m) m.style.display='none'; }
 
-// --- 완료 스프린트(릴리즈) 편집 모달 --- 완료 로그의 제목(코드·마감 시각) 클릭으로 열린다.
+// --- 완료 루프(릴리즈) 편집 모달 --- 완료 로그의 제목(코드·마감 시각) 클릭으로 열린다.
 // 별칭과 마감 일시만 편집한다 — 시작~완료 기간은 휴식까지 포함돼 오해를 부르므로 기록·편집
 // 대상에서 제외 (startedAt 데이터는 남아 있지만 노출하지 않는다).
-// 스프린트 편집 모달과 같은 #spModal 컨테이너를 공유한다 (_spModalNum과 상호 배타).
+// 루프 편집 모달과 같은 #spModal 컨테이너를 공유한다 (_spModalNum과 상호 배타).
 let _relModalId=null;
 function relModalForm(rel){
-  return '<h3>완료 스프린트 '+esc(rel.code||'미배정')+' 편집</h3>'
+  return '<h3>완료 루프 '+esc(rel.code||'미배정')+' 편집</h3>'
     +'<div class="line"><span class="lab">별칭</span><input value="'+esc(rel.code||'').replace(/"/g,'&quot;')+'" placeholder="예: 26-15 · 자유 별칭 가능" onchange="setRelCode(\''+rel.id+'\',this.value)"></div>'
     +'<div class="line"><span class="lab">마감</span><input type="datetime-local" value="'+localInput(rel.releasedAt)+'" onchange="setRelDate(\''+rel.id+'\',this.value)"></div>'
     +'<div class="line" style="margin-top:4px"><span style="flex:1"></span><button class="btn primary" onclick="closeSprintModal()">닫기</button></div>';
 }
 function openRelModal(id){ _relModalId=id; _spModalNum=null; fillRelModal(); const m=$('spModal'); if(m) m.style.display='flex'; }
 function fillRelModal(){ if(_relModalId==null) return; const rel=((_review&&_review.releases)||[]).find(x=>x.id===_relModalId); if(!rel){ closeSprintModal(); return; } const b=$('spModalBox'); if(b) b.innerHTML=relModalForm(rel); }
-// 별칭 변경 — 스프린트·릴리즈 코드 전체에서 유일해야 저장된다 (서버도 재검증 후 무시).
+// 별칭 변경 — 루프·릴리즈 코드 전체에서 유일해야 저장된다 (서버도 재검증 후 무시).
 function setRelCode(id,v){
   const t=String(v||'').trim();
   if(!t){ alert('별칭을 입력하세요.'); fillRelModal(); return; }
@@ -3613,17 +4238,17 @@ function setRelDate(id,val){
   post('/api/release/update',{id:id,releasedAt:ep});
 }
 
-// 이 스프린트에 목표 바로 추가 — 전용 페이지(/goal-add)로 이동한다 (대상=이 스프린트).
+// 이 루프에 목표 바로 추가 — 전용 페이지(/goal-add)로 이동한다 (대상=이 루프).
 function addGoalToSprint(n){ const s=((_review&&_review.sprints)||[]).find(x=>x.number===n); openGoalAdd({sprint:n,label:(s&&s.code)||('#'+n)}); }
 // Backlog(미배정)에 목표 추가 — 같은 페이지, 대상만 Backlog.
 function addGoalToBacklog(){ openGoalAdd({sprint:0,label:'Backlog'}); }
 // Bump out(아이디어 인박스)에 담기 — 같은 페이지, 대상만 Bump out.
 function addGoalToBump(){ openGoalAdd({bump:true,label:'Dump out'}); }
 function createSprintNow(){ post('/api/sprint/create',{goalText:'',durationKind:'1d'}); }   // 자동 코드(26-N), Backlog 비움
-// 열린 빈 스프린트(목표 0·예상 결과 없음)를 정리한다. 다른 작업 중 스프린트가 있으면 전부,
+// 열린 빈 루프(목표 0·예상 결과 없음)를 정리한다. 다른 작업 중 루프가 있으면 전부,
 // 없으면 최신 1개만 남기고 삭제 (서버 cleanupSprints 규칙).
-function cleanupSprintsNow(){ if(!confirm('열린 빈 스프린트(목표 0개·예상 결과 없음)를 정리합니다. 작업 중인 스프린트는 건드리지 않습니다.')) return; post('/api/sprint/cleanup',{}); }
-// 별칭(code) 변경 — 스프린트·릴리즈 코드 전체에서 유일해야 저장된다 (서버도 재검증 후 무시).
+function cleanupSprintsNow(){ if(!confirm('열린 빈 루프(목표 0개·예상 결과 없음)를 정리합니다. 작업 중인 루프는 건드리지 않습니다.')) return; post('/api/sprint/cleanup',{}); }
+// 별칭(code) 변경 — 루프·릴리즈 코드 전체에서 유일해야 저장된다 (서버도 재검증 후 무시).
 function setSprintCode(n,v){
   const t=String(v||'').trim();
   if(!t){ alert('별칭을 입력하세요.'); fillSprintModal(); return; }
@@ -3635,26 +4260,26 @@ function setSprintCode(n,v){
 function updateSprintGoal(n,v){ post('/api/sprint/update',{number:n,goalText:String(v||'')}); }
 function setSprintDur(n,k){ post('/api/sprint/update',{number:n,durationKind:k}); }   // 목표 날짜는 서버가 재계산
 function setSprintDate(n,key,val){ const ep=CMTimeFilter.inputToEpoch(val); const o={number:n}; o[key]=ep; post('/api/sprint/update',o); }
-function deleteSprintNow(n){ if(!confirm('이 스프린트를 삭제합니다. 배정된 목표는 Backlog로 돌아갑니다.')) return; post('/api/sprint/delete',{number:n}); }
-// Complete sprint = 커밋하고 닫는다. 미완료 목표가 있을 때만 이월 — 이미 열린 스프린트가
-// 있으면 그리로, 없으면 새 스프린트(24시간 auto)가 열린다. 빈 스프린트는 기록 없이 닫힌다.
-function releaseSprintGroup(n){ if(!confirm('이 스프린트를 완료합니다. 완료 목표는 커밋되고, 미완료 목표가 있으면 열린 스프린트로 이월됩니다(없으면 새로 열림). 목표가 없으면 기록 없이 닫힙니다.')) return; post('/api/sprint/complete',{number:n}); }
+function deleteSprintNow(n){ if(!confirm('이 루프를 삭제합니다. 배정된 목표는 Backlog로 돌아갑니다.')) return; post('/api/sprint/delete',{number:n}); }
+// Complete loop = 커밋하고 닫는다. 미완료 목표가 있을 때만 이월 — 이미 열린 루프가
+// 있으면 그리로, 없으면 새 루프(24시간 auto)가 열린다. 빈 루프는 기록 없이 닫힌다.
+function releaseSprintGroup(n){ if(!confirm('이 루프를 완료합니다. 완료 목표는 커밋되고, 미완료 목표가 있으면 열린 루프로 이월됩니다(없으면 새로 열림). 목표가 없으면 기록 없이 닫힙니다.')) return; post('/api/sprint/complete',{number:n}); }
 
 // 완료 로그 펼침/복원
 function toggleRel(id){ if(_relOpen.has(id))_relOpen.delete(id); else _relOpen.add(id); if(_review) renderSprintBoard(_review); }
 function toggleRelLog(){ _relLogOpen=!_relLogOpen; if(_review) renderSprintBoard(_review); }   // 섹션 전체 펼침/접힘
 function restoreRelease(id){ post('/api/release/restore',{id:id}); }
-// 오른쪽 위 Complete sprint 버튼: 현재 스프린트 필터의 완료 목표를 커밋한다.
+// 오른쪽 위 Complete loop 버튼: 현재 루프 필터의 완료 목표를 커밋한다.
 function releaseCurrentSprint(){
-  if(_sprintSel.size>1){ alert('Complete sprint는 한 번에 하나의 스프린트만 가능합니다. 스프린트를 하나만 선택하세요.'); return; }
+  if(_sprintSel.size>1){ alert('Complete loop는 한 번에 하나의 루프만 가능합니다. 루프를 하나만 선택하세요.'); return; }
   const only=(_sprintSel.size===1)?[..._sprintSel][0]:0;   // 0 = 모두
-  // 단일 스프린트 선택 시 = 완료 후 다음 번호로 전진(이월 포함). '모두' 선택 시 = 전진 없이
-  // 전 스프린트의 완료 목표만 커밋(번호 전진은 특정 스프린트를 완료할 때만 의미가 있으므로).
+  // 단일 루프 선택 시 = 완료 후 다음 번호로 전진(이월 포함). '모두' 선택 시 = 전진 없이
+  // 전 루프의 완료 목표만 커밋(번호 전진은 특정 루프를 완료할 때만 의미가 있으므로).
   if(only){
-    if(!confirm('스프린트 '+sprintCode(only)+'을(를) 완료합니다. 완료 목표는 커밋되고, 미완료 목표가 있으면 열린 스프린트로 이월됩니다(없으면 새로 열림). 목표가 없으면 기록 없이 닫힙니다.')) return;
+    if(!confirm('루프 '+sprintCode(only)+'을(를) 완료합니다. 완료 목표는 커밋되고, 미완료 목표가 있으면 열린 루프로 이월됩니다(없으면 새로 열림). 목표가 없으면 기록 없이 닫힙니다.')) return;
     post('/api/sprint/complete',{number:only});
   }else{
-    if(!confirm('모든 스프린트의 완료 목표를 커밋합니다. 목록에서 사라지고 완료 로그로 이동합니다.')) return;
+    if(!confirm('모든 루프의 완료 목표를 커밋합니다. 목록에서 사라지고 완료 로그로 이동합니다.')) return;
     post('/api/sprint/release',{sprint:'all'});
   }
 }
@@ -3710,17 +4335,85 @@ function renderReport(d,r,conf,prov){
     const ds=derivedStatus(goals,t);
     const tag=ds==='on_track'?'<span class="otTag">On Track</span>':(ds==='done'?'<span class="otTag" style="border-color:var(--green);color:var(--green);background:rgba(54,192,138,.12)">완료</span>':'');
     const head=linked?('<span style="color:#9b7bff">↗ '+esc(goalTag(t))+' (링크됨)</span> '+esc(t.text)):esc(t.text);
-    html+='<h3 style="margin:12px 0 4px">'+head+tag+'</h3>';
+    html+='<h3 style="margin:12px 0 4px" title="'+esc(t.text)+'">'+head+tag+'</h3>';
     if(gnote(r,t.id)) html+='<div class="muted" style="margin-bottom:4px">'+esc(gnote(r,t.id))+'</div>';
     html+=evReportHtml(t);
     const kids=goals.filter(c=>c.parent===t.id && goalPasses(c,goals));
     if(kids.length) html+='<ul>'+kids.map(c=>{ const cs=(c.status||'backlog');
       const m=cs==='in_progress'?' <span style="color:#9be3fb">(진행)</span>':(cs==='done'?' <span class="ok">(완료)</span>':'');
-      return '<li>'+esc(c.text)+m+(gnote(r,c.id)?' <span class="muted">— '+esc(gnote(r,c.id))+'</span>':'')+evReportHtml(c)+'</li>'; }).join('')+'</ul>';
+      const note=gnote(r,c.id);
+      // 한 줄 고정(.rli): 넘치는 문장은 …로 잘리고, 전문은 title(hover)과 CSV에서 본다.
+      const full=(c.text||'')+(note?(' — '+note):'');
+      return '<li class="rli" title="'+esc(full)+'">'+esc(c.text)+m+(note?' <span class="muted">— '+esc(note)+'</span>':'')+evReportHtml(c)+'</li>'; }).join('')+'</ul>';
     (t.links||[]).forEach(lid=>{ const lg=byId[lid]; if(lg) emitTop(lg,true); });
   }
   tops.forEach(t=>emitTop(t,false));
   $('report').innerHTML=html;
+}
+
+// ===== 리포트 CSV 내보내기 =====
+// 화면(리포트)은 1초 안에 훑는 한 줄 요약이고, CSV는 그 반대편 — 사람/팀마다 필요한 축이
+// 다르므로 자르지 않은 전 필드를 그대로 싣는다. 받는 쪽이 열을 골라 자기 톤의 보고서를 만든다.
+// 행 단위: 목표(부모) 1행 + 자식 1행씩 + 부분과제(task) 1행씩. 화면과 동일한 필터/기간을 따른다.
+function csvCell(v){ const s=(v==null?'':String(v)).replace(/\r?\n/g,' ').replace(/"/g,'""'); return '"'+s+'"'; }
+function csvHours(sec){ return ((Math.max(0,sec||0))/3600).toFixed(2); }
+function buildReportCsv(d,r,conf,prov){
+  const goals=r.goals||[], byId={}; goals.forEach(g=>{ byId[g.id]=g; });
+  const tops=goals.filter(g=>!g.parent && goalPasses(g,goals) && reportPassesRange(g,goals));
+  const cols=['구분','goal','제목','부모goal','부모제목','상태','롤업상태','우선순위','노트',
+    '추적시간(h)','추적시간(표시)','진행중','대기중','토큰(k)','가치','에너지','에이전트',
+    '세션ID','목표일','완료일','루프','릴리즈','릴리즈ID','아카이브','링크',
+    '증거수','증거','부분과제수','effort','mode','cwd','branch','model','이미지수'];
+  const rows=[];
+  function row(kind,g,parent){
+    const ev=g.evidence||[];
+    rows.push([
+      kind, goalTag(g), g.text||'',
+      parent?goalTag(parent):'', parent?(parent.text||''):'',
+      statLabel2(g.status||'backlog'), statLabel(derivedStatus(goals,g)), g.priority||'',
+      gnote(r,g.id),
+      csvHours(g.trackedSeconds), fmtDur(g.trackedSeconds||0),
+      (g.startedAt>0?'Y':''), (g.waitingSince>0?'Y':''),
+      g.tokens||0, g.value||0, g.energy||0, (g.agents||[]).join(' / '),
+      g.sessionId||'', fmtDate(g.targetAt), fmtDate(g.completedAt),
+      g.sprint||'', (g.released?'Y':''), g.releaseId||'', (g.archived?'Y':''),
+      (g.links||[]).map(id=>byId[id]?goalTag(byId[id]):id).join(' / '),
+      ev.length, ev.map(e=>(e.kind==='file'?'📄 ':'🔗 ')+(e.title||e.href||'')+(e.kind==='file'?'':' '+(e.href||''))).join(' | '),
+      (g.tasks||[]).length, g.effort||'', g.mode||'', g.cwd||'', g.branch||'', g.model||'',
+      (g.images||[]).length
+    ].map(csvCell).join(','));
+  }
+  // 부분과제는 목표 자체 필드를 갖지 않으므로 소유 목표의 맥락만 채운 행으로 싣는다.
+  function taskRows(g){
+    (g.tasks||[]).forEach(t=>{
+      const line=new Array(cols.length).fill('');
+      line[0]='부분과제'; line[1]=goalTag(g)+'/'+(t.id||''); line[2]=t.title||t.folder||'';
+      line[3]=goalTag(g); line[4]=g.text||''; line[5]=t.status||'';
+      rows.push(line.map(csvCell).join(','));
+    });
+  }
+  const visited=new Set();
+  function emitTop(t,linked){
+    if(visited.has(t.id)) return; visited.add(t.id);
+    row(linked?'목표(링크됨)':'목표',t,null); taskRows(t);
+    goals.filter(c=>c.parent===t.id && goalPasses(c,goals)).forEach(c=>{ row('자식',c,t); taskRows(c); });
+    (t.links||[]).forEach(lid=>{ const lg=byId[lid]; if(lg) emitTop(lg,true); });
+  }
+  tops.forEach(t=>emitTop(t,false));
+  // 1행 요약 메타(기간·가치)를 맨 앞에 주석처럼 얹지 않고 별도 첫 줄로 두면 스프레드시트가
+  // 열 정렬을 망치므로, 메타는 파일명에만 담고 CSV 본문은 순수 표로 유지한다.
+  return cols.map(csvCell).join(',')+'\n'+rows.join('\n')+'\n';
+}
+function downloadCsv(b){
+  const a=_lastReportArgs; if(!a){ return; }
+  const csv=buildReportCsv(a.d,a.r,a.conf,a.prov);
+  // BOM: Excel(ko)에서 한글이 깨지지 않게.
+  const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob), el=document.createElement('a');
+  el.href=url; el.download='report-'+String(reportRangeLabel(a.d.date)).replace(/[^0-9A-Za-z_-]+/g,'_')+'.csv';
+  document.body.appendChild(el); el.click(); el.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  if(b){ const o=b.textContent; b.textContent='내려받음'; setTimeout(()=>{b.textContent=o;},1200); }
 }
 
 // 활동 차트(drawChart)·시간대 앱 띠(drawStrip)·앱 통계(appStats)·주요 앱 렌더(renderApps)는
@@ -3835,6 +4528,73 @@ setTimeout(publishQaAudit, 1500);
   draw(idle);
   playBuff();                 // play once on load as feedback
   setInterval(playBuff,60000); // then once a minute
+})();
+</script>
+<script>
+// 대화 패널 분할 드래그 — 폭은 --cmchat-w 하나로 흐르고 localStorage 에 영속된다.
+(function(){
+  var MIN=340, root=document.documentElement;
+  function apply(w){ root.style.setProperty('--cmchat-w', w+'px'); }
+  // 보드에 남겨 줄 최소 폭. 레일이 이미 --cmrail-w 만큼 먹고 있으므로 그것까지 빼고 계산한다
+  // (이걸 빼먹어서 창 1400px·레일 240px 에서 보드가 280px 밖에 못 받고 무너졌다).
+  function railW(){ return parseInt(getComputedStyle(root).getPropertyValue('--cmrail-w'),10) || 0; }
+  function clamp(w){
+    var max=Math.max(MIN, window.innerWidth - railW() - 560);
+    return Math.min(max, Math.max(MIN, w));
+  }
+  var saved=0; try{ saved=parseInt(localStorage.getItem('cmChatW')||'0',10)||0; }catch(e){}
+  if(saved) apply(clamp(saved));
+  var grip=document.getElementById('cmChatGrip'), frame=document.getElementById('cmChatFrame'), drag=false;
+  if(grip) grip.addEventListener('mousedown', function(e){
+    drag=true; e.preventDefault();
+    // 드래그 중에는 iframe 이 마우스를 삼키지 않게 막는다.
+    if(frame) frame.style.pointerEvents='none';
+    document.body.style.cursor='col-resize';
+  });
+  window.addEventListener('mousemove', function(e){
+    if(!drag) return;
+    apply(clamp(window.innerWidth - e.clientX));
+  });
+  window.addEventListener('mouseup', function(){
+    if(!drag) return;
+    drag=false;
+    if(frame) frame.style.pointerEvents='';
+    document.body.style.cursor='';
+    var w=parseInt(getComputedStyle(root).getPropertyValue('--cmchat-w'),10);
+    if(w) try{ localStorage.setItem('cmChatW', String(w)); }catch(e){}
+  });
+  window.addEventListener('resize', function(){
+    var w=parseInt(getComputedStyle(root).getPropertyValue('--cmchat-w'),10);
+    if(w) apply(clamp(w));
+  });
+  window.CMChatReclamp=function(){
+    var w=parseInt(getComputedStyle(root).getPropertyValue('--cmchat-w'),10);
+    if(w) apply(clamp(w));
+  };
+})();
+</script>
+<script>
+// 보드가 실제로 쓸 수 있는 폭을 감시해 body.cmnarrow / body.cmxnarrow 를 붙인다.
+// 뷰포트 @media 로는 3단계(오른쪽 대화 패널이 붙은 상태)를 잡을 수 없기 때문 —
+// 창은 넓은데 보드만 좁은 상황이 여기서 유일하게 정확히 측정된다.
+(function(){
+  var NARROW=760, XNARROW=520;
+  function board(){ return document.querySelector('.wrap'); }
+  function paint(){
+    var el=board(); if(!el) return;
+    // 보드가 숨겨진 단계(1·2단계)에서는 폭이 0으로 읽히므로 건드리지 않는다.
+    var w=el.clientWidth; if(!w) return;
+    document.body.classList.toggle('cmnarrow', w<=NARROW);
+    document.body.classList.toggle('cmxnarrow', w<=XNARROW);
+    if(window.CMChatReclamp) window.CMChatReclamp();
+  }
+  function boot(){
+    var el=board(); if(!el) return;
+    if(window.ResizeObserver){ new ResizeObserver(paint).observe(el); }
+    window.addEventListener('resize', paint);
+    paint();
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
 </body>

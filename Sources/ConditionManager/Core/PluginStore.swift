@@ -62,21 +62,30 @@ final class PluginStore {
                hint: "설치형 — 켜면 BGM 디렉터가 함께 동작합니다. 자원은 앱 데이터 폴더에 자동 보관.",
                kind: .toggle, folderPath: "", status: .disconnected, detail: "미설치", verifiedAt: nil),
         // 드로우 (Sources/Draw): hold left ⌥ to sketch on top of the screen with the
-        // mouse, double-tap left ⌘ to type 30pt text at the cursor, tap left ⌃ to wipe.
+        // mouse, double-tap left ⌘ to type 30pt text at the cursor, tap fn to wipe.
         // Toggle model — installing arms the overlay; the card carries a draw on/off
         // sub-switch (Settings.drawEnabled) for pausing without uninstalling. No
         // permissions needed (key-state polling, no event tap).
         Plugin(id: "draw",
                name: "드로우",
-               desc: "왼쪽 ⌥(Option)을 누른 채 마우스로 화면 위에 그림 · 왼쪽 ⌘(Command) 두 번 탭으로 30pt 글씨 · 왼쪽 ⌃(Control)로 지웁니다.",
+               desc: "왼쪽 ⌥(Option)을 누른 채 마우스로 화면 위에 그림 · 왼쪽 ⌘(Command) 세 번 탭으로 30pt 글씨 · fn(🌐)으로 지웁니다.",
                hint: "설치형 — 켜면 화면 드로잉 오버레이가 동작합니다. 카드의 draw on/off로 즉시 일시정지.",
+               kind: .toggle, folderPath: "", status: .disconnected, detail: "미설치", verifiedAt: nil),
+        // 카메라 지킴이 (Sources/ConditionManager/Plugins/CameraGuard): 개더타운이 자리비움을
+        // 감지해 카메라를 멋대로 끄는 것을 막는다 — 개더 실행 중엔 주기적 keep-alive로 유휴
+        // 판정을 무력화하고, 그래도 카메라가 꺼진 채 유지되면 소리+배너로 알린다. 토글 모델 —
+        // 카드의 on/off 스위치(기본 켜짐)로 제거 없이 일시정지.
+        Plugin(id: "camera-guard",
+               name: "카메라 지킴이",
+               desc: "개더타운이 자리비움 감지로 카메라를 끄는 것을 방지합니다. 개더 실행 중 keep-alive · 꺼짐 지속 시 알림.",
+               hint: "설치형 — 켜면 개더 실행 중 카메라 상시-ON을 지킵니다. 카드의 on/off로 즉시 일시정지 (기본 켜짐).",
                kind: .toggle, folderPath: "", status: .disconnected, detail: "미설치", verifiedAt: nil)
     ]
 
     // Toggle plugins that should be installed out of the box (so the feature works on a
     // fresh launch). 컨디션 메이트 owns BGM, which the app has always played by default;
     // 드로우 ships armed so the ⌥-draw gesture works right after the update.
-    private static let defaultInstalled: Set<String> = ["condition-mate", "draw"]
+    private static let defaultInstalled: Set<String> = ["condition-mate", "draw", "camera-guard"]
 
     private(set) var plugins: [Plugin]
     // Latest per-project activity scan (claude-desktop). Refreshed by the sync-check
@@ -354,8 +363,9 @@ final class PluginStore {
             let when = p.verifiedAt.map { String($0.timeIntervalSince1970) } ?? "0"
             // claude-desktop carries its per-project activity scan; others get [].
             let projects = (p.id == "claude-desktop") ? claudeProjectsJSON() : "[]"
-            // 드로우 carries its sub-switch state so the card can render draw on/off.
-            let extra = (p.id == "draw") ? ",\"drawOn\":\(Settings.shared.drawEnabled)" : ""
+            // 드로우/카메라 지킴이 carry their sub-switch state so the card can render on/off.
+            var extra = (p.id == "draw") ? ",\"drawOn\":\(Settings.shared.drawEnabled)" : ""
+            if p.id == "camera-guard" { extra = ",\"cameraOn\":\(Settings.shared.cameraGuardOn)" }
             return "{\"id\":\(esc(p.id)),\"name\":\(esc(p.name)),\"desc\":\(esc(p.desc)),"
                 + "\"hint\":\(esc(p.hint)),\"kind\":\(esc(p.kind.rawValue)),"
                 + "\"installed\":\(p.kind == .toggle && p.status == .valid),"

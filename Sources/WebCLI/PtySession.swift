@@ -23,7 +23,10 @@ public final class PtySession {
 
     // Spawn `command` (a full shell command line, e.g. a quoted claude + flags) inside a
     // fresh PTY sized cols×rows, running in `cwd`. Returns nil if the PTY or process fails.
-    public init?(command: String, cwd: String, cols: UInt16, rows: UInt16) {
+    // `extraEnv` is merged over the inherited environment — the app passes the gateway
+    // ANTHROPIC_* pair through it (this target must not depend on the app's Settings).
+    public init?(command: String, cwd: String, cols: UInt16, rows: UInt16,
+                 extraEnv: [String: String] = [:]) {
         var m: Int32 = 0, s: Int32 = 0
         var win = winsize(ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0)
         guard openpty(&m, &s, nil, nil, &win) == 0 else {
@@ -41,6 +44,7 @@ public final class PtySession {
         let home = NSHomeDirectory()
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
         env["TERM"] = "xterm-256color"
+        for (k, v) in extraEnv { env[k] = v }
         process.environment = env
 
         let slave = FileHandle(fileDescriptor: s, closeOnDealloc: false)

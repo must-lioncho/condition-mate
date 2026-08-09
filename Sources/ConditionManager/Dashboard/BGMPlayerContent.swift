@@ -49,6 +49,13 @@ enum BGMPlayerContent {
   .subtab{border:none; background:none; color:var(--dim); font-size:13px; font-weight:600; padding:7px 16px; border-radius:9px; cursor:pointer; transition:.12s}
   .subtab:hover{color:var(--txt)}
   .subtab.on{background:linear-gradient(145deg,var(--accent),#5a3ff0); color:#fff; box-shadow:var(--glow)}
+  /* 전략7 장소·컨디션 chips */
+  .venuechips{display:flex;flex-wrap:wrap;gap:6px}
+  .vchip{border:1px solid var(--line);background:#12141c;color:var(--dim);font-size:12.5px;font-weight:600;
+         padding:7px 12px;border-radius:999px;cursor:pointer;transition:.12s}
+  .vchip:hover{color:var(--txt);border-color:var(--accent)}
+  .vchip.on{background:linear-gradient(145deg,var(--accent),#5a3ff0);color:#fff;border-color:transparent;box-shadow:var(--glow)}
+  .vchip .vc-n{opacity:.6;font-weight:500;margin-left:4px;font-size:11px;font-variant-numeric:tabular-nums}
   /* activity status */
   .nowcard{display:flex; align-items:center; gap:16px; flex-wrap:wrap}
   .nowdot{width:10px;height:10px;border-radius:50%;background:#4b5163;flex:0 0 auto;transition:.2s}
@@ -128,6 +135,40 @@ enum BGMPlayerContent {
   .slotrow .slbarwrap{margin-top:7px; height:6px; border-radius:999px; background:#1c1f2c; overflow:hidden}
   .slotrow .slbar{height:100%; border-radius:999px; background:linear-gradient(90deg,var(--accent),#5a3ff0)}
   .slotrow .slsub{font-size:11.5px; color:var(--dim); margin-top:6px; line-height:1.5}
+  /* bgm태깅관리 (액티비티 전용 감사) — NEUTRAL tones only: never red/green traffic-light
+     colors (green is reserved for the mute button); the "BPM 없음" badge is plain gray. */
+  .tagstats{display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:8px; margin-bottom:10px}
+  .tagstat{background:#12141c; border:1px solid var(--line); border-radius:11px; padding:10px 12px}
+  .tagstat .tsv{font-size:18px; font-weight:700; font-variant-numeric:tabular-nums}
+  .tagstat .tsl{font-size:11px; color:var(--dim); margin-top:2px}
+  .tagrow{padding:10px 12px; border-radius:11px; background:#12141c}
+  .tagrow+.tagrow{margin-top:6px}
+  .tagrow .tghead{display:flex; align-items:center; gap:9px; flex-wrap:wrap}
+  .tagrow .tgname{font-size:13.5px; font-weight:700}
+  .tagrow .tgmeta{font-size:11.5px; color:var(--dim); font-variant-numeric:tabular-nums}
+  .tagrow .tgfb{font-size:11px; color:var(--dim); border:1px solid var(--line); border-radius:999px;
+                padding:2px 8px; background:#1c1f2c}
+  .tagrow .tgpurpose{font-size:11.5px; color:var(--dim); margin-top:5px; line-height:1.5}
+  /* Per-track expansion (theme row click). arc badges stay in NEUTRAL hues —
+     slate / indigo / violet / steel-blue only, per the no-traffic-light rule. */
+  .tagrow .tghead{cursor:pointer}
+  .tagrow .tgarcs{font-size:11px; color:var(--dim); font-variant-numeric:tabular-nums; margin-left:auto}
+  .tagrow .tgtracks{display:none; margin-top:8px; border-top:1px solid var(--line); padding-top:6px}
+  .tagrow.open .tgtracks{display:block}
+  .tgtrk{display:flex; align-items:center; gap:8px; padding:4px 6px; border-radius:8px; font-size:11.5px}
+  .tgtrk+.tgtrk{margin-top:2px}
+  .tgtrk .tgtn{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .tgtrk .tgtb{color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap}
+  .tgtrk .tgtier{font-size:10.5px; color:var(--dim); white-space:nowrap}
+  .tgtrk .tgtp{flex:1; min-width:0; font-size:11px; color:var(--dim); text-align:right;
+               overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .tgab{font-size:10.5px; border-radius:999px; padding:1px 8px; border:1px solid var(--line);
+        color:var(--dim); white-space:nowrap}
+  .tgab.intro{color:#9db4dd; border-color:#2e3d5c; background:#182034}     /* steel blue: 기 */
+  .tgab.build{color:#a8a5e8; border-color:#3b3868; background:#1d1c36}     /* indigo: 승 */
+  .tgab.peak{color:#c4a2e4; border-color:#4c3866; background:#251a33}      /* violet: 전 */
+  .tgab.resolve{color:#a3b4c2; border-color:#354350; background:#182028}   /* slate: 결 */
+  .tgab.ambient{color:var(--dim); border-color:var(--line); background:#1c1f2c}
   /* BGM analytics tables (앱별 BGM · 타임라인 로그) */
   .tblwrap{overflow-x:auto}
   table{width:100%; border-collapse:collapse; font-size:13px}
@@ -427,14 +468,14 @@ enum BGMPlayerContent {
       <span style="font-size:12px;color:var(--dim)">분류</span>
       <button class="cmf-btn" id="ac_all" onclick="setActCat('')" title="모든 분류">전체</button>
       <button class="cmf-btn" id="ac_pomodoro" onclick="setActCat('pomodoro')" title="세션 시작·중지, 포모도로 완주, 수확 — 포모도로에 대한 유저 행동">포모도로</button>
-      <button class="cmf-btn" id="ac_goal" onclick="setActCat('goal')" title="목표 추가·큐 결정·상태 변경·스프린트·팀 위임 — 목표설정을 위한 행동">목표설정</button>
+      <button class="cmf-btn" id="ac_goal" onclick="setActCat('goal')" title="목표 추가·큐 결정·상태 변경·루프·팀 위임 — 목표설정을 위한 행동">목표설정</button>
       <button class="cmf-btn" id="ac_bgm" onclick="setActCat('bgm')" title="음원 켬/끔·음소거·폭우·싫어요·곡 전환">BGM</button>
       <button class="cmf-btn" id="ac_equipment" onclick="setActCat('equipment')" title="장비 페이지 조작">장비</button>
       <button class="cmf-btn" id="ac_settings" onclick="setActCat('settings')" title="타임존·폴더 열기·창 전환·업데이트 등 설정 조작">설정</button>
     </div>
     <div class="muted" style="font-size:12px;margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:9px">
       곡 전환 줄의 <b>풀 칩</b>이 그 곡을 고른 규칙입니다 — <b>폭우 리셋</b> &gt; <b>플랜 · 슬롯</b>(요일·시간대) &gt; <b>모드 · 세션모드</b> 순으로 우선합니다.
-      포모도로·스프린트·트래커가 같은 곡을 낸다면 풀 칩이 전부 <b>플랜 · …</b>으로 찍혀 있을 것입니다(플랜 슬롯이 모드보다 우선이라 모드가 선곡에 반영되지 않는 상태).
+      포모도로·루프·트래커가 같은 곡을 낸다면 풀 칩이 전부 <b>플랜 · …</b>으로 찍혀 있을 것입니다(플랜 슬롯이 모드보다 우선이라 모드가 선곡에 반영되지 않는 상태).
     </div>
     <div id="actList"></div>
   </div>
@@ -549,6 +590,7 @@ enum BGMPlayerContent {
             <span>전략 <b id="nowProfile">-</b></span>
             <!-- clickable: opens the plan-map visualization in the in-page modal -->
             <span style="cursor:pointer" title="플랜 맵 전체 보기" onclick="openPlanModal()">계획 <b id="nowPlan">-</b> <span style="opacity:.55">↗</span></span>
+            <span title="전략7 · 지금 선택된 장소·컨디션">장소 <b id="nowVenue">-</b></span>
           </div>
         </div>
       </div>
@@ -556,6 +598,13 @@ enum BGMPlayerContent {
         디렉터가 활동 강도에 맞춰 고른 곡이 여기서 재생되고, 활동이 바뀌면 곡도 자동 전환됩니다.
         <b>재생</b>을 누르면 <b>챌린지가 함께 시작</b>되고(위젯 연동), 메이트의 BGM이 흐릅니다.
         소리가 필요 없을 땐 <b>음소거</b> — 챌린지는 계속 달리고 소리만 꺼집니다.
+      </div>
+      <!-- 전략7 · 장소·컨디션: 지금 있는 곳/몸 상태를 원탭 선언 → 선곡 풀 재편성.
+           마지막 선택은 settings.json에 영속 (재시작·업데이트 생존). -->
+      <div style="margin-top:14px">
+        <p class="lbl" style="margin:0 0 8px">장소·컨디션
+          <span style="font-weight:500;color:var(--dim);font-size:11.5px;letter-spacing:0">— 지금 있는 곳·몸 상태에 맞게 선곡 풀을 재편성합니다 (기본: 2명 사무실 = 자동)</span></p>
+        <div class="venuechips" id="venueChips"><span class="tkempty">불러오는 중…</span></div>
       </div>
       <div class="pdiv"></div>
     </div>
@@ -734,6 +783,18 @@ enum BGMPlayerContent {
       <b>비 소리와 함께</b> 켤 수 있고, 재생 중일 때만 들리며 원본 파일과 .wav 저장에는 영향을 주지 않습니다.
     </div>
   </div>
+
+  <!-- bgm태깅관리 (액티비티 전용 — data-actbottom, 디버그에는 안 보임): 스캔된 라이브러리의
+       테마·BPM 태깅 현황을 읽기 전용으로 감사. GET /api/bgm/list의 themes[] 요약으로 렌더. -->
+  <div class="card" data-actbottom style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <p class="lbl" style="margin:0">bgm태깅관리</p>
+      <button class="btn" onclick="loadTagAudit(true)" title="라이브러리 태깅 현황 새로고침">↻ 새로고침</button>
+    </div>
+    <p class="actnote" style="margin:0 0 12px">스캔된 BGM 라이브러리의 테마·BPM 태깅 현황입니다. BPM이 없는 곡은 기본 110으로 폴백해 선곡 정밀도가 낮아지므로, 배지가 붙은 테마부터 태깅을 보강하세요.</p>
+    <div class="tagstats" id="tagStats"></div>
+    <div id="tagThemes"><div class="tkempty">불러오는 중…</div></div>
+  </div>
 </div>
 
 <!-- 화면 카탈로그 lightbox: 스크린샷 클릭 → 원본 크기 확대 (배경 클릭으로 닫기) -->
@@ -852,6 +913,9 @@ function setMode(m){
   $("scPanel").style.display=(m==='screens')?'':'none';
   // 컨디션맵·히스토리·액션로그·진단·시스템로그·화면카탈로그 모드에선 BGM 재생/디버그 카드를 모두 숨겨 분석에 집중한다.
   document.querySelectorAll('[data-bgmcard]').forEach(el=>{ el.style.display=(m==='map'||m==='history'||m==='actions'||m==='diag'||m==='syslog'||m==='screens')?'none':''; });
+  // 액티비티 전용 하단 카드(bgm태깅관리) — 디버그를 포함한 다른 모든 탭에선 숨긴다.
+  document.querySelectorAll('[data-actbottom]').forEach(el=>el.style.display=(m==='activity')?'':'none');
+  if(m==='activity') loadTagAudit();
   if(m==='map'){ initMap(); if(typeof loadBGMAnalytics==='function') loadBGMAnalytics(); }  // 맵 탭 진입 시 오늘 활동 블록 즉시 갱신(캔버스 폭이 이제 유효)
   if(m==='history') initHistory();
   if(m==='actions') initActions();
@@ -959,6 +1023,34 @@ window.__bgmAutoStart = bgmAutoStart;
 document.addEventListener("pointerdown", bgmAutoStart, true);
 document.addEventListener("keydown", bgmAutoStart, true);
 
+// ---------- 전략7 장소·컨디션 selector ----------
+// One-tap venue/condition pick → POST /api/bgm/venue re-pools selection instantly.
+// The highlighted chip is the source-of-truth current (server echoes it back), and the
+// /api/bgm/now poll below re-syncs the highlight if the pick changes elsewhere.
+let venueCur=null;
+async function loadVenue(){
+  let d=null;
+  try{ const r=await fetch('/api/bgm/venue'); d=await r.json(); }catch(e){ return; }
+  if(!d||!d.venues) return;
+  venueCur=d.current;
+  const host=$("venueChips"); host.innerHTML='';
+  d.venues.forEach(function(v){
+    const b=document.createElement('button');
+    b.className='vchip'+(v.key===d.current?' on':'');
+    b.title=v.desc+(v.themes.length?(' · 테마 '+v.themes.join('·')+' ('+v.tracks+'곡)'):'')
+      +(v.isDefault?' · 기본값':'');
+    b.innerHTML=v.emoji+' '+v.label+(v.themes.length?'<span class="vc-n">'+v.tracks+'</span>':'');
+    b.onclick=async function(){
+      if(v.key===venueCur) return;
+      try{ await fetch('/api/bgm/venue',{method:'POST',headers:{'Content-Type':'application/json'},
+                       body:JSON.stringify({key:v.key})}); }catch(e){}
+      loadVenue();
+    };
+    host.appendChild(b);
+  });
+}
+loadVenue();
+
 // ---------- activity: mirror + follow the widget's BGM (ConditionDirector) ----------
 let _pollFails=0;
 async function refreshNow(){
@@ -993,6 +1085,9 @@ async function refreshNow(){
   $("nowBpm").textContent     = (now.bpm>0)?now.bpm:"-";
   $("nowProfile").textContent = now.profile||"-";
   $("nowPlan").textContent    = now.plan||"-";
+  $("nowVenue").textContent   = now.venue||"-";
+  // 전략7: re-sync the chip highlight if the venue changed out-of-band.
+  if(now.venueKey && venueCur && now.venueKey!==venueCur){ loadVenue(); }
   if(now.id>=0 && now.title){ $("nowTitle").textContent = now.title; }
   else if(now.on){ $("nowTitle").textContent = "BGM 준비 중…"; }
   else { $("nowTitle").textContent = "대기 중 — 활동이 시작되면 곡이 잡힙니다"; }
@@ -1055,6 +1150,85 @@ function renderTracks(){
     row.innerHTML='<span class="tkplay">▶</span><span class="tkname">'+esc(t.title)+'</span>'
                  +(t.bpm?'<span class="tkbpm">'+t.bpm+' BPM</span>':'');
     row.onclick=()=>loadTrack(t, true);
+    host.appendChild(row);
+  });
+}
+
+// ---------- bgm태깅관리 (activity-only audit of the scanned library) ----------
+// Read-only render of /api/bgm/list's themes[] summary (theme · count · BPM range over
+// resolved tracks · arc 미니 분포 · 선곡 목적 · fallback badge). Cached after the first
+// load; the 새로고침 button forces a re-fetch. NO failure banner (workspace rule): on
+// fetch error or an empty library we quietly keep the 불러오는 중… state and only log —
+// the next tab entry with force, i.e. the manual refresh, retries.
+//
+// Clicking a theme row toggles a per-track expansion (default collapsed): each track
+// renders 제목 · BPM ("—" when bpmResolved is false) · arc 배지 (기/승/전/결/앰비언트)
+// · tier · purpose, all from bgm-tags.json joined server-side into tracks[]. When the
+// tags file is absent, arc/purpose arrive as "" and the track rows quietly show only
+// 제목 · BPM — no banner, the theme-level audit keeps working.
+let _tagAudit=null;
+let _tagOpen=null;   // Set of expanded theme names — survives refresh re-renders
+const ARC_KO={intro:'기',build:'승',peak:'전',resolve:'결',ambient:'앰비언트'};
+// "기4·승6·전7·결6" (zeros dropped); an ambient-only theme reads "앰비언트 9".
+function arcMini(a){
+  if(!a) return '';
+  const beats=['intro','build','peak','resolve'].filter(k=>a[k]>0).map(k=>ARC_KO[k]+a[k]);
+  if(!beats.length) return a.ambient>0 ? ('앰비언트 '+a.ambient) : '';
+  if(a.ambient>0) beats.push(ARC_KO.ambient+a.ambient);
+  return beats.join('·');
+}
+async function loadTagAudit(force){
+  if(_tagAudit && !force){ return; }
+  let j=null;
+  try{ const r=await fetch("/api/bgm/list"); j=await r.json(); }
+  catch(e){ console.log("tag audit load failed", e); return; }
+  if(!j || !Array.isArray(j.themes) || !j.themes.length){ console.log("tag audit: empty library"); return; }
+  _tagAudit=j;
+  renderTagAudit(j);
+}
+function renderTagAudit(j){
+  if(!_tagOpen) _tagOpen=new Set();
+  const themes=[...j.themes].sort((a,b)=>b.count-a.count);
+  const total=themes.reduce((s,t)=>s+t.count,0);
+  const resolved=themes.reduce((s,t)=>s+t.resolved,0);
+  const fallback=themes.reduce((s,t)=>s+t.fallback,0);
+  $("tagStats").innerHTML=[[total,"총 곡수"],[resolved,"BPM 해결"],[fallback,"BPM 없음(폴백)"],[themes.length,"테마 수"]]
+    .map(([v,l])=>'<div class="tagstat"><div class="tsv">'+v+'</div><div class="tsl">'+l+'</div></div>').join('');
+  const host=$("tagThemes"); host.innerHTML="";
+  themes.forEach(t=>{
+    // No resolved BPM in the theme (e.g. heavy_rain, beatless ambience) → "—" instead of a range.
+    const range=t.resolved ? (t.minBpm===t.maxBpm ? 'BPM '+t.minBpm : 'BPM '+t.minBpm+'–'+t.maxBpm) : 'BPM —';
+    const open=_tagOpen.has(t.name);
+    const row=document.createElement("div");
+    row.className="tagrow"+(open?" open":"");
+    const mini=arcMini(t.arc);
+    const head=document.createElement("div");
+    head.className="tghead";
+    head.innerHTML='<span class="tgname">'+esc(t.name)+'</span>'
+      +'<span class="tgmeta">'+t.count+'곡 · '+range+'</span>'
+      +(t.fallback>0 ? '<span class="tgfb">BPM 없음 '+t.fallback+'곡</span>' : '')
+      +(mini ? '<span class="tgarcs">'+mini+'</span>' : '');
+    // Toggle expansion; re-render keeps the cheap "build only what's open" model.
+    head.onclick=()=>{ open?_tagOpen.delete(t.name):_tagOpen.add(t.name); renderTagAudit(_tagAudit||j); };
+    row.appendChild(head);
+    if(t.purpose){
+      const p=document.createElement("div"); p.className="tgpurpose";
+      p.innerHTML=esc(t.purpose); row.appendChild(p);
+    }
+    if(open){
+      const box=document.createElement("div"); box.className="tgtracks";
+      (j.tracks||[]).filter(x=>x.theme===t.name).forEach(x=>{
+        const tr=document.createElement("div"); tr.className="tgtrk";
+        // Untagged track (no tags file / no entry): quietly just 제목 · BPM.
+        tr.innerHTML='<span class="tgtn">'+esc(x.title)+'</span>'
+          +'<span class="tgtb">'+(x.bpmResolved?x.bpm+' BPM':'—')+'</span>'
+          +(x.arc ? '<span class="tgab '+esc(x.arc)+'">'+(ARC_KO[x.arc]||esc(x.arc))+'</span>' : '')
+          +(x.tier ? '<span class="tgtier">'+esc(x.tier)+'</span>' : '')
+          +(x.purpose ? '<span class="tgtp">'+esc(x.purpose)+'</span>' : '');
+        box.appendChild(tr);
+      });
+      row.appendChild(box);
+    }
     host.appendChild(row);
   });
 }
@@ -2459,20 +2633,20 @@ const ACT_LABEL={ sessionStart:'세션 시작', sessionStop:'세션 중지', mod
   'goal.reopen':'다시 열기', 'goal.title':'제목 수정', 'goal.task':'부분과제 추가',
   'goal.energy':'에너지 설정', 'goal.tokens':'토큰 기록', 'goal.value':'가치 설정',
   'goal.priority':'우선순위 변경', 'goal.target':'목표일 설정', 'goal.completed':'완료 처리',
-  'goal.sprint':'스프린트 배정', 'goal.bump':'범프', 'goal.link':'목표 연결',
+  'goal.sprint':'루프 배정', 'goal.bump':'범프', 'goal.link':'목표 연결',
   'goal.unlink':'연결 해제', 'goal.connect':'세션 연결(파일)', 'goal.session.link':'세션 연결',
   'goal.session.unlink':'세션 해제', 'goal.definition.save':'정의 저장',
   'goal.chat.send':'채팅 전송', 'goal.chat.reset':'채팅 리셋', 'goal.chat2.say':'팀 채팅',
   'goal.chat2.stop':'팀 채팅 중단', 'goal.aiChat':'AI 채팅', 'goal.aiSearch':'AI 검색(구)',
   'goal.cli.start':'CLI 시작', 'goal.cli.stop':'CLI 중단',
   'chat.send':'채팅 전송', 'chat.reset':'채팅 리셋', 'team.delegate':'팀 위임',
-  'sprint.create':'스프린트 생성', 'sprint.update':'스프린트 수정',
-  'sprint.delete':'스프린트 삭제', 'sprint.cleanup':'스프린트 정리',
+  'sprint.create':'루프 생성', 'sprint.update':'루프 수정',
+  'sprint.delete':'루프 삭제', 'sprint.cleanup':'루프 정리',
   'settings.timezone':'타임존 변경', 'settings.reveal':'폴더 열기',
   'window.mode':'창 전환', 'bgm.plan':'플랜 저장', 'bgm.stats.reset':'통계 리셋',
   'skills.summary':'스킬 요약', 'skills.folder':'스킬 폴더', 'skills.folder.pick':'스킬 폴더 선택',
   'skills.reveal':'스킬 폴더 열기', 'agents.reveal':'에이전트 폴더 열기' };
-const ACT_MODE={ pomodoro:'25분', sprint:'스프린트', unlimited:'트래커' };
+const ACT_MODE={ pomodoro:'25분', sprint:'루프', unlimited:'트래커' };
 // 분류(도메인 축) — 서버가 cat을 안 준 옛 라인은 액션 이름으로 유도(서버의
 // ActionLog.defaultCategory와 같은 규칙).
 const ACT_CAT_LABEL={ pomodoro:'포모도로', goal:'목표설정', bgm:'BGM', equipment:'장비', settings:'설정', other:'기타' };

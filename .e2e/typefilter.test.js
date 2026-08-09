@@ -1,4 +1,4 @@
-// E2E for the 유형(type) filter — 부모/자식/task multi-select next to 보기·스프린트.
+// E2E for the 유형(type) filter — 부모/자식/task multi-select next to 보기·루프.
 // Extracts passesTypeFilter + taskRows from the REAL DashboardContent.swift source and
 // asserts: (1) empty selection = 모두 (goals as before, no task rows), (2) parent/child
 // gating, (3) 'task' keeps task-bearing goals as context and renders their rows,

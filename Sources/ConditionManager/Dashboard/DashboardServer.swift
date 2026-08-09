@@ -117,22 +117,55 @@ final class DashboardServer {
         }
         self.onReady = onReady
         guard listener == nil else { return }
+        // Prefer the port of the LAST successful bind (dashboard.port.last). A stable port
+        // means a stable webview origin (http://127.0.0.1:<port>) across restarts, which is
+        // what keeps every page's localStorage alive through an update relaunch — the 메모장
+        // crash draft above all. Fully dynamic ports silently orphaned the previous origin's
+        // data on every relaunch (191 stranded origins observed on one machine, 2026-08-06).
+        startListener(preferring: Self.readLastPort())
+    }
 
+    private func startListener(preferring preferred: UInt16?) {
         let params = NWParameters.tcp
-        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: .any)
-        guard let l = try? NWListener(using: params) else { return }
+        var wanted: UInt16?
+        if let p = preferred, p != 0, !Self.isListening(port: p),
+           let np = NWEndpoint.Port(rawValue: p) {
+            wanted = p
+            params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: np)
+        } else {
+            params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: .any)
+        }
+        guard let l = try? NWListener(using: params) else {
+            // Could not even construct with the preferred port — take any free one.
+            if wanted != nil { startListener(preferring: nil) }
+            return
+        }
 
         l.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
-            if case .ready = state, let p = l.port?.rawValue {
-                self.port = p
-                // Publish the (dynamic) port so external tooling — notably the
-                // Claude Code session hooks — can reach the loopback API without
-                // guessing. Plain text, single integer, overwritten each launch.
-                self.publishPort(p)
-                self.startPortGuard()
-                self.onReady?(p)
-                self.onReady = nil
+            switch state {
+            case .ready:
+                if let p = l.port?.rawValue {
+                    self.port = p
+                    // Publish the port so external tooling — notably the Claude Code
+                    // session hooks — can reach the loopback API without guessing.
+                    // Plain text, single integer, overwritten each launch.
+                    self.publishPort(p)
+                    Self.writeLastPort(p)
+                    self.startPortGuard()
+                    self.onReady?(p)
+                    self.onReady = nil
+                }
+            case .failed:
+                // The preferred port raced into use between the probe and the bind —
+                // fall back to a dynamic port rather than dying without a server.
+                if wanted != nil {
+                    l.cancel()
+                    self.listener = nil
+                    self.startListener(preferring: nil)
+                }
+            default:
+                break
             }
         }
         l.newConnectionHandler = { [weak self] conn in self?.handle(conn) }
@@ -157,6 +190,24 @@ final class DashboardServer {
     // MARK: - dashboard.port publication
 
     private static var portFileURL: URL { AppPaths.base.appendingPathComponent("dashboard.port") }
+
+    // dashboard.port.last — the port of the last successful bind. Unlike dashboard.port it is
+    // NEVER removed on stop: it is the next launch's bind preference, not a liveness signal.
+    // Dev builds keep a separate file so a coexisting dev/prod pair don't fight over one port
+    // (the loser of a fight would just fall back to dynamic, but then its origin churns again).
+    private static var lastPortFileURL: URL {
+        AppPaths.base.appendingPathComponent(AppPaths.isDev ? "dashboard.port.last-dev"
+                                                           : "dashboard.port.last")
+    }
+
+    private static func readLastPort() -> UInt16? {
+        guard let s = try? String(contentsOf: lastPortFileURL, encoding: .utf8) else { return nil }
+        return UInt16(s.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private static func writeLastPort(_ p: UInt16) {
+        try? String(p).write(to: lastPortFileURL, atomically: true, encoding: .utf8)
+    }
 
     private func publishPort(_ p: UInt16) {
         try? String(p).write(to: Self.portFileURL, atomically: true, encoding: .utf8)
@@ -343,14 +394,20 @@ final class DashboardServer {
                                       || path.hasPrefix("/api/cli/sessions") || path.hasPrefix("/api/skills")
                                       || path.hasPrefix("/api/agents")
                                       || path.hasPrefix("/history.json") || path.hasPrefix("/tokens.json")
+                                      || path.hasPrefix("/tokens-sessions.json")
+                                      || path.hasPrefix("/tokens-detail.json")
                                       || path.hasPrefix("/workers.json")
                                       || path.hasPrefix("/api/bgm/list") || path.hasPrefix("/api/bgm/now")
                                       || path.hasPrefix("/api/bgm/stats") || path.hasPrefix("/api/bgm/plan")
                                       || path.hasPrefix("/api/bgm/slot-scores")
+                                      || path.hasPrefix("/api/bgm/venue")
                                       || path.hasPrefix("/api/session/state") || path.hasPrefix("/api/equipment")
                                       || path.hasPrefix("/api/settings/paths")
                                       || path.hasPrefix("/api/settings/timezone")
+                                      || path.hasPrefix("/api/settings/debug-buttons")
+                                      || path.hasPrefix("/api/memo")
                                       || path.hasPrefix("/api/settings/diag-hosts")
+                                      || path.hasPrefix("/api/settings/gateway")
                                       || path.hasPrefix("/api/debug/diag/list")
                                       || path.hasPrefix("/api/debug/view-trace/list")
                                       || path.hasPrefix("/api/debug/ime-log/list")
@@ -358,6 +415,9 @@ final class DashboardServer {
                                       || path.hasPrefix("/api/debug/screens/sitemap")
                                       || path.hasPrefix("/api/update/check")
                                       || path.hasPrefix("/api/folders")
+                                      || path.hasPrefix("/api/hero")
+                                      || path.hasPrefix("/api/slack/items")
+                                      || path.hasPrefix("/api/slack/actions")
                                       || path.hasPrefix("/api/actions")) {
             // Per-goal chat, the raw core/detail definition text, the goal's linked-session
             // list, the recent-session picker feed (all keyed by ?seq=), and the 히스토리
@@ -377,7 +437,7 @@ final class DashboardServer {
         } else if path.hasPrefix("/data.json") {
             send(conn, status: "200 OK", contentType: "application/json; charset=utf-8",
                  body: Data(self.data().utf8), extra: "")
-        } else if method == "GET" && (path.hasPrefix("/transcript") || path.hasPrefix("/breakdown") || path.hasPrefix("/worker") || path.hasPrefix("/cron") || path.hasPrefix("/goal") || path.hasPrefix("/bgm-player") || path.hasPrefix("/bgm-plan") || path.hasPrefix("/bgm-timeline-test") || path.hasPrefix("/session-continue-test") || path.hasPrefix("/lounge-break-test") || path.hasPrefix("/equipment")) {
+        } else if method == "GET" && (path.hasPrefix("/transcript") || path.hasPrefix("/breakdown") || path.hasPrefix("/worker") || path.hasPrefix("/cron") || path.hasPrefix("/goal") || path.hasPrefix("/bgm-player") || path.hasPrefix("/bgm-plan") || path.hasPrefix("/bgm-timeline-test") || path.hasPrefix("/session-continue-test") || path.hasPrefix("/lounge-break-test") || path.hasPrefix("/equipment") || path.hasPrefix("/slack-translate")) {
             if let pageHTML = self.page(path) {
                 send(conn, status: "200 OK", contentType: "text/html; charset=utf-8",
                      body: Data(pageHTML.utf8), extra: "")

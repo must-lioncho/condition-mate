@@ -69,17 +69,23 @@ enum RelatedGoalSearch {
     // Distinctive content tokens. Splits on non-alphanumerics (keeps Hangul and English
     // words whole), drops function words and generic verbs, and — because Korean glues
     // particles onto nouns ("스크립트도", "작성을") — also emits a particle-stripped stem.
-    private static func extractKeywords(_ text: String) -> [String] {
+    // Not private: `ParentSuggest` scores goal titles with the SAME tokenizer, so that the
+    // two features agree on what a keyword is instead of drifting into two dialects.
+    static func extractKeywords(_ text: String) -> [String] {
         let stop: Set<String> = [
             // function words
             "할거야", "거야", "있거든", "있었고", "있어", "만든게", "만든것", "그것을", "이것을", "저것을",
             "그리고", "하지만", "이제", "지금", "다시", "오늘", "내일", "우리", "저는", "제가",
             "위해", "위한", "대해", "대한", "관련", "일전", "이거", "그거", "저거", "여기", "거기", "그때",
             "그것", "이것", "저것", "부터", "까지",
+            // Demonstrative adverbs: pure pointing words. Rare enough corpus-wide to look
+            // "distinctive" to an IDF score ("이렇게" occurred in exactly two goals), which is
+            // how an unrelated goal gets proposed as a parent on the strength of one adverb.
+            "이렇게", "그렇게", "저렇게",
             // generic verbs/actions — too common to be a retrieval signal
             "사용해서", "사용해", "사용", "만들거야", "만들어", "만들었는데", "만들었었고", "만들기", "만들",
             "하려고해", "하려고", "했던것", "했던", "동일하게", "동일한", "동일", "작성해", "작성을", "작성",
-            "하기", "해야", "해서", "하는", "진행", "확인", "정리", "준비"
+            "하기", "해야", "해서", "하는", "진행", "확인", "정리", "준비", "시작", "종료"
             // NOTE: "일일" is intentionally NOT a stopword — it is load-bearing for daily-report
             // routines ("일일리포트"), where dropping it silently loses the tail keyword.
         ]

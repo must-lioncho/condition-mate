@@ -550,6 +550,64 @@ Note (KO): SPEC.html의 P1 섹션은 실제 스크린샷이 아니라 라벨이 
   highway/unknown-type rejection). Export cleanliness is structural: the `$("render")` offline
   graph builds music nodes only.
   **STATUS: PASS — node stub suite 21/21 (2026-07-16, recorded-loop replacement).**
+- **BGMACT-8 — 액티비티 탭 하단 "bgm태깅관리" 감사 섹션.**
+  EN: When the 액티비티 sub-tab is shown, a bottom card "bgm태깅관리" renders a read-only audit of
+  the scanned BGM library from `GET /api/bgm/list`: total tracks, BPM-resolved count,
+  BPM-fallback(110) count, theme count, and a per-theme list (name · track count · BPM min–max ·
+  선곡 목적 문구 · a neutral badge "BPM 없음 N곡" when any track fell back). Card is activity-only
+  (`data-actbottom`, hidden in 디버그). No traffic-light colors; no failure banner (empty → quiet
+  loading state). `/api/bgm/list` carries theme+bpmResolved per track and a themes[] summary with
+  server-owned purpose copy. Each track additionally carries arc/tier/purpose joined from
+  `<musicRoot>/bgm-tags.json` (app read-only via `BGMTags.swift`, reloaded with every library
+  rescan; the path relative to the music root — theme folder + "/" + filename — is the join key;
+  arc ∈ intro/build/peak/resolve/ambient shown as 기/승/전/결/앰비언트; tier ∈
+  가볍게/라운지/집중/초집중, ambient tracks carry none). `/api/bgm/list` tracks[] gains
+  arc/tier/purpose and themes[] gains an `arc` distribution object
+  `{intro,build,peak,resolve,ambient}` (existing fields unchanged, backward compatible). Theme
+  rows in the bgm태깅관리 card expand on click (default collapsed, click again to close) to
+  per-track rows (title · BPM, "—" when unresolved · arc badge in neutral
+  slate/indigo/violet/steel-blue hues · tier · purpose). Theme heads show an arc mini
+  distribution (zeros dropped, e.g. 기4·승6·전7·결6; ambient-only reads 앰비언트 9); heavy_rain
+  tracks are all ambient. If the tags file is missing, per-track fields are quietly empty (title ·
+  BPM only) and the theme audit still works.
+  KO: 액티비티 탭에서 맨하단 "bgm태깅관리" 카드가 `GET /api/bgm/list` 기반으로 스캔된 BGM
+  라이브러리를 읽기 전용 감사로 표시한다 — 총 곡수, BPM 해결 곡수, 110 폴백 곡수, 테마 수,
+  테마별(이름·곡수·BPM 범위·선곡 목적·폴백 시 중립 배지). 디버그 탭엔 안 보임. 신호등 색 금지,
+  실패 배너 금지. 각 트랙은 `<musicRoot>/bgm-tags.json`(앱 읽기 전용, 상대경로=조인 키,
+  라이브러리 재스캔 시 함께 재로드) 기반 arc(기/승/전/결/앰비언트)·tier(가볍게/라운지/집중/초집중,
+  앰비언트는 없음)·purpose(곡별 선곡 목적)를 갖는다. 테마 행 클릭 시 곡별 행 펼침(기본 접힘,
+  재클릭 닫힘) — 제목·BPM(미해결 "—")·arc 배지(중립 hue)·tier·purpose; 테마 행에는 arc 미니
+  분포(0 생략, 앰비언트만이면 "앰비언트 N") 표기. 태그 파일 부재 시 곡별 필드만 조용히 비고
+  테마 감사는 정상 동작.
+  Verify: `swift build`; `data-actbottom` card + setMode activity gate in
+  `BGMPlayerContent.swift`; `bgmListJSON()` has theme/bpmResolved/themes[]; headless open activity
+  tab → 4 summary stats + ~20 theme rows, heavy_rain row shows "BPM 없음 9곡" badge.
+  `BGMTags.swift` exists and is read-only (no write/seed path); `bgm/bgm-tags.json` has 260
+  entries all joining to on-disk files; `/api/bgm/list` tracks[] carries arc/tier/purpose and
+  themes[] carries the arc distribution; `.e2e/tagaudit.test.js` (node stub over the real
+  extracted `arcMini`/`loadTagAudit`/`renderTagAudit` blocks) — theme expand → per-track rows +
+  arc badges, collapse, quiet failure, and a hex-hue scan proving no traffic-light colors.
+  **STATUS: PASS (2026-07-24, manager-qa — full pass incl. per-track arc/tier/purpose extension).**
+  Theme-level pass (same date, see history) reconfirmed unchanged. Per-track extension verified
+  end-to-end: `bgm/bgm-tags.json` (260 entries) integrity-checked against an on-disk walk of
+  `bgm/` — 260/260 paths join with 0 missing/0 duplicate/0 extra (NFC/NFD-safe comparison), every
+  `arc` value is a valid enum member, `heavy_rain`'s 9 tracks are all `ambient` with no `tier` key,
+  every `purpose` is non-empty with no template-leftover pattern (e.g. no bare "기·집중 — "), and
+  every non-`heavy_rain` theme carries ≥2 distinct arc kinds (checked all 20 themes; smallest
+  themes china/peace/last_goal actually show 3 kinds each, no exception needed). `swift build`
+  green (touched `BGMTags.swift` to defeat cache). Isolated `CM_DEV=1` instance scanning the
+  repo's real `bgm/` folder: `curl /api/bgm/list` — all 260 tracks carry non-empty `arc`
+  (260/260 join success, confirming `BGMTags.swift`'s exact-string path lookup already handles
+  this on-disk library without any Unicode normalization mismatch — no fix needed), all 260 also
+  carry the unchanged legacy `id/title/bpm/theme/bpmResolved` (no regression), every `themes[].arc`
+  distribution sums to that theme's `count` across all 20 themes, and `heavy_rain`'s `arc` is
+  exactly `{intro:0,build:0,peak:0,resolve:0,ambient:9}`. Served `/bgm-player` HTML contains the
+  expanded-row markup (`.tgtracks`, `.tgtrk`, `.tgab.intro/.build/.peak/.resolve/.ambient` with the
+  documented steel-blue/indigo/violet/slate/gray hues) and the `data-actbottom` activity-only gate
+  is unchanged. Grepped the full page for red/green traffic-light hex/keywords — none found. Ran
+  `.e2e/tagaudit.test.js` — 34/34 passed (theme expand → per-track rows + arc badges, collapse,
+  untagged-track fallback to title/BPM only, quiet fetch-failure path, no traffic-light hues).
+  Cleaned up the isolated instance and temp files after.
 
 ### Intent audit — P3
 EN: BGMACT-2..5 — code matches intent, PASS as previously recorded. `_pollFails>=1` confirmed by

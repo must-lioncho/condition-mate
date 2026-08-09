@@ -1,7 +1,8 @@
 // E2E for the 드로우 plugin (screen-drawing overlay, Sources/Draw), bound to the REAL
 // sources. Asserts:
 //   1) package wiring: a standalone Draw target exists and ConditionManager depends on it
-//   2) engine contract: LEFT-side keycodes (⌥=58 draw, ⌃=59 wipe) polled via
+//   2) engine contract: layout-independent keycodes (left ⌥=58 draw, fn=63 wipe —
+//      wipe moved off left ⌃ because it collides with the screenshot chords) polled via
 //      CGEventSource.keyState — no event tap / no Accessibility permission — and the
 //      overlay window is click-through on every Space
 //   3) plugin registration: "draw" is a toggle builtin, installed out of the box, and
@@ -47,23 +48,25 @@ check('app depends on Draw', /dependencies: \["WebCLI", "GUI", "Draw"\]/.test(PK
 
 // 2) engine contract — left-side keys, permissionless polling, click-through overlay
 check('left ⌥ keycode 58', CTRL.includes('leftOptionKey: CGKeyCode = 58'), true);
-check('left ⌃ keycode 59', CTRL.includes('leftControlKey: CGKeyCode = 59'), true);
+check('fn keycode 63 (wipe)', CTRL.includes('fnKey: CGKeyCode = 63'), true);
 check('polls keyState (no event tap)',
       CTRL.includes('CGEventSource.keyState(.combinedSessionState'), true);
 check('no Accessibility-needing monitor',
       /addGlobalMonitorForEvents|CGEvent\.tapCreate/.test(CTRL + WIN), false);
-check('wipe fires on ⌃ down edge only',
-      CTRL.includes('if controlDown && !prevControlDown { clear() }'), true);
+check('wipe fires on fn down edge only',
+      CTRL.includes('if fnDown && !prevFnDown { clear() }'), true);
 check('overlay is click-through', WIN.includes('ignoresMouseEvents = true'), true);
 check('overlay follows all Spaces', WIN.includes('.canJoinAllSpaces'), true);
 check('overlay never takes key', WIN.includes('override var canBecomeKey: Bool { false }'), true);
 
-// 2b) text mode — double left-⌘ writes 30pt text; only the editor window takes key
+// 2b) text mode — triple left-⌘ writes 30pt text; only the editor window takes key
 check('left ⌘ keycode 55', CTRL.includes('leftCommandKey: CGKeyCode = 55'), true);
-check('double-tap window 0.4s', CTRL.includes('cmdDoubleTapWindow: TimeInterval = 0.4'), true);
+check('tap window 0.4s', CTRL.includes('cmdTapWindow: TimeInterval = 0.4'), true);
+check('three taps required', CTRL.includes('cmdTapsRequired = 3'), true);
 check('text size defaults to 30pt', CTRL.includes('textFontSize: CGFloat = 30'), true);
-check('double-tap toggles the editor',
-      /lastCommandDownAt\) <= Self\.cmdDoubleTapWindow[\s\S]*?toggleTextEditor\(at: NSEvent\.mouseLocation\)/.test(CTRL), true);
+check('triple-tap toggles the editor',
+      /commandTapCount >= Self\.cmdTapsRequired[\s\S]*?toggleTextEditor\(at: NSEvent\.mouseLocation\)/.test(CTRL), true);
+check('a long gap resets the tap chain', CTRL.includes('commandTapCount = 1'), true);
 check('commit stamps text on the canvas',
       CTRL.includes('canvas.addText(text, at: local, size: textFontSize)'), true);
 check('wipe also discards an open editor', /public func clear\(\) \{\s*\n\s*textEditor\?\.cancelNow\(\)/.test(CTRL), true);

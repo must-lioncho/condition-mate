@@ -48,6 +48,10 @@ extension AppDelegate {
         m.bpmRange = library.bpmRange
 
         m.bgmWindowEnabled = Settings.shared.bgmWindowEnabled
+        m.drawInstalled = pluginStore.isConnected("draw")
+        m.drawEnabled = Settings.shared.drawEnabled
+        m.cameraGuardInstalled = pluginStore.isConnected("camera-guard")
+        m.cameraGuardOn = Settings.shared.cameraGuardOn
         m.menuBarModeIsSports = menuBarMode == .sports
         m.windowOpen = appWindowIsOpen
         m.windowModeIsBGM = appWindowMode == .bgm

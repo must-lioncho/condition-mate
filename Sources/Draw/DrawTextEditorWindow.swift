@@ -1,6 +1,6 @@
 import AppKit
 
-// Floating single-line text entry summoned by a quick double-tap of LEFT COMMAND —
+// Floating single-line text entry summoned by a quick triple-tap of LEFT COMMAND —
 // the only Draw window that ever takes key focus (it's our own window receiving the
 // keystrokes, so text input needs no Accessibility permission either). Return commits
 // the text onto the overlay canvas, Escape cancels, and losing focus commits whatever
