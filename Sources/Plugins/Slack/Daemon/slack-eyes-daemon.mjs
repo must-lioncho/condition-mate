@@ -90,6 +90,10 @@
 // kickstarts this agent itself; it only bothers the user for the states restarting
 // can't fix. Keep the pre-exit postHealth() calls — without them the app sees only
 // silence and retries forever.
+// 프로세스가 살아 있다고 소켓이 살아 있는 것은 아니다 — 죽은 WebSocket이 close를
+// 안 보내면 하트비트는 계속 나가면서 이벤트만 0건이 된다. 그래서 socket:'connected'
+// 대신 프레임 수신(frameAt)으로 판정하고, 무수신이 길면 스스로 다시 개통한다
+// (socketStale/rotateSocket 참고).
 //
 // Zero npm dependencies — Node 22 native fetch + WebSocket.
 
@@ -205,7 +209,7 @@ async function ping(status, why, effect) {
 const health = {
   pid: process.pid,
   startedAt: Math.floor(Date.now() / 1000),
-  socket: 'starting', // starting | connecting | connected | disabled
+  socket: 'starting', // starting | connecting | connected | stale(조용히 죽어 재개통 중) | disabled
   failures: 0, // 연속 연결 실패 횟수 (2회 이상 + netError → 앱이 '차단'으로 안내)
   netError: '', // slack.com에 닿지 못한 마지막 이유 (네트워크·VPN·방화벽)
   authError: '', // 슬랙이 토큰을 거부한 마지막 이유
@@ -219,6 +223,10 @@ const health = {
   pollFound: 0, // 마지막 폴링이 새로 수집한 건수
   pollLimited: false, // 슬랙 rate limit에 걸려 중간에 끊겼는지
   pollError: '', // 대화 목록 자체가 실패한 사유 (보통 토큰 스코프 부족)
+  // 소켓이 "조용히 죽는" 경우를 앱에 드러내기 위한 값들 (아래 socketStale 참고).
+  frameAt: 0, // 소켓에서 마지막으로 무언가(hello·이벤트·disconnect) 받은 시각
+  rotations: 0, // 조용한 소켓을 감지해 다시 개통한 횟수
+  idleLimit: 0, // 이 데몬이 쓰는 무수신 상한(초) — 앱이 자기 백스톱을 이보다 늦게 잡는다
 };
 
 async function postHealth() {
@@ -888,6 +896,7 @@ async function activityPoll() {
   let found = 0;
   let scanned = 0;
   let limited = false;
+  let newest = 0; // 폴링이 새로 주운 메시지 중 가장 최근 — 소켓 교차검증의 증거
   for (const conv of convs) {
     try {
       const res = await slack('conversations.history', {
@@ -897,7 +906,11 @@ async function activityPoll() {
       });
       scanned++;
       const msgs = res.messages || [];
-      for (const m of msgs) if (await considerMessage(conv, m, since, kinds)) found++;
+      for (const m of msgs) {
+        if (!(await considerMessage(conv, m, since, kinds))) continue;
+        found++;
+        newest = Math.max(newest, Math.floor(Number(m.ts) || 0));
+      }
       // history는 스레드 답글을 돌려주지 않는다 — 커서 이후에 답글이 달린 스레드만
       // 골라 replies로 확인한다 (대화당 상한 THREADS_PER_CONV).
       const hot = msgs
@@ -911,7 +924,9 @@ async function activityPoll() {
           limit: 30,
         });
         for (const m of rep.messages || []) {
-          if (await considerMessage(conv, m, since, kinds)) found++;
+          if (!(await considerMessage(conv, m, since, kinds))) continue;
+          found++;
+          newest = Math.max(newest, Math.floor(Number(m.ts) || 0));
         }
       }
     } catch (e) {
@@ -931,6 +946,13 @@ async function activityPoll() {
     saveCursor(now); // 끝까지 훑었을 때만 커서를 전진시킨다
   }
   setHealth({ pollAt: now, pollConvs: scanned, pollFound: found, pollLimited: limited, pollError: '' });
+  // 실시간 구독이 살아 있었다면(realtimeAt>0) 폴링이 그보다 새 메시지를 주울 일이
+  // 없다 — 주웠다면 소켓이 그 이벤트를 못 받았다는 뜻이다. 무수신 상한을 기다리지
+  // 않고 다음 워치독 틱에서 바로 재개통한다 (socketStale 참고).
+  if (newest && health.realtimeAt && newest > health.realtimeAt) {
+    missedRealtimeAt = newest;
+    log(`실시간이 놓친 메시지를 폴링이 주움 (ts ${newest} > realtimeAt ${health.realtimeAt}) — 소켓 재개통 예정`);
+  }
   if (found) {
     log(`폴링: ${scanned}개 대화에서 ${found}건 새로 수집`);
     ping('ok', '알림 폴링', `${found}건 수집 (멘션·DM·전체호출)`);
@@ -1245,7 +1267,89 @@ async function backfillDecisions() {
 let ws = null;
 let backoff = 1;
 
+// ---- 조용히 죽는 소켓 --------------------------------------------------------
+// WebSocket이 죽어도 close/error가 안 오는 경우가 있다 (경로가 사라진 half-open,
+// 프록시가 조용히 끊음). 그러면 프로세스는 멀쩡히 살아 30초 하트비트를 계속 보내고
+// socket:'connected'도 그대로라, 앱은 정상으로 보이는데 이벤트는 0건이 된다
+// (2026-08-16: realtimeAt이 40분 낡은 채 socket:'connected', 그 사이 👀 제거 26건이
+// 데몬 로그에 하나도 안 남았다. kickstart 하자마자 2건이 밀려 들어왔다).
+//
+// 그래서 "붙어 있다"를 믿지 않고 프레임 수신으로 판정한다:
+//   1) 무수신 상한 — 어떤 프레임도 SOCKET_IDLE_LIMIT_MS 동안 안 오면 다시 개통한다.
+//      슬랙은 조용한 워크스페이스에서 앱 레벨 프레임을 안 보내고 Node의 기본
+//      WebSocket은 ping 프레임을 JS로 올려주지 않는다 — 즉 "조용함"만으로는 죽은
+//      소켓과 한가한 워크스페이스를 구분할 수 없다. 그래서 판별하려 들지 말고 그냥
+//      다시 개통한다. Socket Mode는 원래 서버가 주기적으로 재연결을 요구하는
+//      프로토콜이라 재개통은 정상 동작이고, 비용은 apps.connections.open 1회다.
+//      부수 효과로 hello 프레임이 오므로 frameAt이 항상 이 주기 안에서 갱신된다 —
+//      앱은 그 사실에 기대어 "frameAt이 너무 낡음 = 데몬의 자가 복구가 안 돌고 있음"
+//      이라는 백스톱을 안전하게 걸 수 있다.
+//   2) 폴링 교차검증 — 실시간 구독이 있는데(realtimeAt>0) 폴링이 realtimeAt보다 새
+//      메시지를 주웠다면, 그건 소켓이 그 이벤트를 못 받았다는 직접 증거다. 상한을
+//      기다리지 않고 바로 개통한다.
+// 두 경로 모두 30분 catch-up보다 훨씬 빠르고, 개통 직후 catch-up을 한 번 돌려
+// 눈감고 있던 구간을 즉시 메운다.
+const SOCKET_IDLE_LIMIT_MS = 10 * 60_000; // 프레임 무수신 상한
+const SOCKET_CHECK_MS = 30_000; // 판정 주기 (하트비트와 같은 리듬)
+const SOCKET_ROTATE_GAP_MS = 10 * 60_000; // 재개통 최소 간격 (재개통 폭주 방지)
+// 재개통해도 소켓이 안 붙는 상태가 이어지면 프로세스째 갈아엎는다 — undici가 물린
+// 경우처럼 같은 프로세스 안에서는 못 고치는 것들이 있다. launchd가 10초 뒤 되살린다.
+const SOCKET_MAX_FAILURES = 6;
+
+let lastFrameAt = Date.now(); // 마지막 프레임 수신 (ms)
+let lastRotateAt = 0;
+let missedRealtimeAt = 0; // 폴링이 잡은, 실시간이 놓친 메시지의 ts (교차검증 증거)
+let wsGen = 0; // 소켓 세대 — 버린 소켓의 뒤늦은 onclose가 새 연결을 또 만들지 않게
+let catchUpAfterOpen = false;
+
+// 지금 소켓이 죽은 것으로 봐야 하는가. 사유 문자열(빈 문자열 = 정상).
+function socketStale(nowMs) {
+  if (health.socket !== 'connected') return ''; // 붙는 중이면 기존 백오프에 맡긴다
+  // 실시간 이벤트를 한 번도 못 받은 워크스페이스(구독 없음)는 폴링이 정상 경로다 —
+  // 그쪽 수집을 소켓이 놓친 증거로 읽으면 영원히 재개통만 하게 된다.
+  if (health.realtimeAt && missedRealtimeAt > health.realtimeAt) {
+    return '폴링이 실시간에 안 온 메시지를 주움';
+  }
+  const idle = nowMs - lastFrameAt;
+  if (idle >= SOCKET_IDLE_LIMIT_MS) return `${Math.round(idle / 60_000)}분간 프레임 무수신`;
+  return '';
+}
+
+function markFrame() {
+  lastFrameAt = Date.now();
+  health.frameAt = Math.floor(lastFrameAt / 1000); // 30초 주기 보고에 실려 나간다
+}
+
+// 소켓을 버리고 다시 개통한다. 기존 소켓의 콜백은 세대 검사로 무력화되므로 close가
+// 영영 안 와도(=이 문제의 원인) 연결이 하나만 남는다.
+function rotateSocket(why) {
+  const now = Date.now();
+  if (now - lastRotateAt < SOCKET_ROTATE_GAP_MS) return false;
+  lastRotateAt = now;
+  missedRealtimeAt = 0;
+  health.rotations++;
+  wsGen++; // 지금 소켓은 이 시점부터 남의 것 — 콜백이 와도 무시된다
+  log(`소켓 재개통 (${why})`);
+  setHealth({ socket: 'stale' }); // 즉시 보고 — 앱 칩이 '재연결 중'으로 내려간다
+  try {
+    ws?.close();
+  } catch {}
+  ws = null;
+  backoff = 1;
+  catchUpAfterOpen = true; // 눈감고 있던 구간은 30분 주기를 기다리지 않고 바로 메운다
+  markFrame(); // 다음 판정은 새 소켓 기준으로
+  connect();
+  return true;
+}
+
+function socketWatchdog() {
+  if (existsSync(DISABLED_FILE)) return;
+  const why = socketStale(Date.now());
+  if (why) rotateSocket(why);
+}
+
 async function connect() {
+  const gen = ++wsGen; // 이 호출이 만드는 소켓의 세대
   if (existsSync(DISABLED_FILE)) {
     log('disabled file present — idling');
     setHealth({ socket: 'disabled' });
@@ -1254,15 +1358,28 @@ async function connect() {
   }
   try {
     const open = await slack('apps.connections.open', {}, APP_TOKEN);
+    if (gen !== wsGen) return; // 기다리는 사이 재개통됐다 — 이 소켓은 버린다
     ws = new WebSocket(open.url);
     ws.onopen = () => {
+      if (gen !== wsGen) return;
       backoff = 1;
+      markFrame();
       log('socket connected');
       ping('ok', '소켓 연결', '슬랙 실시간 수신 대기 중');
       // 붙었다 = 네트워크도 토큰도 정상 — 앱이 띄운 안내를 내릴 근거.
       setHealth({ socket: 'connected', failures: 0, netError: '', authError: '' });
+      if (catchUpAfterOpen) {
+        catchUpAfterOpen = false;
+        // 재개통 = 그 직전까지 이벤트를 놓쳤을 수 있다는 뜻. 30분 주기를 기다리지
+        // 않고 지금 훑는다 (reactions.list 몇 콜 — reconcile은 무거워 주기에 맡긴다).
+        catchUp().catch((e) => log('재개통 catch-up 오류:', e.message));
+      }
     };
     ws.onmessage = (ev) => {
+      if (gen !== wsGen) return;
+      // 어떤 프레임이든 = 소켓이 살아 있다는 유일한 증거 (Node 기본 WebSocket은
+      // ping 프레임을 JS로 올려주지 않는다). 30초 보고에 실려 앱까지 간다.
+      markFrame();
       let env;
       try {
         env = JSON.parse(ev.data);
@@ -1417,6 +1534,7 @@ async function connect() {
       }
     };
     ws.onclose = () => {
+      if (gen !== wsGen) return; // 이미 재개통된 소켓의 뒤늦은 close — 무시
       log(`socket closed — reconnect in ${backoff}s`);
       setHealth({ socket: 'connecting' });
       setTimeout(connect, backoff * 1000);
@@ -1424,11 +1542,21 @@ async function connect() {
     };
     ws.onerror = (e) => log('socket error:', e.message || 'unknown');
   } catch (e) {
+    if (gen !== wsGen) return;
     log(`connect failed (${e.message}) — retry in ${backoff}s`);
     health.failures++;
     classifyFailure(e);
     setHealth({ socket: 'connecting' });
     postHealth(); // failures/원인이 바뀌었을 수 있다 — 앱이 안내 여부를 다시 판단
+    // 토큰 문제가 아닌데도 계속 못 붙으면 프로세스 안에서 고칠 수 있는 상태가
+    // 아닐 수 있다 (fetch/undici가 물린 경우). 원인을 남기고 죽어 launchd가 깨끗한
+    // 프로세스로 되살리게 한다 — 하트비트는 계속 나가고 있어 앱의 90초 워치독은
+    // 이 상황을 못 잡는다.
+    if (health.failures >= SOCKET_MAX_FAILURES && !health.authError) {
+      log(`연결 실패 ${health.failures}회 — 프로세스를 재시작한다 (launchd)`);
+      postHealth().finally(() => process.exit(1));
+      return;
+    }
     setTimeout(connect, backoff * 1000);
     backoff = Math.min(backoff * 2, 60);
   }
@@ -1807,8 +1935,11 @@ async function main() {
     30 * 60_000,
   );
   // 살아있음 보고 — 앱은 이게 90초 끊기면 데몬이 죽은 것으로 보고 스스로 되살린다.
+  health.idleLimit = Math.round(SOCKET_IDLE_LIMIT_MS / 1000); // 앱 백스톱의 기준값
   postHealth();
   setInterval(postHealth, 30_000);
+  // 소켓이 조용히 죽었는지 — 프로세스가 살아 있어도 이건 따로 봐야 한다.
+  setInterval(socketWatchdog, SOCKET_CHECK_MS);
 }
 
 main().catch(async (e) => {

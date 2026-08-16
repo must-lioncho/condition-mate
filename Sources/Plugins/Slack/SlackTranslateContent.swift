@@ -1220,6 +1220,11 @@ public enum SlackTranslateContent {
         // 실시간을 켜는 방법을 배너에서 안내한다.
         function pathState(h){
           const rt = (h.realtimeAt|0) > 0;
+          // 소켓이 조용히 죽은 상태(degraded)에서는 예전에 실시간을 받았다는 이유로
+          // '실시간 수신'이라고 말하면 안 된다 — 지금 안 오고 있는 게 문제다.
+          if (h.state === 'degraded') return { cls:'wait', label:'실시간 점검 중',
+            tip:'슬랙 소켓이 조용히 끊겨 다시 여는 중입니다. 그동안에도 폴링으로 수집되며(몇 분 지연), '
+              +'연결이 돌아오면 놓친 항목을 자동으로 메웁니다.' };
           if (!rt && h.pollError) return { cls:'wait', label:'폴링 대기',
             tip:'대화 목록을 못 읽어 폴링이 쉬는 중입니다 ('+h.pollError
               +'). 토큰 스코프(channels:read · groups:read · im:read · mpim:read)를 확인하세요 — 다음 주기에 다시 시도합니다.' };
@@ -1261,7 +1266,9 @@ public enum SlackTranslateContent {
           const errs = syncErrList();
           const bad = h.needsUser || errs.length > 0;
           chip.style.display='';
-          const wait = h.state==='restarting' || h.state==='connecting';
+          // degraded = 소켓만 조용히 죽은 상태. 앱·데몬이 스스로 여는 중이라
+          // 재연결과 같은 대기색으로 둔다 (needsUser가 되면 아래 bad가 가져간다).
+          const wait = h.state==='restarting' || h.state==='connecting' || h.state==='degraded';
           chip.className = 'hchip ' + (bad ? 'warn' : h.state==='ok' ? 'ok' : wait ? 'wait' : '');
           document.getElementById('hChipT').textContent =
             bad ? `연결 및 동기화 실패${errs.length?' '+errs.length:''}` : h.title;
