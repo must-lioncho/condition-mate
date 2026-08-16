@@ -11,7 +11,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=".build/debug/ConditionManager"
+BIN=".build/debug/ConditionMate"
 [ -x "$BIN" ] || { echo "build first: swift build"; exit 1; }
 
 DATA_DIR="$(mktemp -d)"

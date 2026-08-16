@@ -61,7 +61,10 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
     doc.focus();
   }, [i, off]);
   const set = (s) => page.evaluate((s) => CMMemo.setText(s), s);
-  const text = () => page.evaluate(() => CMMemo.text());
+  // 생성 스탬프(2026-08-10, '    @생성: …')는 줄마다 붙는 메타다. 이 파일이 보는 것은
+  // 글의 '모양' 이라 스탬프는 걷어 내고 읽는다 — 스탬프 계약은 memocreated.test.js 가 지킨다.
+  const noCr = (s) => String(s).split('\n').filter((l) => !/^\s+@생성:/.test(l)).join('\n');
+  const text = () => page.evaluate(() => CMMemo.text()).then(noCr);
 
   // ── [1] 덩어리 3초 상한 ──────────────────────────────────────────────────
   // 70자를 쉼 없이(60ms 간격 ≈ 4.2초) 이어 친다 — 상한이 없으면 전부 한 덩어리가 되어

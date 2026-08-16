@@ -79,7 +79,7 @@
           "view": "history"
         }
       ],
-      "src": "Sources/ConditionManager/Dashboard/DashboardContent.swift"
+      "src": "Sources/ConditionMate/Dashboard/DashboardContent.swift"
     },
     {
       "id": "goal",
@@ -162,7 +162,7 @@
           "view": "screens"
         }
       ],
-      "src": "Sources/ConditionManager/Dashboard/BGMPlayerContent.swift"
+      "src": "Sources/ConditionMate/Dashboard/BGMPlayerContent.swift"
     },
     {
       "id": "equipment",

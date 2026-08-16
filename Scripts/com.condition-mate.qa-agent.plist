@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent: runs the dashboard QA pass every 10 minutes.
+
+  Install (copy into LaunchAgents, then load):
+    cp Scripts/com.condition-mate.qa-agent.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.condition-mate.qa-agent.plist
+
+  Stop / uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.condition-mate.qa-agent.plist
+    rm ~/Library/LaunchAgents/com.condition-mate.qa-agent.plist
+
+  Run once now (without waiting for the timer):
+    launchctl start com.condition-mate.qa-agent
+
+  The script no-ops quietly when the dashboard app isn't running.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.condition-mate.qa-agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/lioncho/Work/departtment_service/projects/condition-mate/Scripts/qa-scan.sh</string>
+    </array>
+
+    <!-- BASE tick: wake every 60s. The ACTUAL scan period is decided by qa-scan.sh's
+         interval gate (default 10분, user-set via Scripts/qa-set-interval.sh), so the
+         period can change without editing/reloading this plist. -->
+    <key>StartInterval</key>
+    <integer>60</integer>
+
+    <!-- Don't fire a burst at load time; wait for the first interval. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/cm-qa-agent.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/cm-qa-agent.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

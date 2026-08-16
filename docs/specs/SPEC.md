@@ -1,4 +1,4 @@
-# Condition Manager — SPEC (per-page, bilingual)
+# Condition Mate — SPEC (per-page, bilingual)
 
 EN: Source of truth for **manager-qa** regression testing, owned by manager-qa. Organized **per page/screen** (not per category) so a broken page is obvious at a glance. Base format = this Markdown file. `SPEC.html` is a generated, human-friendly render of the same content — regenerate it in the same change whenever this file changes.
 KO: **manager-qa** 회귀 테스트의 기준 문서이며 manager-qa가 소유·관리한다. 카테고리가 아니라 **페이지/화면별**로 정리해 깨진 페이지가 한눈에 보이게 한다. 기준 포맷은 이 Markdown 파일이고, `SPEC.html`은 같은 내용을 사람이 보기 좋게 만든 생성물이다 — 이 파일이 바뀌면 같은 작업에서 다시 생성한다.
@@ -24,7 +24,7 @@ KO: **manager-qa** 회귀 테스트의 기준 문서이며 manager-qa가 소유�
 
 | Page | id prefix | Source |
 |---|---|---|
-| P1. Menu-bar widget (status item + menu) | `WIDGET-` | `GUI/MenuController.swift` (+ `ConditionManager/UI/GUIBridge.swift`) |
+| P1. Menu-bar widget (status item + menu) | `WIDGET-` | `GUI/MenuController.swift` (+ `ConditionMate/UI/GUIBridge.swift`) |
 | P2. App window lifecycle (shared across both modes) | `WINLIFE-` | `GUI/AppWindowController.swift`, `AppDelegate.swift` |
 | P3. App window — BGM mode / 액티비티 sub-tab | `BGMACT-` | `Dashboard/BGMPlayerContent.swift` |
 | P4. App window — BGM mode / 디버그 sub-tab | `BGMDBG-` | `Dashboard/BGMPlayerContent.swift` |
@@ -194,7 +194,7 @@ Note (KO): SPEC.html의 P1 섹션은 실제 스크린샷이 아니라 라벨이 
   hadSavedFrame=true frame={{760, 439}, {1191, 821}}`, confirmed via Accessibility position/size
   query on the correct pid.
   Note: verifying this requires targeting the correct OS process — `System Events` `tell process
-  "ConditionManager"` is AMBIGUOUS whenever a `dev-watch.sh`-spawned instance is also running (same
+  "ConditionMate"` is AMBIGUOUS whenever a `dev-watch.sh`-spawned instance is also running (same
   process name), silently querying the wrong window. Always scope by
   `first process whose unix id is <pid>`.
 - **WINLIFE-7 — [RETIRED 2026-07-06] unified titlebar: the mode toggle lived in the titlebar row
@@ -955,7 +955,7 @@ BGMDBG-2는 이번 실행에서 라이브로 검증하지 않음 — 이전 회�
 EN: **REGRESSION-CLASS FINDING (spec drift, confirmed):** the old A1 item's documented "third audio
 source" — the dashboard's own in-page "BGM 관리" tab as a lazy-loaded `<iframe id="bgmFrame">` of
 `/bgm-player` — **no longer exists in `DashboardContent.swift`.** Confirmed by:
-`grep -n "bgmFrame" Sources/ConditionManager/Dashboard/DashboardContent.swift` → no matches;
+`grep -n "bgmFrame" Sources/ConditionMate/Dashboard/DashboardContent.swift` → no matches;
 `VIEW_DEFS` (`DashboardContent.swift:2502-2506`) lists only
 `input/group/table/token/schedule/preview/sprint/archived/history` — no `bgm` key, so `_view` can
 never equal `'bgm'`. The dashboard's BGM surface today is exclusively the native window's `.bgm`
@@ -968,7 +968,7 @@ only matter if `/bgm-player` were loaded in some other iframe in the future).
 KO: **회귀급 발견(스펙 드리프트, 확인됨):** 예전 A1 항목이 기록한 "제3의 오디오 출처" — 대시보드
 자체의 인페이지 "BGM 관리" 탭이 `/bgm-player`를 지연 로드하는 `<iframe id="bgmFrame">` —
 **는 이제 `DashboardContent.swift`에 존재하지 않는다.** 다음으로 확인함:
-`grep -n "bgmFrame" Sources/ConditionManager/Dashboard/DashboardContent.swift` → 일치 없음;
+`grep -n "bgmFrame" Sources/ConditionMate/Dashboard/DashboardContent.swift` → 일치 없음;
 `VIEW_DEFS`(`DashboardContent.swift:2502-2506`)에는 `input/group/table/token/schedule/preview/
 sprint/archived/history`만 있고 `bgm` 키가 없어 `_view`가 `'bgm'`이 될 수 없다. 오늘날 대시보드의
 BGM 화면은 인페이지 iframe이 아니라 오직 네이티브 창의 `.bgm` 모드(P3/P4)뿐이다. 이는 의도된
@@ -1199,7 +1199,7 @@ PASS로 재검증함(라이브 근거는 위 DASH-6/DASH-7의 RESOLVED 메모 �
   '슬롯 성적표'로 표시. 선곡·플랜 파일은 자동 변경하지 않는다. sessions>=3 && hitRate<0.5 → 재계획
   후보 배지. 전략 카탈로그에 id=4(상태 인지형) 추가, activeStrategy=4로 이관.
   Verify: derivation exercised standalone 2026-07-10 (swiftc harness over the real
-  `~/.condition-manager/events/actions.jsonl` + live plan slots — no XCTest target in the repo):
+  `~/.condition-mate/events/actions.jsonl` + live plan slots — no XCTest target in the repo):
   golden sample (spec §2) `금 심야 · 애프터 라운지` scored hits>=1, misses=0, score>=1, and the
   00:00 목→금 `강제 전환` flip produced no miss.
 - **EP-13 — Wall-clock pomodoro completion, server-owned (added 2026-07-10).**
@@ -1410,7 +1410,7 @@ PASS로 재검증함(라이브 근거는 위 DASH-6/DASH-7의 RESOLVED 메모 �
   in the map as auto entries ("신규 라우트/상태 — 미작성"), so new code surfaces instead of
   drifting. Output `docs/uxui/sitemap.json` (repo) is installed to `<data>/screens/sitemap.json`
   by the "UXUI 관리" worker (`Scripts/uxui-sitemap.sh`, launchd
-  `com.condition-manager.uxui-agent.plist`, 300s base tick): a commit gate (best-effort
+  `com.condition-mate.uxui-agent.plist`, 300s base tick): a commit gate (best-effort
   `git fetch origin main`, stamp `<data>/uxui-sitemap-last-commit`) makes ticks free until main
   actually moves; each real run reports via `POST /api/worker/ping` (id `uxui-sitemap`, registered
   in WorkerRegistry as "UXUI 관리", owner qa, toggleable via `uxui-sitemap-disabled`). Served by

@@ -1,0 +1,72 @@
+/* 지라의 라이트·다크 테마 위에 모두 얹혀야 하므로, 글자색은 상속(color: inherit)하고
+   배경은 반투명 오버레이만 쓴다. 고정색을 쓰면 한쪽 테마에서 반드시 안 보인다. */
+
+.cmjt-btn {
+  position: fixed;
+  z-index: 2147483000;
+  padding: 2px 9px;
+  font: 600 11px/1.7 -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif;
+  color: #fff;
+  background: #0c66e4;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  opacity: 0.92;
+}
+
+.cmjt-btn:hover { opacity: 1; }
+.cmjt-btn:disabled { opacity: 0.6; cursor: default; }
+
+.cmjt-out {
+  margin: 6px 0 10px;
+  padding: 7px 10px 9px;
+  border-left: 3px solid rgba(76, 154, 255, 0.75);
+  border-radius: 3px;
+  background: rgba(76, 154, 255, 0.1);
+  color: inherit;
+  font: 400 14px/1.62 -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cmjt-out-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0.62;
+}
+
+.cmjt-out-close {
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.cmjt-out-close:hover { opacity: 1; }
+
+/* 목록 행·보드 카드용 떠 있는 패널 — 행 높이를 건드리지 않는다. */
+.cmjt-pop {
+  position: fixed;
+  z-index: 2147483000;
+  margin: 0;
+  max-height: 46vh;
+  overflow: auto;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-left: 3px solid rgba(76, 154, 255, 0.85);
+  border-radius: 5px;
+  /* 페이지 배경이 비쳐 읽기 힘들어지지 않게 이 패널만 불투명하게 깐다. */
+  background: Canvas;
+  color: CanvasText;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+}

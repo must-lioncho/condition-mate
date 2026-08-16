@@ -10,7 +10,7 @@
 // Extracts cmChFire / cmChSync / cmChRender / cmChToggle from the Swift source and drives
 // them with a scripted fetch: each cmChSync() consumes the next queued state payload.
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/SessionRail.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/SessionRail.swift', 'utf8');
 
 function balanced(start) {
   let depth = 0;

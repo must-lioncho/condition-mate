@@ -2,16 +2,16 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "scratchpad-static",
+      "name": "scratchpad-static-b",
       "runtimeExecutable": "python3",
       "runtimeArgs": [
         "-m",
         "http.server",
-        "8931",
+        "8935",
         "--directory",
-        "/private/tmp/claude-501/-Users-lioncho-Work-departtment-service-projects-condition-manager/0aaa85c3-3aa3-4f96-83b9-9b3949e70d96/scratchpad"
+        "/private/tmp/claude-501/-Users-lioncho-Work-departtment-service-projects-condition-mate/cb865437-9845-44ae-a2b8-d6c9d8bf4f37/scratchpad"
       ],
-      "port": 8931
+      "port": 8935
     },
     {
       "name": "repo-static",
@@ -21,7 +21,7 @@
         "http.server",
         "8932",
         "--directory",
-        "/Users/lioncho/Work/departtment_service/projects/condition-manager"
+        "/Users/lioncho/Work/departtment_service/projects/condition-mate"
       ],
       "port": 8932
     },
@@ -29,7 +29,7 @@
       "name": "parent-stub",
       "runtimeExecutable": "node",
       "runtimeArgs": [
-        "/Users/lioncho/Work/departtment_service/projects/condition-manager/.e2e/parentstub.js"
+        "/Users/lioncho/Work/departtment_service/projects/condition-mate/.e2e/parentstub.js"
       ],
       "port": 8934
     },
@@ -43,7 +43,7 @@
       "name": "memo-stub",
       "runtimeExecutable": "node",
       "runtimeArgs": [
-        "/Users/lioncho/Work/departtment_service/projects/condition-manager/.e2e/memostub.js"
+        "/Users/lioncho/Work/departtment_service/projects/condition-mate/.e2e/memostub.js"
       ],
       "port": 8933,
       "autoPort": true

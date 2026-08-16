@@ -26,7 +26,7 @@ goal_src="$PROJECT_DIR/.claude/issue/goal-${nn}.md"
 
 # --- data dir + port (mirror qa-scan.sh) -----------------------------------------
 if [ -n "${CM_DATA_DIR:-}" ]; then data_dir="$CM_DATA_DIR"
-else data_dir="$HOME/.condition-manager"; fi
+else data_dir="$HOME/.condition-mate"; fi
 port=""; [ -f "$data_dir/dashboard.port" ] && port="$(tr -dc '0-9' < "$data_dir/dashboard.port")"
 
 ping() {
@@ -66,14 +66,14 @@ mkdir -p "$wt/.claude/issue"; cp "$goal_src" "$wt/.claude/issue/goal-${nn}.md"
 goal_content="$(cat "$goal_src")"
 result="$wt/.qa-fix-result.json"; rm -f "$result"
 
-prompt="You are an automated UI FIX agent for the ConditionManager macOS app (SwiftUI + an
+prompt="You are an automated UI FIX agent for the ConditionMate macOS app (SwiftUI + an
 embedded HTML dashboard). A QA goal describes UI RENDERING BREAKAGE — short labels wrapping
 to 2+ lines or overflowing their box. Fix it in THIS working directory, minimally.
 
 GOAL goal-${nn}:
 $goal_content
 
-The dashboard UI is generated in Sources/ConditionManager/Dashboard/DashboardContent.swift
+The dashboard UI is generated in Sources/ConditionMate/Dashboard/DashboardContent.swift
 (HTML/CSS/JS held as Swift string literals). Wrapping/overflow fixes are CSS/markup, e.g.
 'white-space:nowrap' on a label that must stay one line, a wider/min column width, a slightly
 smaller font, or padding/letter-spacing tweaks. Keep edits minimal and in the surrounding style.

@@ -7,7 +7,7 @@
 //   3) a fresh page load mid-reward (cmZenWasRun=false) never folds — navigating around with
 //      an unharvested orb must not yank the user back to the zen dashboard
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/SessionRail.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/SessionRail.swift', 'utf8');
 function fn(name) {
   const start = SRC.indexOf('function ' + name + '(');
   if (start < 0) throw new Error('no fn ' + name);

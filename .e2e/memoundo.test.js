@@ -49,7 +49,10 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
     doc.focus();
   }, [i, off]);
   const set = (s) => page.evaluate((s) => CMMemo.setText(s), s);
-  const text = () => page.evaluate(() => CMMemo.text());
+  // 생성 스탬프(2026-08-10, '    @생성: …')는 줄마다 붙는 메타다. 이 파일이 보는 것은
+  // 글의 '모양' 이라 스탬프는 걷어 내고 읽는다 — 스탬프 계약은 memocreated.test.js 가 지킨다.
+  const noCr = (s) => String(s).split('\n').filter((l) => !/^\s+@생성:/.test(l)).join('\n');
+  const text = () => page.evaluate(() => CMMemo.text()).then(noCr);
   const caretAt = () => page.evaluate(() => {
     const doc = document.querySelector('[data-cmmemo-doc]');
     const s = getSelection();
@@ -103,7 +106,7 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
   // 상태 토글도 한 단계다 — 실수로 누른 체크가 ⌘Z 로 풀려야 한다.
   await set('가나다');
   await page.evaluate(() => document.querySelector('.cmm-ck').click());
-  eq('체크리스트 승격', await text(), '- [ ] 가나다');
+  eq('평문 줄도 한 번에 완료 (2026-08-10)', await text(), '- [x] 가나다');
   await caret(0, 0);
   await page.keyboard.press('Meta+z');
   eq('⌘Z 가 상태 토글도 되돌린다', await text(), '가나다');

@@ -8,7 +8,7 @@
 //   - summed parent energy over 100% => over-capacity warning
 //   - ROI = value / tokens(K), banded hi/mid/lo
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/DashboardContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/DashboardContent.swift', 'utf8');
 function fn(name) {
   const start = SRC.indexOf('function ' + name + '(');
   if (start < 0) throw new Error('no fn ' + name);

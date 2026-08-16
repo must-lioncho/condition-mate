@@ -1,6 +1,6 @@
 // Node stub render test for the 시스템 로그 (view-trace) tab, bound to the REAL source.
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/BGMPlayerContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/BGMPlayerContent.swift', 'utf8');
 function slice(from, to) { const a = SRC.indexOf(from); const b = SRC.indexOf(to, a); if (a < 0 || b < 0) throw new Error('extract fail: ' + from); return SRC.slice(a, b); }
 const JS = slice('let _vtEvents=null;', 'let _scList=null');   // ends where the 화면 카탈로그 block begins (screens.test.js owns that slice)
 
@@ -71,9 +71,9 @@ check('paint 없음 → 경고 문구', els['vtLaunch'].innerHTML.includes('첫 
 // ── 인페이지 사용자 액션 계측: 하트비트가 window.cmVT.ev 를 노출하고, 채팅/CLI/사진
 //    첨부가 그 훅을 실제로 호출하는지 — 소스 문자열에 바인딩해 회귀를 잡는다.
 //    (배경: 채팅 열기·사진 첨부·CLI 세션 시작이 시스템 로그에 전혀 안 남던 문제)
-const GB = fs.readFileSync(__dirname + '/../Sources/ConditionManager/UI/GUIBridge.swift', 'utf8');
-const GA = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/GoalAddContent.swift', 'utf8');
-const AD = fs.readFileSync(__dirname + '/../Sources/ConditionManager/AppDelegate.swift', 'utf8');
+const GB = fs.readFileSync(__dirname + '/../Sources/ConditionMate/UI/GUIBridge.swift', 'utf8');
+const GA = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/GoalAddContent.swift', 'utf8');
+const AD = fs.readFileSync(__dirname + '/../Sources/ConditionMate/AppDelegate.swift', 'utf8');
 check('heartbeat: window.cmVT.ev 노출', GB.includes('window.cmVT = { ev: ev }'), null);
 check('goal-add: CLI 열기 스탬프 + cmView', /vtev\('cliOpen goal-'\+pad2\(seq\)\); window\.cmView='cli'/.test(GA), null);
 check('goal-add: 세션 뷰 열기/이어가기 스탬프', GA.includes("vtev('sessOpen goal-'") && GA.includes("vtev('sessResume goal-'"), null);

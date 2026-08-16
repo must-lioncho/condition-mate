@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bug-hunt agent runner -> ConditionManager dashboard.
+# Bug-hunt agent runner -> ConditionMate dashboard.
 #
 # A LONG-RUNNING (minimum 4h) hunt for FUNCTIONAL / LOGIC bugs — the kind a human
 # notices by using the app, e.g. "완료 필터를 꺼도 완료 항목이 계속 보인다". This is
@@ -48,7 +48,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [ -n "${CM_DATA_DIR:-}" ]; then
   data_dir="$CM_DATA_DIR"
 else
-  data_dir="$HOME/.condition-manager"
+  data_dir="$HOME/.condition-mate"
 fi
 mkdir -p "$data_dir"
 port_file="$data_dir/dashboard.port"
@@ -153,7 +153,7 @@ while : ; do
   result="$work/result.json"
   goalfile="$work/goal-${nn2}.md"
 
-  prompt="You are an automated bug-hunt agent for the ConditionManager macOS app (Swift +
+  prompt="You are an automated bug-hunt agent for the ConditionMate macOS app (Swift +
 an embedded HTML/JS dashboard). You hunt for ONE real, reproducible FUNCTIONAL / LOGIC
 bug — wrong behavior a user would hit — NOT cosmetic UI wrapping (a separate agent owns
 that), NOT style nits, NOT speculative 'could be improved' ideas.
@@ -161,7 +161,7 @@ that), NOT style nits, NOT speculative 'could be improved' ideas.
 The app source is available under these added directories (use Read / Grep / Glob):
   $PROJECT_DIR/Sources
   $issue_dir
-Key files: Sources/ConditionManager/Dashboard/DashboardContent.swift (the dashboard
+Key files: Sources/ConditionMate/Dashboard/DashboardContent.swift (the dashboard
 HTML/CSS/JS as Swift string literals — filter logic lives here), AppDelegate.swift
 (serialization + HTTP endpoints), Core/ReviewStore.swift, Core/WorkerRegistry.swift,
 Core/ActivityLog.swift, Core/IssuePaths.swift, Sources/GUI/Formatting.swift.

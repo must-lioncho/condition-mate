@@ -11,7 +11,7 @@
 //   - 타이핑하면 목록이 실시간으로 걸러진다 (포커스는 입력칸에 그대로)
 //   - 최근 사용 목록이 서버 MRU(recentParents)를 따른다 (localStorage 아님)
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/DashboardContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/DashboardContent.swift', 'utf8');
 function fn(name) {
   const start = SRC.indexOf('function ' + name + '(');
   if (start < 0) throw new Error('no fn ' + name);

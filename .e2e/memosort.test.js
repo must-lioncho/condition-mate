@@ -7,7 +7,7 @@
 //   - 콤보는 단일 선택(라디오) — 입력 순서 / 미완료 위 · 완료 아래 두 옵션
 const fs = require('fs');
 const R = (p) => fs.readFileSync(__dirname + '/../' + p, 'utf8');
-const PAD = R('Sources/ConditionManager/Dashboard/MemoPad.swift');
+const PAD = R('Sources/ConditionMate/Dashboard/MemoPad.swift');
 
 let pass = 0, fail = 0;
 function eq(name, got, want) {

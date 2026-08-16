@@ -12,7 +12,7 @@
 //   - fetch failure only logs (quiet), never throws
 //   - arc badge CSS stays in neutral hues (no red/green traffic-light colors)
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/BGMPlayerContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/BGMPlayerContent.swift', 'utf8');
 function fn(name) {
   const start = SRC.indexOf('function ' + name + '(');
   if (start < 0) throw new Error('no fn ' + name);

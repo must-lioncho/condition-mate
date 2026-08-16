@@ -21,7 +21,7 @@ https://mustcompany.slack.com/archives/C084315S2F2
 
 This skill never posts to Slack for you. You paste it yourself — that keeps the praise in your own voice and needs no Slack token.
 
-Everything posted in `#hero` is also collected by the Condition Manager app and shown on its Hero tab leaderboard, so posting is what makes the record count.
+Everything posted in `#hero` is also collected by the Condition Mate app and shown on its Hero tab leaderboard, so posting is what makes the record count.
 
 ## Philosophy (read this first — it shapes every entry)
 
@@ -76,13 +76,13 @@ python3 ~/.claude/skills/hero/scripts/hero_db.py add \
 
 If the user assigns an explicit entry number (e.g., "이건 [2]번이야"), pass `--id N` to preserve their numbering.
 
-The DB path resolves in this order: `$CM_HERO_DB` if set, otherwise the legacy workspace DB at `agent-mustcompany/storage/hero/heroes.db` when it exists, otherwise `~/.condition-manager/hero/heroes.db`. Run the `where` subcommand to print the resolved path. Never edit the database file by hand — this script is its only writer.
+The DB path resolves in this order: `$CM_HERO_DB` if set, otherwise the legacy workspace DB at `agent-mustcompany/storage/hero/heroes.db` when it exists, otherwise `~/.condition-mate/hero/heroes.db`. Run the `where` subcommand to print the resolved path. Never edit the database file by hand — this script is its only writer.
 
 Step 5 — Output the paste-ready message. Print the saved entry inside a fenced code block so the user can copy it in one click, then give the channel link on the following line:
 
 The code block contains only the two-line praise format — no entry number commentary, no surrounding prose, so it pastes into Slack exactly as the team expects.
 
-After the block, tell the user: paste this into #hero (https://mustcompany.slack.com/archives/C084315S2F2). Mention the entry number outside the block, and mention that it will appear on the Condition Manager Hero tab once posted.
+After the block, tell the user: paste this into #hero (https://mustcompany.slack.com/archives/C084315S2F2). Mention the entry number outside the block, and mention that it will appear on the Condition Mate Hero tab once posted.
 
 Do not attempt to post to Slack directly. This skill has no Slack credentials by design.
 
@@ -102,7 +102,7 @@ Example:
 on-time skill (lv4) / He showed up whenever needed to resolve issues — no matter the time — because he understood Season 2's trust is critical. He woke up for early morning shifts to support us, and because of his commitment, we maintained stakeholder trust. / next todo: this is on us too. We need to prevent these issues at staging with more rigorous testing. Requires stronger QA validation before prod.
 ```
 
-Keeping this exact shape matters beyond aesthetics: the Condition Manager daemon parses `#hero` messages with a regex built for this format. An off-format message still gets collected, but it falls back to a slower AI parse and may not land on the leaderboard cleanly.
+Keeping this exact shape matters beyond aesthetics: the Condition Mate daemon parses `#hero` messages with a regex built for this format. An off-format message still gets collected, but it falls back to a slower AI parse and may not land on the leaderboard cleanly.
 
 ## Other operations
 

@@ -3,7 +3,7 @@
 // (오늘 활동 분석이 대시보드에서 컨디션 관리 페이지로 이동하며 함수들도 같이 이주)
 // and asserts the user's neighbor-agreement rules on screenshot-derived inputs.
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/BGMPlayerContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/BGMPlayerContent.swift', 'utf8');
 function slice(from, to) { const a = SRC.indexOf(from); const b = SRC.indexOf(to, a); if (a < 0 || b < 0) throw new Error('extract ' + from); return SRC.slice(a, b); }
 // BGMPlayerContent 배치: TENMIN→withCarryForward→timelineSegments 가 연속이라 한 슬라이스로
 // 끊는다 (rowHtml 이후는 DOM/window 를 만져 eval 불가).

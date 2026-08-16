@@ -13,8 +13,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const PAGE = fs.readFileSync(__dirname + '/../Sources/Slack/SlackTranslateContent.swift', 'utf8');
-const DAEMON = fs.readFileSync(__dirname + '/../Sources/Slack/Daemon/slack-eyes-daemon.mjs', 'utf8');
+const PAGE = fs.readFileSync(__dirname + '/../Sources/Plugins/Slack/SlackTranslateContent.swift', 'utf8');
+const DAEMON = fs.readFileSync(__dirname + '/../Sources/Plugins/Slack/Daemon/slack-eyes-daemon.mjs', 'utf8');
 
 // 소스에서 함수 하나를 통째로 떼어낸다. 기본값 파라미터(patch = {})가 있어도
 // 본문 여는 중괄호를 찾도록 파라미터 괄호를 먼저 건너뛰고, async 접두사도 살린다.
@@ -53,7 +53,19 @@ ok(trigAt({ reactedAt: 7 }) === 7, 'triggeredAt 없으면 reactedAt으로 폴백
 ok(trigAt({}) === 0, '둘 다 없으면 0 (정렬 중 NaN 금지)');
 
 // 페이지가 실제로 그 기준을 쓰는지 — 정렬·시간 표시 모두.
-ok(/sort\(\(a,b\)=>trigAt\(b\)-trigAt\(a\)\)/.test(PAGE), '목록 정렬이 trigAt을 쓴다');
+ok(/sort\(\(a,b\)=>sortKey\(b\)-sortKey\(a\)\)/.test(PAGE), '목록 정렬이 sortKey를 쓴다');
+// 정렬 기준은 툴바에서 고른다 — 기본값은 수집·체크 시각(trigAt), 다른 하나는 메시지 시각.
+eval(fn(PAGE, 'msgAt', 'page'));
+let sortBy = 'trig';
+eval(fn(PAGE, 'sortKey', 'page'));
+const m = { id: 'C1:4', ts: '2500.000100', reactedAt: 1000, triggeredAt: 4000 };
+ok(sortKey(m) === 4000, '기본(수집·체크) 정렬 키 = trigAt');
+sortBy = 'msg';
+ok(sortKey(m) === 2500, '메시지 시각 정렬 키 = 슬랙 ts');
+ok(sortKey({ triggeredAt: 9 }) === 9, 'ts가 없으면 trigAt으로 폴백 (정렬 중 0으로 가라앉지 않게)');
+sortBy = 'trig';
+ok(/id="sortSel"/.test(PAGE) && /value="trig"/.test(PAGE) && /value="msg"/.test(PAGE),
+  '툴바에 정렬 기준 선택이 있다 (수집·체크 / 메시지 시각)');
 ok(/when\(trigAt\(it\)\)/.test(PAGE), '항목 시간 표시가 trigAt을 쓴다 (정렬과 같은 값)');
 ok(/const noEmoji = !it\.emoji && !!it\.source/.test(PAGE),
   '멘션 항목이라도 emoji가 붙었으면 처리완료 라벨이 리액션 제거를 안내한다');

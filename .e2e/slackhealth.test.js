@@ -14,8 +14,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
-const PAGE = fs.readFileSync(path.join(ROOT, 'Sources/Slack/SlackTranslateContent.swift'), 'utf8');
-const DAEMON = fs.readFileSync(path.join(ROOT, 'Sources/Slack/Daemon/slack-eyes-daemon.mjs'), 'utf8');
+const PAGE = fs.readFileSync(path.join(ROOT, 'Sources/Plugins/Slack/SlackTranslateContent.swift'), 'utf8');
+const DAEMON = fs.readFileSync(path.join(ROOT, 'Sources/Plugins/Slack/Daemon/slack-eyes-daemon.mjs'), 'utf8');
 
 let fails = 0;
 const ok = (cond, msg) => { console.log((cond ? '  ok   ' : '  FAIL ') + msg); if (!cond) fails++; };
@@ -95,8 +95,8 @@ print(SlackHealth.statusJSON())
   try {
     execFileSync(swiftc, ['-sdk', sdk, '-module-cache-path', path.join(tmp, 'mc'),
       '-o', path.join(tmp, 'probe'),
-      path.join(ROOT, 'Sources/Slack/SlackHealth.swift'),
-      path.join(ROOT, 'Sources/Slack/SlackTranslateStore.swift'),
+      path.join(ROOT, 'Sources/Plugins/Slack/SlackHealth.swift'),
+      path.join(ROOT, 'Sources/Plugins/Slack/SlackTranslateStore.swift'),
       harness], { stdio: ['ignore', 'ignore', 'pipe'] });
     probe = path.join(tmp, 'probe');
   } catch (e) {
@@ -178,9 +178,15 @@ if (probe) {
   // 페이지 전역(cache/hDetail/hSig)을 매번 새로 세운 스코프에 심고 실제 함수를 돌린다.
   // syncErr/items = 리액션 동기화 실패 맵 — 연결 상태와 한 칩으로 합쳐졌으므로
   // 같은 함수가 둘 다 본다.
+  // RT_EVENTS = 실시간 수신에 필요한 유저 이벤트 목록. 배너 안내가 이 배열을 그대로
+  // 읽으므로 스텁에도 소스에서 떼어 심는다 (테스트에 목록을 다시 적지 않는다).
+  const rtConst = (PAGE.match(/const RT_EVENTS = \[[^\]]*\];/) || [])[0];
+  ok(!!rtConst, '페이지가 실시간 이벤트 목록을 상수 하나로 갖고 있다 (안내 문구마다 손으로 적지 않는다)');
   const run = (health, detail, extra) => {
     const b = 'let hSig="", hDetail=' + (detail ? 'true' : 'false')
       + ', cache=' + JSON.stringify(Object.assign({ health, items: [], syncErr: {} }, extra)) + ';\n'
+      + 'let rsTimer = null, rsMsg = "";\n'   // 재연결 대기 타이머 (아래 3.6에서 따로 검증)
+      + rtConst + '\n'
       + 'function syncHint(){ return "" }\n'
       + fn(PAGE, 'syncErrList', 'page') + '\n'
       + fn(PAGE, 'pathState', 'page') + '\n'
@@ -207,6 +213,29 @@ if (probe) {
   ok(/VPN/.test(els.hBanner.innerHTML), '배너에 실제 조치 안내가 들어간다');
   ok(/다시 연결/.test(els.hBanner.innerHTML), '배너에서 바로 다시 연결할 수 있다');
   ok(/api\.test/.test(els.hBanner.innerHTML), '손으로 확인할 명령도 함께 준다');
+
+  // ---- 조치는 한 번에 하나만 ----
+  // 토큰이 죽으면 데몬이 못 돌아 수집 경로도 같이 멈춘다. 그 경로 표시는 원인이
+  // 아니라 결과인데, 여기에 '실시간 켜는 법'까지 붙으면 고칠 게 두 개(토큰이 또
+  // 있는 줄)로 읽힌다 — 실제 사용자 오해(2026-08-11)라 계약으로 못 박는다.
+  run({ state: 'auth', title: '슬랙 토큰 문제', detail: '슬랙이 토큰을 거부했습니다 (token_revoked).',
+        advice: '슬랙 앱에서 토큰을 다시 발급한 뒤 키체인 항목을 갱신해 주세요.',
+        command: 'security add-generic-password -U -s cm-slack-user-token -a slack -w',
+        needsUser: true, ageSec: 5 });
+  ok(!/Event Subscriptions|즉시 받으려면/.test(els.hBanner.innerHTML),
+    '토큰 문제 중에는 실시간 수신(Event Subscriptions) 안내를 띄우지 않는다 — 조치가 둘로 보이면 안 된다');
+  ok(/결과/.test(els.hBanner.innerHTML),
+    '수집 경로가 멈춘 것은 토큰 문제의 결과임을 말해 준다 (별도 문제로 읽히지 않게)');
+  ok(/openIntegrations\(true\)/.test(els.hBanner.innerHTML),
+    '토큰 문제일 때 배너에서 바로 재발급 가이드를 열 수 있다');
+
+  // 반대로 데몬이 멀쩡히 폴링만 돌고 있을 때는 실시간 켜는 법을 안내해야 한다.
+  run({ state: 'ok', title: '연결됨', detail: '슬랙 실시간 수신 중입니다.', advice: '',
+        command: '', needsUser: false, ageSec: 3, realtimeAt: 0, pollAt: 1750000000, pollConvs: 12 },
+      true);
+  ok(/폴링 수집/.test(els.hBanner.innerHTML), '실시간 이벤트가 없으면 폴링으로 돌고 있다고 말한다');
+  ok(/message\.channels/.test(els.hBanner.innerHTML),
+    '이때만 실시간 켜는 법(이벤트 목록)을 안내한다');
 
   // ---- 연결 + 동기화 = 하나의 상태 표시 ----
   const okH = { state: 'ok', title: '연결됨', detail: '슬랙 실시간 수신 중입니다.',
@@ -236,11 +265,118 @@ if (probe) {
   ok(/fetch\('\/api\/slack\/daemon\/restart'/.test(PAGE), '다시 연결이 재시작 엔드포인트를 호출한다');
 }
 
+// ------------------------------------------------- 3.4 '다시 연결' 진행 표시
+// 눌러도 화면이 그대로면 사용자는 눌렸는지부터 의심한다 (실제 지적, 2026-08-11).
+// 누른 순간부터 초가 올라가고, 붙는 순간 "몇 초 걸렸다"로 끝나야 한다.
+{
+  const els = { hSt: { textContent: '' }, intSt: { textContent: '' } };
+  // rsAt을 과거로 심어 "N초째"를 그 자리에서 만든다 (실제로 기다리지 않는다).
+  const paint = (agoSec, state, fail) => {
+    const b = 'let rsAt = Date.now() - ' + (agoSec * 1000) + ', rsEnd = 0, rsMsg = "", rsTimer = 1'
+      + ', rsFail = ' + JSON.stringify(fail || '')
+      + ', cache = ' + JSON.stringify({ health: { state } }) + ';\n'
+      + 'const RS_GIVEUP = ' + (PAGE.match(/const RS_GIVEUP = (\d+)/) || [])[1] + ';\n'
+      + 'function reflectHealth(){}\n'
+      + fn(PAGE, 'paintRestart', 'page') + '\npaintRestart(); return { rsMsg, rsTimer, rsEnd };';
+    const out = new Function('document', 'clearInterval', b)(
+      { getElementById: (id) => els[id] }, () => {});
+    return { msg: els.hSt.textContent, modal: els.intSt.textContent, state: out };
+  };
+
+  let r = paint(3, 'auth');
+  ok(/3초째/.test(r.msg), '누른 뒤 몇 초가 지났는지 계속 보여준다: ' + r.msg);
+  ok(/기다리는 중/.test(r.msg), '무엇을 기다리는 중인지 말해 준다 (눌리긴 했다는 신호)');
+  ok(r.modal === r.msg, '배너에서 눌렀든 연동 모달에서 눌렀든 같은 문구를 본다');
+
+  r = paint(12, 'ok');
+  ok(/연결됐습니다/.test(r.msg) && /12초/.test(r.msg),
+    '실제로 붙는 순간 몇 초 걸렸는지로 끝난다: ' + r.msg);
+  ok(r.state.rsEnd > 0, '성공 문구는 잠깐 남았다가 저절로 사라진다');
+
+  r = paint(95, 'auth');
+  ok(/붙지 않습니다/.test(r.msg) && /95초/.test(r.msg),
+    '오래 지나도 안 붙으면 무한히 세지 않고 원인이 남았다고 말한다: ' + r.msg);
+
+  r = paint(2, 'auth', '재시작 실패 — 아래 명령을 직접 실행해 주세요');
+  ok(/재시작 실패/.test(r.msg), '요청 자체가 실패하면 초 세기 대신 실패를 말한다');
+
+  ok(/rsTimer\?'disabled':''/.test(PAGE) || /rsTimer\s*\?\s*'disabled'/.test(PAGE),
+    '기다리는 동안 다시 연결 버튼은 잠긴다 (연타로 카운터가 초기화되지 않게)');
+  ok(/!bad && !hDetail && !rsTimer/.test(PAGE),
+    '기다리는 동안에는 배너를 붙잡아 둔다 (붙자마자 사라지면 결과를 못 본다)');
+}
+
+// ------------------------------------------------- 3.5 재발급 가이드
+// 조치의 대부분이 앱 밖(슬랙 웹 설정)이라, "토큰을 다시 발급하세요" 한 줄만 주면
+// 사용자가 메뉴를 검색해야 한다. 가이드는 앱만 보고 끝낼 수 있어야 하므로
+// 메뉴 경로·버튼 이름·순서가 실제로 들어 있는지, 스코프 목록이 Swift 원본에서
+// 오는지를 계약으로 확인한다.
+{
+  const INTG = fs.readFileSync(path.join(ROOT, 'Sources/Plugins/Slack/SlackIntegrations.swift'), 'utf8');
+  // 스코프 목록의 원본은 이제 연동 카탈로그(IntegrationCatalog.slackUserScopes)이고,
+  // SlackIntegrations는 그것을 requiredUserScopes로 되비쳐 응답에 싣는다. 계약은
+  // 그대로다 — 페이지가 목록을 따로 적지 않고 응답에서 받아 그린다.
+  ok(/userScopes\\":\[\\\(requiredUserScopes/.test(INTG),
+    '검사 응답이 필요한 스코프 목록을 그대로 내려준다 (가이드가 목록을 따로 적지 않게)');
+  ok(/requiredUserScopes: \[String\] \{ IntegrationCatalog\.slackUserScopes \}/.test(INTG),
+    '스코프 목록의 원본은 연동 카탈로그 한곳이다 (슬랙 쪽에 사본을 두지 않는다)');
+
+  const body = (PAGE.match(/const RT_EVENTS = \[[^\]]*\];/) || [''])[0] + '\n'
+    + (PAGE.match(/const FALLBACK_SCOPES = \[[\s\S]*?\];/) || [''])[0] + '\n'
+    + 'let intGuide = true, intData = ' + JSON.stringify({
+        checks: { slackUser: { state: 'fail', error: 'token_revoked', account: 'must' } },
+        userScopes: ['reactions:read', 'chat:write'],
+      }) + ';\n'
+    + fn(PAGE, 'intSlackBad', 'page') + '\n'
+    + fn(PAGE, 'intGuideHTML', 'page') + '\nreturn intGuideHTML();';
+  const html = new Function(body)();
+
+  for (const [needle, what] of [
+    ['api.slack.com/apps', '슬랙 앱 설정으로 가는 링크'],
+    ['Socket Mode', 'Socket Mode 확인 단계'],
+    ['Event Subscriptions', '실시간 이벤트 구독 단계'],
+    ['Subscribe to events on behalf of users', '유저 이벤트 섹션 이름 (봇 이벤트와 헷갈리지 않게)'],
+    ['message.mpim', '추가할 이벤트 4개'],
+    ['User Token Scopes', '유저 토큰 스코프 위치'],
+    ['Reinstall to Workspace', '재설치 버튼 이름'],
+    ['User OAuth Token', 'xoxp 토큰을 어디서 복사하는지'],
+    ['App-Level Tokens', 'xapp 토큰 발급 위치'],
+    ['connections:write', 'xapp 토큰에 필요한 스코프'],
+    ['cm-slack-user-token', '키체인 갱신 명령 (사용자 토큰)'],
+    ['cm-slack-app-token', '키체인 갱신 명령 (앱 토큰)'],
+    ['reactions:read', '스코프 목록 — 서버가 내려준 값으로 그린다'],
+  ]) ok(html.includes(needle), '가이드에 ' + what + '이(가) 있다');
+
+  ok(!html.includes('reactions:write'),
+    '스코프 목록은 서버 응답 그대로다 (페이지 폴백 목록이 섞이지 않는다)');
+  ok(/Bot Token Scopes가 아닙니다|bot events가 아닙니다/.test(html),
+    '헷갈리기 쉬운 봇용 설정과 구분해 준다');
+  ok(/재설치로 갱신되지 않습니다/.test(html),
+    'xapp 토큰이 재설치와 무관한 별도 토큰임을 알려준다');
+  // 계정명을 'slack'으로 굳히면 계정이 다른 사용자는 같은 서비스에 항목이 둘 생겨
+  // "갱신했는데 그대로"가 된다 — 실제 등록된 계정을 그대로 써야 한다.
+  ok(/-s cm-slack-user-token -a must -w/.test(html),
+    '키체인 명령이 이미 등록된 계정명을 그대로 쓴다 (중복 항목이 생기지 않게)');
+  ok(/-s cm-slack-app-token -a slack -w/.test(html),
+    '검사 결과가 없는 항목은 기본 계정명으로 안내한다');
+
+  // 자동 펼침 — 실제로 슬랙 토큰이 문제일 때만. 정상인데 펼쳐 두면 소음이 된다.
+  const openWhen = (checks) => new Function(
+    'let intGuide = null, intData = ' + JSON.stringify({ checks }) + ';\n'
+    + fn(PAGE, 'intSlackBad', 'page') + '\nreturn intSlackBad();')();
+  ok(openWhen({ slackUser: { state: 'fail' }, slackApp: { state: 'ok' } }) === true,
+    '토큰이 거부되면 가이드가 저절로 펼쳐진다');
+  ok(openWhen({ slackUser: { state: 'ok', missingScopes: ['chat:write'] } }) === true,
+    '토큰은 살아 있어도 스코프가 빠졌으면 펼쳐진다 (조용히 실패하는 상태)');
+  ok(openWhen({ slackUser: { state: 'ok' }, slackApp: { state: 'ok' } }) === false,
+    '둘 다 정상이면 접어 둔다');
+}
+
 // ------------------------------------------------- 4. 앱 배선
 {
-  const APP = fs.readFileSync(path.join(ROOT, 'Sources/ConditionManager/AppDelegate.swift'), 'utf8');
-  const REG = fs.readFileSync(path.join(ROOT, 'Sources/ConditionManager/Core/WorkerRegistry.swift'), 'utf8');
-  const STORE = fs.readFileSync(path.join(ROOT, 'Sources/Slack/SlackTranslateStore.swift'), 'utf8');
+  const APP = fs.readFileSync(path.join(ROOT, 'Sources/ConditionMate/AppDelegate.swift'), 'utf8');
+  const REG = fs.readFileSync(path.join(ROOT, 'Sources/ConditionMate/Core/WorkerRegistry.swift'), 'utf8');
+  const STORE = fs.readFileSync(path.join(ROOT, 'Sources/Plugins/Slack/SlackTranslateStore.swift'), 'utf8');
   ok(/case "\/api\/slack\/health":/.test(APP), '앱이 데몬 하트비트를 받는다');
   ok(/case "\/api\/slack\/daemon\/restart":/.test(APP), '앱이 재시작 요청을 받는다');
   ok(/SlackHealth\.watchdogTick\(\)/.test(APP) && /tick % 30 == 0/.test(APP),
@@ -260,6 +396,23 @@ if (probe) {
   ok(/timeIntervalSince\(lastReval\) >= 60/.test(STORE), '재검증은 60초에 한 번으로 제한');
   ok(/guard lookup\(id: id\) != nil else \{[\s\S]{0,120}ok: true/.test(STORE),
     '항목이 사라진 실패는 즉시 정리한다');
+}
+
+// ------------------------------------------------- 5. 수집 경로 칩의 자리 = 디버그 패널 안
+// 툴바에는 '연결됨' 하나만 둔다. 경로 칩(실시간 수신/폴링 수집)까지 밖에 서 있으면
+// 상태가 두 개인 것처럼 읽혀 혼동을 준다 — 지금 어느 경로인지는 디버그를 켠 사람만
+// 궁금하다. 그래서 칩은 디버그 패널 최상단에 있고, 로그를 다시 그려도 살아남아야 한다.
+{
+  const panel = PAGE.slice(PAGE.indexOf('<div class="dbgpanel" id="dbgPanel"'),
+    PAGE.indexOf('<div id="list">'));
+  const toolbar = PAGE.slice(PAGE.indexOf('<div class="toolbar">'), PAGE.indexOf('<div class="hbanner"'));
+  ok(/id="pChip"/.test(panel), '수집 경로 칩이 디버그 패널 안에 있다');
+  ok(!/id="pChip"/.test(toolbar), '툴바 밖으로는 나오지 않는다 (연결됨 칩만 남는다)');
+  ok(/id="hChip"/.test(toolbar), "'연결됨' 칩은 툴바에 그대로 둔다");
+  ok(panel.indexOf('id="pChip"') < panel.indexOf('id="dbgBody"'), '패널 최상단 — 액션 로그보다 위');
+  const rd = fn(PAGE, 'renderDbgPanel', 'page');
+  ok(/body\.innerHTML =/.test(rd) && !/panel\.innerHTML =/.test(rd),
+    '로그는 body만 다시 쓴다 — 패널을 통째로 덮으면 칩이 사라진다');
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

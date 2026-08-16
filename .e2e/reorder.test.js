@@ -5,7 +5,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/DashboardContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/DashboardContent.swift', 'utf8');
 
 // 1) drag handler block: from `let _dragFrom` through the dropOn definition.
 const dragStart = SRC.indexOf('let _dragFrom');

@@ -10,8 +10,8 @@
 # app / WKWebView, so a local watch-rebuild loop is the right tool.
 #
 # COEXISTENCE: this dev build is stamped with its OWN bundle id ($DEV_BUNDLE_ID), so it runs
-# SIDE BY SIDE with the installed/production ConditionManager.app. DATA IS SHARED: both apps
-# use the single ~/.condition-manager store (unified 2026-07-09 — the old per-build .localdata
+# SIDE BY SIDE with the installed/production ConditionMate.app. DATA IS SHARED: both apps
+# use the single ~/.condition-mate store (unified 2026-07-09 — the old per-build .localdata
 # isolation made goals/settings diverge and "disappear" when switching apps). Avoid running
 # both apps at the same time for long; last-writer-wins on shared files like dashboard.port.
 # Without a distinct id the app's
@@ -23,13 +23,13 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-DEV_BUNDLE_ID="com.lioncho.conditionmanager.dev"   # distinct from prod's com.lioncho.conditionmanager
-DEV_SIGN_IDENTITY="ConditionManager Dev"           # stable TCC across rebuilds; falls back to ad-hoc
+DEV_BUNDLE_ID="com.lioncho.conditionmate.dev"   # distinct from prod's com.lioncho.conditionmate
+DEV_SIGN_IDENTITY="ConditionMate Dev"           # stable TCC across rebuilds; falls back to ad-hoc
 
 # Dev mode: tell the app not to grab the foreground / auto-pop its window on every rebuild-
 # relaunch (AppPaths.isDev). Without this, the watch loop keeps covering the editor. The window
 # still opens from the menu bar. NO CM_DATA_DIR here — dev shares the single
-# ~/.condition-manager store with the installed app (see COEXISTENCE above). Passed via
+# ~/.condition-mate store with the installed app (see COEXISTENCE above). Passed via
 # `open --env` below (NOT a plain shell export — `open` hands the app to launchd, which does
 # not inherit this shell's environment).
 # Set CM_DEV_AUTO_OPEN=1 before running this to auto-open the window after each rebuild
@@ -37,10 +37,10 @@ DEV_SIGN_IDENTITY="ConditionManager Dev"           # stable TCC across rebuilds;
 DEV_ENV=(--env CM_DEV=1)
 [ -n "${CM_DEV_AUTO_OPEN:-}" ] && DEV_ENV+=(--env "CM_DEV_AUTO_OPEN=$CM_DEV_AUTO_OPEN")
 
-APP="$PWD/.dev/ConditionManager.app"
-BIN="$PWD/.build/debug/ConditionManager"
+APP="$PWD/.dev/ConditionMate.app"
+BIN="$PWD/.build/debug/ConditionMate"
 # Watch only our own Swift sources + the plist (skip the vendored node_modules under Plugins).
-# All targets: Sources/ConditionManager + the library modules (Sources/GUI, Sources/WebCLI).
+# All targets: Sources/ConditionMate + the library modules (Sources/GUI, Sources/WebCLI).
 find_sources() {
     find Sources -name '*.swift' -not -path '*/node_modules/*'
     echo "Info.plist"
@@ -54,7 +54,7 @@ build_and_run() {
     fi
     if [ ! -x "$BIN" ]; then echo "!! no debug binary"; return 1; fi
     mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-    cp "$BIN" "$APP/Contents/MacOS/ConditionManager"
+    cp "$BIN" "$APP/Contents/MacOS/ConditionMate"
     cp Info.plist "$APP/Contents/Info.plist"
     printf 'APPL????' > "$APP/Contents/PkgInfo"
     # Re-stamp the copied plist with the dev identity so this build coexists with prod (see the
@@ -62,8 +62,8 @@ build_and_run() {
     # are tellable apart.
     PB=/usr/libexec/PlistBuddy
     "$PB" -c "Set :CFBundleIdentifier $DEV_BUNDLE_ID"                 "$APP/Contents/Info.plist" 2>/dev/null || true
-    "$PB" -c "Set :CFBundleName ConditionManager Dev"                "$APP/Contents/Info.plist" 2>/dev/null || true
-    "$PB" -c "Set :CFBundleDisplayName Condition Manager (Dev)"      "$APP/Contents/Info.plist" 2>/dev/null || true
+    "$PB" -c "Set :CFBundleName ConditionMate Dev"                "$APP/Contents/Info.plist" 2>/dev/null || true
+    "$PB" -c "Set :CFBundleDisplayName Condition Mate (Dev)"      "$APP/Contents/Info.plist" 2>/dev/null || true
     # Sign with the stable dev identity when present so the dev app's own TCC grant survives
     # rebuilds; pin -i to the dev bundle id so the designated requirement stays constant. Fall
     # back to ad-hoc (grant will need re-approving after each rebuild in that case).
@@ -72,19 +72,19 @@ build_and_run() {
     else
         codesign --force --sign - -i "$DEV_BUNDLE_ID" "$APP" >/dev/null 2>&1 || true
     fi
-    pkill -f "$APP/Contents/MacOS/ConditionManager" 2>/dev/null || true
+    pkill -f "$APP/Contents/MacOS/ConditionMate" 2>/dev/null || true
     sleep 0.4
     # `open` forwards this shell's environment to the app. A stale CM_DATA_DIR inherited from
     # the shell that started dev-watch (e.g. an old Claude session with the pre-unification
     # .localdata override) would silently flip the dev app to an isolated store — the exact
     # dev/prod data divergence the 2026-07-09 unification removed. Strip it, same as build-app.sh.
     env -u CM_DATA_DIR open "${DEV_ENV[@]}" "$APP"
-    echo "==> relaunched $(date +%H:%M:%S) — id=$DEV_BUNDLE_ID data=\$HOME/.condition-manager (shared with prod)"
-    echo "    (coexists with the installed app; window stays in the menu bar — click 'Condition Manager (Dev)' to open)"
+    echo "==> relaunched $(date +%H:%M:%S) — id=$DEV_BUNDLE_ID data=\$HOME/.condition-mate (shared with prod)"
+    echo "    (coexists with the installed app; window stays in the menu bar — click 'Condition Mate (Dev)' to open)"
 }
 
 build_and_run
-echo "watching Sources (ConditionManager + GUI + WebCLI) … (Ctrl-C to stop)"
+echo "watching Sources (ConditionMate + GUI + WebCLI) … (Ctrl-C to stop)"
 if command -v fswatch >/dev/null 2>&1; then
     fswatch -o -l 0.5 Sources Info.plist 2>/dev/null | while read -r _; do
         # ignore churn inside vendored deps

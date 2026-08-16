@@ -1,5 +1,5 @@
 #!/bin/bash
-# QA agent runner -> ConditionManager dashboard.
+# QA agent runner -> ConditionMate dashboard.
 #
 # A periodic QA pass that ONLY looks for dashboard UI rendering breakage and, when it
 # finds a real one, files a goal doc. It does no fixing. The flow:
@@ -33,7 +33,7 @@ WORKER_ID="qa-agent"
 # `python3`, and `curl` resolve.
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
-# Project root = two levels up from this script (…/condition-manager/Scripts/qa-scan.sh).
+# Project root = two levels up from this script (…/condition-mate/Scripts/qa-scan.sh).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -41,7 +41,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [ -n "${CM_DATA_DIR:-}" ]; then
   data_dir="$CM_DATA_DIR"
 else
-  data_dir="$HOME/.condition-manager"
+  data_dir="$HOME/.condition-mate"
 fi
 port_file="$data_dir/dashboard.port"
 
@@ -171,7 +171,7 @@ work="$(mktemp -d -t cm-qa-work)"
 result="$work/result.json"
 goalfile="$work/goal-${nn2}.md"
 
-prompt="You are an automated UI QA pass for the ConditionManager dashboard. A deterministic
+prompt="You are an automated UI QA pass for the ConditionMate dashboard. A deterministic
 DOM audit (pixel-measured in a REAL browser at viewport width ${awidth}px) found these
 elements whose short label WRAPS to 2+ lines, or OVERFLOWS its box — i.e. UI rendering
 breakage from font size / column width:

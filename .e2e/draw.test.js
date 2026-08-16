@@ -1,6 +1,6 @@
 // E2E for the 드로우 plugin (screen-drawing overlay, Sources/Draw), bound to the REAL
 // sources. Asserts:
-//   1) package wiring: a standalone Draw target exists and ConditionManager depends on it
+//   1) package wiring: a standalone Draw target exists and ConditionMate depends on it
 //   2) engine contract: layout-independent keycodes (left ⌥=58 draw, fn=63 wipe —
 //      wipe moved off left ⌃ because it collides with the screenshot chords) polled via
 //      CGEventSource.keyState — no event tap / no Accessibility permission — and the
@@ -19,10 +19,10 @@ const CTRL = fs.readFileSync(ROOT + '/Sources/Draw/DrawOverlayController.swift',
 const WIN = fs.readFileSync(ROOT + '/Sources/Draw/DrawOverlayWindow.swift', 'utf8');
 const CANVAS = fs.readFileSync(ROOT + '/Sources/Draw/DrawCanvasView.swift', 'utf8');
 const EDITOR = fs.readFileSync(ROOT + '/Sources/Draw/DrawTextEditorWindow.swift', 'utf8');
-const PS = fs.readFileSync(ROOT + '/Sources/ConditionManager/Core/PluginStore.swift', 'utf8');
-const SET = fs.readFileSync(ROOT + '/Sources/ConditionManager/Core/Settings.swift', 'utf8');
-const AD = fs.readFileSync(ROOT + '/Sources/ConditionManager/AppDelegate.swift', 'utf8');
-const DC = fs.readFileSync(ROOT + '/Sources/ConditionManager/Dashboard/DashboardContent.swift', 'utf8');
+const PS = fs.readFileSync(ROOT + '/Sources/ConditionMate/Core/PluginStore.swift', 'utf8');
+const SET = fs.readFileSync(ROOT + '/Sources/ConditionMate/Core/Settings.swift', 'utf8');
+const AD = fs.readFileSync(ROOT + '/Sources/ConditionMate/AppDelegate.swift', 'utf8');
+const DC = fs.readFileSync(ROOT + '/Sources/ConditionMate/Dashboard/DashboardContent.swift', 'utf8');
 
 function fn(src, name) {
   const start = src.indexOf('function ' + name + '(');

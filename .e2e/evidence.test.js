@@ -6,7 +6,7 @@
 //   - evItem renders a file as a download link (📄) and a link as a new-tab anchor (🔗)
 //   - evMd: files list name only (their /evidence URL is dashboard-local), links keep the URL
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/DashboardContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/DashboardContent.swift', 'utf8');
 function fn(name) {
   const start = SRC.indexOf('function ' + name + '(');
   if (start < 0) throw new Error('no fn ' + name);

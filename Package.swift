@@ -1,10 +1,10 @@
 // swift-tools-version:5.9
 import PackageDescription
 
-// ConditionManager — a memory-light, macOS-only menu bar app.
+// ConditionMate — a memory-light, macOS-only menu bar app.
 // Pure AppKit (no SwiftUI runtime) to keep the resident footprint minimal.
 let package = Package(
-    name: "ConditionManager",
+    name: "ConditionMate",
     platforms: [
         .macOS(.v13) // NSStatusItem + AVAudioPlayer; deliberately AppKit-only
     ],
@@ -22,7 +22,7 @@ let package = Package(
         ),
         // Reusable AppKit GUI toolkit: web-surface app window (dual persistent WKWebViews,
         // zen fold, JS dialog/file-picker plumbing), status-bar lightning gauge, menu builder,
-        // progress formatting. Deliberately app-agnostic — no ConditionManager types; the app
+        // progress formatting. Deliberately app-agnostic — no ConditionMate types; the app
         // injects behavior via hooks/configuration so other apps can reuse it (Sources/GUI).
         .target(
             name: "GUI",
@@ -35,19 +35,39 @@ let package = Package(
             name: "Draw",
             path: "Sources/Draw"
         ),
+        // 외부 연동 레지스트리 (Sources/Plugins/Integrations): 이 앱이 기대는 모든
+        // 자격증명(슬랙 토큰·LLM API 키)의 카탈로그·키체인 접근·라이브 연결 검사·
+        // 기능 게이팅. 앱과 플러그인이 같은 사실을 보게 하려고 별도 타깃으로 뺐다 —
+        // Slack 타깃과 앱 타깃이 둘 다 의존한다(한곳에서 고치면 모두 고쳐진다).
+        .target(
+            name: "Integrations",
+            path: "Sources/Plugins/Integrations"
+        ),
         // Slack 👀 번역 plugin (independent development): dashboard-side stores/page
         // (SlackTranslateStore/SlackActionLog/SlackTranslateContent) plus the external
         // Socket Mode daemon under Daemon/ (not compiled — launchd runs the .mjs).
         // App-agnostic like GUI/Draw; the app injects data dir + settings hooks.
+        // 연동 키는 스스로 들고 있지 않고 Integrations 레지스트리에 묻는다.
         .target(
             name: "Slack",
-            path: "Sources/Slack",
+            dependencies: ["Integrations"],
+            path: "Sources/Plugins/Slack",
             exclude: ["Daemon"]
         ),
+        // 지라 번역 plugin (Sources/Plugins/Jira): 고정 포트 로컬 브리지 + Gemini 번역.
+        // 짝이 되는 크롬 익스텐션은 Extension/ 에 있고 컴파일 대상이 아니다 —
+        // Scripts/install-jira-ext.sh 가 토큰을 심어 <data>/chrome-jira-translate 로
+        // 복사하고, 크롬은 그 폴더를 압축해제 확장으로 읽는다.
+        .target(
+            name: "Jira",
+            dependencies: ["Integrations"],
+            path: "Sources/Plugins/Jira",
+            exclude: ["Extension"]
+        ),
         .executableTarget(
-            name: "ConditionManager",
-            dependencies: ["WebCLI", "GUI", "Draw", "Slack"],
-            path: "Sources/ConditionManager"
+            name: "ConditionMate",
+            dependencies: ["WebCLI", "GUI", "Draw", "Slack", "Jira", "Integrations"],
+            path: "Sources/ConditionMate"
         ),
         // Standalone web terminal: serves the in-app CLI 세션 view to a real browser,
         // reusing the WebCLI target (PtySession + CMWebCLI engine) verbatim. Run it
@@ -62,7 +82,7 @@ let package = Package(
         // invokes `claude -p` — all retrieval/substance/reconcile logic is pure.
         .testTarget(
             name: "RelatedGoalSearchTests",
-            dependencies: ["ConditionManager"],
+            dependencies: ["ConditionMate"],
             path: "tests/RelatedGoalSearchTests"
         )
     ]

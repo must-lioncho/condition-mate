@@ -1,12 +1,12 @@
 # 로컬 세션 관리 정책서 (Session Lifecycle Policy)
 
 작성일: 2026-06-24
-대상: condition-manager (macOS 메뉴바 앱) + 내장 웹 대시보드
+대상: condition-mate (macOS 메뉴바 앱) + 내장 웹 대시보드
 관련 문서: loop-status-design.md, bgm-management.md
 
 ## 1. 목적
 
-Claude 데스크톱 앱의 "세션 보관(archive)"과 condition-manager 웹 대시보드의
+Claude 데스크톱 앱의 "세션 보관(archive)"과 condition-mate 웹 대시보드의
 "목표 완료(done)"를 하나의 동일한 생명주기 개념으로 통합한다.
 두 시스템이 같은 작업 단위를 서로 다른 상태로 들고 있어 발생하는 불일치를 없앤다.
 
@@ -36,8 +36,8 @@ Claude 데스크톱 앱의 "세션 보관(archive)"과 condition-manager 웹 대
   lastActivityAt, model, effort, isArchived, title, titleSource, permissionMode 등.
 - 이 파일은 Claude 데스크톱 앱이 소유하고 갱신하는 비공개 상태 파일이다.
 
-셋째, condition-manager 자체 데이터.
-- 목표: 사용자 홈의 Library/Application Support/ConditionManager/review/goals.json
+셋째, condition-mate 자체 데이터.
+- 목표: 사용자 홈의 Library/Application Support/ConditionMate/review/goals.json
   (또는 CM_DATA_DIR 환경변수로 재정의된 경로).
 - 일일 리뷰: 같은 review 폴더의 review-YYYY-MM-DD.json.
 - 유효 상태 집합: backlog, in_progress, done (ReviewStore.swift 의 validStatuses).
@@ -64,10 +64,10 @@ Claude 데스크톱 앱의 "세션 보관(archive)"과 condition-manager 웹 대
 
 ### 2.3 현재 동작 (정책 적용 전)
 
-- condition-manager 는 Claude Code 의 세션 라이프사이클 훅(start, active, idle, end)을
+- condition-mate 는 Claude Code 의 세션 라이프사이클 훅(start, active, idle, end)을
   HTTP 엔드포인트 api/session/event 로 수신해 목표 상태를 자동 전환한다
   (cc-session-hook.sh, AppDelegate.swift, ReviewStore.recordSession).
-- condition-manager 는 현재 Claude 데스크톱의 isArchived 필드를 읽거나 감시하지 않는다.
+- condition-mate 는 현재 Claude 데스크톱의 isArchived 필드를 읽거나 감시하지 않는다.
 - 따라서 데스크톱에서 보관해도 웹 상태는 바뀌지 않는다. 이 정책이 그 연결을 추가한다.
 
 ## 3. 상태 매핑 규칙
@@ -87,7 +87,7 @@ Claude 데스크톱 앱의 "세션 보관(archive)"과 condition-manager 웹 대
 웹 대시보드 목표가 자동으로 완료(done)가 된다.
 
 동작 절차:
-- condition-manager 가 claude-code-sessions 디렉토리를 파일 감시(FSEvents 또는
+- condition-mate 가 claude-code-sessions 디렉토리를 파일 감시(FSEvents 또는
   DispatchSource 기반)한다.
 - cwd 가 현재 프로젝트 경로와 일치하는 local_<id>.json 만 대상으로 한다.
 - 어떤 파일의 isArchived 가 false 에서 true 로 바뀌면 다음을 수행한다.
@@ -120,7 +120,7 @@ Claude 데스크톱 앱의 "세션 보관(archive)"과 condition-manager 웹 대
 - 사용자가 웹에서 완료 버튼을 누르면 api/goal/status 경로로 목표 status 를
   done 으로 바꾼다. 이 부분은 이미 구현되어 있고 안전하며 신뢰할 수 있다.
 - done 이 된 목표는 웹 활성 목록에서 숨긴다 (별도 완료 보관함 또는 비표시).
-  이 동작도 condition-manager 자체 데이터 안에서 일어나므로 신뢰할 수 있다.
+  이 동작도 condition-mate 자체 데이터 안에서 일어나므로 신뢰할 수 있다.
 - (베스트 에포트) 목표에 sessionId 가 연결되어 있으면, 대응하는
   local_<id>.json 의 isArchived 를 true 로 기록 시도한다.
 
@@ -132,7 +132,7 @@ Claude 데스크톱 앱의 "세션 보관(archive)"과 condition-manager 웹 대
 - 앱이 파일 변경을 실시간으로 다시 읽는다는 보장이 없다. 보관 표시가
   앱 재시작 또는 새로고침 후에만 반영될 수 있다.
 
-따라서 정책 2 의 진실 원천(source of truth)은 condition-manager 의 goals.json 이며,
+따라서 정책 2 의 진실 원천(source of truth)은 condition-mate 의 goals.json 이며,
 데스크톱 보관 쓰기는 실패해도 사용자 흐름을 막지 않는 부가 동작으로 취급한다.
 데스크톱 쓰기를 시도할 경우 다음을 지킨다.
 - 쓰기 직전 파일을 다시 읽어 cliSessionId 가 여전히 일치하는지 확인한다.

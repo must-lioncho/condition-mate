@@ -2,7 +2,7 @@
 
 Status: Ready to dispatch
 Owner: manager-pm (proposal) / SPEC.md owned by manager-qa
-Target app: `projects/condition-manager` (macOS menu-bar app, Swift + in-window WKWebView dashboard)
+Target app: `projects/condition-mate` (macOS menu-bar app, Swift + in-window WKWebView dashboard)
 Related memory: goals-safe-write, agents-page (GET whitelist), session-goal-suppress, data-layout
 
 ---
@@ -33,7 +33,7 @@ Goal-to-goal LINK model (flat display + link-following export), and generalizati
 2. **GET whitelist.** Any new GET route/page MUST be added to the `DashboardServer` GET dispatch in `respond(...)` (`DashboardServer.swift:184-258`). New mutations are POST under `/api/...` (already caught by the `POST && hasPrefix("/api/")` branch at `:188`).
 3. **Headless `claude -p` workers set `CM_SUPPRESS_SESSION_GOAL=1`** (memory: session-goal-suppress) — same as `aiDedupVerdict` today.
 4. **Backward-compat decoders.** Every new `Goal` / queue-item field decodes via `decodeIfPresent(...) ?? default` (same pattern as `Goal.parent` at `ReviewStore.swift:142` and `AIQueueItem` at `:336-350`). Existing on-disk JSON must still load unchanged.
-5. **Single data store** at `~/.condition-manager`, resolution order `CM_DATA_DIR → <repo>/.localdata → ~/.condition-manager` (memory: data-layout). SPEC + ledger currently live at `~/.condition-manager/SPEC.md` and `~/.condition-manager/ledger/agent-update-log.jsonl`.
+5. **Single data store** at `~/.condition-mate`, resolution order `CM_DATA_DIR → <repo>/.localdata → ~/.condition-mate` (memory: data-layout). SPEC + ledger currently live at `~/.condition-mate/SPEC.md` and `~/.condition-mate/ledger/agent-update-log.jsonl`.
 
 ### Anchor corrections (verified against current code, 2026-07-06)
 The originating brief cited a few stale line numbers. Confirmed current anchors:
@@ -308,7 +308,7 @@ Status vocabulary stays exactly `pending / analyzing / ready` (`AIQueueItem` doc
 
 **Goal:** Regression + intent verification against SPEC.md for all new behavior, using the manager-qa playbook (isolated bundle, unique bundle id, `CM_QUIT_AFTER`, `app.log`).
 
-**Files:** `~/.condition-manager/SPEC.md` (add the new items in §"SPEC.md edits" below), regenerate `SPEC.html`, append to `~/.condition-manager/ledger/agent-update-log.jsonl`.
+**Files:** `~/.condition-mate/SPEC.md` (add the new items in §"SPEC.md edits" below), regenerate `SPEC.html`, append to `~/.condition-mate/ledger/agent-update-log.jsonl`.
 
 **Build order:** run after Phases 1–3 land. Gate shipping on a manager-qa PASS.
 
@@ -320,7 +320,7 @@ Status vocabulary stays exactly `pending / analyzing / ready` (`AIQueueItem` doc
 
 ## SPEC.md edits (item id + old→new)
 
-Owner manager-qa applies these to `~/.condition-manager/SPEC.md` (bilingual EN/KO format, per the DASH/EP page style) and regenerates `SPEC.html` in the same change.
+Owner manager-qa applies these to `~/.condition-mate/SPEC.md` (bilingual EN/KO format, per the DASH/EP page style) and regenerates `SPEC.html` in the same change.
 
 - **NEW DASH-6 — goal-to-goal LINK model (flat display, link-following export).**
   EN: A goal may LINK to another goal (`Goal.links: [String]`, source-side). Creating a link PROMOTES the source to top-level (`parent=""`) and records the link; a confirm dialog shows the before/after promotion. Display hierarchy stays flat 1-level (the `setParent` flat guards at `ReviewStore.swift:630-642/648-667` are unchanged). Rows with links show a link dot. Only export/compression follows links.
@@ -348,7 +348,7 @@ Ordering/dependency: Phase 0 (data, standalone) and Phase 1 (backend `links` + m
 ### Phase 0 → (user decision, optionally general-purpose engineer)
 ```
 Resolve whether goal-240 and goal-260 (children of goal-233) are duplicates or distinct work in the
-Condition Manager app. Read each goal's definition/transcript via the 프리뷰 tab or /goal?n=NN. Do NOT
+Condition Mate app. Read each goal's definition/transcript via the 프리뷰 tab or /goal?n=NN. Do NOT
 edit goals.json directly — apply any consolidation only through the running app's APIs
 (POST /api/goal/status {"id","status":"cancelled"} to cancel a duplicate; POST /api/goal/parent
 {"id","parent":""} to detach). Report your decision and the exact API calls made. Cancelling is
@@ -357,7 +357,7 @@ reversible; never delete.
 
 ### Phase 1 → expert-backend (Swift/store/API) then expert-frontend (row UI)
 ```
-Implement the goal LINK model in projects/condition-manager. User: Korean speaker; user-facing strings
+Implement the goal LINK model in projects/condition-mate. User: Korean speaker; user-facing strings
 Korean, code comments English. Spec: docs/specs/goal-link-and-generic-queue.md (Phase 1). Do NOT edit
 goals.json directly; do NOT relax the setParent flat-hierarchy guards (ReviewStore.swift:630-642,
 648-667).
@@ -375,13 +375,13 @@ Frontend (expert-frontend):
   "링크로 연결" → goal-search popup (reuse the gPickParent/setParentByNumber :2515/:2668 pattern to pick
   the target by goal-NN/seq) → confirm dialog with a before/after promotion graphic (mock approved) →
   on confirm POST /api/goal/link {id:source,target}.
-Build with `swift build`; confirm the existing ~/.condition-manager goals.json still loads (goal count
+Build with `swift build`; confirm the existing ~/.condition-mate goals.json still loads (goal count
 unchanged in app.log). Deliver: acceptance criteria AC1-AC5 from Phase 1 met.
 ```
 
 ### Phase 2 → expert-backend (store/worker/API) + expert-frontend (tab)
 ```
-Generalize the AI 큐 into a general-purpose async queue tab in projects/condition-manager. User: Korean.
+Generalize the AI 큐 into a general-purpose async queue tab in projects/condition-mate. User: Korean.
 Spec: docs/specs/goal-link-and-generic-queue.md (Phase 2, §1.2). Any new GET route MUST be added to the
 DashboardServer GET whitelist (DashboardServer.swift:234-258).
 Backend (expert-backend):
@@ -414,7 +414,7 @@ legacy item jobKind=="dedup".
 
 ### Phase 3 → expert-frontend (JS export + tab card) + expert-backend (runner + route)
 ```
-Reimplement "내보내기" as a queued linkmap job in projects/condition-manager. User: Korean. Spec:
+Reimplement "내보내기" as a queued linkmap job in projects/condition-mate. User: Korean. Spec:
 docs/specs/goal-link-and-generic-queue.md (Phase 3). Depends on Phase 1 (Goal.links) and Phase 2
 (generalized queue + worker branch). Headless claude -p MUST set CM_SUPPRESS_SESSION_GOAL=1. New GET
 routes MUST be whitelisted (DashboardServer.swift:258 group).
@@ -437,10 +437,10 @@ Deliver: Phase 3 AC1-AC6, including a deliberate-cycle test that terminates.
 ### Phase 4 → manager-qa
 ```
 Regression + intent QA for the goal LINK model + generic queue tab + queued linkmap export in
-projects/condition-manager, against SPEC.md. User: Korean. Apply the SPEC.md edits from
+projects/condition-mate, against SPEC.md. User: Korean. Apply the SPEC.md edits from
 docs/specs/goal-link-and-generic-queue.md (new DASH-6, DASH-7, DASH-8; EP endpoint additions) to
-~/.condition-manager/SPEC.md, regenerate SPEC.html in the same change, and append one line to
-~/.condition-manager/ledger/agent-update-log.jsonl. Verify every AC in Phases 1-3 using the manager-qa playbook
+~/.condition-mate/SPEC.md, regenerate SPEC.html in the same change, and append one line to
+~/.condition-mate/ledger/agent-update-log.jsonl. Verify every AC in Phases 1-3 using the manager-qa playbook
 (isolated bundle, unique bundle id, CM_QUIT_AFTER, app.log; /data.json and /api/debug/snapshot as
 evidence). Specifically confirm: (a) linking goal-233→goal-01 promotes 233 to top-level and records the
 link; (b) the flat setParent guards are unchanged; (c) legacy goals.json/queue.json still load; (d) the

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>목업 · 계획 메뉴 = 대화 UXUI 그대로 + GUI시작→대화</title>
 <style>
-  /* Condition Manager 팔레트 — 대화(goal-add) 페이지 구조를 그대로 재현 */
+  /* Condition Mate 팔레트 — 대화(goal-add) 페이지 구조를 그대로 재현 */
   :root{
     --bg:#0a0d12; --panel:#0f141d; --panel2:#161c2a; --line:#1c2230; --line2:#263143;
     --fg:#e7ecf4; --txt:#c8cfdb; --mut:#5d6678; --mut2:#8b93a7;
@@ -400,7 +400,7 @@ function gaStart(){
   $('gsStat').style.display='flex'; $('gsStxt').textContent='작업 중 — 첫 턴 진행';
   setTimeout(function(){
     aiSay('목표를 확인했습니다 — goal-'+seq+'로 추가했고, 바로 시작합니다.\n\n먼저 관련 코드를 파악하겠습니다.', function(){
-      toolCard('Read','Sources/ConditionManager/Dashboard/SessionRail.swift','레일 세션 목록 렌더러(cmRailSessions)와 정렬 규칙 확인 (…)');
+      toolCard('Read','Sources/ConditionMate/Dashboard/SessionRail.swift','레일 세션 목록 렌더러(cmRailSessions)와 정렬 규칙 확인 (…)');
       setTimeout(function(){
         toolCard('Edit','SessionRail.swift — 드래그 핸들 +24줄','+ row.draggable=true\n+ row.addEventListener(\'dragstart\', …)\n+ /api/cli/reorder 연동');
         setTimeout(function(){

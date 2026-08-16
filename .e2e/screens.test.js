@@ -6,7 +6,7 @@
 //   query KEYS stripped so /goal?n matches the /goal page node)
 //   그리드: SCR cards, status filtering, summary counts, note/status save round-trip.
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/BGMPlayerContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/BGMPlayerContent.swift', 'utf8');
 function slice(from, to) {
   const a = SRC.indexOf(from); const b = SRC.indexOf(to, a);
   if (a < 0 || b < 0) throw new Error('extract ' + from);
@@ -69,7 +69,7 @@ global.__data = {
   flagLabels: { zen: '젠 (보드 접힘)', reward: '수확 대기 (완주 오브)' },
   pages: [
     { id: 'dashboard', title: '대시보드', path: '/', mode: 'dashboard', desc: '메인 보드',
-      src: 'Sources/ConditionManager/Dashboard/DashboardContent.swift',
+      src: 'Sources/ConditionMate/Dashboard/DashboardContent.swift',
       children: [{ id: 'dashboard-goals', title: '목록', view: 'goals' }],
       states: ['zen', 'reward'] },
     { id: 'goal', title: '목표 상세', path: '/goal', mode: 'dashboard', desc: 'goal 하나의 페이지',

@@ -1,6 +1,6 @@
 import Testing
 import Foundation
-@testable import ConditionManager
+@testable import ConditionMate
 
 // DASH-9 regression tests for the AI 큐 "연관성 찾기" content-substance cascade.
 // Deterministic ONLY: none of these invoke `claude -p`. They exercise the pure retrieval,

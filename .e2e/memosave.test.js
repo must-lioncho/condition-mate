@@ -23,14 +23,22 @@ const html = `<!doctype html><html><head><meta charset="utf-8">
 // ?case= 로 초기 서버 상태(그리고 4번 케이스의 로컬 초안)를 심는다.
 (function(){
   var c=new URLSearchParams(location.search).get('case')||'base';
-  window.SRV={ text:'서버 첫 줄', rev:7, updatedAt:100, posts:[] };
+  // 생성 스탬프(2026-08-10)는 서버 글에 이미 찍혀 있는 상태로 둔다 — 첫 로드
+  // 마이그레이션(@생성: 이전 채우기)이 여기서 판번호와 저장 횟수를 흔들지 않도록.
+  window.SRV={ text:'서버 첫 줄\\n    @생성: 이전', rev:7, updatedAt:100, posts:[] };
   window.__delayGet=false; window.__getWaiters=[];
   try{ localStorage.removeItem('cmMemoDraft'); }catch(e){}
   if(c==='draft'){
-    window.SRV={ text:'서버 글', rev:3, updatedAt:100, posts:[] };
-    try{ localStorage.setItem('cmMemoDraft', JSON.stringify({text:'서버 글\\n죽기 전 초안 줄', t:200})); }catch(e){}
+    window.SRV={ text:'서버 글\\n    @생성: 이전', rev:3, updatedAt:100, posts:[] };
+    try{ localStorage.setItem('cmMemoDraft', JSON.stringify(
+      {text:'서버 글\\n    @생성: 이전\\n죽기 전 초안 줄\\n    @생성: 이전', t:200})); }catch(e){}
   }
-  if(c==='lateload'){ window.SRV={ text:'서버 글', rev:5, updatedAt:100, posts:[] }; window.__delayGet=true; }
+  if(c==='lateload'){ window.SRV={ text:'서버 글\\n    @생성: 이전', rev:5, updatedAt:100, posts:[] }; window.__delayGet=true; }
+  // 이 파일이 보는 것은 저장 신뢰(판번호·합집합·초안)이지 스탬프가 아니다 — 걷어 내고 읽는다.
+  window.__noCr=function(s){ return String(s||'').split('\\n')
+    .filter(function(l){ return !/^\\s+@생성:/.test(l); }).join('\\n'); };
+  window.__t=function(){ return __noCr(CMMemo.text()); };
+  window.__st=function(){ return __noCr(SRV.text); };
   var _f=window.fetch;
   window.fetch=function(u,o){
     if(String(u).indexOf('/api/memo')<0) return _f.apply(this,arguments);
@@ -72,16 +80,16 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
     await page.waitForFunction(() => window.CMMemo && CMMemo.count() > 0);
     return { ctx, page };
   };
-  const text = (page) => page.evaluate(() => CMMemo.text());
-  const srv = (page) => page.evaluate(() => ({ text: SRV.text, rev: SRV.rev, posts: SRV.posts }));
+  const text = (page) => page.evaluate(() => __t());
+  const srv = (page) => page.evaluate(() => ({ text: __st(), rev: SRV.rev, posts: SRV.posts }));
   const set = (page, s) => page.evaluate((s) => CMMemo.setText(s), s);
   const waitSrvText = (page, want) =>
-    page.waitForFunction((w) => window.SRV && SRV.text === w, want, { timeout: 5000 });
+    page.waitForFunction((w) => window.SRV && __st() === w, want, { timeout: 5000 });
 
   // [1] base 왕복 — 저장은 본 판을 싣고, 새 판을 이어받는다.
   {
     const { ctx, page } = await open('base');
-    await page.waitForFunction(() => CMMemo.text() === '서버 첫 줄');
+    await page.waitForFunction(() => __t() === '서버 첫 줄');
     await set(page, '서버 첫 줄\n새 줄');
     await waitSrvText(page, '서버 첫 줄\n새 줄');
     let s = await srv(page);
@@ -100,7 +108,7 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
   // [2] 판 어긋남 — 덮지 않고 합쳐서 다시 민다. 어느 쪽 글도 사라지지 않는다.
   {
     const { ctx, page } = await open('base');
-    await page.waitForFunction(() => CMMemo.text() === '서버 첫 줄');
+    await page.waitForFunction(() => __t() === '서버 첫 줄');
     await page.evaluate(() => { SRV.text = '서버 첫 줄\n다른 창 줄'; SRV.rev = 8; });
     await set(page, '서버 첫 줄\n내 줄');
     await waitSrvText(page, '서버 첫 줄\n내 줄\n다른 창 줄');
@@ -114,10 +122,10 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
   // [3] 포커스 새로고침 — 놀고 있는 패드는 앞으로 올 때 서버 판을 이어받는다.
   {
     const { ctx, page } = await open('base');
-    await page.waitForFunction(() => CMMemo.text() === '서버 첫 줄');
+    await page.waitForFunction(() => __t() === '서버 첫 줄');
     await page.evaluate(() => { SRV.text = '서버 첫 줄\n딴 데서 쓴 줄'; SRV.rev = 8; });
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await page.waitForFunction(() => CMMemo.text() === '서버 첫 줄\n딴 데서 쓴 줄');
+    await page.waitForFunction(() => __t() === '서버 첫 줄\n딴 데서 쓴 줄');
     check('refresh: 창이 앞으로 오면 다른 화면의 글이 보인다', true);
     await ctx.close();
   }
@@ -125,7 +133,7 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
   // [4] 로컬 초안 복구 — 저장 못 하고 죽은 세션의 글이 다음 로드에서 살아난다.
   {
     const { ctx, page } = await open('draft');
-    await page.waitForFunction(() => CMMemo.text() === '서버 글\n죽기 전 초안 줄');
+    await page.waitForFunction(() => __t() === '서버 글\n죽기 전 초안 줄');
     await waitSrvText(page, '서버 글\n죽기 전 초안 줄');
     const s = await srv(page);
     eq('draft: 복구된 글이 서버에 저장된다', s.text, '서버 글\n죽기 전 초안 줄');
@@ -142,7 +150,7 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
     await page.waitForTimeout(700);
     eq('lateload: 로드 전에는 서버에 쓰지 않는다', (await srv(page)).posts.length, 0);
     await page.evaluate(() => { window.__delayGet = false; window.__getWaiters.forEach((f) => f()); });
-    await page.waitForFunction(() => CMMemo.text() === '로드 전에 친 줄\n서버 글');
+    await page.waitForFunction(() => __t() === '로드 전에 친 줄\n서버 글');
     await waitSrvText(page, '로드 전에 친 줄\n서버 글');
     check('lateload: 내 줄도 서버 글도 살아남는다', true);
     await ctx.close();

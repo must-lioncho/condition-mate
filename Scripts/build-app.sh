@@ -1,5 +1,5 @@
 #!/bin/bash
-# Assemble a self-contained ConditionManager.app from the SPM release binary.
+# Assemble a self-contained ConditionMate.app from the SPM release binary.
 # Ad-hoc signs the bundle so SMAppService (login item) works locally.
 #
 # Two modes, and the difference is who waits:
@@ -14,8 +14,8 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-APP="ConditionManager.app"
-BIN_NAME="ConditionManager"
+APP="ConditionMate.app"
+BIN_NAME="ConditionMate"
 
 # --stage: park the build instead of installing it. Everything up to (and including)
 # code signing is identical — only the tail differs.
@@ -25,7 +25,7 @@ STAGE=0
 # Staging lives in the data dir, NOT the repo: it must survive `git clean`, and the app
 # has to find it without being told a repo path. Honour CM_DATA_DIR the same way
 # AppPaths does so a test/dev run stages into its own store.
-DATA_DIR="${CM_DATA_DIR:-$HOME/.condition-manager}"
+DATA_DIR="${CM_DATA_DIR:-$HOME/.condition-mate}"
 STAGE_DIR="$DATA_DIR/updates"
 STAGED_JSON="$STAGE_DIR/staged.json"
 
@@ -107,7 +107,7 @@ cp "Assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 /usr/libexec/PlistBuddy -c "Delete :CMBuildStart" "$APP/Contents/Info.plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :CMBuildStart string $BUILD_START" "$APP/Contents/Info.plist"
 
-IDENTITY="ConditionManager Dev"
+IDENTITY="ConditionMate Dev"
 if security find-identity -p codesigning | grep -q "$IDENTITY"; then
     echo "==> Code signing with '$IDENTITY' (stable Accessibility grant across rebuilds)"
     codesign --force --deep --sign "$IDENTITY" "$APP"
@@ -140,7 +140,7 @@ fi
 # (recommended — stable path for the SMAppService login item), every build quits the
 # running instance cleanly, swaps the installed bundle, and relaunches. No manual
 # Finder copy. First-time install never happens implicitly — pass --install once.
-BUNDLE_ID="com.lioncho.conditionmanager"
+BUNDLE_ID="com.lioncho.conditionmate"
 INSTALLED="/Applications/$APP"
 if [ -d "$INSTALLED" ] || [ "${1:-}" = "--install" ]; then
     echo "==> Updating $INSTALLED"
@@ -148,8 +148,8 @@ if [ -d "$INSTALLED" ] || [ "${1:-}" = "--install" ]; then
     # so stores flush. Targets prod only — the dev app has the .dev bundle id.
     osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
     for _ in $(seq 1 20); do
-        # Prod paths only — the dev app (.dev/ConditionManager.app) must not hold the wait.
-        pgrep -fq "(/Applications|$PWD)/ConditionManager.app/Contents/MacOS/ConditionManager" || break
+        # Prod paths only — the dev app (.dev/ConditionMate.app) must not hold the wait.
+        pgrep -fq "(/Applications|$PWD)/ConditionMate.app/Contents/MacOS/ConditionMate" || break
         sleep 0.3
     done
     rm -rf "$INSTALLED"

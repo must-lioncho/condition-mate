@@ -39,7 +39,10 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
   await page.waitForFunction(() => window.CMMemo && CMMemo.count() > 0);
 
   const set = (s) => page.evaluate((s) => CMMemo.setText(s), s);
-  const text = () => page.evaluate(() => CMMemo.text());
+  // 생성 스탬프(2026-08-10, '    @생성: …')는 줄마다 붙는 메타다. 이 파일이 보는 것은
+  // 글의 '모양' 이라 스탬프는 걷어 내고 읽는다 — 스탬프 계약은 memocreated.test.js 가 지킨다.
+  const noCr = (s) => String(s).split('\n').filter((l) => !/^\s+@생성:/.test(l)).join('\n');
+  const text = () => page.evaluate(() => CMMemo.text()).then(noCr);
   // i 번째 행 제목의 맨 앞/맨 뒤에 캐럿 — 앱과 같은 길(선택 영역)로 놓고 실제 키를 친다.
   const caret = (i, atEnd) => page.evaluate(({ i, atEnd }) => {
     const tx = document.querySelectorAll('[data-cmmemo-doc] .cmm-row')[i].querySelector('.cmm-tx');

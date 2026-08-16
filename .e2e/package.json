@@ -1,13 +1,14 @@
 {
-  "name": "condition-manager-e2e",
+  "name": "condition-mate-e2e",
   "private": true,
-  "description": "Headless E2E checks for the ConditionManager dashboard (Korean IME, tier smoothing, stable goal seq, on-track rollup).",
+  "description": "Headless E2E checks for the ConditionMate dashboard (Korean IME, tier smoothing, stable goal seq, on-track rollup).",
   "scripts": {
-    "test": "node ime.test.js && node source.test.js && node tier.test.js && node seq.test.js && node ontrack.test.js && node energy.test.js && node actioncat.test.js && node pomodoro.test.js && node memostage.test.js && node memotag.test.js && node memosort.test.js && node memoui.test.js && node memolink.test.js && node memomove.test.js && node memofilter.test.js && node memoloop.test.js && node memogoalno.test.js && node memohistory.test.js && node memoparent.test.js && node parentsuggest.test.js && node zenflap.test.js",
+    "test": "node ime.test.js && node source.test.js && node tier.test.js && node seq.test.js && node ontrack.test.js && node energy.test.js && node actioncat.test.js && node pomodoro.test.js && node memostage.test.js && node memotag.test.js && node memosort.test.js && node memoui.test.js && node memoultra.test.js && node memolink.test.js && node memomove.test.js && node memofilter.test.js && node memoloop.test.js && node memocreated.test.js && node memocopy.test.js && node memogoalno.test.js && node memohistory.test.js && node memoparent.test.js && node parentsuggest.test.js && node zenflap.test.js && node integrations.test.js",
     "test:parent": "node parentsuggest.test.js",
-    "test:memo": "node memostage.test.js && node memotag.test.js && node memosort.test.js && node memoui.test.js && node memolink.test.js && node memomove.test.js && node memofilter.test.js && node memoloop.test.js && node memogoalno.test.js && node memohistory.test.js && node memoparent.test.js",
+    "test:memo": "node memostage.test.js && node memotag.test.js && node memosort.test.js && node memoui.test.js && node memoultra.test.js && node memolink.test.js && node memomove.test.js && node memofilter.test.js && node memoloop.test.js && node memocreated.test.js && node memocopy.test.js && node memogoalno.test.js && node memohistory.test.js && node memoparent.test.js",
     "test:pomodoro": "node pomodoro.test.js",
     "test:slack": "node slackretrig.test.js && node slackhealth.test.js && node slackmenu.test.js",
+    "test:integrations": "node integrations.test.js",
     "test:actions": "node actioncat.test.js",
     "test:ime": "node ime.test.js && node source.test.js",
     "test:tier": "node tier.test.js",

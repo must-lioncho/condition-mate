@@ -1,5 +1,5 @@
 #!/bin/bash
-# Claude Code session hook -> ConditionManager dashboard.
+# Claude Code session hook -> ConditionMate dashboard.
 #
 # Bridges a Claude Code session lifecycle event to the local dashboard so the
 # session shows up as a goal whose status tracks real agent activity:
@@ -43,11 +43,11 @@ sid="$(field session_id)"
 # The data dir mirrors AppPaths.base. Resolution order, so the hook always reaches the
 # same store the app writes to:
 #   1. CM_DATA_DIR          - explicit override (tests / throwaway runs)
-#   2. ~/.condition-manager - the single shared store (dev + prod, unified 2026-07-09)
+#   2. ~/.condition-mate - the single shared store (dev + prod, unified 2026-07-09)
 if [ -n "$CM_DATA_DIR" ]; then
   data_dir="$CM_DATA_DIR"
 else
-  data_dir="$HOME/.condition-manager"
+  data_dir="$HOME/.condition-mate"
 fi
 port_file="$data_dir/dashboard.port"
 [ -f "$port_file" ] || exit 0
@@ -166,10 +166,10 @@ if ! deliver "$port"; then
   # dashboard.port can go stale during a dev-watch relaunch: the dying instance's port-file
   # write can land after the new instance's, so the file points at a dead port. The app
   # self-heals the file within a few seconds, but THIS event fires now — probe the ports
-  # ConditionManager actually listens on and deliver to the instance that serves the SAME
+  # ConditionMate actually listens on and deliver to the instance that serves the SAME
   # data dir (checked via GET /api/settings/paths), so a test/dev instance on another
   # store never receives this store's events.
-  for p in $(lsof -nP -a -iTCP -sTCP:LISTEN -c ConditionManager 2>/dev/null \
+  for p in $(lsof -nP -a -iTCP -sTCP:LISTEN -c ConditionMate 2>/dev/null \
                | grep -o '127\.0\.0\.1:[0-9]*' | sed 's/.*://' | sort -un); do
     [ "$p" = "$port" ] && continue
     owner="$(curl -s -m 1 "http://127.0.0.1:$p/api/settings/paths" 2>/dev/null \

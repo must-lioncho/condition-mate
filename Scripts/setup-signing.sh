@@ -10,7 +10,7 @@
 # Idempotent: re-running detects an existing identity and does nothing.
 set -euo pipefail
 
-IDENTITY_NAME="ConditionManager Dev"
+IDENTITY_NAME="ConditionMate Dev"
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 
 if security find-identity -v -p codesigning | grep -q "$IDENTITY_NAME"; then

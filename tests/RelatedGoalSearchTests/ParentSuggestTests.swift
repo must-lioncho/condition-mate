@@ -1,6 +1,6 @@
 import Testing
 import Foundation
-@testable import ConditionManager
+@testable import ConditionMate
 
 // Unit tests for the deterministic 부모# suggestion scorer.
 //
@@ -169,7 +169,7 @@ import Foundation
     //   CM_PSUG_DUMP=1 Scripts/run-unit-tests.sh --filter dumpRealTracker
     @Test func dumpRealTracker() throws {
         guard ProcessInfo.processInfo.environment["CM_PSUG_DUMP"] == "1" else { return }
-        let path = NSString(string: "~/.condition-manager/review/goals.json").expandingTildeInPath
+        let path = NSString(string: "~/.condition-mate/review/goals.json").expandingTildeInPath
         guard let data = FileManager.default.contents(atPath: path) else {
             print("[psug] no goals.json at \(path)")
             return

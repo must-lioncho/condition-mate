@@ -9,7 +9,7 @@
 //   5) saveState persists exhaust{type,drive,level}; restore validates (rejects unknown car/mode,
 //      including 'highway' left over from the synthesized v1)
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/BGMPlayerContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/BGMPlayerContent.swift', 'utf8');
 function slice(from, to) { const a = SRC.indexOf(from); const b = SRC.indexOf(to, a); if (a < 0 || b < 0) throw new Error('extract ' + from); return SRC.slice(a, b); }
 
 let pass = 0, fail = 0;

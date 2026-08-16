@@ -1,8 +1,8 @@
 #!/bin/bash
-# NSS 리포트 (SUT / Supertrust) worker runner -> ConditionManager dashboard.
+# NSS 리포트 (SUT / Supertrust) worker runner -> ConditionMate dashboard.
 #
 # Runs the /nss-report-daily skill once, unattended, every morning at 09:10 KST
-# (fired by launchd; see Scripts/com.condition-manager.nss-daily.plist). The flow:
+# (fired by launchd; see Scripts/com.condition-mate.nss-daily.plist). The flow:
 #   1. Resolve the running app's data dir + dashboard port (mirrors uxui-sitemap.sh).
 #   2. Toggle gate: skip when the user turned the worker off (nss-report-disabled,
 #      written by the 크론 페이지 꺼짐 button).
@@ -47,7 +47,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -n "${CM_DATA_DIR:-}" ]; then
   data_dir="$CM_DATA_DIR"
 else
-  data_dir="$HOME/.condition-manager"
+  data_dir="$HOME/.condition-mate"
 fi
 port_file="$data_dir/dashboard.port"
 

@@ -1,4 +1,4 @@
-# SECURITY — Condition Manager 보안 포스처
+# SECURITY — Condition Mate 보안 포스처
 
 Owner: manager-security. 이 문서는 위협모델, 수용위험 대장, open-findings 를 담는 단일
 소스다. 보안 서브에이전트(security-updates / security-pr-reviewer / security-audit /

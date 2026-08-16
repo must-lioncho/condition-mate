@@ -99,7 +99,7 @@ A2는 채택하지 않음(자동 mutation 위험), A3는 Phase 3로 미룸.
   - 효과: 새 파일·마이그레이션·safe-write 경로 불필요, 상태 불일치 없음, 최소 표면. **채택.**
   - 한계: 로그 윈도우(최근 ~1MB, `ActionLog.recentJSON`)를 넘는 과거는 못 봄 → Phase 1엔 충분.
 - **B2. 캐시 파일 지속(`bgm-slot-scores.json`)** — 추세·장기 이력용. Phase 1.5로 미룸.
-  - 저장 위치: `~/.condition-manager/bgm-slot-scores.json`(`AppPaths.base`).
+  - 저장 위치: `~/.condition-mate/bgm-slot-scores.json`(`AppPaths.base`).
   - 쓰기 주체: **앱이 파생·소유**하는 데이터이므로 `track-playstats.json`처럼 앱이 atomic write
     (직접 쓰기 허용). safe-write POST 규약은 **에이전트가 편집하는** 데이터(goals, bgm-plan)에만
     적용된다 — 슬롯 점수는 앱 산출물이라 API 경유 쓰기 불필요.
@@ -275,19 +275,19 @@ A2는 채택하지 않음(자동 mutation 위험), A3는 Phase 3로 미룸.
 
 ```
 전략4 · 상태 인지형 BGM Phase 1(관측 전용)을 구현하라. 스펙:
-/Users/lioncho/Work/departtment_service/projects/condition-manager/docs/specs/strategy4-state-aware-bgm.md
+/Users/lioncho/Work/departtment_service/projects/condition-mate/docs/specs/strategy4-state-aware-bgm.md
 User: lioncho. 사용자 응답 한국어, 코드 주석·식별자 영어.
 
 범위(선곡 로직·오디오·플랜 파일은 절대 건드리지 말 것 — 순수 관측·표시 증분):
 
-1) 전략 카탈로그 확장 (Sources/ConditionManager/Core/TrackPlayStats.swift)
+1) 전략 카탈로그 확장 (Sources/ConditionMate/Core/TrackPlayStats.swift)
    - seedStrategies에 id=4 엔트리 추가(스펙 §8 텍스트 그대로: name "상태 인지형",
      startedAt "2026-07-10", endedAt "", summary/ retro §8).
    - migrateCatalog()에 3→4 이관 추가: id 4 미존재일 때만(멱등) — 전략3 endedAt이 비면
      "2026-07-10"으로 닫고, 전략3 retro가 비면 §8 seed 문자열로 채우고, 4를 append,
      activeStrategy=4. id 4 존재 시 no-op(사용자 편집 retro 미덮어씀).
 
-2) 슬롯 점수 파생 (Sources/ConditionManager/AppDelegate.swift)
+2) 슬롯 점수 파생 (Sources/ConditionMate/AppDelegate.swift)
    - func bgmSlotScoresJSON() -> String 추가. ActionLog가 읽는 것과 동일한
      events/actions.jsonl(최근 ~1MB 윈도우)을 재생.
    - 세션 귀속: sessionStart..sessionStop 윈도우, 그 안 trackChange.pool에서 접두사 "플랜 · "
@@ -301,12 +301,12 @@ User: lioncho. 사용자 응답 한국어, 코드 주석·식별자 영어.
    - 순수 읽기·파생. 파일 쓰기 금지.
 
 3) 엔드포인트 노출
-   - Sources/ConditionManager/AppDelegate.swift 라우팅 핸들러 블록(현 33행 인근)에
+   - Sources/ConditionMate/AppDelegate.swift 라우팅 핸들러 블록(현 33행 인근)에
      if path.hasPrefix("/api/bgm/slot-scores") { return self?.bgmSlotScoresJSON() } 추가.
-   - Sources/ConditionManager/Dashboard/DashboardServer.swift GET 화이트리스트 OR 체인
+   - Sources/ConditionMate/Dashboard/DashboardServer.swift GET 화이트리스트 OR 체인
      (현 235-247행, /api/bgm/stats 인접)에 || path.hasPrefix("/api/bgm/slot-scores") 추가.
 
-4) 대시보드 UI (Sources/ConditionManager/Dashboard/BGMPlayerContent.swift)
+4) 대시보드 UI (Sources/ConditionMate/Dashboard/BGMPlayerContent.swift)
    - 전략 히스토리 섹션(399행 인근) 아래에 "슬롯 성적표(전략4 관측)" sub-section 추가.
    - GET /api/bgm/slot-scores로 로드해 슬롯별 라벨·요일/시간대·hits/misses/score·hitRate 바 렌더,
      rePlanCandidate면 "재계획 후보" 배지, sampleTracks 서브텍스트.
