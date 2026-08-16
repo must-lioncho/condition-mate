@@ -3,7 +3,7 @@
 # build so the 업데이트 button is instant when the user finally presses it.
 #
 #   Scripts/autobuild-watch.sh          # run in the foreground (Ctrl-C to stop)
-#   launchd: com.condition-manager.autobuild  (KeepAlive — see the plist next to this)
+#   launchd: com.condition-mate.autobuild  (KeepAlive — see the plist next to this)
 #
 # Why quiet-detection and not build-on-every-save: a release build takes ~40s and pins
 # the CPU. Building on each keystroke-save would mean a permanently busy machine and a
@@ -21,7 +21,7 @@ cd "$(dirname "$0")/.."
 QUIET_SEC="${CM_AUTOBUILD_QUIET_SEC:-25}"   # no-edit window before a build starts
 POLL_SEC=3
 
-DATA_DIR="${CM_DATA_DIR:-$HOME/.condition-manager}"
+DATA_DIR="${CM_DATA_DIR:-$HOME/.condition-mate}"
 LOG="$DATA_DIR/autobuild.log"
 DISABLED="$DATA_DIR/autobuild-disabled"     # user off switch (시스템 페이지 토글)
 mkdir -p "$DATA_DIR"
@@ -67,7 +67,7 @@ PY
 # light up the 업데이트 button for a no-op.
 installed_build_start() {
     /usr/libexec/PlistBuddy -c 'Print :CMBuildStart' \
-        "/Applications/ConditionManager.app/Contents/Info.plist" 2>/dev/null || echo 0
+        "/Applications/ConditionMate.app/Contents/Info.plist" 2>/dev/null || echo 0
 }
 
 log "autobuild watcher start (quiet=${QUIET_SEC}s)"

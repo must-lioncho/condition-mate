@@ -8,7 +8,7 @@
 
 ## 2. 현재 상태 (변경 전)
 
-goal의 상태는 세 가지뿐이다. 정의는 `Sources/ConditionManager/Core/ReviewStore.swift`에 있다.
+goal의 상태는 세 가지뿐이다. 정의는 `Sources/ConditionMate/Core/ReviewStore.swift`에 있다.
 
 - `backlog` (대기): 아직 시작하지 않음. 기본값.
 - `in_progress` (진행): 진행 중. 이때 `startedAt`이 채워져 라이브 세션 시간이 흐른다.
@@ -90,15 +90,15 @@ waiting 을 자동으로 잡으려면 "Claude가 사용자 입력을 기다리�
 
 ### 7.2 ReviewStore 변경
 
-`Sources/ConditionManager/Core/ReviewStore.swift`의 `validStatuses` 집합에 `waiting`, `stopped`, `cancelled`를 추가한다. `setStatus`는 in_progress 이탈 시 시간 적립 로직을 stopped 와 cancelled 에도 동일하게 적용한다. `recordSession`에는 `wait` 케이스를 추가해 status 를 waiting 으로 두고, 다시 active 가 오면 in_progress 로 되돌린다.
+`Sources/ConditionMate/Core/ReviewStore.swift`의 `validStatuses` 집합에 `waiting`, `stopped`, `cancelled`를 추가한다. `setStatus`는 in_progress 이탈 시 시간 적립 로직을 stopped 와 cancelled 에도 동일하게 적용한다. `recordSession`에는 `wait` 케이스를 추가해 status 를 waiting 으로 두고, 다시 active 가 오면 in_progress 로 되돌린다.
 
 ### 7.3 라우팅 변경
 
-`Sources/ConditionManager/AppDelegate.swift`의 `/api/session/event` 처리에서 새 이벤트 문자열을 그대로 통과시키면 되므로 큰 변경은 없다. 수동 중지/취소는 기존 `/api/goal/status` 경로가 status 문자열을 받으므로 새 상태 키만 허용되면 자동으로 동작한다.
+`Sources/ConditionMate/AppDelegate.swift`의 `/api/session/event` 처리에서 새 이벤트 문자열을 그대로 통과시키면 되므로 큰 변경은 없다. 수동 중지/취소는 기존 `/api/goal/status` 경로가 status 문자열을 받으므로 새 상태 키만 허용되면 자동으로 동작한다.
 
 ### 7.4 대시보드 변경
 
-`Sources/ConditionManager/Dashboard/DashboardContent.swift`에서 상태 버튼 묶음과 필터에 새 상태를 반영한다. 현재 상태 버튼은 대기/진행/완료 세 개이고 필터도 세 개의 토글로 되어 있으므로, 응답 대기/중지/취소를 추가하고 색상과 라벨을 정의한다. 부모 goal의 롤업 상태 계산(derivedStatus)도 새 상태를 어떻게 집계할지 정해야 한다. 특히 응답 대기 자식이 있을 때 부모를 어떻게 표시할지 규칙이 필요하다.
+`Sources/ConditionMate/Dashboard/DashboardContent.swift`에서 상태 버튼 묶음과 필터에 새 상태를 반영한다. 현재 상태 버튼은 대기/진행/완료 세 개이고 필터도 세 개의 토글로 되어 있으므로, 응답 대기/중지/취소를 추가하고 색상과 라벨을 정의한다. 부모 goal의 롤업 상태 계산(derivedStatus)도 새 상태를 어떻게 집계할지 정해야 한다. 특히 응답 대기 자식이 있을 때 부모를 어떻게 표시할지 규칙이 필요하다.
 
 ### 7.5 루프 구동 주체
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Render the Condition Manager docs hub: a GitBook-style single HTML file (SPEC.html) with
+# Render the Condition Mate docs hub: a GitBook-style single HTML file (SPEC.html) with
 # top tabs. The SPEC tab renders SPEC.md (per-page QA spec); the "제품 소울" tab renders SOUL.md
 # (why the product exists). Each doc stays the Markdown source of truth; run this after editing
 # either one to regenerate the human view. Craft principles live in craft-soul.md (not rendered
@@ -223,7 +223,7 @@ SCRIPT = """<script>
 HTMLDOC = f"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Condition Manager — Docs (Soul · Spec)</title>
+<title>Condition Mate — Docs (Soul · Spec)</title>
 <style>
 :root{{--bg:#0d1017;--panel:#141925;--line:#232a3a;--fg:#e7ecf5;--dim:#93a0b5;--acc:#7c9bff;--acc2:#00d4c8;--code:#1b2230}}
 *{{box-sizing:border-box}}
@@ -268,7 +268,7 @@ body[data-lang="ko"] .lang.en{{display:none}}
 {EXTRA_CSS}
 </style></head>
 <body data-lang="ko">
-<div class="topbar"><span class="brand">Condition Manager <small>Docs</small></span>
+<div class="topbar"><span class="brand">Condition Mate <small>Docs</small></span>
   <span class="synctime">Last synced: {sync_stamp} KST</span>
   <div class="langtoggle"><button data-l="en">EN</button><button data-l="ko">KO</button></div>
 </div>

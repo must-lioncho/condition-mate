@@ -409,7 +409,7 @@ function gaStart(){
   $('gsStat').style.display='flex'; $('gsStxt').textContent='작업 중 — 첫 턴 진행';
   setTimeout(function(){
     aiSay('목표를 확인했습니다 — goal-'+seq+'로 추가했고, 바로 시작합니다.\n\n먼저 관련 코드를 파악하겠습니다.', function(){
-      toolCard('Read','Sources/ConditionManager/Dashboard/SessionRail.swift','레일 세션 목록 렌더러와 정렬 규칙 확인 (…)');
+      toolCard('Read','Sources/ConditionMate/Dashboard/SessionRail.swift','레일 세션 목록 렌더러와 정렬 규칙 확인 (…)');
       setTimeout(function(){
         toolCard('Edit','SessionRail.swift — 드래그 핸들 +24줄','+ row.draggable=true\n+ row.addEventListener(\'dragstart\', …)');
         setTimeout(function(){

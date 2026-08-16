@@ -7,7 +7,7 @@
 // categories, (3) path-derived action names get Korean labels and a category
 // pill, (4) the summary line counts 포모도로/목표 events.
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/BGMPlayerContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/BGMPlayerContent.swift', 'utf8');
 function slice(from, to) { const a = SRC.indexOf(from); const b = SRC.indexOf(to, a); if (a < 0 || b < 0) throw new Error('extract ' + from); return SRC.slice(a, b); }
 
 // Globals the extracted functions reference. _actRange=null → 기간 필터 통과(자동과 동일).

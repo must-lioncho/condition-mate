@@ -9,7 +9,7 @@
 //   3) boot: the hint is consumed on /goal-add load (collapse once, then removed), and the
 //      persisted cmRailCollapsed preference is never written by this path
 const fs = require('fs');
-const SR = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/SessionRail.swift', 'utf8');
+const SR = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/SessionRail.swift', 'utf8');
 
 function fnExpr(src, marker) {
   const start = src.indexOf(marker);

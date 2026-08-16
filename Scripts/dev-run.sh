@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dev launcher. DATA IS SHARED with the installed app: the single ~/.condition-manager
+# Dev launcher. DATA IS SHARED with the installed app: the single ~/.condition-mate
 # store (AppPaths.base). The old repo-local .localdata isolation was retired 2026-07-09 —
 # two stores made goals/settings diverge and "disappear" when switching dev↔prod. Set
 # CM_DATA_DIR explicitly before running for a throwaway/isolated run.
@@ -12,11 +12,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-IDENTITY="ConditionManager Dev"
-BUNDLE_ID="com.lioncho.conditionmanager"
-BIN=".build/debug/ConditionManager"
+IDENTITY="ConditionMate Dev"
+BUNDLE_ID="com.lioncho.conditionmate"
+BIN=".build/debug/ConditionMate"
 
-echo "[dev-run] data=${CM_DATA_DIR:-$HOME/.condition-manager (shared with prod)}"
+echo "[dev-run] data=${CM_DATA_DIR:-$HOME/.condition-mate (shared with prod)}"
 echo "[dev-run] building"
 swift build "$@"
 

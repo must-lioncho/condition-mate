@@ -1,4 +1,4 @@
-// gen-icon.swift — renders the ConditionManager app icon (energy / lightning theme).
+// gen-icon.swift — renders the ConditionMate app icon (energy / lightning theme).
 // Draws a 1024x1024 master PNG with CoreGraphics, then Scripts/build-app.sh (via iconutil)
 // turns it into AppIcon.icns. No external image deps — pure AppKit/CoreGraphics.
 //

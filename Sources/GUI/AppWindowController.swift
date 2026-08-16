@@ -10,7 +10,7 @@ import WebKit
 // is injected — logging (`onLog`), lifecycle tracing (`onTrace`), the screen-catalog observer
 // (`screenCatalog`), and the injected JS + paths/titles/geometry (`Configuration`). The host
 // app wires these once at construction; every behavioral comment below still describes the
-// Condition Manager usage that shaped the design.
+// Condition Mate usage that shaped the design.
 //
 // Autoplay is enabled (mediaTypesRequiringUserActionForPlayback = []) so BGM mode plays the
 // activity BGM with the space effect the moment it opens — zero clicks.

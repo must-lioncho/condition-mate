@@ -15,7 +15,7 @@ import Carbon.HIToolbox
 // the caller keeps working without the shortcut (no failure banner — see the app's
 // "no user-facing failure" rule).
 //
-// App-agnostic like the rest of this target: no ConditionManager types, the handler is
+// App-agnostic like the rest of this target: no ConditionMate types, the handler is
 // injected. Hold on to the instance — releasing it unregisters the hotkey.
 public final class GlobalHotKey {
 

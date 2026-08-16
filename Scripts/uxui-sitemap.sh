@@ -1,5 +1,5 @@
 #!/bin/bash
-# UXUI 관리 worker runner -> ConditionManager dashboard.
+# UXUI 관리 worker runner -> ConditionMate dashboard.
 #
 # Keeps the UXUI sitemap (docs/uxui/sitemap.json, served to the 화면 카탈로그 tab) in
 # sync with the CODE: whenever new commits land on the main branch, regenerate the
@@ -37,7 +37,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [ -n "${CM_DATA_DIR:-}" ]; then
   data_dir="$CM_DATA_DIR"
 else
-  data_dir="$HOME/.condition-manager"
+  data_dir="$HOME/.condition-mate"
 fi
 port_file="$data_dir/dashboard.port"
 

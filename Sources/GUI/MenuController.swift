@@ -33,6 +33,8 @@ public struct MenuState {
     public var menuBarModeIsSports = true         // 스포츠(APM) vs 타임(clock)
     public var windowOpen = false
     public var windowModeIsBGM = false
+    public var debugCaptureOn = false             // 디버그 모드(버그 수집) 진행 중
+    public var debugCaptureLabel = ""             // "12분 · 1,204건" (켜져 있을 때만)
 
     // Permissions / login item block.
     public var accessibilityTrusted = false
@@ -54,6 +56,7 @@ public protocol MenuControllerActions: AnyObject {
     func dislikeCurrentTrack()
     func toggleAppWindowMode()
     func toggleBGMWindowAutoOpen()
+    func toggleDebugCapture()
     func chooseMusicFolder()
     func requestAccessibility()
     func toggleLoginItem()
@@ -176,6 +179,16 @@ public final class MenuController: NSObject, NSMenuDelegate {
         // Settings values keep working without a menu surface.
         addItem("음악 폴더 선택…", action: #selector(onChooseFolder))
 
+        // 디버그 모드 (버그 수집) — 제보 직전에 켜고, 재현한 뒤 끄면 그 구간의 전수 기록이
+        // 버그 리포트 goal 하나로 자동 생성된다. 켜져 있는 동안에만 키/클릭/콘솔/네트워크가
+        // 기록되므로, 평상시에는 아무것도 남지 않는다는 사실을 부제목으로 계속 보여준다.
+        addCheck(s.debugCaptureOn ? "🐞 디버그 모드 — 수집 중 (끄면 리포트 생성)"
+                                  : "🐞 디버그 모드 (버그 재현 전에 켜기)",
+                 checked: s.debugCaptureOn, action: #selector(onToggleDebugCapture))
+        if s.debugCaptureOn, !s.debugCaptureLabel.isEmpty {
+            addDisabled("    수집 \(s.debugCaptureLabel)")
+        }
+
         menu.addItem(.separator())
 
         // --- Permission status ---
@@ -285,6 +298,7 @@ public final class MenuController: NSObject, NSMenuDelegate {
     @objc private func onDislikeTrack() { actions?.dislikeCurrentTrack() }
     @objc private func onToggleAppWindowMode() { actions?.toggleAppWindowMode() }
     @objc private func onToggleBGMWindow() { actions?.toggleBGMWindowAutoOpen() }
+    @objc private func onToggleDebugCapture() { actions?.toggleDebugCapture() }
     @objc private func onChooseFolder() { actions?.chooseMusicFolder() }
     @objc private func onRequestAccessibility() { actions?.requestAccessibility() }
     @objc private func onToggleLoginItem() { actions?.toggleLoginItem() }

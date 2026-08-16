@@ -39,7 +39,10 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
   });
 
   const set = (s) => page.evaluate((s) => CMMemo.setText(s), s);
-  const text = () => page.evaluate(() => CMMemo.text());
+  // 생성 스탬프(2026-08-10, '    @생성: …')는 줄마다 붙는 메타다. 이 파일이 보는 것은
+  // 글의 '모양' 이라 스탬프는 걷어 내고 읽는다 — 스탬프 계약은 memocreated.test.js 가 지킨다.
+  const noCr = (s) => String(s).split('\n').filter((l) => !/^\s+@생성:/.test(l)).join('\n');
+  const text = () => page.evaluate(() => CMMemo.text()).then(noCr);
   // 남아 있는 메뉴를 닫는다 — 막힌 항목을 누른 뒤에는 메뉴가 열린 채라, 다음
   // 우클릭 좌표를 덮어 클릭이 메뉴를 때리는 사고를 막는다.
   const closeAll = () => page.evaluate(() =>

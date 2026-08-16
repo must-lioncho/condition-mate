@@ -68,7 +68,10 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
   await page.waitForFunction(() => window.CMMemo && CMMemo.count() > 0);
 
   const set = (s) => page.evaluate((s) => CMMemo.setText(s), s);
-  const text = () => page.evaluate(() => CMMemo.text());
+  // 생성 스탬프(2026-08-10, '    @생성: …')는 줄마다 붙는 메타다. 이 파일이 보는 것은
+  // 글의 '모양' 이라 스탬프는 걷어 내고 읽는다 — 스탬프 계약은 memocreated.test.js 가 지킨다.
+  const noCr = (s) => String(s).split('\n').filter((l) => !/^\s+@생성:/.test(l)).join('\n');
+  const text = () => page.evaluate(() => CMMemo.text()).then(noCr);
   // 각 행의 표시 여부 — '1'=보임 '0'=감춤. computed display 로 CSS 까지 확인한다.
   const vis = () => page.evaluate(() =>
     Array.from(document.querySelectorAll('[data-cmmemo-doc] .cmm-row'))
@@ -210,7 +213,7 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
   // 영속 계약은 소스로 확인한다 — 메모리 상태(loopState)가 진실이고 localStorage 는
   // best-effort 라는 필드 필터의 원칙을 루프도 그대로 따른다.
   const fs = require('fs');
-  const PAD = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/MemoPad.swift', 'utf8');
+  const PAD = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/MemoPad.swift', 'utf8');
   eq('선택은 localStorage(cmMemoLoop)로 영속을 시도한다',
     /localStorage\.setItem\('cmMemoLoop'/.test(PAD) && /localStorage\.getItem\('cmMemoLoop'\)/.test(PAD), true);
 

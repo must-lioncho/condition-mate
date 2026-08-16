@@ -18,8 +18,8 @@
 //   7) the goal page's sendTeamKick consumes cmGoalKick as a plain kick: preset '' (no team
 //      preamble), the stashed mode, and the stashed text as the first chat2 turn
 const fs = require('fs');
-const GA = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/GoalAddContent.swift', 'utf8');
-const AD = fs.readFileSync(__dirname + '/../Sources/ConditionManager/AppDelegate.swift', 'utf8');
+const GA = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/GoalAddContent.swift', 'utf8');
+const AD = fs.readFileSync(__dirname + '/../Sources/ConditionMate/AppDelegate.swift', 'utf8');
 function fn(src, name) {
   const start = src.indexOf('function ' + name + '(');
   if (start < 0) throw new Error('no fn ' + name);

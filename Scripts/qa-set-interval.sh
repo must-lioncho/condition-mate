@@ -13,7 +13,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [ -n "${CM_DATA_DIR:-}" ]; then
   data_dir="$CM_DATA_DIR"
 else
-  data_dir="$HOME/.condition-manager"
+  data_dir="$HOME/.condition-mate"
 fi
 mkdir -p "$data_dir"
 interval_file="$data_dir/qa-interval-sec"

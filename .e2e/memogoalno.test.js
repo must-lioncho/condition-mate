@@ -10,9 +10,9 @@
 //   - 채번 전(스텁·오프라인)에는 위치 번호 1,2,3… 폴백, 실패는 조용히
 const fs = require('fs');
 const R = (p) => fs.readFileSync(__dirname + '/../' + p, 'utf8');
-const PAD = R('Sources/ConditionManager/Dashboard/MemoPad.swift');
-const APP = R('Sources/ConditionManager/AppDelegate.swift');
-const REV = R('Sources/ConditionManager/Core/ReviewStore.swift');
+const PAD = R('Sources/ConditionMate/Dashboard/MemoPad.swift');
+const APP = R('Sources/ConditionMate/AppDelegate.swift');
+const REV = R('Sources/ConditionMate/Core/ReviewStore.swift');
 
 let pass = 0, fail = 0;
 function eq(name, got, want) {

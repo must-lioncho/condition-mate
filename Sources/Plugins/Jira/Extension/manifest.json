@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "컨디션 매니저 — 지라 번역",
+  "version": "1.0.0",
+  "description": "지라 이슈·백로그·보드 텍스트 옆의 번역 버튼. 번역은 로컬 컨디션 매니저 앱이 대신하며, API 키는 브라우저에 저장되지 않습니다.",
+  "background": { "service_worker": "background.js" },
+  "options_page": "options.html",
+  "action": { "default_title": "지라 번역 — 옵션 열기" },
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1:17321/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://*.atlassian.net/*"],
+      "js": ["config.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

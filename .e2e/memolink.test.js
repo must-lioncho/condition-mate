@@ -11,7 +11,7 @@
 //   - 칸 이름 옆 검증: 그 서비스 주소가 맞으면 성격(관리·문서·대화), 아니면 '주소 확인'
 const fs = require('fs');
 const R = (p) => fs.readFileSync(__dirname + '/../' + p, 'utf8');
-const PAD = R('Sources/ConditionManager/Dashboard/MemoPad.swift');
+const PAD = R('Sources/ConditionMate/Dashboard/MemoPad.swift');
 
 let pass = 0, fail = 0;
 function eq(name, got, want) {

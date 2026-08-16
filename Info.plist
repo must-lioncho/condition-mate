@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>ConditionManager</string>
+    <string>ConditionMate</string>
     <key>CFBundleDisplayName</key>
-    <string>Condition Manager</string>
+    <string>Condition Mate</string>
     <key>CFBundleIdentifier</key>
-    <string>com.lioncho.conditionmanager</string>
+    <string>com.lioncho.conditionmate</string>
     <key>CFBundleExecutable</key>
-    <string>ConditionManager</string>
+    <string>ConditionMate</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>

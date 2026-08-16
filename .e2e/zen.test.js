@@ -8,7 +8,7 @@
 //      reload of a revealed board doesn't re-hide it)
 //   4) guards hold: a hidden/covered page never folds, an already-zen page is a no-op
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/SessionRail.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/SessionRail.swift', 'utf8');
 function slice(from, to) { const a = SRC.indexOf(from); const b = SRC.indexOf(to, a); if (a < 0 || b < 0) throw new Error('extract ' + from); return SRC.slice(a, b); }
 const ZEN = slice("try{ if(location.pathname==='/' && !sessionStorage.getItem('cmChArmed'))", 'var cmZenWasRun=false');
 

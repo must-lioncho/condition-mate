@@ -9,8 +9,8 @@
 //   3) server contract stays for legacy sessions: /api/plan/delegate mints a "계획:" goal;
 //      chat2Say routes preset "plan" to planChatPreamble (plan-first, no implementation)
 const fs = require('fs');
-const SR = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/SessionRail.swift', 'utf8');
-const AD = fs.readFileSync(__dirname + '/../Sources/ConditionManager/AppDelegate.swift', 'utf8');
+const SR = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/SessionRail.swift', 'utf8');
+const AD = fs.readFileSync(__dirname + '/../Sources/ConditionMate/AppDelegate.swift', 'utf8');
 
 function fn(src, name) {
   const start = src.indexOf('function ' + name + '(');

@@ -20,9 +20,9 @@
 //      ?q=detail), and QueuePanel is now a card library delegating renders to the host
 //      (renderAiQueue → gaQueueRender hook; resolve/undo → gaQueueResolved/gaQueueUndone)
 const fs = require('fs');
-const GA = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/GoalAddContent.swift', 'utf8');
-const DC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/DashboardContent.swift', 'utf8');
-const QP = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/QueuePanel.swift', 'utf8');
+const GA = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/GoalAddContent.swift', 'utf8');
+const DC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/DashboardContent.swift', 'utf8');
+const QP = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/QueuePanel.swift', 'utf8');
 function fn(src, name) {
   const start = src.indexOf('function ' + name + '(');
   if (start < 0) throw new Error('no fn ' + name);
@@ -201,7 +201,7 @@ async function run() {
   const clearPosts = env.posts.filter(p => p.path === '/api/goal/tally').map(p => p.obj.list.length);
   check('clear posts the pruned list to the server', clearPosts.includes(1), true);
   // Swift 쪽 배선: 엔드포인트 + 렌더 주입 (소스 어서션)
-  const AD = fs.readFileSync(__dirname + '/../Sources/ConditionManager/AppDelegate.swift', 'utf8');
+  const AD = fs.readFileSync(__dirname + '/../Sources/ConditionMate/AppDelegate.swift', 'utf8');
   check('server has the /api/goal/tally route', AD.includes('if path == "/api/goal/tally"'), true);
   check('render injects the server copy', GA.includes('window._gaTallyHist=\\#(tallyHist)'), true);
 

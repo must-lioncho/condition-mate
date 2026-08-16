@@ -1,14 +1,14 @@
 # BGM 관리 (BGM Management)
 
-ConditionManager가 배경음악(BGM)을 언제, 어떤 템포로 재생할지 결정하는 규칙을 정리한 문서입니다. 코드 기준은 다음 파일들입니다.
+ConditionMate가 배경음악(BGM)을 언제, 어떤 템포로 재생할지 결정하는 규칙을 정리한 문서입니다. 코드 기준은 다음 파일들입니다.
 
-- `Sources/ConditionManager/AppDelegate.swift` — 1초 하트비트에서 재생 여부(세션)를 판정
-- `Sources/ConditionManager/Audio/ConditionDirector.swift` — 상태 머신(WARMUP/SUSTAIN/RELEASE)으로 목표 BPM 결정
-- `Sources/ConditionManager/Audio/BPMLibrary.swift` — 목표 BPM에 가장 가까운 트랙 선택
-- `Sources/ConditionManager/Audio/AudioEngine.swift` — 실제 재생/크로스페이드/일시정지
-- `Sources/ConditionManager/Core/ActivityMonitor.swift` — 키보드/마우스 입력률과 유휴 시간 측정
-- `Sources/ConditionManager/Core/BGMProfile.swift` — 앱별 템포 밴드(프로파일)
-- `Sources/ConditionManager/Core/Settings.swift` — 사용자 설정 기본값
+- `Sources/ConditionMate/AppDelegate.swift` — 1초 하트비트에서 재생 여부(세션)를 판정
+- `Sources/ConditionMate/Audio/ConditionDirector.swift` — 상태 머신(WARMUP/SUSTAIN/RELEASE)으로 목표 BPM 결정
+- `Sources/ConditionMate/Audio/BPMLibrary.swift` — 목표 BPM에 가장 가까운 트랙 선택
+- `Sources/ConditionMate/Audio/AudioEngine.swift` — 실제 재생/크로스페이드/일시정지
+- `Sources/ConditionMate/Core/ActivityMonitor.swift` — 키보드/마우스 입력률과 유휴 시간 측정
+- `Sources/ConditionMate/Core/BGMProfile.swift` — 앱별 템포 밴드(프로파일)
+- `Sources/ConditionMate/Core/Settings.swift` — 사용자 설정 기본값
 
 ---
 
@@ -95,7 +95,7 @@ BGM이 소리를 내려면 매 1초 하트비트(`onHeartbeat`)에서 계산되�
 
 ### 2.3 구현 내용
 
-- `ConditionDirector` (`Sources/ConditionManager/Audio/ConditionDirector.swift`)
+- `ConditionDirector` (`Sources/ConditionMate/Audio/ConditionDirector.swift`)
   - 상태 추가: `isIdleMode`(외부 공개), 그리고 복원용 `savedPhase`/`savedTargetBPM`/`savedVolume`.
   - `enterIdle()`: 멱등. 디렉터가 미동작이면 새 세션을 시작한다(자리 비움이라도 무음이 되지 않도록). 진입 시 현재 phase/targetBPM/볼륨을 저장하고, 결정 타이머를 멈춘 뒤 목표를 `idleTargetBPM()`로 내리고 볼륨을 `idleVolumeScale`배로 낮춰 `applyTrack(force: true)`로 느린 트랙으로 크로스페이드한다.
   - `exitIdle()`: 저장한 phase/targetBPM/볼륨을 복원하고 결정 타이머를 재가동한다.
@@ -103,7 +103,7 @@ BGM이 소리를 내려면 매 1초 하트비트(`onHeartbeat`)에서 계산되�
   - `pauseSession()`/`stop()`: 앰비언트 도중 호출되면 저장한 phase/targetBPM/볼륨을 먼저 되돌려, 이후 정상 재개나 다음 시작이 올바른 상태에서 출발하도록 한다.
   - `isPlaying`: `isActive || isIdleMode`. 결정 타이머가 멈춘 앰비언트 중에도 소리가 나는 상태를 가리킨다.
 
-- `AppDelegate.onHeartbeat()` (`Sources/ConditionManager/AppDelegate.swift`)
+- `AppDelegate.onHeartbeat()` (`Sources/ConditionMate/AppDelegate.swift`)
   - 음악 게이트 분기에서 "유휴만이 비세션 사유인 경우"를 분리한다. 판정: `isWorking && appOK && isIdle && cm.idleAmbientEnabled`.
     - 해당 시: `director.enterIdle()`로 앰비언트 유지.
     - 그 외 비세션(추적 앱 비활성, 마스터 OFF 등): 재생 중이면 `pauseSession()`(또는 음악 OFF 시 `stop()`).
@@ -112,7 +112,7 @@ BGM이 소리를 내려면 매 1초 하트비트(`onHeartbeat`)에서 계산되�
   - 대시보드 샘플과 디버그 출력은 `isPlaying`/`isIdleMode`를 사용해 앰비언트 재생을 반영한다(유휴 중 phase는 "IDLE"로 표기).
   - 메뉴의 "이 곡 싫어요"(dislike)도 앰비언트 재생 중 동작하도록 `isPlaying` 기준으로 변경.
 
-- `Settings` (`Sources/ConditionManager/Core/Settings.swift`) — 신규 키
+- `Settings` (`Sources/ConditionMate/Core/Settings.swift`) — 신규 키
   - `cm.idleAmbientEnabled` (기본 true): 유휴 시 앰비언트 재생 on/off.
   - `cm.idleVolumeScale` (기본 0.5): 앰비언트 중 기본 볼륨에 곱하는 배수(0~1).
 
@@ -153,9 +153,9 @@ BGM이 소리를 내려면 매 1초 하트비트(`onHeartbeat`)에서 계산되�
 
 기본 동작은 디렉터가 WARMUP으로 시작해 `BPMLibrary.track(forTargetBPM:)`으로 목표 BPM에 가장 가까운 곡을 자동 선택하는 것이다([1.3]~[1.4]). 시작 전략은 이 자동 선택 위에 "씬(scene) 곡 고정"을 얹어 구현했다. 곡은 파일명에 포함된 키워드로 식별한다(BPM 번호가 같은 `[096]` 곡이 둘이라 번호가 아닌 제목으로 구분).
 
-- `BPMLibrary.track(matchingKeyword:)` (`Sources/ConditionManager/Audio/BPMLibrary.swift`) — 파일명에 키워드가 포함된 첫 트랙을 대소문자 무시로 찾는다. 씬 매핑 전용 조회.
+- `BPMLibrary.track(matchingKeyword:)` (`Sources/ConditionMate/Audio/BPMLibrary.swift`) — 파일명에 키워드가 포함된 첫 트랙을 대소문자 무시로 찾는다. 씬 매핑 전용 조회.
 
-- `ConditionDirector` (`Sources/ConditionManager/Audio/ConditionDirector.swift`)
+- `ConditionDirector` (`Sources/ConditionMate/Audio/ConditionDirector.swift`)
   - 씬 키워드 상수: 오프닝 `"유리문"`(096), 정착 `"새 출발 엔딩"`(105), 릴리즈 `"창가의 바람"`(082). 오프닝 유지 시간 `openingHoldMinutes` = 5분.
   - 오프닝 상태: `openingPlayed`(이번 실행에서 오프닝을 한 번 했는지), `openingActive`(오프닝 진행 중), `openingStartedAt`(시작 시각). `openingPlayed`는 `stop()`으로 초기화되지 않아 실행(프로세스)당 한 번만 재생된다 — 실행 도중 음악 토글로는 재생되지 않는다.
   - `start()`: 이번 실행의 첫 활성 시작이면 자동 BPM 선택 대신 오프닝 곡(096 유리문)을 강제 재생하고 결정 타이머만 가동한다. 라이브러리에 해당 곡이 없으면 기존 `resumeSession()`(자동 선택)으로 폴백한다.

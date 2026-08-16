@@ -1,7 +1,7 @@
 # GUI — reusable AppKit toolkit
 
-App-agnostic AppKit components extracted from Condition Manager (2026-07-13). This target has
-**no dependency on ConditionManager types** — everything app-specific is injected — so any other
+App-agnostic AppKit components extracted from Condition Mate (2026-07-13). This target has
+**no dependency on ConditionMate types** — everything app-specific is injected — so any other
 macOS app (or another package depending on the `GUI` library product) can use it.
 
 ## Components
@@ -22,10 +22,10 @@ macOS app (or another package depending on the `GUI` library product) can use it
   driven by a 0…1 `norm` at ~20 Hz. Only needs an `apply: (NSImage) -> Void` installer.
 - **Formatting** — game-style progress formatting (hours, milestones, clock, "n분 전").
 
-## Condition Manager wiring
+## Condition Mate wiring
 
-The app-side glue lives in `Sources/ConditionManager/UI/GUIBridge.swift`: the injected JS
+The app-side glue lives in `Sources/ConditionMate/UI/GUIBridge.swift`: the injected JS
 payloads (view-trace heartbeat, screen-state probe), the `AppLog`/`ViewTrace`/`ScreenCatalog`
 sinks, the `MenuState` builder, and the protocol conformances. When adding app-specific
 behavior, put the knowledge there (or pass it through `Configuration`) — never import
-ConditionManager types into this target.
+ConditionMate types into this target.

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Background auto-builder for Condition Mate.
+
+  Keeps Scripts/autobuild-watch.sh alive; that script watches the sources, waits for the
+  edits to go quiet, and stages a release build into <data>/updates/. It never touches the
+  running app — the user applies a staged build with the rail's 업데이트 button.
+
+  Install once:
+    cp Scripts/com.condition-mate.autobuild.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.condition-mate.autobuild.plist
+
+  Off switch: the 시스템 페이지 worker row (writes <data>/autobuild-disabled), which the
+  script polls — no need to unload the agent.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.condition-mate.autobuild</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/lioncho/Work/departtment_service/projects/condition-mate/Scripts/autobuild-watch.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/lioncho/Work/departtment_service/projects/condition-mate</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <!-- A crash loop must not spin: 10s minimum between respawns. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- A release build should never compete with the foreground app for CPU. Background
+         priority keeps the machine responsive while the build runs. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>10</integer>
+
+    <!-- swift/xcrun/git live here; launchd agents get a minimal PATH otherwise. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/lioncho/.condition-mate/autobuild.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/lioncho/.condition-mate/autobuild.launchd.log</string>
+</dict>
+</plist>

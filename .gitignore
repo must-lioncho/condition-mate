@@ -3,7 +3,7 @@
 Package.resolved
 .DS_Store
 *.xcodeproj
-ConditionManager.app/
+ConditionMate.app/
 
 # Audio assets (not part of Swift build; kept local to keep repo lean)
 temp/

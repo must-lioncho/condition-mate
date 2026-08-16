@@ -12,7 +12,7 @@ const http = require('http');
 const path = require('path');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..',
-  'Sources/ConditionManager/Dashboard/DashboardContent.swift'), 'utf8');
+  'Sources/ConditionMate/Dashboard/DashboardContent.swift'), 'utf8');
 
 function slice(from, to, what) {
   const a = SRC.indexOf(from), b = SRC.indexOf(to, a);

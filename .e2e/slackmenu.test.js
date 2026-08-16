@@ -9,7 +9,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 
-const SRC = fs.readFileSync(__dirname + '/../Sources/Slack/SlackTranslateContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/Plugins/Slack/SlackTranslateContent.swift', 'utf8');
 const open = SRC.indexOf('return #"""');
 if (open < 0) throw new Error('페이지 HTML 리터럴을 못 찾음');
 const html = SRC.slice(open + 'return #"""'.length, SRC.indexOf('"""#', open))

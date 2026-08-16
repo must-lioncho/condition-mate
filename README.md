@@ -1,4 +1,4 @@
-# Condition Manager
+# Condition Mate
 
 macOS 전용, 메모리 경량 메뉴바 앱. **타임 트래킹 기반 컨디션 매니저**.
 
@@ -17,7 +17,7 @@ BGM 템포로 컨디션을 끌어올려 최상의 퍼포먼스 상태를 유지�
 ### 1. 타임 트래킹 (특정 앱 활성 시간)
 - 사용자가 지정한 "추적 대상 앱"이 frontmost일 때만 시간 누적.
 - 입력이 일정 시간(기본 60초) 없으면 자동 일시정지(idle).
-- 누적 시간은 `~/.condition-manager/stats.json`에 저장.
+- 누적 시간은 `~/.condition-mate/stats.json`에 저장.
 - 마일스톤(10/50/100/200/500/1000/2000/5000/10000h)으로 성장감 제공.
 
 ### 2. 컨디션 디렉터 (BGM 템포 제어)
@@ -91,11 +91,11 @@ raw 시간 × 배수는 "잠정 가치"일 뿐, 9시간 매크로처럼 조작 �
 
 1. **셀프 리뷰**: 목표 우선순위 리스트를 보고 본인 기여도(0~100%) 입력
 2. **AI 필터**: 입력 패턴 분석으로 매크로/어뷰징 자동 검증 → 신뢰도 %
-   (입력 변동이 비정상적으로 일정하거나 동일값 장시간 반복 시 감점 — [AbuseFilter.swift](projects/condition-manager/Sources/ConditionManager/Core/AbuseFilter.swift))
+   (입력 변동이 비정상적으로 일정하거나 동일값 장시간 반복 시 감점 — [AbuseFilter.swift](projects/condition-mate/Sources/ConditionMate/Core/AbuseFilter.swift))
 3. **관리자 승인**: 준비 중 (stub)
 
 **확정 가치 = 잠정 × 셀프% × AI신뢰도%**. 대시보드 "오늘 가치(확정)" 카드 = 승인 전 0, 옆에 (현재 생성 X) 잠정값.
-목표/리뷰/AI는 대시보드에서 직접 입력(로컬 서버 POST), `~/.condition-manager/review/`에 저장.
+목표/리뷰/AI는 대시보드에서 직접 입력(로컬 서버 POST), `~/.condition-mate/review/`에 저장.
 
 **목표 계층 + 리포트:**
 - 목표 추가는 **그냥 빠르게 무한 추가**(Enter 연타). 추가 시 부모 선택 없음.
@@ -115,12 +115,12 @@ raw 시간 × 배수는 "잠정 가치"일 뿐, 9시간 매크로처럼 조작 �
 
 상단 "오늘 가치(가중)" 카드 = Σ(작업초 × 배수). 타임라인 각 행에 등급·배수 뱃지 표시.
 브라우저 사이트 감지는 **Apple Events(자동화) 권한**이 필요합니다 — 첫 실행 시
-"ConditionManager가 Google Chrome 제어"를 허용하세요(거부 시 사이트만 비고, 나머지는 정상).
+"ConditionMate가 Google Chrome 제어"를 허용하세요(거부 시 사이트만 비고, 나머지는 정상).
 - **주요 앱**: 앱별 활성 시간 막대.
 - **앱별 BGM (적절성 디버그)**: 앱마다 어떤 전략으로 어떤 트랙이 재생됐는지 표로 표시.
   트랙 BPM이 그 전략의 밴드를 벗어나면 **빨강(⚠)으로 경고** → "이 앱에 부적절한 BGM이 나왔나"를 한눈에 검증.
 - 상단 카드: 오늘 작업 / 현재 상태 / 누적 + "지금: 앱·전략·BGM" 라이브 라인. 5초마다 자동 갱신.
-- 데이터: `~/.condition-manager/activity/activity-YYYY-MM-DD.jsonl`
+- 데이터: `~/.condition-mate/activity/activity-YYYY-MM-DD.jsonl`
   (분당 1줄: 활동량·작업초·앱·전략·트랙·BPM, 최근 7일 보관). 서버는 평소엔 떠 있지 않아 메모리 부담 없음, 루프백 전용이라 외부 접근 불가.
 
 ## BGM 음원 준비 (로컬 BPM 폴더)
@@ -177,9 +177,9 @@ bash Scripts/organize.sh        # BPM 분석 + ID3 태깅 + "[BPM] 제목"으로
 ## 빌드 & 실행
 
 ```bash
-cd projects/condition-manager
+cd projects/condition-mate
 swift build -c release
-./.build/release/ConditionManager
+./.build/release/ConditionMate
 ```
 
 개발 중에는 `./Scripts/dev-run.sh` 로 실행하세요 (빌드 → 서명 → 실행).
@@ -192,7 +192,7 @@ macOS 손쉬운 사용 권한(TCC)은 바이너리의 코드 서명으로 "누�
 인증서 기반(`certificate leaf = H"..."`)으로 고정되어, **한 번 허용하면 재빌드해도 유지**됩니다.
 
 ```bash
-./Scripts/setup-signing.sh   # 한 번만: "ConditionManager Dev" 자체 서명 인증서 생성
+./Scripts/setup-signing.sh   # 한 번만: "ConditionMate Dev" 자체 서명 인증서 생성
 ```
 
 이후 `dev-run.sh` 와 `build-app.sh` 가 자동으로 이 인증서로 서명합니다. 처음 한 번은
@@ -213,12 +213,12 @@ ad-hoc 바이너리로 허용했던 항목이 시스템 설정 > 개인정보 �
 ```
 
 이 스크립트가 하는 일:
-- 릴리즈 바이너리 빌드 → `ConditionManager.app` 번들 조립
+- 릴리즈 바이너리 빌드 → `ConditionMate.app` 번들 조립
 - `Info.plist`(`LSUIElement = true`)로 Dock/전환 목록에서 숨김
-- 코드 서명 — `ConditionManager Dev` 인증서가 있으면 그것으로(권한 유지), 없으면 ad-hoc
+- 코드 서명 — `ConditionMate Dev` 인증서가 있으면 그것으로(권한 유지), 없으면 ad-hoc
 
 실행 및 자동 시작 설정:
-1. `open ConditionManager.app` (또는 `/Applications`로 이동 후 실행 — 로그인 항목 안정화 권장)
+1. `open ConditionMate.app` (또는 `/Applications`로 이동 후 실행 — 로그인 항목 안정화 권장)
 2. 메뉴바 아이콘 → **로그인 시 자동 시작** 체크 → `SMAppService.mainApp.register()` 호출
 
 로그인 항목은 **서명된 .app 번들에서 실행할 때만** 동작합니다. 원시 SPM 바이너리(`swift run`)로
@@ -229,7 +229,7 @@ ad-hoc 바이너리로 허용했던 항목이 시스템 설정 > 개인정보 �
 ## 구조
 
 ```
-Sources/ConditionManager/
+Sources/ConditionMate/
   main.swift              # NSApplication 진입점 (accessory policy)
   AppDelegate.swift       # 코디네이터 + 1Hz 하트비트
   Core/

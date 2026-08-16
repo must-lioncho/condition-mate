@@ -3,10 +3,10 @@
 에이전트가 사람의 응답을 기다리며 멈춰 있는 시간을 정확히 가려내, 그 시간이 "에이전트가 실제로 일한 시간"으로 잘못 적립되지 않게 하는 정책과 구현 설계를 정리한 문서다. 코드 기준은 다음 파일들이다.
 
 - `Scripts/cc-session-hook.sh` — Claude Code 세션 훅을 대시보드 이벤트로 변환
-- `Sources/ConditionManager/Core/ReviewStore.swift` — goal 상태/시간 적립의 단일 진실 공급원
-- `Sources/ConditionManager/AppDelegate.swift` — 1Hz 하트비트, 트랜스크립트 경로 해석(`resolveTranscript`)
-- `Sources/ConditionManager/Dashboard/DashboardServer.swift` — `/api/session/event` 수신, 상태 조회 JSON
-- `Sources/ConditionManager/Dashboard/DashboardContent.swift` — 상태 버튼/필터/라이브 시계 표시
+- `Sources/ConditionMate/Core/ReviewStore.swift` — goal 상태/시간 적립의 단일 진실 공급원
+- `Sources/ConditionMate/AppDelegate.swift` — 1Hz 하트비트, 트랜스크립트 경로 해석(`resolveTranscript`)
+- `Sources/ConditionMate/Dashboard/DashboardServer.swift` — `/api/session/event` 수신, 상태 조회 JSON
+- `Sources/ConditionMate/Dashboard/DashboardContent.swift` — 상태 버튼/필터/라이브 시계 표시
 
 관련 문서: `loop-status-design.md`(6개 상태 모델 전반), `session-lifecycle-policy.md`(세션 생애주기 동기화). 이 문서는 그 둘 중 응답 대기 신호의 **탐지와 시간 적립**만 구현 수준으로 확정한다.
 

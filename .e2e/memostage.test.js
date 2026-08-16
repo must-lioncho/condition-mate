@@ -20,6 +20,9 @@ const vm = require('vm');
 process.env.TZ = 'Asia/Seoul';
 const { RAIL_CSS, RAIL_JS, PAD_CSS, PAD_JS, PAD_HTML, GOALADD_SRC: GOALADD } = require('./memosrc');
 
+// 생성 스탬프(2026-08-10, '    @생성: …')는 모든 줄에 붙는 메타라 이 파일의 '모양' 비교에서는
+// 걷어 낸다 — 시각이 들어간 값이라 리터럴로 못 적고, 스탬프 자체의 계약은 memocreated.test.js 가 지킨다.
+const noCr = (s) => String(s).split('\n').filter((l) => !/^\s+@생성:/.test(l)).join('\n');
 let pass = 0, fail = 0;
 const ok = (m) => { console.log('  PASS: ' + m); pass++; };
 const ng = (m, got) => { console.log('  FAIL: ' + m + (got === undefined ? '' : '  (got ' + JSON.stringify(got) + ')')); fail++; };
@@ -375,7 +378,7 @@ async function boot(opts = {}) {
   pad.type('오늘 할 일');
   eq('타이핑 직후에는 저장하지 않는다 (400ms 디바운스)', t.net.saved.length, 0);
   await t.sleep(600);
-  eq('디바운스 후 한 번 저장', t.net.saved, ['오늘 할 일']);
+  eq('디바운스 후 한 번 저장', t.net.saved.map(noCr), ['오늘 할 일']);
 
   // blur flushes the pending debounce (창이 닫혀도 마지막 글자가 남는다)
   pad.type('오늘 할 일!');
@@ -453,6 +456,16 @@ async function boot(opts = {}) {
   eq('평문 줄에는 체크리스트가 붙지 않는다',
     t.page.pad.doc.children.every((r) => !r.dataset.st), true);
 
+  // 평문 줄의 원도 한 번에 완료다 — 예전에는 첫 클릭이 todo 승격뿐이라(마크가 빈 문자열)
+  // 눈에 아무 변화가 없어 "두 번 눌러야 체크된다" 는 불평이 나왔다(2026-08-10).
+  const plainRow = () => t.page.pad.doc.children[0];
+  plainRow().querySelector('.cmm-ck').fire('click');
+  eq('평문 줄 원 = 한 번 클릭에 완료', plainRow().dataset.st, 'done');
+  eq('한 번에 완료한 줄은 저장 텍스트도 완료', t.page.pad.text().split('\n')[0], '- [x] 그냥 메모');
+  plainRow().querySelector('.cmm-ck').fire('click');
+  eq('다시 누르면 곧바로 평문으로 (바틀넥을 거치지 않는다)', plainRow().dataset.st, undefined);
+  eq('취소하면 글자도 원래대로', t.page.pad.text().split('\n')[0], '그냥 메모');
+
   // ---------- 7c. 키보드: 엔터는 아래로, ⌘Enter 는 상세 ----------
   // 편집면이 .cmm-doc 하나뿐이라 keydown 의 target 은 늘 .cmm-doc 다. 칸을 이벤트에서 찾으면
   // 엔터가 우리 핸들러에 안 닿고 브라우저 기본 줄바꿈으로 새서 행이 옆으로 흘렀다(2026-08-04).
@@ -523,7 +536,7 @@ async function boot(opts = {}) {
   // 타임존이 안 붙은 옛 값('2026-08-20')은 벽시계 그대로 읽는다 — 옛 메모의 날짜가 밀리면 안 된다.
   eq('@키: 값 은 칸으로 읽힌다', [inp('목표일').value, inp('담당').value], ['2026-08-20T00:00', '조성용']);
   eq('칸이 아닌 들여쓴 줄은 상세로 남는다', fr.querySelector('.cmm-dt').textContent, '긴 배경 설명');
-  eq('필드 왕복 항등', t.win.CMMemo.text(),
+  eq('필드 왕복 항등', noCr(t.win.CMMemo.text()),
     '- [ ] 온체인 정산 자동화\n    @목표일: 2026-08-20\n    @담당: 조성용\n    긴 배경 설명');
   eq('값이 있어도 처음엔 접혀 있다 (목록엔 제목만)', fr.dataset.fs || '0', '0');
   eq('알약이 감춘 것을 알려 준다', fr.querySelector('.cmm-cue').textContent, '필드 · 상세 1줄');
@@ -535,7 +548,7 @@ async function boot(opts = {}) {
   inp('팀').fire('input');
   eq('칸에 적으면 바로 저장 텍스트에 들어간다',
     t.win.CMMemo.text().indexOf('    @팀: 플랫폼') > 0, true);
-  eq('필드 순서는 정의 순서 (목표일·담당·팀·프로젝트)', t.win.CMMemo.text().split('\n').slice(1, 4),
+  eq('필드 순서는 정의 순서 (목표일·담당·팀·프로젝트)', noCr(t.win.CMMemo.text()).split('\n').slice(1, 4),
     ['    @목표일: 2026-08-19T15:00Z', '    @담당: 조성용', '    @팀: 플랫폼']);
   inp('팀').fire('keydown', { key: 'Enter', metaKey: true });
   eq('칸 안에서 ⌘Enter 로 닫는다', fr.dataset.fs || '0', '0');
@@ -547,7 +560,7 @@ async function boot(opts = {}) {
   t.page.pad.caret(er.querySelector('.cmm-tx'));
   t.page.pad.key('Enter', { metaKey: true, shiftKey: true });
   t.page.pad.key('Enter', { metaKey: true });
-  eq('한 글자도 안 적은 칸은 저장되지 않는다', t.win.CMMemo.text(), '- [ ] 그냥 할 일');
+  eq('한 글자도 안 적은 칸은 저장되지 않는다', noCr(t.win.CMMemo.text()), '- [ ] 그냥 할 일');
   eq('빈 칸만 열었다 닫으면 알약도 안 남는다', er.querySelector('.cmm-cue').textContent, '');
 
   // ---------- 7e. 가져오기(CSV 붙여넣기) — 내보내기의 역방향 ----------
@@ -580,14 +593,14 @@ async function boot(opts = {}) {
     ['목표일=2026-08-20T00:00', '담당=조성용']);
   eq('상세도 되돌아온다', ir.querySelector('.cmm-dt').textContent, '배경 설명');
   eq('가져온 뒤 저장 텍스트가 내보내기 이전과 같은 모양',
-    t.win.CMMemo.text(),
+    noCr(t.win.CMMemo.text()),
     '1. 우리의 경쟁력\n- [ ] 온체인 정산\n    @목표일: 2026-08-19T15:00Z\n    @담당: 조성용\n    배경 설명\n- [x] 백서 리뷰\n- [!] 깃허브 오픈');
 
   // 표(엑셀 붙여넣기)로 나간 것도 같은 길로 돌아온다.
   t = await boot({ serverText: '' });
   t.page.pad.caret(t.page.pad.doc.lastElementChild.querySelector('.cmm-tx'));
   pasteInto(t, ['번호\t상태\t제목\t상세', '1\t완료\t끝낸 일\t메모 한 줄'].join('\n'));
-  eq('TSV(표) 도 가져온다', t.win.CMMemo.text(), '- [x] 끝낸 일\n    메모 한 줄');
+  eq('TSV(표) 도 가져온다', noCr(t.win.CMMemo.text()), '- [x] 끝낸 일\n    메모 한 줄');
 
   // 사람이 복사하면 머리글 앞에 빈 줄·구분선이 딸려 온다 — 그래도 표로 알아본다.
   // (2026-08-04 실사용 버그: 첫 줄이 머리글이 아니면 통째로 평문으로 쏟아졌다.)
@@ -606,7 +619,7 @@ async function boot(opts = {}) {
   pasteInto(t, '오늘 회의, 두 시\n- [ ] 내일 정산\n    확인할 것');
   eq('여러 줄 글은 execCommand 에 넘기지 않는다 (행이 옆으로 흐르는 원인)', plain, null);
   eq('여러 줄 글은 줄마다 행이 된다 (메모 문법도 살아난다)',
-    t.win.CMMemo.text(), '오늘 회의, 두 시\n- [ ] 내일 정산\n    확인할 것');
+    noCr(t.win.CMMemo.text()), '오늘 회의, 두 시\n- [ ] 내일 정산\n    확인할 것');
   // 한 줄 붙여넣기는 예전 그대로 — 캐럿 자리에 글자만 들어간다.
   t.page.pad.caret(t.page.pad.doc.lastElementChild.querySelector('.cmm-tx'));
   pasteInto(t, '한 줄, 그대로');
@@ -625,7 +638,7 @@ async function boot(opts = {}) {
   eq('여러 줄이 통째로 상세 텍스트로 (CRLF 정리·탭은 공백)',
     dr.querySelector('.cmm-dt').textContent,
     '이미 있던 상세\n1. Amani will do\nwill not do\n2. Sharron');
-  eq('저장 텍스트에도 들여쓴 줄로 남는다', t.win.CMMemo.text(),
+  eq('저장 텍스트에도 들여쓴 줄로 남는다', noCr(t.win.CMMemo.text()),
     '- [ ] 첫 걸음\n    이미 있던 상세\n    1. Amani will do\n    will not do\n    2. Sharron');
   // 우리 CSV 라도 상세 칸 안에서는 표 가져오기가 아니라 글자다 — 손이 가리킨 곳이 우선.
   t.page.pad.caret(dr.querySelector('.cmm-dt'));
@@ -696,9 +709,9 @@ async function boot(opts = {}) {
     has(AWC, /memoActive, let f = memoSavedFrame/), true);
 
   // ── 메모장 확장 토글 / 좁은 판 반응형 (2026-07-31) ──
-  const MEMO_SRC = fs2.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/MemoPad.swift', 'utf8');
-  const DASH = fs2.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/DashboardContent.swift', 'utf8');
-  const GA = fs2.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/GoalAddContent.swift', 'utf8');
+  const MEMO_SRC = fs2.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/MemoPad.swift', 'utf8');
+  const DASH = fs2.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/DashboardContent.swift', 'utf8');
+  const GA = fs2.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/GoalAddContent.swift', 'utf8');
 
   eq('메모 카드에 확장 버튼이 있다', has(MEMO_SRC, /data-cmmemo-exp/), true);
   eq('확장하면 3줄 → 10줄 (무한이 아니다)',

@@ -10,7 +10,7 @@
 //   - 상세 칸 가독성: 안내문은 읽히는 농도(opacity .8), 선택 배경은 앱 색으로 고정
 const fs = require('fs');
 const R = (p) => fs.readFileSync(__dirname + '/../' + p, 'utf8');
-const PAD = R('Sources/ConditionManager/Dashboard/MemoPad.swift');
+const PAD = R('Sources/ConditionMate/Dashboard/MemoPad.swift');
 
 let pass = 0, fail = 0;
 function eq(name, got, want) {

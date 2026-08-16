@@ -4,7 +4,7 @@
 # Calls `claude -p` for real.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-BIN=".build/debug/ConditionManager"
+BIN=".build/debug/ConditionMate"
 [ -x "$BIN" ] || { echo "build first: swift build"; exit 1; }
 command -v claude >/dev/null 2>&1 || { echo "SKIP: claude CLI not installed"; exit 0; }
 

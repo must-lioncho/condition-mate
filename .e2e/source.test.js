@@ -4,7 +4,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/DashboardContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/DashboardContent.swift', 'utf8');
 
 // 1) onkeydown handler attribute for #goalText
 const onkeydown = (SRC.match(/id="goalText"[\s\S]*?onkeydown="([^"]+)"/) || [])[1];

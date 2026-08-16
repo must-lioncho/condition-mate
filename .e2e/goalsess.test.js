@@ -17,7 +17,7 @@
 //      count into the working line ("… · 453 tokens", 1000+ folds to "1.2k"), and done
 //      appends tokens to the cost line — without tokens the cost line stays plain "$…"
 const fs = require('fs');
-const GA = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/GoalAddContent.swift', 'utf8');
+const GA = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/GoalAddContent.swift', 'utf8');
 function fn(src, name) {
   const start = src.indexOf('function ' + name + '(');
   if (start < 0) throw new Error('no fn ' + name);

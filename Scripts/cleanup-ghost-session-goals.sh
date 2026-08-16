@@ -23,7 +23,7 @@ set -euo pipefail
 apply=""
 [ "${1:-}" = "--apply" ] && apply="1"
 
-data_dir="${CM_DATA_DIR:-$HOME/.condition-manager}"
+data_dir="${CM_DATA_DIR:-$HOME/.condition-mate}"
 port_file="$data_dir/dashboard.port"
 [ -f "$port_file" ] || { echo "dashboard.port 없음 — 앱이 실행 중인지 확인하세요: $port_file"; exit 1; }
 port="$(tr -dc '0-9' < "$port_file")"

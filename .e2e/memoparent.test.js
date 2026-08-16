@@ -17,11 +17,11 @@
 //   - 추천은 ParentSuggest.rank — 드롭다운 전용이라 compute 의 침묵 게이트가 없다
 const fs = require('fs');
 const R = (p) => fs.readFileSync(__dirname + '/../' + p, 'utf8');
-const PAD = R('Sources/ConditionManager/Dashboard/MemoPad.swift');
-const APP = R('Sources/ConditionManager/AppDelegate.swift');
-const SET = R('Sources/ConditionManager/Core/Settings.swift');
-const PS = R('Sources/ConditionManager/Core/ParentSuggest.swift');
-const SERVER = R('Sources/ConditionManager/Dashboard/DashboardServer.swift');
+const PAD = R('Sources/ConditionMate/Dashboard/MemoPad.swift');
+const APP = R('Sources/ConditionMate/AppDelegate.swift');
+const SET = R('Sources/ConditionMate/Core/Settings.swift');
+const PS = R('Sources/ConditionMate/Core/ParentSuggest.swift');
+const SERVER = R('Sources/ConditionMate/Dashboard/DashboardServer.swift');
 
 let pass = 0, fail = 0;
 function eq(name, got, want) {

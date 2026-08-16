@@ -8,7 +8,7 @@
 //   4) an empty history renders nothing (no note, no separator)
 //   5) it runs at most once per view (histLoaded guard)
 const fs = require('fs');
-const GA = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/GoalAddContent.swift', 'utf8');
+const GA = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/GoalAddContent.swift', 'utf8');
 const test = require('node:test');
 const assert = require('node:assert');
 

@@ -7,7 +7,7 @@
 // Server-side completion itself (heartbeat -> pomodoro.complete -> PomodoroStats) is covered
 // by the live isolated-instance check (CM_POMODORO_SECS), not here.
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/SessionRail.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/SessionRail.swift', 'utf8');
 function slice(from, to) { const a = SRC.indexOf(from); const b = SRC.indexOf(to, a); if (a < 0 || b < 0) throw new Error('extract ' + from); return SRC.slice(a, b); }
 
 // Stubs for the browser globals the block touches.

@@ -1,6 +1,6 @@
 # 컨디션 메이트 (Condition Mate)
 
-ConditionManager의 BGM 관리를 "컨디션 메이트(Condition Mate)"라는 동반자로 설계한 문서입니다. 사용자의 작업 상황 전체를 함께 읽고, 거기에 딱 맞는 음악적 연출을 만들어 단조로운 배경음이 아니라 기복 있는 흐름으로 컨디션과 액티비티를 끌어올립니다.
+ConditionMate의 BGM 관리를 "컨디션 메이트(Condition Mate)"라는 동반자로 설계한 문서입니다. 사용자의 작업 상황 전체를 함께 읽고, 거기에 딱 맞는 음악적 연출을 만들어 단조로운 배경음이 아니라 기복 있는 흐름으로 컨디션과 액티비티를 끌어올립니다.
 
 연출 기복을 만드는 메커니즘은 RimWorld의 "스토리텔러(Storyteller)"에서 빌려옵니다. 스토리텔러는 게임 상황을 읽어 사건의 리듬(루틴/랜덤)을 결정합니다. 다만 컨디션 메이트가 지향하는 관계는 게임을 내려다보는 연출자가 아니라, 아래 [0]의 동반자상입니다.
 
@@ -17,12 +17,12 @@ ConditionManager의 BGM 관리를 "컨디션 메이트(Condition Mate)"라는 �
 기준 코드와 선행 문서:
 
 - `.doc/bgm-management.md` — 현재 BGM 재생 조건·상태 머신·씬 곡 전략(이 문서의 토대)
-- `Sources/ConditionManager/Audio/ConditionDirector.swift` — WARMUP/SUSTAIN/RELEASE 상태 머신과 트랙 선택(실행 계층)
-- `Sources/ConditionManager/Audio/AudioEngine.swift` — 실제 재생·크로스페이드
-- `Sources/ConditionManager/Audio/BPMLibrary.swift` — BPM·키워드 기반 트랙 조회
-- `Sources/ConditionManager/Core/PluginStore.swift` — 플러그인 연결/검증 모델(claude-desktop 선례)
-- `Sources/ConditionManager/Core/WorkerRegistry.swift` — owner별 워커 등록/해제
-- `Sources/ConditionManager/AppDelegate.swift` — 1Hz 하트비트 게이팅, `claude -p` 오케스트레이션, 채팅
+- `Sources/ConditionMate/Audio/ConditionDirector.swift` — WARMUP/SUSTAIN/RELEASE 상태 머신과 트랙 선택(실행 계층)
+- `Sources/ConditionMate/Audio/AudioEngine.swift` — 실제 재생·크로스페이드
+- `Sources/ConditionMate/Audio/BPMLibrary.swift` — BPM·키워드 기반 트랙 조회
+- `Sources/ConditionMate/Core/PluginStore.swift` — 플러그인 연결/검증 모델(claude-desktop 선례)
+- `Sources/ConditionMate/Core/WorkerRegistry.swift` — owner별 워커 등록/해제
+- `Sources/ConditionMate/AppDelegate.swift` — 1Hz 하트비트 게이팅, `claude -p` 오케스트레이션, 채팅
 
 ---
 
@@ -82,7 +82,7 @@ ConditionManager의 BGM 관리를 "컨디션 메이트(Condition Mate)"라는 �
 
 ### 2.3 코드 폴더 구조
 
-코드는 기존 단일 실행 타깃 안에 폴더로 둡니다: `Sources/ConditionManager/Plugins/ConditionMate/`. SwiftPM 설정 변경 없이 컴파일되고, "폴더 단위 관리" 의도를 충족하며, 메모리 가벼운 단일 바이너리 철학과도 맞습니다. (최상위 `Sources/Plugins`는 `Package.swift` 타깃 경로가 `Sources/ConditionManager` 단일이라 컴파일되지 않으므로 채택하지 않음.)
+코드는 기존 단일 실행 타깃 안에 폴더로 둡니다: `Sources/ConditionMate/Plugins/ConditionMate/`. SwiftPM 설정 변경 없이 컴파일되고, "폴더 단위 관리" 의도를 충족하며, 메모리 가벼운 단일 바이너리 철학과도 맞습니다. (최상위 `Sources/Plugins`는 `Package.swift` 타깃 경로가 `Sources/ConditionMate` 단일이라 컴파일되지 않으므로 채택하지 않음.)
 
 - `Mate.swift` — `Mate` 프로토콜, `Cue`, `MateContext`
 - `MateRegistry.swift` — 사용 가능한 메이트 목록·현재 선택
@@ -264,7 +264,7 @@ RimWorld의 "Randy Random"에 해당합니다. 일정 박자로 이벤트 풀에
 
 사용자 확인을 거쳐 다음으로 확정했습니다.
 
-- 코드 폴더 위치: `Sources/ConditionManager/Plugins/ConditionMate/`. SwiftPM 설정 변경 없이 단일 실행 타깃 안에서 바로 컴파일된다.
+- 코드 폴더 위치: `Sources/ConditionMate/Plugins/ConditionMate/`. SwiftPM 설정 변경 없이 단일 실행 타깃 안에서 바로 컴파일된다.
 - 연결 모델: 폴더 연결 폐기 → 설치형(toggle). 설치 = BGM 디렉터 켜기(기본 기능), 자원은 앱 데이터 폴더 자동 보관. 컨디션 메이트는 기본 설치됨(첫 실행부터 BGM 동작), 제거하면 BGM도 꺼진다.
 - BGM 디렉터 소유권: core 상시 워커 → 컨디션 메이트 플러그인 소유. 미설치 시 무음.
 - Discord(채널 연결) = 강화. 설치 위에 얹는 양방향 소통. 수신은 브리지 스크립트 + 파일 인박스, 송신은 순수 Swift 웹훅 POST. (4단계)

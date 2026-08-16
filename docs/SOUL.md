@@ -1,7 +1,7 @@
-# Condition Manager — SOUL (제품의 존재 이유)
+# Condition Mate — SOUL (제품의 존재 이유)
 
-EN: The product soul — why Condition Manager exists, what problem it solves, and what "done well" means. The Spec tab says HOW each screen must behave; this says WHY any of it is worth building. Source of truth for the Soul tab of the docs hub (`SOUL.md` → rendered into `SPEC.html` by `doc/script/render-spec.py`). Craft principles ("어떻게 만드는가") live in `craft-soul.md` and are summarized here.
-KO: 제품의 영혼 — Condition Manager가 왜 존재하고, 어떤 문제를 풀며, "잘 된 것"이 무엇인지를 적는다. Spec 탭이 각 화면이 어떻게 동작해야 하는지를 말한다면, 이 문서는 왜 그것을 만들 가치가 있는지를 말한다. 문서 허브 Soul 탭의 기준 문서(`SOUL.md` → `render-spec.py`가 `SPEC.html`로 렌더)다. 제작 원칙("어떻게 만드는가")은 `craft-soul.md`에 있으며 여기에 요약한다.
+EN: The product soul — why Condition Mate exists, what problem it solves, and what "done well" means. The Spec tab says HOW each screen must behave; this says WHY any of it is worth building. Source of truth for the Soul tab of the docs hub (`SOUL.md` → rendered into `SPEC.html` by `doc/script/render-spec.py`). Craft principles ("어떻게 만드는가") live in `craft-soul.md` and are summarized here.
+KO: 제품의 영혼 — Condition Mate가 왜 존재하고, 어떤 문제를 풀며, "잘 된 것"이 무엇인지를 적는다. Spec 탭이 각 화면이 어떻게 동작해야 하는지를 말한다면, 이 문서는 왜 그것을 만들 가치가 있는지를 말한다. 문서 허브 Soul 탭의 기준 문서(`SOUL.md` → `render-spec.py`가 `SPEC.html`로 렌더)다. 제작 원칙("어떻게 만드는가")은 `craft-soul.md`에 있으며 여기에 요약한다.
 
 ## 핵심 한 줄 · Essence
 

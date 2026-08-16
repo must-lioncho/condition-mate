@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>목업 · 계획→업무 DETAIL 단일면 흐름</title>
 <style>
-  /* Condition Manager 대시보드 톤 재현 (SessionRail/goal 페이지 팔레트) */
+  /* Condition Mate 대시보드 톤 재현 (SessionRail/goal 페이지 팔레트) */
   :root{
     --bg:#0a0d12; --panel:#0f141d; --panel2:#161c2a; --line:#1c2230; --line2:#263143;
     --txt:#c8cfdb; --txt2:#e7ecf4; --mut:#5d6678; --mut2:#8b93a7;
@@ -320,7 +320,7 @@ function startWork(){
   scrollBottom();
   setTimeout(function(){
     aiSay('계획 승인 확인. 1단계(탭 등록·빈 화면)부터 시작합니다.', function(){
-      toolCard('Read','Sources/ConditionManager/Dashboard/DashboardContent.swift','탭 레지스트리 구조 확인 — _tabOrder, 탭 등록 지점 파악 (…)');
+      toolCard('Read','Sources/ConditionMate/Dashboard/DashboardContent.swift','탭 레지스트리 구조 확인 — _tabOrder, 탭 등록 지점 파악 (…)');
       setTimeout(function(){
         toolCard('Edit','DashboardContent.swift — 탭 등록 +12줄','+ {id:"weekly", label:"주간 리포트", render:renderWeekly}\n+ function renderWeekly(){ … }');
         setTimeout(function(){

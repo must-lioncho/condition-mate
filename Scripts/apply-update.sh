@@ -4,16 +4,16 @@
 # minutes ago. That is the whole point of the split: pressing 업데이트 costs a copy
 # (~2s), not a release build (~40s+).
 #
-#   Scripts/apply-update.sh          # apply <data>/updates/ConditionManager.app
+#   Scripts/apply-update.sh          # apply <data>/updates/ConditionMate.app
 #
 # Invoked by POST /api/update/run when a staged build is ready. Refuses (exit non-zero,
 # staged.json untouched) if there is nothing staged, so the caller can fall back to the
 # old build-then-install path. Output goes to <data>/update.log.
 set -euo pipefail
 
-APP="ConditionManager.app"
-BUNDLE_ID="com.lioncho.conditionmanager"
-DATA_DIR="${CM_DATA_DIR:-$HOME/.condition-manager}"
+APP="ConditionMate.app"
+BUNDLE_ID="com.lioncho.conditionmate"
+DATA_DIR="${CM_DATA_DIR:-$HOME/.condition-mate}"
 STAGE_DIR="$DATA_DIR/updates"
 STAGED="$STAGE_DIR/$APP"
 STAGED_JSON="$STAGE_DIR/staged.json"
@@ -35,7 +35,7 @@ echo "==> Quitting $BUNDLE_ID"
 # Normal shutdown path (applicationShouldTerminate), not SIGKILL, so stores flush.
 osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
 for _ in $(seq 1 20); do
-    pgrep -fq "/Applications/$APP/Contents/MacOS/ConditionManager" || break
+    pgrep -fq "/Applications/$APP/Contents/MacOS/ConditionMate" || break
     sleep 0.3
 done
 

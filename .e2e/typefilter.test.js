@@ -4,7 +4,7 @@
 // gating, (3) 'task' keeps task-bearing goals as context and renders their rows,
 // (4) the 보기(status) filter also applies to task rows (BLOCKED always shown).
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/DashboardContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/DashboardContent.swift', 'utf8');
 function slice(from, to) { const a = SRC.indexOf(from); const b = SRC.indexOf(to, a); if (a < 0 || b < 0) throw new Error('extract ' + from); return SRC.slice(a, b); }
 
 // Globals the extracted functions reference.

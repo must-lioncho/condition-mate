@@ -31,7 +31,7 @@ import sys
 from datetime import datetime, timezone, timedelta
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "Sources", "ConditionManager")
+SRC = os.path.join(ROOT, "Sources", "ConditionMate")
 
 
 def read(rel):
@@ -170,12 +170,12 @@ def main():
             "children": [],
         }
         if path == "/":
-            page["src"] = "Sources/ConditionManager/Dashboard/DashboardContent.swift"
+            page["src"] = "Sources/ConditionMate/Dashboard/DashboardContent.swift"
             page["children"] = [
                 {"id": "dashboard-" + k, "title": t, "view": k} for k, t in views
             ]
         elif path == "/bgm-player":
-            page["src"] = "Sources/ConditionManager/Dashboard/BGMPlayerContent.swift"
+            page["src"] = "Sources/ConditionMate/Dashboard/BGMPlayerContent.swift"
             page["children"] = [
                 {"id": "system-" + k, "title": t, "view": k} for k, t in tabs
             ]

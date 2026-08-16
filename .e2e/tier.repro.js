@@ -3,7 +3,7 @@
 // Goal: see whether the existing carry-forward already absorbs the sandwiched
 // rest minutes, or whether there is a real gap.
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/DashboardContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/DashboardContent.swift', 'utf8');
 
 function slice(from, toExclusive) {
   const a = SRC.indexOf(from); const b = SRC.indexOf(toExclusive, a);

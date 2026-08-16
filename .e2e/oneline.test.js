@@ -2,7 +2,7 @@
 // 긴 Slack 원문 하나가 행 높이를 수백 px로 늘려 표를 못 읽게 만들던 회귀를 잡는다.
 // CSS 규칙과 title(hover 전문) 부착을 실제 소스에서 검사한다.
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/DashboardContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/DashboardContent.swift', 'utf8');
 let pass = 0, fail = 0;
 const check = (n, ok, extra) => { console.log((ok ? 'PASS ' : 'FAIL ') + n + (extra ? '  ' + extra : '')); ok ? pass++ : fail++; };
 const has = (re) => re.test(SRC);

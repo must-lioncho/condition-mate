@@ -13,10 +13,10 @@
 //   - 후보 목록의 매칭/정렬 규칙(앞글자 → 단어 앞글자 → 포함, 많이 쓴 순)
 const fs = require('fs');
 const R = (p) => fs.readFileSync(__dirname + '/../' + p, 'utf8');
-const PAD = R('Sources/ConditionManager/Dashboard/MemoPad.swift');
-const STORE = R('Sources/ConditionManager/Core/MemoTagStore.swift');
-const APP = R('Sources/ConditionManager/AppDelegate.swift');
-const SERVER = R('Sources/ConditionManager/Dashboard/DashboardServer.swift');
+const PAD = R('Sources/ConditionMate/Dashboard/MemoPad.swift');
+const STORE = R('Sources/ConditionMate/Core/MemoTagStore.swift');
+const APP = R('Sources/ConditionMate/AppDelegate.swift');
+const SERVER = R('Sources/ConditionMate/Dashboard/DashboardServer.swift');
 const STUB = R('.e2e/memostub.js');
 
 let pass = 0, fail = 0;
@@ -80,7 +80,7 @@ eq('kind 는 자유 입력이 아니다 (오타 하나가 새 사전을 만들�
   /guard MemoTagStore\.isKind\(kind\) else \{ return nil \}/.test(STORE), true);
 
 // ── 사전 저장 ──────────────────────────────────────────────────────────────
-eq('사전은 memo.json 이 아니라 자기 파일', /memo-tags\.json/.test(STORE) && !/memo-tags/.test(R('Sources/ConditionManager/Core/MemoStore.swift')), true);
+eq('사전은 memo.json 이 아니라 자기 파일', /memo-tags\.json/.test(STORE) && !/memo-tags/.test(R('Sources/ConditionMate/Core/MemoStore.swift')), true);
 eq('atomic 으로 쓴다 (반쪽 사전이 남지 않게)', /options: \.atomic/.test(STORE), true);
 eq('이름 수·길이에 상한이 있다', /maxPerKind/.test(STORE) && /maxNameChars/.test(STORE), true);
 eq('있는 이름은 새로 만들지 않고 횟수만 오른다', /list\[i\]\.count \+= 1/.test(STORE), true);

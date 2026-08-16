@@ -8,9 +8,9 @@ in the team's standard praise format.
 DB location, first match wins:
   1. $CM_HERO_DB                     — explicit override (same rule as HeroStore.dbPath)
   2. <workspace>/agent-mustcompany/storage/hero/heroes.db, when that path exists
-  3. ~/.condition-manager/hero/heroes.db
+  3. ~/.condition-mate/hero/heroes.db
 
-The Condition Manager app reads this DB read-only for its Hero tab; this
+The Condition Mate app reads this DB read-only for its Hero tab; this
 script is its only writer.
 """
 
@@ -31,7 +31,7 @@ def resolve_db() -> Path:
         return Path(env).expanduser()
     if LEGACY_DB.exists():
         return LEGACY_DB
-    return Path.home() / ".condition-manager" / "hero" / "heroes.db"
+    return Path.home() / ".condition-mate" / "hero" / "heroes.db"
 
 
 DB_PATH = resolve_db()

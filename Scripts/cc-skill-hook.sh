@@ -20,11 +20,11 @@ input="$(cat)"
 # Data dir — mirrors AppPaths.base and the resolution in cc-session-hook.sh, so the JSONL
 # lands in the same store the running app reads:
 #   1. CM_DATA_DIR          - explicit override (tests / throwaway runs)
-#   2. ~/.condition-manager - the single shared store (dev + prod, unified 2026-07-09)
+#   2. ~/.condition-mate - the single shared store (dev + prod, unified 2026-07-09)
 if [ -n "$CM_DATA_DIR" ]; then
   data_dir="$CM_DATA_DIR"
 else
-  data_dir="$HOME/.condition-manager"
+  data_dir="$HOME/.condition-mate"
 fi
 [ -d "$data_dir" ] || mkdir -p "$data_dir" 2>/dev/null || exit 0
 

@@ -19,7 +19,7 @@ import AppKit
 // mouse events — drawing only samples NSEvent.mouseLocation), one per screen, shown
 // lazily when the first stroke starts and hidden again when the canvas is wiped.
 //
-// Deliberately app-agnostic (like the GUI target): no ConditionManager types. The app
+// Deliberately app-agnostic (like the GUI target): no ConditionMate types. The app
 // wires liveness reporting via `onActivity`.
 public final class DrawOverlayController {
 

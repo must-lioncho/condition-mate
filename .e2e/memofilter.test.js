@@ -145,7 +145,7 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
   // 영속 계약은 소스로 확인한다 — 이 하네스(setContent)는 origin 이 없어 localStorage 가
   // 막혀 있고, 앱 규칙상 저장소가 막혀도 필터는 동작해야 한다(메모리 상태가 진실).
   const fs = require('fs');
-  const PAD = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/MemoPad.swift', 'utf8');
+  const PAD = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/MemoPad.swift', 'utf8');
   eq('선택은 localStorage(cmMemoFlt)로 영속을 시도한다',
     /localStorage\.setItem\('cmMemoFlt'/.test(PAD) && /localStorage\.getItem\('cmMemoFlt'\)/.test(PAD), true);
 

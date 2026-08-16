@@ -1,6 +1,6 @@
 # tests
 
-Condition Manager의 테스트/프로토타입 아티팩트를 한곳에 모은 인덱스입니다. 세 부류가 있고, 물리적 위치가 다른 것은 각각의 제약 때문입니다.
+Condition Mate의 테스트/프로토타입 아티팩트를 한곳에 모은 인덱스입니다. 세 부류가 있고, 물리적 위치가 다른 것은 각각의 제약 때문입니다.
 
 ## 1. prototypes/ — 느슨한 디자인 목업 (정적 HTML)
 
@@ -22,7 +22,7 @@ Condition Manager의 테스트/프로토타입 아티팩트를 한곳에 모은 
 
 ## 2. 앱에 서빙되는 테스트 페이지 (컴파일된 Swift)
 
-이 페이지들은 앱 바이너리에 컴파일되어 로컬 대시보드 서버가 라우트로 서빙합니다. SwiftPM은 타겟 경로(Sources/ConditionManager) 밖의 소스를 컴파일하지 못하므로, 소스 파일 자체는 tests/로 옮길 수 없고 Sources 아래에 남아 있어야 합니다. 실행 중인 앱에서 아래 경로로 접속해 확인합니다.
+이 페이지들은 앱 바이너리에 컴파일되어 로컬 대시보드 서버가 라우트로 서빙합니다. SwiftPM은 타겟 경로(Sources/ConditionMate) 밖의 소스를 컴파일하지 못하므로, 소스 파일 자체는 tests/로 옮길 수 없고 Sources 아래에 남아 있어야 합니다. 실행 중인 앱에서 아래 경로로 접속해 확인합니다.
 
 - 라우트 /lounge-break-test — Dashboard/LoungeBreakTestContent.swift (라운지 브레이크 기획 프로토타입)
 - 라우트 /session-continue-test — Dashboard/SessionContinueTestContent.swift (세션 이어가기 A안 디테일 목업)

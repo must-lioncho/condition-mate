@@ -4,7 +4,7 @@
 // field incl. seq). Asserts: drag reorder changes ORDER but never the seq badge,
 // and 부모# references resolve by stable seq.
 const fs = require('fs');
-const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionManager/Dashboard/DashboardContent.swift', 'utf8');
+const SRC = fs.readFileSync(__dirname + '/../Sources/ConditionMate/Dashboard/DashboardContent.swift', 'utf8');
 function fn(name) {
   // grab `function name(...) { ... }` up to its matching closing brace at column 0-ish.
   const start = SRC.indexOf('function ' + name);
