@@ -2043,4 +2043,9 @@ KO: 이번 회차에서 테스트 가능한 행동 관점에서 모호한 새 �
   기록은 M 개였다" 라는 문장이 왔고, 그중
   `inbox/2026-09-06-0455-condition-mate-orca-launch-confirm-undo` 는 실제로 Bash `mv` 로
   옮겨진 카드여서 못 잡는 것이 맞다고 기록으로 확인했다.
-  `swift build -c release` 통과. 카드 파일과 `lion-work-queue/` 아래에는 한 바이트도 안 썼다.
+  `swift build -c release` 통과, `.e2e/issues.test.js` **203 PASS 0 FAIL**.
+  그 하네스가 이 파일을 `static func transcriptJSON(` 부터 **파일 끝까지** 잘라서 그 조각에
+  `jsonl` 이라는 낱말이 없는지를 보므로(DASH-13 이 원본 JSONL 을 그대로 붓지 않는다는 판정),
+  이 절은 `transcriptJSON` **앞**에 둔다. 처음에 뒤에 뒀더니 이 절의 `subagents/*.jsonl` 이
+  그 조각에 들어가 그 판정이 1 FAIL 로 거짓이 됐다 — 하네스를 고치지 않고 자리를 옮겨서 풀었다.
+  카드 파일과 `lion-work-queue/` 아래에는 한 바이트도 안 썼다.

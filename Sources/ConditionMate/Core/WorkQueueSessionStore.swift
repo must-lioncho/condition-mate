@@ -484,118 +484,14 @@ enum WorkQueueSessionStore {
         return out.joined(separator: "\n")
     }
 
-    // MARK: - 기록 팝업이 읽는 자리 (SPEC DASH-13)
-
-    // 기록 한 벌을 **사람이 읽는 턴 배열**로 돌려준다. 원본 JSONL 을 그대로 화면에 붓지 않는다 —
-    // 124 줄짜리 파일이 796KB 이고 그중 사람이 읽을 것은 극히 일부다.
+    // NOTE: 이 절은 `transcriptJSON` **앞**에 선다. `.e2e/issues.test.js` 가 이 파일을
+    // `transcriptJSON(` 선언 줄부터 파일 끝까지 잘라서 그 조각에 `jsonl` 이라는 낱말이
+    // 없는지를 본다 — 그 함수가 원본 JSONL 을 그대로 붓지 않는다는 판정이다. 아래에 두면
+    // 이 절의 `subagents/*.jsonl` 이 그 조각에 들어가 그 판정이 거짓으로 진다.
     //
-    // 판정 규칙(`isMeta` · `isSystemInjected` · Write/Edit/MultiEdit/NotebookEdit)은 위 `scan()`
-    // 과 **같은 한 벌**을 쓴다. 두 벌을 두면 한쪽만 고쳐지고, 그때 화면과 목록이 서로 다른
-    // 세션을 말한다.
-    //
-    // 경로 검증은 여기서 하지 않는다. `AppDelegate.workQueueTranscriptPath` 가 다섯 조건을
-    // 다 통과시킨 경로만 이 함수에 온다 — 검증을 두 자리에 두면 한쪽이 느슨해진다.
-    static func transcriptJSON(path: String) -> String {
-        let url = URL(fileURLWithPath: path)
-        // 파일이 2MB 를 넘어도 읽는다. md 리더처럼 통째로 거절하면 15MB 짜리 세션에서 이 기능이
-        // 통째로 안 도는데, 그런 세션이야말로 라이언이 보고 싶어 하는 것이다. `scan()` 과 같은
-        // 64MB 상한을 쓰고 매핑으로 연다.
-        guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else {
-            return "{\"ok\":false,\"error\":\"unreadable\"}"
-        }
-        let capped = data.count > 64 * 1024 * 1024 ? data.prefix(64 * 1024 * 1024) : data
-        guard let text = String(data: capped, encoding: .utf8) else {
-            return "{\"ok\":false,\"error\":\"unreadable\"}"
-        }
-
-        var cwd = ""
-        var turns: [[String: Any]] = []
-        for line in text.components(separatedBy: "\n") {
-            guard line.count > 20 else { continue }
-            let isUser = line.contains("\"type\":\"user\"")
-            let isAsst = line.contains("\"type\":\"assistant\"")
-            guard isUser || isAsst, let o = jsonObject(line) else { continue }
-            let type = o["type"] as? String ?? ""
-            if cwd.isEmpty, let c = o["cwd"] as? String, c.hasPrefix("/") { cwd = c }
-            let at = (o["timestamp"] as? String) ?? ""
-            if type == "user" {
-                guard (o["isMeta"] as? Bool) != true else { continue }
-                let t = userText(o)
-                guard !t.isEmpty, !isSystemInjected(t) else { continue }
-                turns.append(["role": "user", "at": at, "text": String(t.prefix(4000)), "files": [String]()])
-                continue
-            }
-            guard type == "assistant",
-                  let msg = o["message"] as? [String: Any],
-                  let blocks = msg["content"] as? [[String: Any]] else { continue }
-            var parts: [String] = []
-            var files: [String] = []
-            for b in blocks {
-                switch b["type"] as? String ?? "" {
-                case "text":
-                    let t = (b["text"] as? String ?? "")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !t.isEmpty { parts.append(t) }
-                case "tool_use":
-                    // 쓴 파일만 담는다. 읽기·검색·셸 호출은 담지 않는다 — 라이언이 보고 싶은
-                    // 것은 그 턴이 **무엇을 만들었나**이고, 나머지는 소음이다.
-                    let name = b["name"] as? String ?? ""
-                    guard ["Write", "Edit", "MultiEdit", "NotebookEdit"].contains(name),
-                          let input = b["input"] as? [String: Any] else { continue }
-                    let p = (input["file_path"] as? String)
-                        ?? (input["notebook_path"] as? String) ?? ""
-                    if p.hasPrefix("/"), !files.contains(p) { files.append(p) }
-                default: continue
-                }
-            }
-            let t = parts.joined(separator: "\n")
-            guard !t.isEmpty || !files.isEmpty else { continue }
-            turns.append(["role": "assistant", "at": at, "text": String(t.prefix(4000)), "files": files])
-        }
-
-        let total = turns.count
-        // 뒤에서부터 400 개. 오래된 것을 자른다 — 라이언이 보고 싶은 것은 그 세션이 무엇을
-        // 했나이고 그것은 뒤에 있다.
-        if turns.count > 400 { turns.removeFirst(turns.count - 400) }
-        // 전체 2MB 상한도 **뒤에서부터** 채운다. 같은 이유다.
-        var budget = 2_000_000
-        var kept: [[String: Any]] = []
-        for t in turns.reversed() {
-            let cost = ((t["text"] as? String)?.utf8.count ?? 0)
-                + ((t["files"] as? [String]) ?? []).reduce(0) { $0 + $1.utf8.count } + 120
-            if !kept.isEmpty && cost > budget { break }
-            budget -= cost
-            kept.append(t)
-        }
-        kept.reverse()
-
-        let payload: [String: Any] = [
-            "ok": true,
-            "path": path,
-            "sessionId": String(url.lastPathComponent.dropLast(6)),   // ".jsonl"
-            "cwd": cwd,
-            "turns": kept,
-            "total": total,
-            "shown": kept.count,
-            // 자른 것이 있으면 그렇게 말한다. 조용히 자르지 않는 것이 이 화면의 규칙이다.
-            "truncated": kept.count < total,
-        ]
-        guard let out = try? JSONSerialization.data(withJSONObject: payload, options: []),
-              let s = String(data: out, encoding: .utf8) else {
-            return "{\"ok\":false,\"error\":\"unreadable\"}"
-        }
-        return s
-    }
-
-    // 사람이 친 것이 아니라 하네스가 밀어 넣은 것. 이것을 지시문으로 잡으면 엉뚱한 세션이 걸린다.
-    private static func isSystemInjected(_ t: String) -> Bool {
-        for p in ["<task-notification>", "<local-command", "<command-name>",
-                  "<system-reminder>", "Caveat: The messages below"] where t.hasPrefix(p) {
-            return true
-        }
-        return false
-    }
-
+    // 그리고 그 선언 줄을 여기서 글자 그대로 다시 적지 않는다. 시험이 `indexOf` 로 **첫 번째**
+    // 등장을 찾기 때문에, 이 파일 안에서 그 선언 문자열을 글자 그대로 다시 쓰면 슬라이스가
+    // 진짜 함수가 아니라 여기서 시작해 뒤쪽 판정이 통째로 어긋난다.
     // MARK: - 이 카드를 **쓴** 실행 (SPEC DASH-14)
 
     // 위 `session(cardID:…)` 이 찾는 것은 카드를 **받은** 세션이다. 여기서 찾는 것은 그 카드
@@ -992,4 +888,116 @@ enum WorkQueueSessionStore {
         let d = b.timeIntervalSince(a)
         return d >= 0 ? d : nil
     }
+    // MARK: - 기록 팝업이 읽는 자리 (SPEC DASH-13)
+
+    // 기록 한 벌을 **사람이 읽는 턴 배열**로 돌려준다. 원본 JSONL 을 그대로 화면에 붓지 않는다 —
+    // 124 줄짜리 파일이 796KB 이고 그중 사람이 읽을 것은 극히 일부다.
+    //
+    // 판정 규칙(`isMeta` · `isSystemInjected` · Write/Edit/MultiEdit/NotebookEdit)은 위 `scan()`
+    // 과 **같은 한 벌**을 쓴다. 두 벌을 두면 한쪽만 고쳐지고, 그때 화면과 목록이 서로 다른
+    // 세션을 말한다.
+    //
+    // 경로 검증은 여기서 하지 않는다. `AppDelegate.workQueueTranscriptPath` 가 다섯 조건을
+    // 다 통과시킨 경로만 이 함수에 온다 — 검증을 두 자리에 두면 한쪽이 느슨해진다.
+    static func transcriptJSON(path: String) -> String {
+        let url = URL(fileURLWithPath: path)
+        // 파일이 2MB 를 넘어도 읽는다. md 리더처럼 통째로 거절하면 15MB 짜리 세션에서 이 기능이
+        // 통째로 안 도는데, 그런 세션이야말로 라이언이 보고 싶어 하는 것이다. `scan()` 과 같은
+        // 64MB 상한을 쓰고 매핑으로 연다.
+        guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else {
+            return "{\"ok\":false,\"error\":\"unreadable\"}"
+        }
+        let capped = data.count > 64 * 1024 * 1024 ? data.prefix(64 * 1024 * 1024) : data
+        guard let text = String(data: capped, encoding: .utf8) else {
+            return "{\"ok\":false,\"error\":\"unreadable\"}"
+        }
+
+        var cwd = ""
+        var turns: [[String: Any]] = []
+        for line in text.components(separatedBy: "\n") {
+            guard line.count > 20 else { continue }
+            let isUser = line.contains("\"type\":\"user\"")
+            let isAsst = line.contains("\"type\":\"assistant\"")
+            guard isUser || isAsst, let o = jsonObject(line) else { continue }
+            let type = o["type"] as? String ?? ""
+            if cwd.isEmpty, let c = o["cwd"] as? String, c.hasPrefix("/") { cwd = c }
+            let at = (o["timestamp"] as? String) ?? ""
+            if type == "user" {
+                guard (o["isMeta"] as? Bool) != true else { continue }
+                let t = userText(o)
+                guard !t.isEmpty, !isSystemInjected(t) else { continue }
+                turns.append(["role": "user", "at": at, "text": String(t.prefix(4000)), "files": [String]()])
+                continue
+            }
+            guard type == "assistant",
+                  let msg = o["message"] as? [String: Any],
+                  let blocks = msg["content"] as? [[String: Any]] else { continue }
+            var parts: [String] = []
+            var files: [String] = []
+            for b in blocks {
+                switch b["type"] as? String ?? "" {
+                case "text":
+                    let t = (b["text"] as? String ?? "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !t.isEmpty { parts.append(t) }
+                case "tool_use":
+                    // 쓴 파일만 담는다. 읽기·검색·셸 호출은 담지 않는다 — 라이언이 보고 싶은
+                    // 것은 그 턴이 **무엇을 만들었나**이고, 나머지는 소음이다.
+                    let name = b["name"] as? String ?? ""
+                    guard ["Write", "Edit", "MultiEdit", "NotebookEdit"].contains(name),
+                          let input = b["input"] as? [String: Any] else { continue }
+                    let p = (input["file_path"] as? String)
+                        ?? (input["notebook_path"] as? String) ?? ""
+                    if p.hasPrefix("/"), !files.contains(p) { files.append(p) }
+                default: continue
+                }
+            }
+            let t = parts.joined(separator: "\n")
+            guard !t.isEmpty || !files.isEmpty else { continue }
+            turns.append(["role": "assistant", "at": at, "text": String(t.prefix(4000)), "files": files])
+        }
+
+        let total = turns.count
+        // 뒤에서부터 400 개. 오래된 것을 자른다 — 라이언이 보고 싶은 것은 그 세션이 무엇을
+        // 했나이고 그것은 뒤에 있다.
+        if turns.count > 400 { turns.removeFirst(turns.count - 400) }
+        // 전체 2MB 상한도 **뒤에서부터** 채운다. 같은 이유다.
+        var budget = 2_000_000
+        var kept: [[String: Any]] = []
+        for t in turns.reversed() {
+            let cost = ((t["text"] as? String)?.utf8.count ?? 0)
+                + ((t["files"] as? [String]) ?? []).reduce(0) { $0 + $1.utf8.count } + 120
+            if !kept.isEmpty && cost > budget { break }
+            budget -= cost
+            kept.append(t)
+        }
+        kept.reverse()
+
+        let payload: [String: Any] = [
+            "ok": true,
+            "path": path,
+            "sessionId": String(url.lastPathComponent.dropLast(6)),   // ".jsonl"
+            "cwd": cwd,
+            "turns": kept,
+            "total": total,
+            "shown": kept.count,
+            // 자른 것이 있으면 그렇게 말한다. 조용히 자르지 않는 것이 이 화면의 규칙이다.
+            "truncated": kept.count < total,
+        ]
+        guard let out = try? JSONSerialization.data(withJSONObject: payload, options: []),
+              let s = String(data: out, encoding: .utf8) else {
+            return "{\"ok\":false,\"error\":\"unreadable\"}"
+        }
+        return s
+    }
+
+    // 사람이 친 것이 아니라 하네스가 밀어 넣은 것. 이것을 지시문으로 잡으면 엉뚱한 세션이 걸린다.
+    private static func isSystemInjected(_ t: String) -> Bool {
+        for p in ["<task-notification>", "<local-command", "<command-name>",
+                  "<system-reminder>", "Caveat: The messages below"] where t.hasPrefix(p) {
+            return true
+        }
+        return false
+    }
+
 }
