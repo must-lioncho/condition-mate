@@ -180,6 +180,18 @@ enum IssuesContent {
              "무슨 일이었나" 한 눈이고, 길면 그 아래 절들이 화면 밖으로 밀린다. */
           .lead.clamp{display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
           .rawtag{color:#d29922;font-size:11px;margin-bottom:6px}
+          /* DASH-14 — 이 `요구` 줄을 만든 실행의 정보. 절 제목 바로 밑, **접힌 상태에서도
+             보이는 자리**에 선다. 펼치지 않고도 누가 얼마를 써서 몇 초에 만들었는지 아는
+             것이 이 줄의 목적이므로, 3 단 접힘 바깥에 둔다.
+             `.sesid` 를 그대로 못 쓰는 이유는 그 규칙이 `.ses .sh a.sesid` 로 세션 블록
+             안에만 걸려 있어서다 — 여기는 `.ses` 밖이라 선택자가 안 닿는다. 그래서 링크
+             모양만 같은 값으로 다시 적는다(색·밑줄·hover 동일). */
+          .revrow{color:#8fa2c0;font-size:11px;line-height:1.55;margin-bottom:7px;
+            font-variant-numeric:tabular-nums;word-break:break-word}
+          .revrow.miss{color:#8a93a3}
+          .revrow a{color:#cfe0ff;text-decoration:underline;text-underline-offset:2px;
+            text-decoration-color:#4a6ea8;cursor:pointer}
+          .revrow a:hover{color:#fff;background:#1b2436}
           /* 원문은 읽기 전용이다. 한 글자도 못 고친다 — 원문 훼손으로 폐기된 카드가 있다. */
           .orig{background:#0f141d;border:1px solid var(--line);border-radius:9px;padding:11px 13px;
             color:#c3cad6;font-size:12.5px;line-height:1.7;white-space:pre-wrap;word-break:break-word;
@@ -372,7 +384,12 @@ enum IssuesContent {
         (function(){
           var D=null, F={bucket:'전체', track:'전체', target:'전체'};
           var BCLS={'완료':'done','도는 중':'run','대기':'wait','막힘':'blocked','미분류':'unk'};
-          var SEL=null, DET=null, CLEANOPEN=false;
+          var SEL=null, DET=null;
+          // 수정된 최초의 리퀘스트도 원문과 같은 3 단이다 — 0 접힘(기본) · 1 다섯 줄 · 2 전문.
+          // DASH-14 이전에는 불리언이었고 기본이 펼침이었다. 라이언이 이 절을 콕 집어
+          // "기본적으로 접혀있고 그걸 전문으로 볼 수 있게" 라고 했으므로 아래 ORIGOPEN 과
+          // 같은 모양으로 맞춘다. 화면의 두 절이 같은 말을 다른 손잡이로 하면 안 된다.
+          var CLEANOPEN=0;
           // 원문 박스는 세 단계다 — 0 접힘(기본) · 1 다섯 줄 · 2 전문.
           // 불리언이었을 때는 펼치면 곧바로 전문이 쏟아져 그 아래 절이 화면 밖으로
           // 밀렸다. 라이언이 원한 것은 "펼치면 5줄" 이므로 중간 단이 필요하다.
@@ -1173,10 +1190,56 @@ enum IssuesContent {
           };
 
           window.isOrigSet=function(v){ ORIGOPEN=v; drawDet(); };
-          window.isToggleClean=function(){ CLEANOPEN=!CLEANOPEN; drawDet(); };
+          // 원문(isOrigSet)과 똑같은 모양의 3 단 setter 다. 이름만 다르고 하는 일은 같다.
+          window.isCleanSet=function(v){ CLEANOPEN=v; drawDet(); };
           window.isSesSet=function(v){ SESOPEN=v; drawDet(); };
           window.isRepSet=function(v){ REPOPEN=v; drawDet(); };
           window.isClose=function(){ SEL=null; DET=null; drawDet(); render(); };
+
+          // DASH-14 — `수정된 최초의 리퀘스트` 를 만든 실행 한 줄.
+          //
+          // 이 함수는 **DET.revision 이 아예 없어도 안 깨져야 한다.** 백엔드가 이 필드를
+          // 지금 만들고 있어서 화면이 먼저 배포되는 순간이 실제로 있고, 이미 쌓인 옛 응답에는
+          // 영원히 없다. 그래서 rv 는 `DET.revision||{}` 로 받고, `found` 가 참일 때만 값
+          // 줄을, 거짓이고 `why` 가 있을 때만 이유 줄을, 둘 다 아니면 빈 문자열을 돌려준다.
+          // 라벨만 남은 껍데기를 그리면 화면이 고장 난 것처럼 보인다.
+          //
+          // ASSUMPTION (L1, 갈래를 스스로 골랐다). 셋을 되묻지 않고 이렇게 정했다.
+          //  (1) 조각마다 값이 있을 때만 넣는다. `effort` 가 빈 값이면 조각을 통째로 뺀다 —
+          //      Claude 실행에는 이 필드가 물리적으로 없으므로 `effort ` 만 남는 것은
+          //      "값이 없다" 가 아니라 "화면이 깨졌다" 로 읽힌다. 같은 이유로 tokens 와
+          //      seconds 도 숫자일 때만 넣는다 (문자열로 오면 toLocaleString 이 딴 값을 낸다).
+          //  (2) 기록으로 가는 길은 새로 만들지 않고 sesHead 가 쓰는 isTr 팝업을 그대로
+          //      쓴다. 경로는 JS 리터럴이 아니라 data-p 속성으로 넘긴다 — 따옴표가 든 경로
+          //      하나에 onclick 이 통째로 깨지는 것을 이 파일이 이미 한 번 겪었다.
+          //  (3) `tokensFrom` 은 지시대로 줄의 title 에 넣는데, 줄 전체가 링크가 되면 a 의
+          //      title 이 위에 덮인다. 그래서 a 의 title 에도 같은 문장을 넣는다 — 마우스를
+          //      어디에 올리든 출처가 보이는 쪽이 맞다.
+          function revRow(rv){
+            if(!rv || typeof rv!=='object') return '';
+            if(rv.found){
+              var bits=[];
+              if(rv.model) bits.push(esc(String(rv.model)));
+              if(rv.effort) bits.push('effort '+esc(String(rv.effort)));
+              if(typeof rv.tokens==='number' && isFinite(rv.tokens)) bits.push(rv.tokens.toLocaleString()+' 토큰');
+              if(typeof rv.seconds==='number' && isFinite(rv.seconds)) bits.push(rv.seconds.toFixed(1)+' 초');
+              if(!bits.length) return '';
+              var txt=bits.join(' · ');
+              var tf=String(rv.tokensFrom||'');
+              var f=String(rv.file||'');
+              // f 가 비면 링크도 안 그린다. 눌러도 아무 일이 안 나는 링크가 링크가 없는 것보다
+              // 나쁘다 — 이 파일이 sesHead 에서 이미 지키는 규칙이다.
+              var body = f
+                ? '<a data-p="'+esc(f)+'" onclick="isTr(this)" title="'
+                  + esc(tf ? tf+' · 눌러서 이 실행의 기록을 읽는다 (읽기 전용)'
+                            : '눌러서 이 실행의 기록을 읽는다 (읽기 전용)')+'">'+txt+'</a>'
+                : txt;
+              return '<div class="revrow" title="'+esc(tf)+'">'+body+'</div>';
+            }
+            // 못 찾았으면 빈칸이 아니라 왜 못 찾았는지를 쓴다. why 를 자르지 않는다.
+            if(rv.why) return '<div class="revrow miss">이 수정을 만든 실행을 못 찾았다 — '+esc(String(rv.why))+'</div>';
+            return '';
+          }
 
           function drawDet(){
             var el=document.getElementById('isDet'), main=document.getElementById('isMain');
@@ -1259,18 +1322,43 @@ enum IssuesContent {
             // 3. 수정된 최초의 리퀘스트. 원문을 고친 값이 아니라 원문 옆에 서는 값이다 —
             //    원문 훼손으로 카드가 폐기된 전례가 있다.
             //
-            //    펼쳐진 채로 나오되 5 줄에서 자른다. [더보기] 는 실제로 넘칠 때만 그린다 —
-            //    두 줄짜리 요약 밑에 붙은 죽은 [더보기] 는 읽을 것만 늘리고 아는 것은 안 는다.
+            //    DASH-14 부터 **기본이 접힘**이고 위 원문 절과 똑같은 3 단이다 —
+            //    0 접힘 · 1 다섯 줄 · 2 전문. 라이언이 이 절을 콕 집어 "그 수정한 내용이
+            //    기본적으로 접혀있고 그걸 전문으로 볼 수 있게 해줘요" 라고 했다.
+            //
+            //    0 단의 [펼치기] 는 **길이와 무관하게 언제나 그린다.** 라이언이 요구한 것이
+            //    접힘이고, 접힌 것을 여는 손잡이가 없으면 이 절이 화면에서 통째로 사라진다.
+            //    반대로 2 단의 [전문 보기] 는 그린 뒤에 재서 실제로 5 줄을 넘칠 때만 그린다 —
+            //    죽은 손잡이는 누를 것만 늘리고 아는 것은 안 는다. 재는 코드는 이 함수 끝에
+            //    있고 #isOrigMore 와 같은 방식이다. 새로 만들지 않았다.
+            //
+            //    자르는 것은 보이는 높이뿐이고 데이터가 아니다 — cl.text 는 어느 단계에서도
+            //    통째로 esc() 되어 DOM 에 들어가고 5 줄 상태는 CSS 가 가리는 것뿐이다.
+            //
+            //    `.rawtag` 경고 줄과 실행 정보 줄은 **접힘 단계 바깥**에 있다. 앞엣것은 읽을
+            //    거리가 아니라 이 카드가 정리 안 됐다는 상태 표시이고, 뒤엣것은 펼치지 않고도
+            //    보이는 것이 존재 이유다.
             var cl=DET.cleaned||{};
+            var cltxt=String(cl.text||''), cllen=cltxt.length.toLocaleString();
+            // 옛 응답과 백엔드가 아직 안 붙은 순간에는 이 키가 없다. 그때 rv 는 {} 이고
+            // revRow() 가 빈 문자열을 돌려주므로 이 절은 평소대로 그려진다.
+            var rv=DET.revision||{};
             h+='<div class="sec"><div class="t">수정된 최초의 리퀘스트'
               + '<span class="why">'+esc(cl.source||'')+'</span></div>'
+              + revRow(rv)
               + (cl.isRawExcerpt
                  ? '<div class="rawtag">이 카드는 아직 정리되지 않았다. 아래는 원문 앞부분 그대로다.</div>'
                  : '')
-              + '<div class="lead'+(cl.isRawExcerpt?' raw':'')+(CLEANOPEN?'':' clamp')
-              + '" id="isLead">'+esc(cl.text||'')+'</div>'
-              + '<button class="lnk" id="isLeadMore" style="display:none" onclick="isToggleClean()">'
-              + (CLEANOPEN?'접기':'더보기')+'</button></div>';
+              + (CLEANOPEN===0
+                   ? '<button class="lnk" onclick="isCleanSet(1)">펼치기 (요구 '+cllen+'자)</button>'
+                   : '<div class="lead'+(cl.isRawExcerpt?' raw':'')+(CLEANOPEN===1?' clamp':'')
+                     + '" id="isLead">'+esc(cltxt)+'</div>'
+                     + (CLEANOPEN===1
+                        ? '<button class="lnk" id="isLeadMore" style="display:none" onclick="isCleanSet(2)">'
+                          + '전문 보기 ('+cllen+'자)</button>'
+                        : '<button class="lnk" onclick="isCleanSet(1)">5 줄만 보기</button>')
+                     + '<button class="lnk" style="margin-left:10px" onclick="isCleanSet(0)">접기</button>')
+              + '</div>';
 
             // 4. 작업지시서. 리스트로 들어온 카드가 있어 배열로 받는다.
             //
@@ -1364,10 +1452,13 @@ enum IssuesContent {
             }
             el.innerHTML=h;
 
-            // [더보기] 는 실제로 5 줄을 넘길 때만 그린다. 넘치는지는 글자 수로 짐작하지 않고
+            // [전문 보기] 는 실제로 5 줄을 넘길 때만 그린다. 넘치는지는 글자 수로 짐작하지 않고
             // **그려진 요소에서 잰다** — 줄 수는 폭과 줄바꿈에 달려 있어서 글자 수로는 못 맞춘다.
+            // DASH-14 에서 `CLEANOPEN||` 이 빠졌다. 이제 #isLeadMore 는 1 단(5 줄 클램프)
+            // 에서만 DOM 에 있으므로, 펼쳤다는 이유로 무조건 보이던 옛 갈래는 죽은 손잡이를
+            // 되살릴 뿐이다. 아래 #isOrigMore 와 판정이 같아졌다.
             var lead=document.getElementById('isLead'), more=document.getElementById('isLeadMore');
-            if(lead&&more&&(CLEANOPEN||lead.scrollHeight>lead.clientHeight+2)) more.style.display='';
+            if(lead&&more&&lead.scrollHeight>lead.clientHeight+2) more.style.display='';
 
             // 원문 5 줄 상태도 같은 방식으로 잰다. 글자 수로 짐작하면 폭과 줄바꿈 때문에
             // 틀린다 — 3,000 자여도 한 줄일 수 있고 40 자여도 다섯 줄을 넘길 수 있다.
@@ -1377,7 +1468,7 @@ enum IssuesContent {
 
           window.isOpen=function(k){
             if(SEL===k){ isClose(); return; }
-            SEL=k; DET=null; ORIGOPEN=0; CLEANOPEN=false; SESOPEN=0; REPOPEN=0; render(); drawDet();
+            SEL=k; DET=null; ORIGOPEN=0; CLEANOPEN=0; SESOPEN=0; REPOPEN=0; render(); drawDet();
             fetch('/api/issues/'+k.split('/').map(encodeURIComponent).join('/'))
               .then(function(r){ return r.json(); })
               .then(function(j){ if(SEL===k){ DET=j; drawDet(); } })

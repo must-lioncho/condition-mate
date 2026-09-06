@@ -338,15 +338,31 @@ check('접기 returns to stage 0 from either open stage',
 check('원문 is never truncated in the data path',
       /esc\(og\)/.test(draw) && !/og\.slice\(|og\.substr/.test(draw), true);
 
-// ── 수정된 리퀘스트 is expanded but clamped to 5 lines ───────────────────────
-// Expanded by default (that is the section Ryan reads), clamped so it cannot push the
-// 작업지시서 and 결과물 sections off the screen. The 더보기 button only appears when the
-// text actually overflows — a dead 더보기 under a two-line summary is noise.
+// ── 수정된 리퀘스트 collapses by default and opens in three stages (DASH-14) ─
+// It used to be expanded-and-clamped. 2026-09-06 Ryan asked for the opposite on this exact
+// pane — "그 수정한 내용이 기본적으로 접혀있고 그걸 전문으로 볼 수 있게 해줘요" — so it now
+// carries the same 0/1/2 control as the 원문 pane above it. CLEANOPEN went from a boolean to
+// a stage number, which is why the old `CLEANOPEN=false` assertion below is now `CLEANOPEN=0`:
+// the thing being asserted is unchanged (reset on every open), only the resting value moved.
+// The 전문 보기 handle is still measured, never guessed — a dead handle is noise.
 check('the clamp is 5 lines in the CSS', /-webkit-line-clamp:5/.test(IC), true);
 check('the clamp class lands on .lead', /class="lead'\+[\s\S]{0,80}' clamp'/.test(draw), true);
-check('CLEANOPEN resets to false on every open', /CLEANOPEN=false/.test(IC), true);
-check('더보기 is shown only when the rendered element overflows',
+check('CLEANOPEN resets to stage 0 on every open', /CLEANOPEN=0/.test(IC), true);
+check('전문 보기 is shown only when the rendered element overflows',
       /scrollHeight>lead\.clientHeight\+2/.test(IC), true);
+check('stage 0 draws the 펼치기 handle regardless of length',
+      /isCleanSet\(1\)">펼치기 \(요구 /.test(draw), true);
+check('접기 returns 수정된 리퀘스트 to stage 0', /isCleanSet\(0\)">접기/.test(draw), true);
+// The run that produced this line is shown above the fold, and a missing revision block must
+// not break the pane — the backend field is optional and old responses never carry it.
+check('the run-provenance row reads DET.revision defensively',
+      /var rv=DET\.revision\|\|\{\}/.test(draw), true);
+check('the run-provenance row draws nothing when neither found nor why',
+      /if\(rv\.found\)/.test(IC) && /if\(rv\.why\) return/.test(IC), true);
+check('an empty effort drops the whole 조각, never leaves a bare label',
+      /if\(rv\.effort\) bits\.push\('effort '/.test(IC), true);
+check('the run row reuses the existing isTr transcript popup',
+      /class="revrow"[\s\S]{0,400}|onclick="isTr\(this\)"/.test(IC), true);
 
 // ── "결과물 없음" is a first-class state, not a greyed blank ──────────────────
 // 59 of 85 cards have no artifact pointer — the majority. A blank there reads as a broken
