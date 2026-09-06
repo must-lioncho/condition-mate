@@ -1982,3 +1982,65 @@ KO: 이번 회차에서 테스트 가능한 행동 관점에서 모호한 새 �
   `{"ok":true}` 였다. `swift build` 통과, `.e2e/issues.test.js` 197 PASS 0 FAIL.
   그 파일의 닫힌 POST 목록에 `mdsave` 가 빠져 있어 이번에 같이 채웠다 — DASH-12 때 더해진
   엔드포인트인데 목록이 안 따라가서 이 항목과 무관하게 1 FAIL 이 서 있었다.
+
+- **DASH-14 — 수정된 최초의 리퀘스트는 기본 접힘이고, 그것을 만든 실행 정보를 같이 보인다.**
+  KO: 이슈 상세의 `수정된 최초의 리퀘스트` 절은 섹션 1 과 같은 3 단이다 — 0 단(접힘, `펼치기
+  (요구 N자)`) · 1 단(5 줄) · 2 단(전문). 0 단의 `펼치기` 는 길이와 무관하게 언제나 그리고,
+  2 단의 `전문 보기` 는 그린 뒤에 재서 실제로 5 줄을 넘칠 때만 그린다(죽은 손잡이 금지).
+  절 제목 밑에는 **접힌 상태에서도 보이는** 실행 정보 한 줄이 선다 — 그 `요구` 줄을 만든
+  실행의 모델 · effort · 토큰 · 걸린 초. 값의 출처는 **이미 있는 세션 기록**이고 새 로그
+  파일을 만들지 않는다. codex 실행은 tool_result 안의 Codex 배너(`model:` ·
+  `reasoning effort:` · `tokens used`)에서, Claude 실행은 `message.model` 과 `message.usage`
+  에서 읽는다. 찾는 대상은 **카드를 쓴 실행**이지 카드를 받은 세션(DASH-12)이 아니다 —
+  둘은 다른 기록이다. 후보는 카드 `captured`(로컬 시각) 이후에 수정된 기록으로 좁히고
+  하위 대화(`subagents/*.jsonl`)를 포함한다. 못 찾으면 빈칸이 아니라 왜 못 찾았는지를 쓴다.
+  카드 파일과 큐 폴더에는 한 바이트도 쓰지 않는다.
+  EN: The `수정된 최초의 리퀘스트` pane collapses by default with the same three-stage control as
+  the origin pane, and carries a one-line run-provenance row that stays visible while collapsed:
+  the model, reasoning effort, token count and elapsed seconds of the run that produced that line.
+  All four are read from existing transcripts — no new log file. Codex runs are read from the
+  banner inside the Bash tool_result; Claude runs from `message.model` / `message.usage`. The
+  target is the run that WROTE the card, not the session that RECEIVED it (DASH-12) — different
+  records. A miss states its reason.
+  Mechanism: `Core/WorkQueueSessionStore.swift` (`revision(cardID:cardPath:captured:)`),
+  `Core/WorkQueueStore.swift` (`detailJSON` 의 `revision` 블록),
+  `Dashboard/IssuesContent.swift` (섹션 2 의 3 단 · 실행 정보 줄).
+  Why: 2026-09-06. 라이언 — "그 수정한 내용이 기본적으로 접혀있고 그걸 전문으로 볼 수 있게
+  해줘요 그리고 그거를 어떤 AI 모델이 그리고 얼마나 앱폭트를 써서 몇 초 걸려서 했는지도
+  알려줘요 / 그게 세션에 이게 나와 있지 않나 따로 파일을 만들 필요 없을 것 같은데."
+  `앱폭트` 는 `effort` 로 확정했다 — 기록에 `reasoning effort:` 필드가 그 이름 그대로 있고,
+  이 카드를 쓴 Codex 실행 자신이 그 낱말을 `에포트` 로 옮겨 적었다.
+  ASSUMPTION (L1, 백엔드가 갈래를 스스로 골랐다): 라이언의 문장이 "얼마나 … **써서**" 로 쓴
+  **양**을 묻는데 `reasoning effort` 는 양이 아니라 설정값이라, 양에 해당하는 `tokens` 를 같이
+  돌려주고 어느 필드에서 왔는지를 `tokensFrom` 에 적는다. codex 실행에 `tokens used` 줄이
+  없으면 `tokens` 는 0 이고 `tokensFrom` 이 비어서 화면이 그 조각을 통째로 뺀다 — 0 을
+  "0 토큰 썼다" 로 그리지 않는다. Claude 갈래의 시작 시각은 **바로 앞 사람 턴**이므로, 하위
+  대화에서는 그 워커가 뜬 순간부터 카드를 쓴 순간까지가 된다(실측 700.9 초 · 2,776.9 초).
+  Bash heredoc 이나 `mv` 로 만든 카드는 못 잡는다 — Write/Edit 툴 호출도 Codex 배너도 안
+  남기기 때문이고, 셸 문자열을 파싱해 추측하는 것보다 못 잡은 것을 못 잡았다고 두는 쪽이
+  이 화면의 규칙("없으면 왜 없는지를 쓴다")에 맞는다.
+  Verified: 2026-09-06 백엔드 실측. `Core/WorkQueueSessionStore.swift` 를 그대로 컴파일해
+  (`swiftc -O`) 카드 `d7a0211b-3ee8-4a5e-a172-400cb674b595`
+  (`inbox/2026-09-06-0445-condition-mate-revision-details.md`, `captured: 2026-09-06-0445`)로
+  호출한 결과가 —
+  `runner: "codex"` · `model: "gpt-6-astra"` · `effort: "none"` · `tokens: 31521` ·
+  `tokensFrom: "codex \`tokens used\`"` · `seconds: 58.9` ·
+  `startedAt: "2026-09-05T23:14:54.708Z"` · `endedAt: "2026-09-05T23:15:53.646Z"` ·
+  `sessionId: "01a073da-80fa-7ab2-b8d8-5e5529240495"` ·
+  `file: "/Users/lioncho/.claude/projects/-Users-lioncho-Work-lion-work/11b66f83-03c0-4542-ac34-140b9f3cd2e4/subagents/agent-a76a3488df2463e20.jsonl"`.
+  후보 좁히기 실측 — 기록 전체 3,301 개 중 `captured - 120초` 이후에 수정된 것이 147 개
+  (153.9MB)이고 그중 카드 이름을 담은 것이 27 개였다. **첫 호출 0.68 초**(같은 프로세스
+  재호출 0.000 초 · 페이지 캐시가 더워진 뒤 0.13 초). 앞선 판은 줄을 String 으로 쪼개고
+  줄마다 `String.contains` 를 물어 2.66~4.36 초였다 — 지금은 줄 경계를 바이트로 뜨고 카드
+  이름이 실제로 나온 줄만 JSON 으로 판다. codex 후보가 5 개 걸렸고 **가장 이른 것**을 골라
+  카드를 처음 만든 실행이 잡혔다(나머지 넷은 그 카드를 나중에 읽은 실행이다). claude 후보
+  3 개는 전부 `status`·`target_handle` 을 적은 나중 Edit 이라 codex 가 이겼다.
+  다른 카드 8 장으로도 돌렸다 — claude 갈래 3 건이
+  `claude-haiku-4-5-20251001` · `message.usage` 합계 118,716 / 148,108 토큰으로 잡혔고,
+  codex 갈래 1 건(`inbox/2026-09-06-1255-panama-ceo-nda-m-mata`)은 `tokens used` 줄이 없어
+  `tokens: 0` · `tokensFrom: ""` 로 나왔다. 못 찾는 카드 3 장은 `found:false` 와
+  "기록 N 개(전체 3,301 개 중 …)를 봤는데 이 카드 파일을 만든 실행이 없다 … 카드 이름을 담은
+  기록은 M 개였다" 라는 문장이 왔고, 그중
+  `inbox/2026-09-06-0455-condition-mate-orca-launch-confirm-undo` 는 실제로 Bash `mv` 로
+  옮겨진 카드여서 못 잡는 것이 맞다고 기록으로 확인했다.
+  `swift build -c release` 통과. 카드 파일과 `lion-work-queue/` 아래에는 한 바이트도 안 썼다.

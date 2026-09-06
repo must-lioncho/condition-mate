@@ -984,6 +984,15 @@ enum WorkQueueStore {
         let sessionBlock = WorkQueueSessionStore.session(
             cardID: card.id, cardPath: card.filePath, cwds: cwds)
 
+        // ── 이 카드를 **쓴** 실행 (SPEC DASH-14) ──────────────────────────────
+        // 위 `session` 이 찾는 것은 카드를 **받은** 세션이다. 섹션 2 `수정된 최초의 리퀘스트` 의
+        // 값은 앱이 만든 것이 아니라 카드의 `## 1초 요약` 의 `요구` 줄이므로, "그 수정을 어떤
+        // 모델이 얼마나 써서 몇 초에 했나" 는 카드를 **쓴** 실행을 가리킨다. 둘은 다른 기록이라
+        // 섞으면 틀린 숫자가 선다 — 근거는 WorkQueueSessionStore 의 DASH-14 절에 있다.
+        // 후보를 좁히는 열쇠는 카드 프론트매터의 `captured:` 하나다.
+        let revisionBlock = WorkQueueSessionStore.revision(
+            cardID: card.id, cardPath: card.filePath, captured: unquote(pick(front, "captured")))
+
         var d = card.dict
         d["version"] = versions.count
         d["versionFirstSeen"] = (versions.last?["firstSeen"] as? String) ?? ""
@@ -1010,6 +1019,7 @@ enum WorkQueueStore {
             "lineage": lineage,
             "stage": card.stage,
             "session": sessionBlock,
+            "revision": revisionBlock,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
               let out = String(data: data, encoding: .utf8) else {

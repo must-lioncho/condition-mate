@@ -595,4 +595,401 @@ enum WorkQueueSessionStore {
         }
         return false
     }
+
+    // MARK: - 이 카드를 **쓴** 실행 (SPEC DASH-14)
+
+    // 위 `session(cardID:…)` 이 찾는 것은 카드를 **받은** 세션이다. 여기서 찾는 것은 그 카드
+    // 파일을 **만든** 실행이고 둘은 다른 기록이다. 실측 —
+    //   카드를 쓴 실행: `.../11b66f83-…/subagents/agent-a76a3488df2463e20.jsonl`
+    //                   (codex exec / gpt-6-astra), 2026-09-05T23:14Z
+    //   카드를 받은 세션: `bc96ab37-…` (lion-condition-mate 폴더), 2026-09-06T08:45Z
+    // 섹션 2 `수정된 최초의 리퀘스트` 의 값은 카드의 `## 1초 요약` 의 `요구` 줄이므로, 라이언이
+    // 물은 "그 수정을 어떤 모델이 얼마에 했나" 는 앞의 것을 가리킨다. 뒤엣것을 재사용하면
+    // **틀린 세션**의 숫자가 화면에 선다.
+    //
+    // 새 로그 파일을 만들지 않는다 — 라이언의 제약이 "따로 파일을 만들 필요 없을 것 같은데"
+    // 이고, 실제로 세 값이 전부 이미 디스크에 있다. codex 는 Bash tool_result 본문에 그대로
+    // 찍힌 배너에서, Claude 는 `message.model` / `message.usage` 에서 읽는다.
+    //
+    // ASSUMPTION (L1, 갈래를 스스로 골랐다). 라이언의 구술 낱말 `앱폭트` 를 `effort` 로
+    // 확정했다. 근거 둘 — 배너에 `reasoning effort:` 라는 필드가 그 이름 그대로 있고, 이 카드를
+    // 쓴 Codex 실행 자신이 그 낱말을 `에포트` 로 옮겨 적었다. 다만 라이언의 문장은 "얼마나 …
+    // **써서**" 로 쓴 **양**을 묻고 `reasoning effort` 는 양이 아니라 설정값이므로, 양에 해당하는
+    // `tokens` 를 같이 돌려준다. 어느 필드에서 왔는지는 `tokensFrom` 에 적어서 이 해석이 틀렸을
+    // 때 라이언이 화면만 보고 반려할 수 있게 한다.
+    //
+    // ASSUMPTION: codex 실행에는 `message.usage` 가 없으므로 토큰은 배너 꼬리의 `tokens used`
+    // 줄에서만 읽는다. 그 줄이 없으면 `tokens` 는 0 이고 `tokensFrom` 이 비어서, 화면이 그
+    // 조각을 통째로 뺀다. 0 을 "0 토큰 썼다" 로 그리지 않는다.
+
+    private static var revisionHit: [String: [String: Any]] = [:]
+    private static var revisionMiss: [String: (at: Date, value: [String: Any])] = [:]
+    // 후보 상한. 넘기면 최신 것부터 이만큼만 본다. 실측 후보가 147 개이므로 여유가 크다.
+    private static let revisionCandidateCap = 400
+
+    /// 카드 하나를 **만든 실행**의 모델 · effort · 토큰 · 걸린 초. 못 찾으면 빈칸이 아니라
+    /// `found:false` 와 **왜 못 찾았는지**를 돌려준다.
+    ///
+    /// - Parameters:
+    ///   - cardID: 카드의 `id:` — 캐시 키로만 쓴다. 찾는 열쇠는 카드 **파일 이름**이다.
+    ///             실측으로 codex 출력에 적힌 것이 상대경로(`organization/…/inbox/<이름>.md`)라
+    ///             절대경로로만 찾으면 하나도 안 걸린다.
+    ///   - cardPath: 카드 파일 절대경로
+    ///   - captured: 카드 프론트매터의 `captured:`. 후보를 좁히는 유일한 열쇠다.
+    static func revision(cardID: String, cardPath: String, captured: String) -> [String: Any] {
+        lock.lock()
+        let hit = revisionHit[cardID]
+        let miss = revisionMiss[cardID]
+        lock.unlock()
+        if let h = hit { remember([(h["file"] as? String) ?? ""]); return h }
+        if let m = miss, Date().timeIntervalSince(m.at) < missTTL { return m.value }
+
+        let out = findRevision(cardPath: cardPath, captured: captured)
+        lock.lock()
+        if (out["found"] as? Bool) == true {
+            revisionHit[cardID] = out
+            revisionMiss[cardID] = nil
+            if revisionHit.count > 240 { revisionHit.removeAll() }
+        } else {
+            // 방금 만들어진 카드는 곧 찾아진다. 영구히 캐시하면 앱을 다시 띄울 때까지
+            // `없음` 으로 굳는다 — `missed` 와 같은 이유로 짧게 둔다.
+            revisionMiss[cardID] = (Date(), out)
+        }
+        lock.unlock()
+        if let f = out["file"] as? String, !f.isEmpty { remember([f]) }
+        return out
+    }
+
+    private struct RevHit {
+        var runner: String
+        var model: String
+        var effort: String
+        var tokens: Int
+        var tokensFrom: String
+        var startedAt: String
+        var endedAt: String
+        var file: String
+        var sessionId: String
+    }
+
+    private static func findRevision(cardPath: String, captured: String) -> [String: Any] {
+        let cardName = (cardPath as NSString).lastPathComponent
+        guard !cardName.isEmpty else {
+            return ["found": false, "why": "카드 파일 경로가 비어 있어 무엇을 찾을지 정할 수 없다."]
+        }
+
+        // 1. `captured` 를 **로컬 시각**으로 읽는다. 실측 — `captured: 2026-09-06-0445` 는 카드를
+        //    쓴 python 이 `date +%Y-%m-%d-%H%M` 로 찍은 값이고 이 맥은 UTC+5:30 이라
+        //    `2026-09-05T23:15:53Z + 5:30 = 04:45` 로 정확히 맞는다.
+        //    카드 파일의 `birthtime` 은 쓰지 않는다 — 나중에 `target_handle` 을 적은 Edit 가
+        //    파일을 새로 써서 실제 생성보다 9 시간 30 분 뒤로 갱신돼 있었다.
+        let capAt = capturedDate(captured)
+        // 파싱 실패면 이 필터를 건너뛰고 전체를 후보로 둔다. 느리지만 틀리지는 않는다.
+        let cutoff = capAt.map { $0.addingTimeInterval(-120) }
+
+        // 2. 후보 모으기. **하위 대화(`<sessionId>/subagents/*.jsonl`)를 반드시 포함한다** —
+        //    실측으로 카드를 쓴 것이 바로 그 자리다. `launchIndex()` 는 최상위 `.jsonl` 만
+        //    담으므로 여기에 쓸 수 없다.
+        let fm = FileManager.default
+        var all = 0
+        var cands: [(url: URL, mtime: Date)] = []
+        if let it = fm.enumerator(at: projectsDir,
+                                  includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                                  options: [.skipsHiddenFiles]) {
+            for case let u as URL in it {
+                guard u.pathExtension == "jsonl" else { continue }
+                all += 1
+                let v = try? u.resourceValues(forKeys: [.contentModificationDateKey])
+                let m = v?.contentModificationDate ?? Date.distantPast
+                if let c = cutoff, m < c { continue }
+                cands.append((u, m))
+            }
+        }
+        var capped = false
+        if cands.count > revisionCandidateCap {
+            cands.sort { $0.mtime > $1.mtime }
+            cands = Array(cands.prefix(revisionCandidateCap))
+            capped = true
+        }
+
+        // 3~5. 후보를 훑어 codex 갈래와 claude 갈래를 각각 모으고, codex 가 이긴다.
+        //      같은 갈래에서 여럿이면 **가장 이른 것**을 고른다. 카드를 처음 만든 것이 codex 이고
+        //      Claude 쪽은 나중에 `status`·`target_handle` 을 적은 Edit 라, 라이언이 물은 것은
+        //      수정을 **만든** 실행이지 나중에 좌표를 적은 실행이 아니다.
+        var codexHits: [RevHit] = []
+        var claudeHits: [RevHit] = []
+        var scanned = 0
+        let needle = Data(cardName.utf8)
+        for (u, _) in cands {
+            guard let data = try? Data(contentsOf: u, options: [.mappedIfSafe]) else { continue }
+            let sliced = data.count > 64 * 1024 * 1024 ? data.prefix(64 * 1024 * 1024) : data[...]
+            // 문자열로 먼저 거르고 그다음에 JSON 파싱한다(`scan()` 과 같은 방식). 바이트
+            // 비교라 String 변환 비용을 후보 27 개에만 물린다 — 실측 147 개 훑기가 0.1 초다.
+            guard sliced.range(of: needle) != nil else { continue }
+            scanned += 1
+            // 인덱스를 0 부터로 맞춘 사본을 넘긴다. `prefix` 로 자른 조각은 시작 인덱스가
+            // 0 이 아니라, 아래의 바이트 오프셋 계산이 어긋난다.
+            harvest(Data(sliced), url: u, cardName: cardName, cardPath: cardPath,
+                    codex: &codexHits, claude: &claudeHits)
+        }
+
+        let pick = codexHits.sorted { $0.endedAt < $1.endedAt }.first
+            ?? claudeHits.sorted { $0.endedAt < $1.endedAt }.first
+        guard let h = pick else {
+            var why = "기록 \(cands.count) 개(전체 \(all) 개 중 `captured` 이후에 수정된 것)를 봤는데 "
+                + "이 카드 파일(`\(cardName)`)을 만든 실행이 없다. "
+            if capAt == nil && !captured.isEmpty {
+                why += "카드의 `captured: \(captured)` 를 시각으로 못 읽어 전체를 후보로 뒀는데도 없다. "
+            } else if capAt == nil {
+                why += "카드에 `captured:` 가 없어 전체를 후보로 뒀는데도 없다. "
+            }
+            if capped { why += "후보가 상한 \(revisionCandidateCap) 개를 넘어 최신 것부터 그만큼만 봤다. " }
+            why += "카드 이름을 담은 기록은 \(scanned) 개였다 — 카드를 읽기만 한 세션이고, "
+                + "쓴 실행은 기록이 지워졌거나 Claude Code 밖(셸 heredoc 등)에서 돌았다."
+            return ["found": false, "why": why]
+        }
+
+        let secs = elapsed(from: h.startedAt, to: h.endedAt)
+        var out: [String: Any] = [
+            "found": true,
+            "runner": h.runner,
+            "model": h.model,
+            "effort": h.effort,
+            "tokens": h.tokens,
+            "tokensFrom": h.tokensFrom,
+            "startedAt": h.startedAt,
+            "endedAt": h.endedAt,
+            "file": h.file,
+            "sessionId": h.sessionId,
+        ]
+        if let s = secs { out["seconds"] = (s * 10).rounded() / 10 }
+        out["why"] = h.runner == "codex"
+            ? "이 카드 파일을 만든 실행이다 — codex exec 출력에 카드 경로와 `1초 요약` 이 있다."
+            : "이 카드 파일을 만든 실행이다 — `\(h.model)` 이 이 경로로 Write/Edit 를 했다."
+        return out
+    }
+
+    // 기록 한 벌에서 이 카드를 만든 후보를 뽑는다.
+    //
+    // **줄을 String 으로 쪼개지 않는다.** 후보 27 개가 2,400 만 글자라, 앞선 판처럼
+    // `components(separatedBy:)` 로 쪼개고 줄마다 `String.contains` 를 물으면 그 한 가지가
+    // 첫 호출의 2~4 초였다(전체 0.5 초는 파일 읽기와 걸러내기뿐이었다). 여기서는 줄 경계를
+    // 바이트로 뜨고, 카드 이름이 실제로 나온 자리(보통 한 파일에 서너 개)만 String 으로 바꿔
+    // JSON 으로 판다. 되짚기도 바이트 비교로 한다.
+    private static func harvest(_ d: Data, url: URL, cardName: String, cardPath: String,
+                                codex: inout [RevHit], claude: inout [RevHit]) {
+        let sessionFromPath = String(url.lastPathComponent.dropLast(6))   // ".jsonl"
+
+        var bounds: [Range<Int>] = []
+        d.withUnsafeBytes { (p: UnsafeRawBufferPointer) in
+            var s = 0
+            var i = 0
+            let n = p.count
+            while i < n {
+                if p[i] == 0x0A {
+                    if i > s { bounds.append(s..<i) }
+                    s = i + 1
+                }
+                i += 1
+            }
+            if s < n { bounds.append(s..<n) }
+        }
+        guard !bounds.isEmpty else { return }
+
+        func lineIndex(containing off: Int) -> Int? {
+            var lo = 0, hi = bounds.count - 1
+            while lo <= hi {
+                let m = (lo + hi) / 2
+                if off < bounds[m].lowerBound { hi = m - 1 }
+                else if off >= bounds[m].upperBound { lo = m + 1 }
+                else { return m }
+            }
+            return nil
+        }
+        func has(_ i: Int, _ needle: Data) -> Bool {
+            d.range(of: needle, options: [], in: bounds[i]) != nil
+        }
+        func obj(_ i: Int) -> [String: Any]? {
+            guard bounds[i].count > 20 else { return nil }
+            guard let s = String(data: d.subdata(in: bounds[i]), encoding: .utf8) else { return nil }
+            return jsonObject(s)
+        }
+
+        let nameBytes = Data(cardName.utf8)
+        let asstBytes = Data("\"type\":\"assistant\"".utf8)
+        let userBytes = Data("\"type\":\"user\"".utf8)
+
+        // codex 갈래의 **시작 시각**은 그 tool_result 가 아니라 같은 `tool_use_id` 를 낸 앞쪽
+        // assistant 레코드에 있다. 그 줄만 되짚어 찾는다.
+        func assistantAt(toolUseID tid: String, before i: Int) -> String {
+            guard !tid.isEmpty else { return "" }
+            let t = Data(tid.utf8)
+            var j = i - 1
+            while j >= 0 {
+                if has(j, t), has(j, asstBytes), let o = obj(j),
+                   (o["type"] as? String) == "assistant" {
+                    return (o["timestamp"] as? String) ?? ""
+                }
+                j -= 1
+            }
+            return ""
+        }
+
+        // claude 갈래의 시작 시각은 **바로 앞 사람 턴**이다. 툴 결과와 하네스가 밀어 넣은 것은
+        // 사람 턴이 아니므로 `scan()` 과 같은 판정(`isMeta` · `isSystemInjected`)으로 거른다.
+        func humanAt(before i: Int) -> String {
+            var j = i - 1
+            while j >= 0 {
+                if has(j, userBytes), let o = obj(j), (o["type"] as? String) == "user",
+                   (o["isMeta"] as? Bool) != true {
+                    let t = userText(o)
+                    if !t.isEmpty, !isSystemInjected(t) { return (o["timestamp"] as? String) ?? "" }
+                }
+                j -= 1
+            }
+            return ""
+        }
+
+        // 카드 이름이 실제로 나온 줄만 고른다. 이것이 이 함수의 성능 축이다.
+        var targets: [Int] = []
+        var from = 0
+        while from < d.count,
+              let r = d.range(of: nameBytes, options: [], in: from..<d.count) {
+            if let li = lineIndex(containing: r.lowerBound), targets.last != li { targets.append(li) }
+            from = max(r.upperBound, from + 1)
+        }
+
+        for i in targets {
+            let isAsst = has(i, asstBytes)
+            let isUser = has(i, userBytes)
+            guard isAsst || isUser, let o = obj(i) else { continue }
+            let at = (o["timestamp"] as? String) ?? ""
+            guard let msg = o["message"] as? [String: Any] else { continue }
+
+            // claude 갈래 — `Write`/`Edit`/`MultiEdit` 의 `file_path` 가 카드를 가리킨다.
+            if isAsst, (o["type"] as? String) == "assistant",
+               let blocks = msg["content"] as? [[String: Any]] {
+                for b in blocks where (b["type"] as? String) == "tool_use" {
+                    let name = b["name"] as? String ?? ""
+                    guard ["Write", "Edit", "MultiEdit"].contains(name),
+                          let input = b["input"] as? [String: Any],
+                          let p = input["file_path"] as? String,
+                          p == cardPath || (p as NSString).lastPathComponent == cardName else { continue }
+                    let u = msg["usage"] as? [String: Any] ?? [:]
+                    func n(_ k: String) -> Int { (u[k] as? NSNumber)?.intValue ?? 0 }
+                    let tk = n("input_tokens") + n("cache_creation_input_tokens")
+                        + n("cache_read_input_tokens") + n("output_tokens")
+                    let began = humanAt(before: i)
+                    claude.append(RevHit(
+                        runner: "claude",
+                        model: (msg["model"] as? String) ?? "",
+                        // Claude 실행에는 `reasoning effort` 필드가 없다. 빈칸으로 두고
+                        // 화면이 그 조각을 통째로 뺀다 — `effort ` 만 남기지 않는다.
+                        effort: "",
+                        tokens: tk,
+                        tokensFrom: tk > 0 ? "claude `message.usage` 합계" : "",
+                        startedAt: began.isEmpty ? at : began,
+                        endedAt: at,
+                        file: url.path,
+                        sessionId: sessionFromPath))
+                }
+                continue
+            }
+
+            // codex 갈래 — Bash `tool_result` 본문에 Codex 배너와 카드 경로가 같이 있다.
+            guard isUser, (o["type"] as? String) == "user",
+                  let blocks = msg["content"] as? [[String: Any]] else { continue }
+            for b in blocks where (b["type"] as? String) == "tool_result" {
+                let body: String
+                if let s = b["content"] as? String {
+                    body = s
+                } else if let parts = b["content"] as? [[String: Any]] {
+                    body = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
+                } else { continue }
+                guard body.contains("OpenAI Codex"),
+                      body.contains(cardName) || (!cardPath.isEmpty && body.contains(cardPath))
+                else { continue }
+                let banner = codexBanner(body)
+                let tid = (b["tool_use_id"] as? String) ?? ""
+                let tk = codexTokens(body)
+                let began = assistantAt(toolUseID: tid, before: i)
+                codex.append(RevHit(
+                    runner: "codex",
+                    model: banner["model"] ?? "",
+                    effort: banner["reasoning effort"] ?? "",
+                    tokens: tk,
+                    tokensFrom: tk > 0 ? "codex `tokens used`" : "",
+                    startedAt: began.isEmpty ? at : began,
+                    endedAt: at,
+                    file: url.path,
+                    sessionId: banner["session id"] ?? sessionFromPath))
+            }
+        }
+    }
+
+    // Codex 배너의 `키: 값` 표. 배너는 `OpenAI Codex v…` 다음 `--------` 로 열고 닫힌다.
+    private static func codexBanner(_ body: String) -> [String: String] {
+        var out: [String: String] = [:]
+        let lines = body.components(separatedBy: "\n")
+        guard let start = lines.firstIndex(where: { $0.contains("OpenAI Codex") }) else { return out }
+        var seenRule = 0
+        var i = start + 1
+        while i < lines.count, i < start + 40 {
+            let t = lines[i].trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("----") { seenRule += 1; if seenRule >= 2 { break }; i += 1; continue }
+            if let r = t.range(of: ": ") {
+                out[String(t[t.startIndex..<r.lowerBound])] = String(t[r.upperBound...])
+            }
+            i += 1
+        }
+        return out
+    }
+
+    // 꼬리의 `tokens used` 다음 줄. 콤마를 뗀다. 여럿이면 마지막 것이 그 실행의 총계다.
+    private static func codexTokens(_ body: String) -> Int {
+        let lines = body.components(separatedBy: "\n")
+        var found = 0
+        var i = 0
+        while i < lines.count {
+            if lines[i].trimmingCharacters(in: .whitespaces) == "tokens used" {
+                var j = i + 1
+                while j < lines.count, j < i + 4 {
+                    let t = lines[j].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "")
+                    if let n = Int(t), n > 0 { found = n; break }
+                    if !t.isEmpty { break }
+                    j += 1
+                }
+            }
+            i += 1
+        }
+        return found
+    }
+
+    // `YYYY-MM-DD-HHMM` 과 ISO8601 둘을 받는다. 앞의 것은 **로컬 시각**으로 읽는다.
+    private static func capturedDate(_ s: String) -> Date? {
+        let t = s.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return nil }
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = TimeZone.current
+        for fmt in ["yyyy-MM-dd-HHmm", "yyyy-MM-dd HH:mm", "yyyy-MM-dd"] {
+            df.dateFormat = fmt
+            if let d = df.date(from: t) { return d }
+        }
+        return isoDate(t)
+    }
+
+    private static func isoDate(_ s: String) -> Date? {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: s) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: s)
+    }
+
+    private static func elapsed(from: String, to: String) -> Double? {
+        guard let a = isoDate(from), let b = isoDate(to) else { return nil }
+        let d = b.timeIntervalSince(a)
+        return d >= 0 ? d : nil
+    }
 }
