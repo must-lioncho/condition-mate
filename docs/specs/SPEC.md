@@ -1643,6 +1643,95 @@ PASS로 재검증함(라이브 근거는 위 DASH-6/DASH-7의 RESOLVED 메모 �
   History: EP-20 added 2026-09-05. Supersedes the `NOT KST` claim in EP-19's Verify, which was true
   on 2026-09-04 and is now dated in place rather than deleted.
 
+- **EP-21 — new timestamps are stored in UTC and the screen converts them to the display
+  timezone; slicing an ISO string is not conversion (added 2026-09-06).**
+  EN: Every wall-clock time the dashboard prints from a STORED ISO string goes through
+  `CMTimeFilter.isoDisp(value, len, sep)`, which resolves the instant and re-renders it under
+  `window.CM_TZ` (the server injects `Settings.timeZoneID` per page request; the rail's selector
+  saves then `location.reload()`s, so a setting change is picked up by re-serving). `isoDisp`
+  converts ONLY values carrying an offset (`Z`, `±HH:MM`, `±HHMM`); a zone-less wall clock is
+  printed verbatim, because we cannot know where it was written and inventing UTC would silently
+  move old records. Newly written timestamps are UTC: `WorkQueueVersionLedger.stamp()`,
+  `IssueArchiveStore.stamp()` and `WorkQueueLiveStore.fmt` pin `f.timeZone = TimeZone(identifier:
+  "UTC")`. **Existing data is NOT migrated** and does not need to be — the format keeps its `Z`
+  specifier, so `DateFormatter` honors whatever offset is written and old `+0530` / `+0900` values
+  still parse to the correct instant. **Cutting the string is a regression**:
+  `String(v).replace('T',' ').slice(0,16)` prints whatever zone the bytes were written in, and the
+  only symptom is a number that is 3h (KST) or 3h30m (IST) off — a wrong number does not announce
+  itself. The 설정 selector (rail menu and dashboard header, same list) must offer
+  `Asia/Kolkata` alongside `system` / `Asia/Seoul` / `UTC`; without it India is reachable only by
+  changing the Mac's own timezone.
+  Verify: 2026-09-06 — `.e2e/timezone.test.js` **32 passed / 0 failed** (gated in `.e2e/run.js`).
+  It evals the REAL `CMTimeFilter.js` and the REAL `sesHead`/`tdisp`/`esc` pulled out of
+  `IssuesContent.swift`, so it fails when the product changes without it. The reported instant
+  `2026-09-06T07:31:12.345Z` renders `2026-09-06 16:31` under `Asia/Seoul`, `2026-09-06 13:01`
+  under `Asia/Kolkata` (the 30-minute offset), `2026-09-06 07:31` under `UTC`; the full session
+  line reads `세션 <b>97cc3cc2</b> · 2026-09-06 16:31 · 사람 말 2 번 · 쓴 파일 3 개` in Korea and
+  `… 13:01 …` in India. Flipping `CM_TZ` five times (Seoul→Kolkata→Seoul→UTC→Kolkata) yields five
+  correspondingly different strings, i.e. nothing is cached and frozen. Day-boundary instant
+  `2026-09-06T19:00:00Z` → `2026-09-07 04:00` (KR) vs `2026-09-07 00:30` (IN).
+  `Scripts/e2e-timezone-display.sh` **PASS=10 FAIL=0** against a live isolated instance: POSTing
+  `Asia/Seoul` / `Asia/Kolkata` / `Asia/Seoul` / `Asia/Kolkata` makes `/issues` serve
+  `window.CM_TZ='<that id>'` each time, and the served 353,872-byte page carries `isoDisp`,
+  `esc(tdisp(S.startedAt,16))`, the India option, and none of the three old slicing expressions.
+  Swift side, run directly: the stamp formatter emitted `2026-09-06T13:01:12+0530` before (this
+  Mac's `/etc/localtime` is `Asia/Kolkata`) and emits `2026-09-06T07:31:12+0000` after, while
+  `+0530`, `+0900` and `+0000` inputs all parse back to epoch `1788679872`.
+  Regression: `.e2e/run.js` **55 files, 1708 assertions passed / 0 failed**;
+  `Scripts/e2e-timezone-boundary.sh` **PASS=8 FAIL=0** (EP-20 intact). Two harnesses needed
+  editing and both were stale-by-design, not product failures: `issues.test.js` asserted the old
+  expression text while still checking the same thing (the timestamp passes through `esc`), and
+  `screens.test.js` stubbed `CMTimeFilter` with `parts` only. `swift build` exits 0 with the same
+  two pre-existing `AppDelegate.swift` warnings and no new ones.
+  KO: 대시보드가 **저장된 ISO 문자열**에서 벽시계를 찍는 자리는 전부 `CMTimeFilter.isoDisp` 를
+  거친다. 오프셋이 붙은 값만 변환하고, 오프셋 없는 값은 어느 지역인지 알 수 없으므로 적힌 대로
+  둔다 — 없는 정보를 UTC 라고 지어내면 옛 기록이 조용히 다른 시각으로 바뀐다. 앞으로 생성되는
+  시각은 UTC 로 저장하고(원장 셋), **기존 데이터는 마이그레이션하지 않는다** — 포맷의 `Z` 가
+  적힌 오프셋을 존중하므로 옛 값도 계속 정확히 읽힌다. **자르기는 변환이 아니다** — 자르면
+  3시간(KST)이나 3시간 30분(IST) 어긋난 숫자가 나오고, 어긋난 숫자는 틀렸다고 소리치지 않는다.
+  설정 셀렉터 두 곳(레일 메뉴·헤더)에 `Asia/Kolkata` 가 있어야 한다.
+  Why / 근거: 2026-09-06. 라이언이 이슈 화면 스크린샷의 `2026-09-06 07:31` 에 밑줄을 그었다.
+  그 세션은 KST 16:31 에 시작했다. 배관(`Settings.displayTimeZone` · `window.CM_TZ` ·
+  `CMTimeFilter`)은 EP-20 에서 이미 다 놓여 있었고, 이 화면들만 그것을 안 쓰고 문자열을 잘라
+  쓰고 있었다. 고친 것은 배관이 아니라 그 자리 12 개다 (IssuesContent 5 · LoopEngineeringContent 6 ·
+  BGMPlayerContent 1).
+  **Live re-verify on the RUNNING app, 2026-09-06 22:30–22:45 IST (second pass — the first pass
+  only ever proved the SOURCE was right).** The binary actually running is
+  `/Applications/ConditionMate.app/Contents/MacOS/ConditionMate` (pid 5544, installed 21:11,
+  serving 127.0.0.1:57797), and it carries the fix: `strings -a` finds
+  `function isoDisp(v, len, sep)` and `esc(tdisp(S.startedAt,16))` in it, finds `Asia/Kolkata`
+  4×, and finds ZERO occurrences of `esc(String(S.startedAt||'').replace`. Posting
+  `Asia/Seoul → Asia/Kolkata → UTC → Asia/Seoul → Asia/Kolkata → system` to
+  `/api/settings/timezone` on that live instance made `/issues` serve
+  `window.CM_TZ='<that id>'` (and `null` for `system`) on every single request; the user's
+  original setting (`system`, effective `Asia/Kolkata`) was restored afterwards. The strongest
+  evidence is that the running app's OWN data now proves the storage half: card
+  `2026-09-06-2225-script-first-routing-loop`, written by this app today, carries
+  `versionFirstSeen: 2026-09-06T17:01:18+0000` — a new timestamp, stored in UTC, on a Mac whose
+  `/etc/localtime` is `Asia/Kolkata`. Feeding that live value plus the live `captured:
+  2026-09-06T22:25:55+0530` through the REAL `CMTimeFilter` / `tdisp` / `sesHead` extracted from
+  the 360,592-byte page THAT INSTANCE SERVED gives **16 passed / 0 failed**: the UTC-stored
+  instant renders `2026-09-07 02:01` (KR, crosses the date line), `2026-09-06 22:31` (IN, the
+  30-minute offset), `2026-09-06 17:01` (UTC); the old `+0530` value still resolves to the same
+  instant in all three (`2026-09-07 01:55` / `2026-09-06 22:25` / `2026-09-06 16:55`), i.e. old
+  records are read correctly WITHOUT migration; and five consecutive `CM_TZ` flips produce five
+  correspondingly different strings, so nothing is cached and frozen.
+  Swift side, run directly on this Mac (`TimeZone.current = Asia/Kolkata`): `ISO8601DateFormatter()`
+  already emits `2026-09-06T07:31:12Z` by default, so only the three `DateFormatter` ledgers needed
+  pinning — unpinned they emitted `…T13:01:12+0530`, pinned they emit `…T07:31:12+0000`, and
+  `+0530` / `+0900` / `+0000` inputs all parse back to epoch `1788679872`.
+  Regression this pass: `.e2e/run.js` **55 files, 1714 assertions passed / 0 failed**,
+  `.e2e/timezone.test.js` **32/0**, `Scripts/e2e-timezone-display.sh` **PASS=10 FAIL=0**,
+  `Scripts/e2e-timezone-boundary.sh` **PASS=8 FAIL=0**, `swift build` exit 0. (The 1708 above is
+  the first pass's count; other work has added assertions since. Both numbers are 0 failed.)
+  KO: 소스가 맞다는 것과 **지금 도는 앱이 맞다는 것은 다른 판정이다.** 두 번째 패스는 뒤엣것을
+  본다 — 설치된 바이너리 안에 변환 코드가 있고 옛 자르기가 없으며, 살아 있는 인스턴스가 설정
+  전환마다 새 `CM_TZ` 를 내보내고(사용자 원래 설정 `system` 은 되돌려 놓았다), 그 앱이 오늘
+  스스로 쓴 레코드가 `+0000` 이고, 그 앱이 서빙한 페이지의 진짜 JS 로 그 진짜 값을 찍으면
+  한국·인도·UTC 가 갈린다. 옛 `+0530` 값도 같은 순간으로 읽히므로 마이그레이션이 필요 없다.
+  History: EP-21 added 2026-09-06. Builds on EP-20's plumbing (`displayTimeZone`, `CM_TZ`),
+  which is unchanged.
+
 ### Intent audit — P6
 EN: Code matches intent — PASS on EP-1..EP-6 and EP-7..EP-9 (added 2026-07-06), live-verified this
 run (see per-item Verify). EP-9's design fork (server-side deterministic `linkmap` runner instead of

@@ -542,7 +542,10 @@ check('the transcript popup has exactly one button, 닫기',
       (trPopup.match(/<button/g) || []).length === 1 && /닫기<\/button>/.test(trPopup), true);
 // innerHTML sink + a file full of pasted HTML. Every value must pass through esc().
 check('the turn text is escaped', /class="tx">'\+esc\(t\.text\|\|''\)/.test(trUI), true);
-check('the turn timestamp is escaped', /esc\(String\(t\.at\|\|''\)/.test(trUI), true);
+// 2026-09-06 — 시각이 esc 를 거치는 것은 그대로이고, 안쪽이 `String(t.at||'').replace…slice`
+// 에서 `tdisp(t.at,16)` 으로 바뀌었다. 자르기는 변환이 아니라서 UTC 가 화면에 그대로 찍혔다
+// (세션 줄이 KST 16:31 을 07:31 로 보여줬다). 이 단정이 지키는 것은 여전히 esc 통과다.
+check('the turn timestamp is escaped', /esc\(tdisp\(t\.at,\s*16\)\)/.test(trUI), true);
 check('each written file path is escaped', /rows\.push\(esc\(String\(fs\[k\]\)\)\)/.test(trUI), true);
 check('the header path and cwd are escaped',
       /head\.innerHTML=esc\(p\)/.test(trUI) && /esc\(String\(j\.cwd\)\)/.test(trUI), true);

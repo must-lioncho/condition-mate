@@ -39,7 +39,10 @@ function check(name, got, want) {
 // ── 실제 CMTimeFilter.js 를 소스에서 뽑아 돌린다 ────────────────────────────
 const jsm = /static let js = #"""\n([\s\S]*?)\n"""#/.exec(CMF);
 if (!jsm) throw new Error('CMTimeFilter.swift 안에서 js 블록을 못 찾았다');
-global.window = {};
+// 브라우저에서는 `window.X` 가 곧 전역 `X` 다. 화면 코드가 `window.CMTimeFilter &&
+// CMTimeFilter.isoDisp` 처럼 쓰므로 node 에서도 그 동일성을 세워 준다 — 안 그러면 제품이
+// 아니라 하네스가 진다.
+global.window = globalThis;
 global.document = { getElementById: () => null, createElement: () => ({}), head: { appendChild() {} } };
 eval(jsm[1]);
 const T = window.CMTimeFilter;
@@ -96,7 +99,6 @@ function fnFrom(src, name) {
   }
   throw new Error(name + ' 의 끝을 못 찾았다');
 }
-const sandbox = {};
 eval(fnFrom(IC, 'esc') + '\n' + fnFrom(IC, 'tdisp') + '\n' + fnFrom(IC, 'sesHead'));
 const S = { sessionId: '97cc3cc25f0a4d3b', file: '', cwd: '', projectDir: '',
             startedAt: REAL, userTurns: 2, writeCount: 3 };
@@ -137,5 +139,5 @@ check('헤더 셀렉터에 Asia/Kolkata', /\['Asia\/Kolkata','IST \(UTC\+5:30\)'
 check('포맷에 `Z` 가 남아 있다 (옛 오프셋 값을 그대로 파싱한다)',
       /"yyyy-MM-dd'T'HH:mm:ssZ"/.test(C('WorkQueueLiveStore.swift')), true);
 
-console.log('\n' + pass + ' passed / ' + fail + ' failed');
+console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
