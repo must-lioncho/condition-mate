@@ -427,13 +427,10 @@ enum IssuesContent {
               : String(v==null?'':v).replace('T',(sep===undefined?' ':sep)).slice(0,len||16);
           }
 
-          // captured 는 13 가지 모양으로 갈려 있다(오프셋 있는 것/없는 것/붙여 쓴 HHMM). 화면에서는
-          // 파서가 이미 만들어 둔 정렬 키(YYYYMMDDHHMMSS)에서 잘라 쓴다 — 여기서 다시 파싱하면
-          // 목록의 정렬과 표시가 서로 다른 규칙을 쓰게 된다.
+          // The API resolves legacy capture formats to UTC; display uses the selected zone.
           function when(c){
-            var k=c.capturedKey||'';
-            if(k.length<12) return c.captured||'—';
-            return k.slice(2,4)+'-'+k.slice(4,6)+'-'+k.slice(6,8)+' '+k.slice(8,10)+':'+k.slice(10,12);
+            if(c.capturedUTC) return tdisp(c.capturedUTC,16).slice(2);
+            return c.captured||'—';
           }
 
           function chip(label, count, on, group, value, why){

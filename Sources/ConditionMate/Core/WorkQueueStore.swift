@@ -243,7 +243,7 @@ enum WorkQueueStore {
         var laneKey: String { folder + "/" + fileName }
 
         var dict: [String: Any] {
-            ["id": id, "captured": captured, "capturedKey": capturedKey, "track": track,
+            ["id": id, "captured": captured, "capturedKey": capturedKey, "capturedUTC": WorkQueueTimestamp.utc(captured) ?? "", "track": track,
              "status": status, "bucket": bucket, "target": target, "cleanup": cleanup,
              "folder": folder, "file": fileName, "path": filePath, "title": title,
              "parsed": parsed, "artifactCount": artifactCount, "hasDirective": hasDirective,
@@ -474,17 +474,16 @@ enum WorkQueueStore {
 
     // MARK: - 정렬 키
 
-    // ASSUMPTION (L1): 타임존 오프셋을 무시하고 적힌 벽시계 시각 그대로 비교한다. 실측상 captured 는
-    // 13 가지 모양으로 갈려 있고(`+05:30` · `+0530` · `Z` · 오프셋 없음이 섞여 있다) 오프셋을
-    // 적용하면 같은 날 적은 카드들의 순서가 화면에 적힌 시각과 어긋나 보인다. 이 값의 쓰임은
-    // "최신이 위" 하나이므로 적힌 대로 세우는 쪽이 읽는 사람에게 맞다.
-    // 파싱이 안 되면 파일 mtime 으로 대체한다 — 빈 키를 주면 그 카드가 목록 맨 아래로 가라앉는다.
+    // Compare instants in UTC, independently of the user's display timezone.
     private static func sortKey(_ raw: String, fallbackURL: URL) -> String {
-        if let k = parseStamp(raw) { return k }
-        let m = (try? FileManager.default.attributesOfItem(atPath: fallbackURL.path)[.modificationDate]) as? Date
+        let date = WorkQueueTimestamp.date(raw)
+        if date == nil, let key = parseStamp(raw) { return key }
+        let modified = (try? FileManager.default.attributesOfItem(atPath: fallbackURL.path)[.modificationDate]) as? Date
         let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
         f.dateFormat = "yyyyMMddHHmmss"
-        return f.string(from: m ?? Date(timeIntervalSince1970: 0))
+        return f.string(from: date ?? modified ?? Date(timeIntervalSince1970: 0))
     }
 
     private static func parseStamp(_ raw: String) -> String? {

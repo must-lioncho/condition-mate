@@ -139,5 +139,16 @@ check('헤더 셀렉터에 Asia/Kolkata', /\['Asia\/Kolkata','IST \(UTC\+5:30\)'
 check('포맷에 `Z` 가 남아 있다 (옛 오프셋 값을 그대로 파싱한다)',
       /"yyyy-MM-dd'T'HH:mm:ssZ"/.test(C('WorkQueueLiveStore.swift')), true);
 
+// Actual list-row formatter: the screenshot's captured time must change too.
+const rowFunctions = IC.match(/function tdisp\(v,len,sep\)\{[\s\S]*?\n          \}/)[0]
+  + '\n' + IC.match(/function when\(c\)\{[\s\S]*?\n          \}/)[0];
+eval(rowFunctions);
+const row = {captured:'2026-09-06T23:00:00+05:30', capturedKey:'20260906230000', capturedUTC:'2026-09-06T17:30:00Z'};
+for (const [zone, expected] of [['Asia/Seoul','26-09-07 02:30'], ['Asia/Kolkata','26-09-06 23:00'], ['UTC','26-09-06 17:30'], ['Asia/Seoul','26-09-07 02:30']]) {
+  window.CM_TZ = zone;
+  check('list row timezone switch ' + zone, when(row), expected);
+}
+check('date-only capture remains a date', when({captured:'2026-09-06'}), '2026-09-06');
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
