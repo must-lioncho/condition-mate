@@ -5,6 +5,7 @@
 //   - 선택은 cmMemoUI 로 저장되어 다음에 열 때도 유지
 //   - 집중 모드: 캐럿/호버 밖의 줄은 회색으로 가라앉고, 쓰는 줄만 색·바탕이 남는다
 //   - 집중 모드: 글자가 한 단계 커진다(본문 16px, 상세 14px)
+//   - UI 모드는 셋(기본 / 집중 / 초집중) — 초집중(ultra)은 2026-08-13 에 더해졌다
 //   - 구조 섹션(2026-08-08): 리스트(기본) / 부모 기반 — 부모 아래 자식 계층(표시만),
 //     선택은 cmMemoGrp, 예전 정렬 트리(cmMemoSort='tree') 선택은 이어받는다
 //   - 상세 칸 가독성: 안내문은 읽히는 농도(opacity .8), 선택 배경은 앱 색으로 고정
@@ -35,8 +36,36 @@ eq('UI 전환은 히스토리에 남지 않는다 (uiSet 이 onEdit 을 부르�
   /function uiSet\(m\)\{[^}]*onEdit/.test(PAD), false);
 
 // ── 기본값 · 저장 ──────────────────────────────────────────────────────────
-eq('기본은 현재 모습 (아는 모드 focus 외에는 전부 기본)',
-  /v==='focus' \? v : ''/.test(PAD), true);
+
+// 소스 문자열을 정규식으로 통째 고정하면 기능 추가가 곧 시험 실패가 된다(뿌리 C).
+// 모드 판정과 라벨 조립은 문자열이 아니라 '무엇을 내놓는가' 로 본다 — 소스에서 잘라
+// 실제로 굴린다.
+function fnSrc(src, marker) {
+  const start = src.indexOf(marker);
+  if (start < 0) throw new Error('no fn ' + marker);
+  let depth = 0;
+  for (let k = src.indexOf('{', start); k < src.length; k++) {
+    if (src[k] === '{') depth++;
+    else if (src[k] === '}') { depth--; if (depth === 0) return src.slice(start, k + 1); }
+  }
+  throw new Error('unbalanced ' + marker);
+}
+// uiMode() — localStorage 에 적힌 값을 화면 모드로 옮기는 곳.
+let LS = {};
+const uiModeFn = new Function('localStorage',
+  fnSrc(PAD, 'function uiMode()') + '; return uiMode;')({ getItem: (k) => (k in LS ? LS[k] : null) });
+const uiModeOf = (v) => { LS = (v === undefined ? {} : { cmMemoUI: v }); return uiModeFn(); };
+// UI 버튼 라벨 — m(UI 모드) g(구조) 두 축을 합성하는 한 식.
+const lblExpr = (PAD.match(/'UI'\+[\s\S]*?\+' \u25be'/) || [''])[0];
+const label = new Function('m', 'g', 'return ' + lblExpr);
+
+// 뿌리 C (2026-08-13): UI 모드가 둘(기본·집중)에서 셋(＋초집중)으로 늘었다. 옛 시험은
+// 소스의 `v==='focus' ? v : ''` 한 줄을 정규식으로 고정하고 있어서, ultra 를 더한 순간
+// 행동은 멀쩡한데 시험만 붉어졌다. 이제 판정 '결과' 를 본다.
+eq('저장된 값이 없으면 기본 (현재 모습)', uiModeOf(undefined), '');
+eq('집중은 그대로 살아난다', uiModeOf('focus'), 'focus');
+eq('초집중도 그대로 살아난다 (2026-08-13 추가)', uiModeOf('ultra'), 'ultra');
+eq('모르는 값은 기본으로 떨어진다 (옛 값·오타가 빈 화면을 만들지 않게)', uiModeOf('zzz'), '');
 eq('선택은 cmMemoUI 로 저장된다', /localStorage\.setItem\('cmMemoUI', m\)/.test(PAD), true);
 eq('기본 모드에서는 data-ui 를 떼어낸다 (CSS 흔적 없음)',
   /else p\.el\.removeAttribute\('data-ui'\)/.test(PAD), true);
@@ -46,13 +75,23 @@ eq('마운트마다 저장된 UI 모드를 다시 칠한다', /sortPaint\(\);\s*
 eq('UI 버튼은 메뉴 묶음 맨 앞 (필터 왼쪽)',
   PAD.indexOf('data-cmmemo-ui ') < PAD.indexOf('data-cmmemo-flt ') &&
   PAD.indexOf('data-cmmemo-meta') < PAD.indexOf('data-cmmemo-ui '), true);
-eq('활성 시 버튼 라벨이 모드를 말해 준다 (집중·부모 합성)',
-  /p\.ui\.textContent = 'UI'\+\(m\?' 집중':''\)\+\(g\?' 부모':''\)\+' ▾'/.test(PAD), true);
+// 뿌리 C — 같은 변경으로 라벨이 한 줄 2분기에서 두 줄 3분기가 됐다. 옛 시험은 그 한 줄을
+// 통째로 고정했다. 여기서는 식을 굴려 나온 라벨을 본다 (줄바꿈·공백에 흔들리지 않는다).
+eq('기본 모드에서는 모드 이름을 붙이지 않는다', label('', false), 'UI ▾');
+eq('집중이면 라벨이 집중이라고 말한다', label('focus', false), 'UI 집중 ▾');
+eq('초집중이면 초집중이라고 말한다 (2026-08-13 추가)', label('ultra', false), 'UI 초집중 ▾');
+eq('구조(부모 기반)는 UI 모드와 따로 붙는다', label('', true), 'UI 부모 ▾');
+eq('둘 다면 둘 다 붙는다 (두 축이 한 버튼에 합성된다)', label('ultra', true), 'UI 초집중 부모 ▾');
 
 // ── 콤보 (라디오) ─────────────────────────────────────────────────────────
 const uis = PAD.match(/var UIS=\[([\s\S]*?)\];/)[1];
 eq('옵션 1 = 기본(현재 모습)', /\{s:'',n:'기본',d:'현재 모습'\}/.test(uis), true);
 eq('옵션 2 = 집중(공유·발표)', /\{s:'focus',n:'집중',d:'공유·발표'\}/.test(uis), true);
+// 뿌리 C — 세 번째 옵션. 설명글(d)은 자주 다듬는 자리라 이름까지만 본다.
+eq('옵션 3 = 초집중 (2026-08-13 추가)', /\{s:'ultra',n:'초집중'/.test(uis), true);
+eq('콤보가 내놓는 모드와 uiMode 가 아는 모드가 같다 (고를 수 없는 모드도, 모르는 모드도 없다)',
+  (uis.match(/s:'([^']*)'/g) || []).map((x) => x.slice(3, -1)).map(uiModeOf).join('|'),
+  '|focus|ultra');
 eq('고르면 즉시 적용되고 콤보가 닫힌다 (라디오)',
   /ev\.preventDefault\(\); uiSet\(o\.s\); closeMenu\(\);/.test(PAD), true);
 eq('체크 표시는 현재 모드 하나만',

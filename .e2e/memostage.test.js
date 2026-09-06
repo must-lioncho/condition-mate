@@ -18,7 +18,7 @@ const vm = require('vm');
 // 목표일이 시각 칸이 된 뒤(2026-08-05)로 이 테스트는 타임존에 민감하다 — 돌리는 사람의
 // 맥이 서울이든 인도든 같은 결과가 나오도록 여기서 못 박는다. Date 를 처음 쓰기 전에.
 process.env.TZ = 'Asia/Seoul';
-const { RAIL_CSS, RAIL_JS, PAD_CSS, PAD_JS, PAD_HTML, GOALADD_SRC: GOALADD } = require('./memosrc');
+const { RAIL_CSS, RAIL_JS, RAIL_SRC, PAD_CSS, PAD_JS, PAD_HTML, GOALADD_SRC: GOALADD } = require('./memosrc');
 
 // 생성 스탬프(2026-08-10, '    @생성: …')는 모든 줄에 붙는 메타라 이 파일의 '모양' 비교에서는
 // 걷어 낸다 — 시각이 들어간 값이라 리터럴로 못 적고, 스탬프 자체의 계약은 memocreated.test.js 가 지킨다.
@@ -64,9 +64,10 @@ function El(cls) {
     focus() { this._focused = true; }, setSelectionRange() {},
     setAttribute(k, v) { this['_attr_' + k] = v; }, getAttribute(k) { return this['_attr_' + k]; },
     removeAttribute(k) { delete this['_attr_' + k]; },
-    appendChild(c) { c.parentElement = this; this.children.push(c); return c; },
-    insertBefore(c, ref) { c.parentElement = this;
-      const i = this.children.indexOf(ref); this.children.splice(i < 0 ? this.children.length : i, 0, c); return c; },
+    appendChild(c) { if (c.parentElement) c.remove(); c.parentElement = this; this.children.push(c); return c; },
+    insertBefore(c, ref) { if (c.parentElement) c.remove();
+      const i = this.children.indexOf(ref); c.parentElement = this;
+      this.children.splice(i < 0 ? this.children.length : i, 0, c); return c; },
     remove() { const p = this.parentElement; if (!p) return;
       p.children.splice(p.children.indexOf(this), 1); this.parentElement = null; },
     set innerHTML(v) {
@@ -114,7 +115,7 @@ function El(cls) {
 
 // One page: rail toggles (in-rail + floating), optional memo pad inside <main>,
 // optional 작업 보드([data-cmboard] — 대시보드에만 있다).
-function makePage(withPad, withBoard) {
+function makePage(withPad, withBoard, withHd) {
   const body = El(), main = El();
   const mk = (n, f) => Array.from({ length: n }, f);
   const tgs = mk(2, () => El());
@@ -135,6 +136,21 @@ function makePage(withPad, withBoard) {
     // 사람이 하는 것과 같은 경로: 캐럿을 칸에 두고 키를 doc 에 때린다.
     pad.caret = null;   // boot() 가 selection 스텁을 물려준다
     pad.key = null;
+    // 헤더 줄 넘침(hdWire, 2026-08-20)을 실제로 돌려 보는 판. 기본 부팅에서는 이 선택자들이
+    // 비어 있어 pad.hd 가 null 이고 hdWire 가 첫 줄에서 빠져나간다 — 폭을 재는 스텁이라
+    // 필요한 시험에서만 켠다.
+    if (withHd) {
+      const hd = El('cmmemo-hd'), hd2 = El('cmmemo-hd cmmemo-hd2'),
+            more = El('cmm-view cmm-more'), addB = El('cmm-add'), expB = El('exp');
+      meta.className = 'meta';
+      hd.isConnected = true; hd.clientWidth = 200;          // 좁은 판으로 시작
+      meta.offsetWidth = 60; viewBtn.offsetWidth = 80;
+      addB.offsetWidth = 90; expB.offsetWidth = 40; more.offsetWidth = 26;
+      [meta, viewBtn, addB, expB, more].forEach((e) => hd.appendChild(e));
+      Object.assign(pad._by, { '[data-cmmemo-hd]': [hd], '[data-cmmemo-hd2]': [hd2],
+        '[data-cmmemo-more]': [more], '[data-cmmemo-add]': [addB], '[data-cmmemo-exp]': [expB] });
+      pad.hd = hd; pad.hd2 = hd2; pad.more = more;
+    }
     pad.text = () => docEl.children.map((r) => {
       const t = r.querySelector('.cmm-tx').textContent, st = r.dataset.st;
       const d = r.querySelector('.cmm-dt').textContent;
@@ -156,8 +172,8 @@ function makePage(withPad, withBoard) {
 // then the pad markup+script, then DOMContentLoaded.
 async function boot(opts = {}) {
   const { withPad = true, withBoard = true, store = {}, width = 1100, zen = false,
-          serverText = '', getDelay = 0 } = opts;
-  const page = makePage(withPad, withBoard);
+          serverText = '', getDelay = 0, withHd = false } = opts;
+  const page = makePage(withPad, withBoard, withHd);
   let visible = withPad ? false : true;   // the pad is parsed AFTER the rail script
   const doc = {
     readyState: 'loading', body: page.body, _h: {},
@@ -229,8 +245,29 @@ async function boot(opts = {}) {
   // A vm context whose global IS `window`, like a browser: the source assigns
   // window.cmRailStage/… and then calls the bare name, which only resolves when the two
   // are the same object. A plain closure would silently diverge from what ships.
+  // hdWire(2026-08-20) 만 쓰는 둘 — 이 둘이 없으면 헤더 넘침 코드가 통째로 안 돈다.
+  // (ResizeObserver 는 일부러 두지 않는다. 소스가 window.ResizeObserver 를 가드하고 있어
+  //  없으면 조용히 건너뛰는 길까지 같이 지난다.)
+  const mos = [];
+  // 보드 자동 새로고침(MemoPad.swift 의 boardFetch 30초 주기)이 부팅 경로에서 setInterval 을
+  // 부른다. 이 스텁이 없으면 boot() 이 ReferenceError 로 죽어 모듈이 통째로 안 돌고,
+  // 부팅 이후 단정 전부가 "메모장이 안 뜬다" 처럼 엉뚱하게 보인다. 진짜 타이머를 걸면
+  // 30초짜리 핸들이 남아 프로세스가 안 끝나므로 콜백만 모아 둔다.
+  const ivals = [];
   Object.assign(win, { document: doc, localStorage: ls, fetch: fetchStub,
+                       setInterval: (f, ms) => { ivals.push({ f, ms }); return ivals.length; },
+                       clearInterval: () => {},
                        getSelection: () => sel,
+                       requestAnimationFrame: (f) => setTimeout(f, 0),
+                       MutationObserver: function (cb) {
+                         return { observe() { mos.push(cb); }, disconnect() {} };
+                       },
+                       // 30초 보드 폴링(MemoPad boot, 2026-08-29)이 여기서 돈다 — 없으면
+                       // boot 이 ReferenceError 로 죽어 이 파일이 통째로 크래시한다.
+                       // unref 를 거는 이유: 진짜 타이머를 주되 30초짜리가 node 를 붙들어
+                       // 이 시험을 0.1초에서 30초짜리로 만들지 않게 한다(이 파일은 그 전에 끝난다).
+                       setInterval: (f, ms) => { const t = setInterval(f, ms); if (t && t.unref) t.unref(); return t; },
+                       clearInterval,
                        setTimeout, clearTimeout, console });
   vm.createContext(win);
   win.window = win;
@@ -260,7 +297,13 @@ async function boot(opts = {}) {
   // ⌃⌘N — 브라우저 경로(앱에서는 네이티브 모니터가 먼저 삼킨다). 한글 입력원에서는 key 가 'ㅜ'.
   const hotkey = (over) => doc.fire('keydown', Object.assign(
     { metaKey: true, ctrlKey: true, shiftKey: false, code: 'KeyN', key: 'n', preventDefault() {} }, over));
-  return { page, doc, win, ls, net, stage, resize, click, esc, hotkey, sleep };
+  // 헤더 폭을 바꾸고 관찰자를 깨운다 — 앱에서는 ResizeObserver 가 하는 일.
+  const hdResize = async (w) => {
+    page.pad.hd.clientWidth = w;
+    mos.forEach((f) => f([]));
+    await sleep(20);
+  };
+  return { page, doc, win, ls, net, stage, resize, click, esc, hotkey, sleep, hdResize };
 }
 
 (async () => {
@@ -418,25 +461,35 @@ async function boot(opts = {}) {
     t.page.pad.text(), '- [ ] 첫 항목\n- [x] 끝낸 것\n    왜 끝냈는지\n- [!] 막힌 것\n그냥 메모');
   eq('번호는 데이터에만 (평문 줄은 세지 않는다)',
     rows().map((r) => r.dataset.no || '-'), ['1', '2', '3', '-']);
-  // 보기 필터 — 처리할 때는 완료가 안 보이는 게 기본, 리포트 쓸 때 켠다.
-  eq('기본은 완료 숨김 (남은 일에 집중)', t.page.pad.hidden(), 'done');
-  eq('보기 배지 = 켜진 종류 수', String(t.page.pad.viewN.textContent), '2');
-  eq('감춰도 텍스트는 그대로 (사라진 게 아니다)',
-    t.page.pad.text(), '- [ ] 첫 항목\n- [x] 끝낸 것\n    왜 끝냈는지\n- [!] 막힌 것\n그냥 메모');
-  eq('감춰도 번호는 그대로 (완료도 제 번호를 지킨다)',
-    rows().map((r) => r.dataset.no || '-'), ['1', '2', '3', '-']);
+  // 보기 필터 — R1(2026-08-20): 기본이 ['todo','block'] 에서 ['todo','done','block'] 으로
+  // 뒤집혔다. 체크가 완료·바틀넥 두 상태만 오가게 되면서, 완료를 감추면 방금 누른 줄이
+  // 눈앞에서 그대로 사라져 버리기 때문이다. 아래 배지 수·aria-checked·토글 방향·저장 값은
+  // 전부 이 한 줄에서 파생된 것이고, 따로 바뀐 계약이 아니다.
+  eq('기본은 전부 보임 (방금 체크한 줄이 사라지지 않는다)', t.page.pad.hidden(), '');
+  eq('보기 배지 = 켜진 종류 수', String(t.page.pad.viewN.textContent), '3');
   t.page.pad.view.fire('mousedown');
   const vm = () => t.win.document.body.children[t.win.document.body.children.length - 1];
   eq('보기 콤보가 다중 선택 메뉴를 연다', vm().className.indexOf('cmm-vm') >= 0, true);
   const vopt = (n) => vm().querySelectorAll('.cmm-vo')[n];
   eq('메뉴에 종류별 개수', [1, 2, 3].map((i) => String(vopt(i).cnt.textContent)), ['1', '1', '1']);
-  eq('완료는 꺼져 있다', vopt(2).getAttribute('aria-checked'), 'false');
+  // R1 파생 — 기본이 전부 켜짐이므로 완료도 켜져 있고, 클릭은 켜기가 아니라 끄기다.
+  eq('완료도 켜져 있다', vopt(2).getAttribute('aria-checked'), 'true');
   vopt(2).fire('mousedown');
-  eq('완료를 켜면 다 보인다 (리포트 모드)', t.page.pad.hidden(), '');
-  eq('켠 뒤 배지 3', String(t.page.pad.viewN.textContent), '3');
-  eq('선택은 저장된다', t.win.localStorage.getItem('cmMemoView'), 'todo,done,block');
+  eq('완료를 끄면 완료만 감춘다 (처리 모드)', t.page.pad.hidden(), 'done');
+  eq('끈 뒤 배지 2', String(t.page.pad.viewN.textContent), '2');
+  eq('선택은 저장된다', t.win.localStorage.getItem('cmMemoView'), 'todo,block');
+  // 감춤은 CSS 만 건드린다 — 텍스트도 번호도 그대로다. R1 이후로는 필터를 건드리기 전에
+  // 물으면 아무것도 안 감춰져 있어 헛도는 단정이 되므로, 실제로 감춘 지금 확인한다.
+  eq('감춰도 텍스트는 그대로 (사라진 게 아니다)',
+    t.page.pad.text(), '- [ ] 첫 항목\n- [x] 끝낸 것\n    왜 끝냈는지\n- [!] 막힌 것\n그냥 메모');
+  eq('감춰도 번호는 그대로 (완료도 제 번호를 지킨다)',
+    rows().map((r) => r.dataset.no || '-'), ['1', '2', '3', '-']);
+  // R1 파생 — 앞 단계가 '2개 켜짐' 으로 끝나므로 '모두' 는 이제 전부 켜기로 동작한다.
+  // 전부 감추는 반대 방향은 그 다음 클릭이 지킨다(두 방향 다 살아 있어야 한다).
   vopt(0).fire('mousedown');
-  eq('"모두" 를 다시 누르면 전부 감춘다', t.page.pad.hidden(), 'todo done block');
+  eq('"모두" 는 하나라도 꺼져 있으면 전부 켠다', t.page.pad.hidden(), '');
+  vopt(0).fire('mousedown');
+  eq('전부 켜진 채로 "모두" 를 누르면 전부 감춘다', t.page.pad.hidden(), 'todo done block');
 
   // 원을 클릭하면 미완료 → 완료 → 바틀넥 → 미완료
   const ck = rows()[0].querySelector('.cmm-ck');
@@ -462,8 +515,13 @@ async function boot(opts = {}) {
   plainRow().querySelector('.cmm-ck').fire('click');
   eq('평문 줄 원 = 한 번 클릭에 완료', plainRow().dataset.st, 'done');
   eq('한 번에 완료한 줄은 저장 텍스트도 완료', t.page.pad.text().split('\n')[0], '- [x] 그냥 메모');
+  // R2(2026-08-20): 평문에서 한 번에 완료된 줄(qk)의 순환이 done→평문 2단계에서
+  // done→block→평문 3단계로 늘었다. '나중에 처리하기' 로 미뤄 두고 싶을 때 곧장 평문으로
+  // 사라지면 안 되기 때문이다. 평문 복귀는 여전히 todo 를 건너뛴다(빈 미완료 마크가 없다).
   plainRow().querySelector('.cmm-ck').fire('click');
-  eq('다시 누르면 곧바로 평문으로 (바틀넥을 거치지 않는다)', plainRow().dataset.st, undefined);
+  eq('다시 누르면 바틀넥 (곧장 평문으로 사라지지 않는다)', plainRow().dataset.st, 'block');
+  plainRow().querySelector('.cmm-ck').fire('click');
+  eq('바틀넥에서 한 번 더 눌러야 평문 (todo 는 건너뛴다)', plainRow().dataset.st, undefined);
   eq('취소하면 글자도 원래대로', t.page.pad.text().split('\n')[0], '그냥 메모');
 
   // ---------- 7c. 키보드: 엔터는 아래로, ⌘Enter 는 상세 ----------
@@ -673,10 +731,37 @@ async function boot(opts = {}) {
   eq('문서형: 편집면이 남은 높이를 채운다',
     has(PAD_CSS, /body\.cmmemo-only \.cmmemo \.cmm-doc\{[^}]*flex:1/), true);
   // 2026-08-06 — 좁은 창에서 '메모장'/'Esc → …' 텍스트가 글자 단위로 세로 깨져 둘 다 제거.
-  // 헤더에는 버튼만 남고, 더 좁아지면 flex-wrap 으로 줄바꿈한다.
   eq('헤더에 타이틀·Esc 안내 텍스트 없음 (세로 깨짐 방지)',
     /class="t"|class="esc"|대화로 돌아가기/.test(PAD_HTML), false);
-  eq('헤더는 좁은 폭에서 줄바꿈 (flex-wrap)', has(PAD_CSS, /\.cmmemo-hd\{[^}]*flex-wrap:wrap/), true);
+  // R3(2026-08-20): 헤더가 flex-wrap:wrap 에서 nowrap + overflow:hidden 으로 바뀌었다.
+  // 줄바꿈을 두면 meta 글자 길이가 바뀔 때마다('저장 중…' ↔ '저장됨') 줄 수가 흔들려
+  // 화면이 출렁였기 때문이다. 줄바꿈 대신 넘치는 버튼을 둘째 줄(.cmmemo-hd2)로 옮기고
+  // 첫 줄 끝에 ＋ 하나만 남기는 이관(JS: hdWire)이 그 자리를 대신한다. 아래 넷이 그
+  // 대체 구현의 계약이다 — 여기를 비워 두면 넘침 처리가 통째로 무검증이 된다.
+  eq('헤더는 줄바꿈하지 않는다 (meta 글자 수에 줄 수가 흔들리지 않는다)',
+    has(PAD_CSS, /\.cmmemo-hd\{[^}]*flex-wrap:nowrap[^}]*overflow:hidden/), true);
+  eq('접힌 둘째 줄은 자리를 차지하지 않는다 (펼쳤을 때만 보인다)',
+    has(PAD_CSS, /\.cmmemo-hd\.cmmemo-hd2\{[^}]*height:0[^}]*visibility:hidden/)
+    && has(PAD_CSS, /\.cmmemo-hd\.cmmemo-hd2\[data-open\]\{[^}]*visibility:visible/), true);
+
+  // 이관 동작 자체 — 헤더 폭을 재는 판(withHd)에서만 돈다. meta 60 + 보기 80 + ＋체크리스트 90
+  // + 확장 40 (사이 8px) = 294 라, 200px 에서는 뒤의 둘이 밀리고 400px 에서는 다 들어간다.
+  const kids = (el) => el.children.map((c) => c.className);
+  t = await boot({ withHd: true });
+  const hp = t.page.pad, hd2open = () => hp.hd2.getAttribute('data-open') !== undefined;
+  eq('좁으면 넘친 버튼이 둘째 줄로 가고 첫 줄엔 ＋ 만 남는다',
+    [kids(hp.hd), kids(hp.hd2), hp.more.style.display],
+    [['meta', 'cmm-view', 'cmm-view cmm-more'], ['cmm-add', 'exp'], 'inline-flex']);
+  hp.more.fire('click');
+  eq('＋ 를 누르면 둘째 줄이 펼쳐진다',
+    [hd2open(), hp.more.getAttribute('aria-expanded')], [true, 'true']);
+  await t.hdResize(400);
+  eq('다 들어가면 ＋ 도 둘째 줄도 사라진다 (펼쳐 둔 것도 함께 접힌다)',
+    [kids(hp.hd), kids(hp.hd2), hp.more.style.display, hd2open()],
+    [['meta', 'cmm-view', 'cmm-add', 'exp', 'cmm-view cmm-more'], [], 'none', false]);
+  await t.hdResize(200);
+  eq('다시 좁히면 도로 둘째 줄로 (관찰자가 계속 지킨다)',
+    [kids(hp.hd2), hp.more.style.display], [['cmm-add', 'exp'], 'inline-flex']);
   eq('컴포저 바 left = --cmrail-w (GoalAdd)',
     has(GOALADD, /\.gs-bar\{[^}]*left:var\(--cmrail-w, ?0\)/), true);
   eq('세션/CLI 뷰에서는 메모 카드 숨김',
@@ -696,8 +781,15 @@ async function boot(opts = {}) {
     has(RAIL_JS, /was>=0 && was!==st && !cmRailForcedMemo && !cmRailZen\(\)/), true);
   eq('네이티브가 memo/memoExit 를 처리한다',
     has(AWC, /cmd == "memo" \{ self\?\.enterMemoFold\(\)/) && has(AWC, /cmd\.hasPrefix\("memoExit"\)/), true);
-  eq('나갈 때 그 단계가 필요로 하는 폭을 보장한다 (3단계가 가장 넓다)',
-    has(AWC, /usableWidth: CGFloat = \(stage == 3\) \? config\.defaultExpandedWidth : 720/)
+  // R4(2026-08-20): 3단계 이탈이 '최소 폭 보장' 에서 '화면 전체로 펴기' 로 바뀌었다 —
+  // 보드와 대화를 좌우로 나누는 화면이라 어중간한 폭에서는 두 판이 모두 좁아진다.
+  // 옛 단정은 두 항의 AND 였는데 뒤항(guard …)이 3단계와 무관하게 계속 통과해서, stage
+  // 처리가 통째로 사라져도 초록일 수 있었다. 그래서 stage == 3 분기를 직접 겨냥한다.
+  eq('3단계로 나가면 창을 그 화면의 사용 가능 영역 전체로 편다',
+    has(AWC, /if stage == 3, let vis = win\.screen\?\.visibleFrame \?\? NSScreen\.main\?\.visibleFrame \{/)
+    && has(AWC, /win\.animator\(\)\.setFrame\(vis, display: true\)/), true);
+  eq('3단계가 아닌 단계는 종전대로 최소 폭(720)만 보장한다',
+    has(AWC, /let usableWidth: CGFloat = 720/)
     && has(AWC, /guard memoActive \|\| win\.frame\.width < usableWidth else \{ return \}/), true);
   eq('넓힐 때 화면 밖으로 나가지 않는다',
     has(AWC, /target\.origin\.x = min\(max\(target\.minX, vis\.minX\), vis\.maxX - target\.width\)/), true);
@@ -730,8 +822,13 @@ async function boot(opts = {}) {
     has(GA, /\.btn, \.iconbtn, \.ga-seg button\{ white-space:nowrap/), true);
   eq('컴포저에 좁은 폭 규칙이 있다', has(GA, /@media \(max-width: 560px\)/), true);
 
-  eq('3단계는 전환이 아니어도 창이 좁으면 넓혀 달라고 한다',
-    has(RAIL_JS, /st===3 && !cmRailForcedMemo && !cmRailZen\(\) && window\.innerWidth < CMRAIL_WIDE3/), true);
+  // R4(2026-08-20): 같은 이관의 페이지 쪽 절반. window.innerWidth < CMRAIL_WIDE3 가드가
+  // 빠지고, 3단계면 전환이 아니어도 무조건 memoExit:3 를 보낸다 — "이미 그 크기면
+  // 네이티브가 조용히 무시한다". 이제 폭을 아는 곳은 AppWindowController 하나다.
+  eq('3단계는 전환이 아니어도 창을 펴 달라고 한다 (폭 판정은 네이티브가 한다)',
+    has(RAIL_JS, /else if\(st===3 && !cmRailForcedMemo && !cmRailZen\(\)\)\{/)
+    && has(RAIL_JS, /postMessage\('memoExit:3'\)/), true);
+  eq('페이지 쪽에는 폭 문턱(CMRAIL_WIDE3)이 남아 있지 않다', /CMRAIL_WIDE3/.test(RAIL_SRC), false);
   eq('창을 더 넓힐 수 없을 때 대화 패널이 화면 절반을 넘지 않는다',
     has(DASH, /body\.cmchat-side\{ --cmchat-w:min\(42vw, 420px\) \}/), true);
 

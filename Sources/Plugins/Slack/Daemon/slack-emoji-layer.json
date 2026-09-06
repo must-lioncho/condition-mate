@@ -1,0 +1,150 @@
+{
+  "version": 5,
+  "_doc": "선응답이 글 대신 리액션 하나로 끝내도 될 때 쓰는 이모지 어휘집. 뜻은 조직이 실제로 쓰는 뜻을 그대로 적었다 — 이모지는 표준 의미가 없고 팀마다 다르므로 여기 적힌 것이 정본이다. auto=false 인 것은 뜻은 살아 있으나 자동으로 달지 않는다(사유는 autoNote). 운영 중 수정은 ~/.condition-mate/slack-translate/emoji-layer.json 으로 덮어쓴다. 2026-08-29 Lion cho 구술로 확정.",
+  "_decision_doc": "2026-09-02 판 3. 그날 그룹 DM C0BU7LC0QSH 에서 Amani 의 1785자 귀국 사유 설명에 ✅ 가 나갔다. 그 ✅ 는 '확인했다' 의 결과가 아니라 '길어서 글을 못 썼다' 의 결과였고(R2 후보 → 근거 부족 → R1 강등), 리액션이 라이언 계정(xoxp)으로 나가는 탓에 동료는 그것을 라이언의 승인으로 읽었다. Elma 가 채널에서 '그 초록 체크는 라이언의 AI 에이전트가 단 것이고 자동 승인이 아니다' 라고 정정했고, 그 정정 대화 두 줄에도 데몬이 다시 ✅ 를 달았다. 원장 전수 158건 중 근거가 있었던 것은 21건(13%)뿐이었다. 그래서 ✅ 는 더 이상 바닥값이 아니다 — decision 축이 not-needed 일 때만 단다. 모르면(unknown) 그리고 답을 기다리는 자리면(needed) pendingEmoji 를 단다.",
+  "_axis_doc": "decision 은 '이 메시지가 라이언의 판단을 기다리는가' 한 축이다. not-needed 는 어휘집이 실제로 닫는 말을 물었을 때만이고, needed 는 veto 가 걸렸을 때이고, unknown 은 아무것도 안 잡혔을 때다. '분류가 안 됐다' 와 '의사결정이 필요 없다' 는 다른 상태이고 둘을 같게 읽은 것이 위 사고다. resolves 는 다른 축이다 — resolves:false 인 이모지는 그 항목을 처리완료로 만들지 않는다. 그 이름이 붙어 있어도 데몬의 resolvingReaction·firstNonTrigger 가 건너뛰므로 항목은 미처리에 남는다. 값을 적지 않은 행은 예전 그대로 처리완료로 읽힌다. 2026-09-02 부터 이 행 단위 값 위에 워크스페이스 단위의 resolvesPolicy 가 있다 — 먼저 아래 _resolvesPolicy_doc 을 읽는다. 지금 값은 self 다(2026-09-06). 라이언 본인이 슬랙에서 직접 단 리액션만 항목을 닫고, 그중에서도 이 데몬이 그 항목에 단 이모지(ackEmoji·ackEmojis)는 닫지 않으며, 남이 단 리액션은 무엇이든 닫지 않는다. 행 단위 resolves:false 는 self 아래에서도 계속 존중되므로, 이 파일의 모든 행에 resolves:false 를 명시해 둔 것은 그대로 참이고 그 행들의 이름은 라이언이 손으로 달아도 닫지 않는다.",
+  "_approval_doc": "approval 은 decision·resolves 와 또 다른 축이다 — '이 이모지를 라이언 계정으로 달면 상대가 그것을 라이언의 승인·동의로 읽는가'. level0 이 아닌 무거운 행(matchHeavy 가 고르는 행)이 일치했을 때 emoji-layer.mjs 는 approval:false 라고 명시된 행만 그 행 자신으로 내보내고 나머지는 전부 white_check_mark 로 접는다. 판정은 heavy.approval !== false 이며 부호 방향이 핵심이다 — === true 로 뒤집으면 approval 을 안 적은 행과 이 키를 모르는 옛 어휘집이 전부 자기 자신으로 나가고, 그 방향의 실패는 라이언 계정에서 나가는 승인이다. 모르면 접는 쪽이 안전한 쪽이라 키가 없으면 접힌다. 그래서 무거운 행을 새로 넣을 때는 approval 을 반드시 하나 적는다 — 안 적어도 안전한 쪽으로 떨어지지만, 그러면 왜 접히는지가 파일에 안 남는다. 2026-09-02: 이 축이 없을 때는 무거운 행이 전부 접혀서 🙏·🙇 는 어휘집이 정확히 골라낸 뒤에도 구조적으로 슬랙에 나갈 수 없었다. 같은 날 그 둘을 실측한 결과 채택선(정밀도 0.70·표본 8)에 못 미쳐 auto:false 로 내렸다. 그래서 지금 이 어휘집에는 approval:false 이면서 auto:true 인 행이 하나도 없다 — 접힘을 푸는 경로는 살아 있고 그 자리가 비어 있을 뿐이다. auto 와 approval 은 다른 축이라, 나갈 자격이 없다고 해서 approval 값을 지우지는 않는다.",
+  "resolvesPolicy": "self",
+  "_resolvesPolicy_doc": "어떤 리액션이 항목을 처리완료로 만드는가를 워크스페이스 단위로 정하는 값. 값은 셋이다 — none 은 어떤 리액션도 항목을 닫지 않는다는 뜻이고, self 는 라이언 본인이 직접 단 리액션만 닫되 이 데몬이 그 항목에 단 이모지는 빼고 닫는다는 뜻이고, catalog 는 예전 동작으로 행 단위 resolves 가 정하며 어휘집에 없는 이름은 닫는다는 뜻이다. 지금 값은 self 다(2026-09-06). 바닥값 두 줄은 그대로다 — 키가 없는 옛 어휘집은 catalog 로 읽어 예전과 바이트 단위로 같게 돌고, 파일을 못 읽었거나 모르는 값이 적혀 있으면 none 으로 떨어진다(fail-closed). self 의 판정은 두 조건의 논리곱이다: e.user === MY_USER 이고 baseEmoji(리액션) 이 그 항목의 ourAckEmojis(ackEmojis ∪ ackEmoji) 에 없을 것. MY_USER 조건만 거는 것은 회귀다 — 데몬의 리액션이 라이언 토큰(xoxp)으로 나가므로 자기 ack 이모지가 MY_USER 로 되돌아온다. 그것이 2026-09-02 사고 그 자체다. 2026-09-02 Lion cho 결정으로 먼저 none 이 됐다: '어떤 리액션도 항목을 닫지 않는다. 미처리는 손으로 닫는다. 리액션은 봤다는 표시일 뿐이고 미처리 목록에서 항목을 빼는 권한은 사람 손에만 있다.' 사유는 그날 사고가 어느 이모지였느냐가 아니라 의사결정이 필요한 글이 리액션 하나로 처리완료가 되어 목록에서 사라진 것이었기 때문이다. 왜 행마다 resolves:false 를 적는 것으로 끝내지 않는가 — nonResolvingEmojiNames 는 이 파일에 이름이 적힌 행만 알고, 어휘집에 없는 이름은 예전 규칙대로 항목을 닫는다. items.jsonl 1,793건을 실측하면 트리거를 뺀 리액션 이름 89종 중 이 파일에 있는 것은 8종이고 나머지 81종 1,481건이 전부 그 경로로 항목을 닫고 있었다(ez_clap 160 · mustheart 81 · heart 80 · flag-pk 67 · green-heart 64 · tada 62 · joy 57 …). 행 단위 값으로는 89종 중 8종밖에 못 덮으므로 축이 하나 더 필요했다. 어휘집을 못 읽을 때는 none 으로 떨어진다(fail-closed) — 못 읽었다고 자동 처리완료를 되살리면 방금 금지한 해악이 조용히 되돌아온다. 항목이 쌓이는 것은 눈에 보이고 되돌릴 수 있지만 의사결정이 필요한 항목이 사라지는 것은 둘 다 아니다. 이 값은 수집 트리거 규칙과 무관하다 — 👀·🔖·📌 는 policy 가 무엇이든 emojiSafeToPost 가 계속 거부한다(SLKST-8). 2026-09-06 Lion cho 결정으로 그것이 self 로 좁혀졌다. 실측이 근거다 — items.jsonl 2,004줄에서 자동 처리완료 1,083건 중 데몬이 자기 이모지에 걸려 닫은 것이 155건(14.3%), 라이언이 손으로 단 것이 557건(51.4%), 남이 단 것이 371건(34.3%)이었다. 사고는 155건짜리 부분집합인데 none 은 1,083건 전부를 껐고 대체 경로가 없었다. self 는 155건을 계속 막고 557건을 되살리고 371건은 계속 열어 둔다 — 남이 처리했다는 것과 라이언이 처리했다는 것은 다른 사실이다. self 로 되돌리기는 낱말 하나다: 이 값을 none 으로 적으면 2026-09-04~09-06 상태로 정확히 돌아온다.",
+  "pendingEmoji": "mag",
+  "_pendingEmoji_doc": "decision 이 needed 또는 unknown 일 때 다는 이모지의 이름. 👀(eyes) 를 쓰지 못하는 이유는 그것이 이 데몬의 수집 트리거라서다 — 달면 reaction_added 가 재수집으로 돌아온다(emojiSafeToPost 가 코드 차원에서 거부한다). 🔍 는 트리거가 아니고 라이언이 채널에 적은 'taking a look' 과 뜻이 같다. 다른 이모지로 바꾸려면 이 한 줄과 아래 해당 행만 고친다 — 코드에는 이름을 박지 않았다.",
+  "_veto_doc": "이 중 하나라도 걸리면 R2 이상 후보가 된다 (2026-08-31 두 축 구조 이전에는 곧장 글이었다). 후보가 된 뒤에도 신규성 게이트를 통과해야 실제로 글이 되고, 통과하지 못하면 R1 로 내려와 리액션 하나가 나간다. 이 파일이 정하는 것은 어느 이모지를 달지이고, 글이냐 이모지냐는 축 1(emoji-layer.mjs 의 responseGrade)이 정한다 — 상대가 답을 기다리는 메시지에 이모지만 달면 무시로 읽힌다. 단어 하나로 잡지 않고 '보내는 사람이 지금 무엇을 하고 있는가'(묻는다·요청한다·막혀 있다)로 잡는다: 예전 판이 required 라는 낱말만 보고 'I'll proceed with the required actions' 를 요청으로 오판했다. '잘 부탁드립니다' 는 형태는 부탁이지만 실제로는 닫는 인사라 🙇 로 받는다 — 그래서 부탁 패턴에서 '잘' 이 앞에 붙은 경우만 빼 둔다.",
+  "veto": {
+    "maxChars": 240,
+    "patterns": [
+      "[?？]",
+      "\\b(can|could|would|should)\\s+(you|we|i)\\b",
+      "\\b(please|kindly)\\s+(send|share|check|confirm|review|advise|provide|let|update|clarify)\\b",
+      "\\b(let me know|any update|what about|how about|which one|who (is|will)|when (is|will|do|can)|where (is|can)|why (is|are|do|did))\\b",
+      "\\b(i|we|they|you)\\s+(need|needs|require|requires)\\b",
+      "\\b(is|are|was|were|will be)\\s+(required|needed|pending|missing|outstanding)\\b",
+      "\\bwaiting (for|on)\\b",
+      "\\b(blocked|blocker|stuck)\\b",
+      "\\b(not working|doesn'?t work|isn'?t working|failed|failing|broken)\\b",
+      "(해\\s*주(세요|시|실)|(?<!잘)(?<!잘\\s)부탁\\s*(드립니다|합니다|해요)|알려\\s*주|확인\\s*부탁|검토\\s*부탁|가능(할까|한가|한지)|어떻게|언제|누가|어디|왜|무엇|뭔가요|인가요|나요\\b|될까요|주시겠)",
+      "(안\\s*(됩니다|돼요|돼\\b|되는데)|문제(가|는|입니다)|오류|막혀|막혔|대기\\s*중|필요합니다|필요해요|누락)",
+      "\\b(is|are|went|going)\\s+down\\b",
+      "\\b(outage|incident|urgent|asap|emergency|critical)\\b",
+      "(장애|긴급|다운\\s*(됐|됨|되었)|중단\\s*(됐|됨|되었)|급합니다|급해요)"
+    ],
+    "_group_doc": "veto 가 깨끗하면 어휘집 일치가 없어도 ✅ 하나로 끝낸다 — 단체 멘션이든 1:1 이든 바닥값이 R1 이기 때문이다 (emoji-layer.mjs 의 responseGrade). 앞선 판은 단체 멘션에서만 뒤집었고 1:1 은 글이 기본이었다. 그래서 이 veto 목록이 곧 '단체 자리에서 글을 쓰는 조건' 이다 — 답을 기다리게 만드는 신호가 새로 보이면 코드가 아니라 여기에 추가한다. 장애·긴급 패턴은 2026-08-31 티타임 사고 때 같이 넣었다: 'server is down' 은 아무것도 묻지 않지만 ✅ 로 받으면 안 되는 자리다."
+  },
+  "emojis": [
+    {
+      "name": "man-bowing",
+      "char": "🙇‍♂️",
+      "label": "겸손한 부탁",
+      "means": "엎드려 절하는 것. 윗사람에게 또는 '정말로 잘 부탁합니다' 라고 겸손하게 말할 때 쓴다.",
+      "use": "상대가 나를 위해 무엇을 해 주기로 했고, 그것을 겸손하게 부탁하는 자리.",
+      "auto": false,
+      "approval": false,
+      "resolves": false,
+      "decision": "not-needed",
+      "autoNote": "2026-09-02 auto:false — 3개월 clean 3,174건에 대고 잰 이 행의 정밀도가 0.07(걸린 14건 중 1건)이고 채택선은 0.70·표본 8건이다. 걸린 14건에서 라이언이 그 자리에 실제로 단 것은 🫡 7 · ✅ 4 이고 🙇 는 1이었다. 뜻은 정본으로 남기고 자동으로는 달지 않는다 — 뜻을 아는 것과 그 자리를 찾을 수 있는 것은 다른 문제이고, 후자가 안 되면 어휘집에 넣지 않고 '못 잡는다' 로 적는다(G4). 🙌 와 같은 처리다. approval:false 는 지우지 않고 그대로 둔다: 어느 쪽으로 접히는지(approval)와 나갈 자격이 있는지(auto)는 다른 축이고, auto 가 열리는 날 이 값을 다시 알아내야 하는 상태로 두지 않는다. 이름 교정도 여기 같이 남긴다 — 이 행은 bow 🙇 로 적혀 있었는데 그 이름은 라이언이 3개월간 0번 썼고 실제로 쓴 이름은 man-bowing 🙇‍♂️ 로 43번이다(emoji-corpus.jsonl 실측). 이름이 다르면 reactions.add 가 invalid_name 으로 실패한다. emoji.list 로는 확인하지 못했다 — 이 워크스페이스의 두 토큰 모두 그 스코프가 없다. 대신 근거를 반대편에서 잡았다: reactions.list 가 돌려준 리액션 이름이 man-bowing 이고 그것이 43번 실제로 달려 있다. 슬랙은 없는 이름을 거부하므로 43번의 성공 자체가 이 이름이 실재한다는 직접 증거다. auto 를 다시 true 로 올리려면 위 채택선을 먼저 넘겨야 한다.",
+      "match": "(잘\\s*부탁|잘부탁|말씀\\s*드립니다|송구|죄송)|\\b(much appreciated|i really appreciate|humbly ask)\\b"
+    },
+    {
+      "name": "pray",
+      "char": "🙏",
+      "label": "기원",
+      "means": "내가 해 줄 수 있는 것은 없지만 잘 되기를 기도한다는 뜻.",
+      "use": "상대가 어려운 일을 앞두고 있는데 내가 손을 보탤 자리가 없을 때.",
+      "auto": false,
+      "approval": false,
+      "resolves": false,
+      "decision": "not-needed",
+      "autoNote": "2026-09-02 auto:false — 3개월 clean 3,174건에서 이 정규식에 걸린 것이 2건뿐이고 그 2건 다 라이언은 🫡 를 달았다. 정밀도 0.00 이며 표본 2 는 채택선의 표본 하한 8 에도 못 미친다 — 정밀도를 논하기 전에 이미 자격이 없다. 라이언이 이름을 대어 살려 달라고 한 이모지지만 데몬은 그 자리를 못 고른다. 뜻은 정본으로 남기고 자동으로는 달지 않는다(G4, 🙌·🙇 와 같은 처리). approval:false 는 지우지 않고 그대로 둔다: 접히는 방향과 나갈 자격은 다른 축이다. auto 를 다시 true 로 올리려면 정밀도 0.70·표본 8 을 먼저 넘겨야 한다.",
+      "match": "(화이팅|파이팅|잘\\s*되(길|기를)|응원)|\\b(good luck|wish (you|us) luck|fingers crossed|hope it goes well)\\b"
+    },
+    {
+      "name": "ok_hand",
+      "char": "👌",
+      "label": "승인",
+      "means": "상대가 YES/NO 를 물었을 때 메시지 없이 이모지만으로 OK 를 주는 것. 상대는 이것을 'APPROVE 했다' 로 읽는다.",
+      "use": "허가·승인만 필요한 자리. 설명이 붙으면 이 이모지가 아니라 글이다.",
+      "auto": true,
+      "approval": true,
+      "resolves": false,
+      "decision": "not-needed",
+      "match": "\\b(approved|approve it|go ahead|please proceed|proceed as planned|permission granted)\\b|(승인(합니다|했습니다|드립니다)|진행하셔도|그렇게\\s*하(세요|시죠))"
+    },
+    {
+      "name": "saluting_face",
+      "char": "🫡",
+      "label": "에이전트 대필 표시",
+      "means": "이 글은 라이언이 아니라 라이언의 에이전트가 대신 썼다는 발신자 표시. 2026-09-02 라이언 확정으로 뜻이 바뀌었다 — 예전 뜻(경례·존중)은 폐기했다.",
+      "use": "들어온 글에 다는 리액션이 아니라 나간 글에 다는 표시다. 이 어휘집의 축(들어온 글에 무엇을 달까)에 속하지 않는다.",
+      "auto": false,
+      "level0": false,
+      "resolves": false,
+      "autoNote": "2026-09-02 auto:false — 사유가 🙇·🙌 와 다르다. 저 둘은 정밀도가 채택선(0.70·표본 8)에 못 미쳐서 껐고, 이 행은 정밀도와 무관하게 뜻이 바뀌어 이 축의 이모지가 아니게 되어 껐다. 그러므로 정밀도가 아무리 올라도 다시 켜면 안 된다 — 축이 다르다. 규칙 본문은 공용 레이어 ~/.must-aios/sources/docs/slack-layers/layer-2-attribution.md 에 있고, 그 문서가 '이 값을 본문에서 추론하지 않는다. 발신하는 쪽은 자기가 그 글을 썼는지 아닌지를 이미 안다' 를 못박았다. 어휘집은 본문에서 추론하는 자리이므로 이 이모지를 다룰 자격이 없다. 뜻 두 개를 한 이모지에 두면 2026-09-02 에 동료가 ✅ 를 두고 채널에서 '그건 라이언의 AI 에이전트가 단 것이고 자동 승인이 아니다' 를 대신 설명해야 했던 일이 🫡 로 반복된다. match 정규식은 지웠다 — 남겨 두면 auto 를 다시 켜는 순간 옛 뜻으로 발화한다."
+    },
+    {
+      "name": "+1",
+      "char": "👍",
+      "label": "동의",
+      "means": "동의는 하는데 리스펙 하는 정도는 아니다. '좋아, 그 정도' 인 자리. 🫡 보다 약하다.",
+      "use": "상대의 제안이나 판단에 동의만 표할 때.",
+      "auto": true,
+      "approval": true,
+      "resolves": false,
+      "decision": "not-needed",
+      "match": "\\b(sounds good|looks good|lgtm|agreed|i agree|that works|makes sense|fine by me|no objection)\\b|(좋습니다|좋아요|동의합니다|그게\\s*맞|맞습니다|괜찮습니다|반대\\s*없)"
+    },
+    {
+      "name": "white_check_mark",
+      "char": "✅",
+      "label": "확인만 함",
+      "means": "체크는 했다는 뜻. 납득한 것도 아니고 동의한 것도 아니고 응원하는 것도 아니다 — 그냥 체크만 했다.",
+      "use": "상대가 알렸고 내가 읽었다는 사실만 남기면 되는 자리. 이모지 레이어의 기본값이다.",
+      "auto": true,
+      "level0": true,
+      "resolves": false,
+      "decision": "not-needed",
+      "match": "\\b(understood|noted|acknowledged|got it|roger|received|thank you|thanks|ty)\\b|(확인했습니다|확인됐습니다|알겠습니다|이해했습니다|넵|넹|감사합니다|고맙습니다|수고하셨습니다|수고하세요)"
+    },
+    {
+      "name": "mag",
+      "char": "🔍",
+      "label": "보는 중",
+      "means": "살펴보고 있다. 승인이 아니다.",
+      "use": "라이언의 판단이 필요하거나(needed) 무엇이 필요한지 아직 모르는(unknown) 자리. 읽고 있다는 사실만 남기고 항목은 미처리에 그대로 둔다.",
+      "auto": true,
+      "level0": true,
+      "resolves": false,
+      "decision": "needed",
+      "autoNote": "match 가 없다. 어휘집 일치로 골라지는 행이 아니라 decision 축이 needed·unknown 일 때만 골라지는 행이다 — 정규식을 붙이면 '보는 중' 이라는 말이 본문에 있다는 이유로 달리게 된다."
+    },
+    {
+      "name": "eyes",
+      "char": "👀",
+      "label": "보는 중",
+      "means": "살펴보고 있다, 내 답변 줄게. 지금 보고 있는 중이라는 뜻.",
+      "use": "사람이 직접 달 때만 쓴다.",
+      "auto": false,
+      "resolves": false,
+      "autoNote": "이 데몬 자신의 수집 트리거 이모지다(EMOJIS). 봇이 달면 같은 항목이 다시 수집돼 되돌아온다. 그리고 이 뜻은 글 선응답의 첫 줄('확인하고 있습니다')이 이미 하고 있다."
+    },
+    {
+      "name": "raised_hands",
+      "char": "🙌",
+      "label": "환호",
+      "means": "환호 · 축하. 잘 됐다는 것을 같이 기뻐한다는 뜻이고, 승인도 동의도 아니다.",
+      "use": "상대가 무언가를 끝냈거나 좋은 소식을 알렸을 때 축하만 표하는 자리.",
+      "auto": false,
+      "approval": false,
+      "resolves": false,
+      "autoNote": "2026-09-02 사실 교정 — 이 행은 means 가 '잘 안 쓴다' 였는데 실측이 반대였다. 3개월 clean 표본 123건으로 👍(+1) 121건보다 많다(emoji-corpus.jsonl). 그래서 뜻은 이제 안다. 그런데도 auto:false 로 두는 이유는 뜻을 몰라서가 아니라 자리를 못 찾아서다 — 이 이모지를 겨냥한 정규식 후보의 실측 정밀도가 0.06 이고 채택선은 0.70(표본 8건 이상)이다. 결정적 규칙으로 잡히지 않는 것은 어휘집에 넣지 않고 '못 잡는다' 로 적는다는 규칙(G4)을 그대로 적용했다. approval:false 는 auto 가 true 로 바뀌는 날을 위해 미리 적어 둔 것이다 — 환호에는 승인 뜻이 없다."
+    },
+    {
+      "name": "heavy_check_mark",
+      "char": "✔️",
+      "label": "회색 체크",
+      "means": "✅ 와 뜻이 겹친다.",
+      "use": "-",
+      "auto": false,
+      "resolves": false,
+      "autoNote": "✅ 와 구별되는 뜻이 확정되지 않았다 — 자동으로는 ✅ 하나만 쓴다."
+    }
+  ]
+}

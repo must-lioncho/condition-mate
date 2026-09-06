@@ -92,9 +92,57 @@ final class AudioEngine {
     var muted = false {
         didSet { applyVolume() }
     }
+
+    // 받아쓰기 덕킹. superwhisper 가 녹음을 시작하면 음악을 끄는 대신 5% 로 눌러 둔다 —
+    // 목소리는 또렷해지면서도 "음악이 끊겼다"는 느낌은 남지 않는다. `muted` 와는 다른 축이다:
+    // muted 는 사용자의 의도(⌘M)이거나 웹뷰가 출력을 가져간 상태라 오래 간다면, 이건 몇 초짜리
+    // 일시적 억제다. 서로를 덮어쓰지 않고 effectiveVolume 에서 합쳐지며, 더 조용한 쪽이 이긴다.
+    // 켜고 끌 때 곧바로 값을 바꾸지 않고 램프를 태우는 이유는 계단식 볼륨 변화가 클릭처럼
+    // 들리기 때문 — 내려갈 때는 빠르게(말이 이미 시작됐다), 올라올 때는 느긋하게.
+    var voiceDucked = false {
+        didSet {
+            guard oldValue != voiceDucked else { return }
+            // 효과음 덕킹(duck())이 돌고 있으면 그 타이머가 볼륨을 되돌려 놓으므로 먼저 끊는다.
+            duckTimer?.invalidate(); duckTimer = nil
+            rampVolume(over: voiceDucked ? 0.25 : 0.6)
+        }
+    }
+    private let voiceDuckDepth: Float = 0.05
+    private var voiceTimer: Timer?
+
+    // 지금 이 순간 스피커로 나가야 할 볼륨. 볼륨을 정하는 모든 경로가 여기 하나를 거치므로
+    // 뮤트·일시정지·덕킹이 어떤 순서로 겹쳐도 결과가 갈라지지 않는다.
+    private var effectiveVolume: Float {
+        if isPaused || muted { return 0 }
+        return voiceDucked ? targetVolume * voiceDuckDepth : targetVolume
+    }
+
     private func applyVolume() {
-        current?.volume = (isPaused || muted) ? 0 : targetVolume
+        // 즉시 확정하는 경로(뮤트 토글, 타깃 볼륨 변경)라 진행 중인 램프보다 우선한다.
+        voiceTimer?.invalidate(); voiceTimer = nil
+        current?.volume = effectiveVolume
         if isPaused || muted { outgoing?.volume = 0 }
+    }
+
+    // 현재 볼륨에서 effectiveVolume 까지 부드럽게 이동. 도중에 뮤트·트랙 전환이 끼어들면
+    // 그쪽이 applyVolume/startCrossfade 로 램프를 끊고 자기 값을 쓴다.
+    private func rampVolume(over duration: TimeInterval) {
+        voiceTimer?.invalidate()
+        guard let player = current else { return }
+        let from = player.volume
+        let to = effectiveVolume
+        guard abs(to - from) > 0.001 else { player.volume = to; return }
+        let start = Date()
+        voiceTimer = Timer.scheduledTimer(withTimeInterval: fadeStep, repeats: true) { [weak self] timer in
+            guard let self = self, let p = self.current else { timer.invalidate(); return }
+            let prog = min(1.0, Date().timeIntervalSince(start) / duration)
+            p.volume = from + (to - from) * Float(prog)
+            if prog >= 1.0 {
+                timer.invalidate(); self.voiceTimer = nil
+                // 램프가 도는 사이 타깃이 움직였을 수 있으니 마지막엔 현재 값으로 확정한다.
+                p.volume = self.effectiveVolume
+            }
+        }
     }
 
     private let fadeDuration: TimeInterval = 2.0
@@ -131,13 +179,17 @@ final class AudioEngine {
 
     private func startCrossfade() {
         fadeTimer?.invalidate()
+        // 크로스페이드가 매 틱 볼륨을 직접 쓰므로 받아쓰기 램프와 겹치면 서로 값을 덮어쓴다.
+        // 여기서 램프를 끊고, 대신 아래 틱이 effectiveVolume 을 천장으로 써서 덕킹을 이어받는다.
+        voiceTimer?.invalidate(); voiceTimer = nil
         var elapsed: TimeInterval = 0
         fadeTimer = Timer.scheduledTimer(withTimeInterval: fadeStep, repeats: true) { [weak self] timer in
             guard let self = self else { timer.invalidate(); return }
             elapsed += self.fadeStep
             let progress = min(1.0, elapsed / self.fadeDuration)
-            self.current?.volume = self.muted ? 0 : Float(progress) * self.targetVolume
-            self.outgoing?.volume = self.muted ? 0 : Float(1 - progress) * self.targetVolume
+            let ceiling = self.effectiveVolume
+            self.current?.volume = Float(progress) * ceiling
+            self.outgoing?.volume = Float(1 - progress) * ceiling
             if progress >= 1.0 {
                 timer.invalidate()
                 self.fadeTimer = nil
@@ -158,7 +210,7 @@ final class AudioEngine {
     func resume() {
         guard let player = current else { return }
         isPaused = false
-        player.volume = muted ? 0 : targetVolume
+        player.volume = effectiveVolume
         player.play()
         // Resume continues the same track — reopen a segment but do not count a new play.
         if let u = currentURL { beginSegment(u.lastPathComponent, currentTitle ?? u.lastPathComponent) }
@@ -168,8 +220,10 @@ final class AudioEngine {
     // ka-ching) cuts through, then ramp back to targetVolume. Hold low for `hold`,
     // then release over `release`. No-op while paused. Self-correcting: volume always
     // ends at targetVolume even if a crossfade was running.
+    // 받아쓰기 덕킹 중에는 건너뛴다 — 이미 더 낮게 눌려 있고, 이 타이머가 끝나면서
+    // 볼륨을 targetVolume 으로 되돌려 놓으면 말하는 도중에 음악이 되살아난다.
     func duck(depth: Float = 0.22, hold: TimeInterval = 0.55, release: TimeInterval = 0.5) {
-        guard !isPaused, !muted, let player = current else { return }
+        guard !isPaused, !muted, !voiceDucked, let player = current else { return }
         duckTimer?.invalidate()
         let low = targetVolume * max(0, min(1, depth))
         player.volume = low
@@ -226,6 +280,7 @@ final class AudioEngine {
         endSegment()               // flush the final segment before going silent
         fadeTimer?.invalidate(); fadeTimer = nil
         duckTimer?.invalidate(); duckTimer = nil
+        voiceTimer?.invalidate(); voiceTimer = nil
         current?.stop(); current = nil
         outgoing?.stop(); outgoing = nil
         currentURL = nil

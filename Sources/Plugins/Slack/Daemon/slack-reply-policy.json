@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "channels": {
+    "C03GJV11UTV": {
+      "name": "chat-random-global",
+      "mode": "no-reply",
+      "reason": "잡담 채널 자동응답은 대화에 혼선을 만듦"
+    }
+  },
+  "people": {
+    "U03H8P77THN": {
+      "name": "Ju Hun Cha (차주헌)",
+      "mode": "no-reply",
+      "reason": "대표님에게 자동응답을 보내면 혼동을 만들 수 있음"
+    }
+  }
+}

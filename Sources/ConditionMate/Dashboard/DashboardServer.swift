@@ -143,10 +143,12 @@ final class DashboardServer {
 
         l.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
+            AppLog.log("dashboard listener state -> \(state)")
             switch state {
             case .ready:
                 if let p = l.port?.rawValue {
                     self.port = p
+                    AppLog.log("dashboard listener bound to port \(p)")
                     // Publish the port so external tooling — notably the Claude Code
                     // session hooks — can reach the loopback API without guessing.
                     // Plain text, single integer, overwritten each launch.
@@ -156,7 +158,8 @@ final class DashboardServer {
                     self.onReady?(p)
                     self.onReady = nil
                 }
-            case .failed:
+            case .failed(let err):
+                AppLog.log("dashboard listener failed: \(err)")
                 // The preferred port raced into use between the probe and the bind —
                 // fall back to a dynamic port rather than dying without a server.
                 if wanted != nil {
@@ -400,16 +403,32 @@ final class DashboardServer {
                 send(conn, status: "404 Not Found", contentType: "text/plain; charset=utf-8",
                      body: Data("not found".utf8), extra: "")
             }
+        } else if method == "GET" && path.hasPrefix("/api/orchestration") {
+            // 은퇴한 경로. 페이지(/orchestration)에는 이정표를 남겼지만 API 에는 남기지 않는다 —
+            // 호출자가 저장소 안에 둘뿐이고 둘 다 같은 변경에서 새 경로로 고쳤기 때문이다.
+            // 이 분기가 명시적으로 필요한 이유: 이 서버의 마지막 else 는 매칭 안 된 경로 전부에
+            // 대시보드 HTML 을 200 으로 돌려준다. 그대로 두면 "없어진 API" 가 404 가 아니라
+            // 200 + HTML 로 보여서, 호출자가 JSON 파싱 실패로만 알게 된다.
+            send(conn, status: "404 Not Found", contentType: "text/plain; charset=utf-8",
+                 body: Data("gone — use /api/loop-engineering".utf8), extra: "")
         } else if method == "GET" && (path.hasPrefix("/api/goal/chat") || path.hasPrefix("/api/goal/definition")
                                       || path.hasPrefix("/api/goal/session/history")
                                       || path.hasPrefix("/api/goal/sessions") || path.hasPrefix("/api/sessions/recent")
                                       || path.hasPrefix("/api/cli/sessions") || path.hasPrefix("/api/skills")
                                       || path.hasPrefix("/api/plugins") || path.hasPrefix("/api/agents")
+                                      || path.hasPrefix("/api/loop-engineering")
+                                      // 이슈 목록 피드. 이 목록에 없으면 마지막 else 가 대시보드
+                                      // HTML 을 200 으로 돌려줘서 JSON 대신 HTML 이 온다 —
+                                      // 404 가 아니라 조용히 틀린 것이 오므로 위 /api/orchestration
+                                      // 주석의 함정과 같은 자리다.
+                                      || path.hasPrefix("/api/issues")
                                       || path.hasPrefix("/api/integrations")
                                       || path.hasPrefix("/history.json") || path.hasPrefix("/tokens.json")
                                       || path.hasPrefix("/tokens-sessions.json")
                                       || path.hasPrefix("/tokens-detail.json")
+                                      || path.hasPrefix("/tokens-accounts.json")
                                       || path.hasPrefix("/workers.json")
+                                      || path.hasPrefix("/device-cron.json")
                                       || path.hasPrefix("/api/bgm/list") || path.hasPrefix("/api/bgm/now")
                                       || path.hasPrefix("/api/bgm/stats") || path.hasPrefix("/api/bgm/plan")
                                       || path.hasPrefix("/api/bgm/slot-scores")
@@ -433,6 +452,7 @@ final class DashboardServer {
                                       || path.hasPrefix("/api/hero")
                                       || path.hasPrefix("/api/slack/items")
                                       || path.hasPrefix("/api/slack/actions")
+                                      || path.hasPrefix("/api/slack/emoji")
                                       || path.hasPrefix("/api/actions")) {
             // Per-goal chat, the raw core/detail definition text, the goal's linked-session
             // list, the recent-session picker feed (all keyed by ?seq=), and the 히스토리
@@ -452,7 +472,7 @@ final class DashboardServer {
         } else if path.hasPrefix("/data.json") {
             send(conn, status: "200 OK", contentType: "application/json; charset=utf-8",
                  body: Data(self.data().utf8), extra: "")
-        } else if method == "GET" && (path.hasPrefix("/transcript") || path.hasPrefix("/breakdown") || path.hasPrefix("/worker") || path.hasPrefix("/cron") || path.hasPrefix("/goal") || path.hasPrefix("/bgm-player") || path.hasPrefix("/bgm-plan") || path.hasPrefix("/bgm-timeline-test") || path.hasPrefix("/session-continue-test") || path.hasPrefix("/lounge-break-test") || path.hasPrefix("/equipment") || path.hasPrefix("/slack-translate")) {
+        } else if method == "GET" && (path.hasPrefix("/transcript") || path.hasPrefix("/breakdown") || path.hasPrefix("/worker") || path.hasPrefix("/device-cron") || path.hasPrefix("/cron") || path.hasPrefix("/goal") || path.hasPrefix("/bgm-player") || path.hasPrefix("/bgm-plan") || path.hasPrefix("/bgm-timeline-test") || path.hasPrefix("/session-continue-test") || path.hasPrefix("/lounge-break-test") || path.hasPrefix("/equipment") || path.hasPrefix("/slack-translate") || path.hasPrefix("/agents") || path.hasPrefix("/loop-engineering") || path.hasPrefix("/orchestration") || path.hasPrefix("/issues")) {
             if let pageHTML = self.page(path) {
                 send(conn, status: "200 OK", contentType: "text/html; charset=utf-8",
                      body: Data(pageHTML.utf8), extra: "")

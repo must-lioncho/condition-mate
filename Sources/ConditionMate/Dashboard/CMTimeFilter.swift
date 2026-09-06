@@ -15,6 +15,7 @@ import Foundation
 //   inputToEpoch(v) -> sec                'YYYY-MM-DDTHH:mm' → epoch초 (빈 값=0)
 //   epochToInput(sec) -> str              epoch초 → datetime-local 값 (0/없음='')
 //   hhmm(sec) / hourOf(sec) / weekdayKo(Date|ms)
+//   isoDisp(str,len,sep) -> str          저장된 ISO 문자열을 표시 tz 벽시계로 (자르기 아님)
 //   presetRange(key) -> {start,end,preset}
 //   mount(host, opts) -> controller       opts: {presets:[keys], auto:Bool, custom:Bool,
 //                                                 initial:key, onChange:({mode,preset,start,end})=>…}
@@ -74,6 +75,32 @@ window.CMTimeFilter = window.CMTimeFilter || (function(){
   function hourOf(sec){ const ms=sec*1000, w=ms+offsetMs(ms);
     return Math.floor((((w%DAYMS)+DAYMS)%DAYMS)/3600000); }
   function weekdayKo(x){ return ['일','월','화','수','목','금','토'][parts(x).wd]; }
+  // 저장된 ISO 시각 문자열 → 표시 타임존의 벽시계 문자열.
+  //
+  // 왜 있는가 (2026-09-06): 대시보드 여러 자리가 저장된 ISO 문자열을
+  // `.replace('T',' ').slice(0,16)` 으로 잘라 그대로 찍고 있었다. 그 값은 UTC(`…Z`)라서
+  // 이슈 화면의 세션 줄이 KST 16:31 인 세션을 `2026-09-06 07:31` 로 보여줬다.
+  // **자르기는 변환이 아니다.** 여기 한 벌만 두고 그 자리들이 전부 이것을 부른다.
+  //
+  // 오프셋(`Z` · `±HH:MM` · `±HHMM`)이 붙은 값만 변환한다. 오프셋이 없는 값은 어느 지역의
+  // 벽시계인지 알 수 없으므로 적힌 그대로 둔다 — 없는 정보를 UTC 라고 지어내면 옛 기록이
+  // 조용히 다른 시각으로 바뀐다. 이번 작업은 기존 데이터를 손대지 않는 것이 조건이다.
+  //
+  // len: 10='YYYY-MM-DD' · 16='YYYY-MM-DD HH:mm' · 19='…:ss'  ·  sep: 날짜와 시각 사이(기본 ' ')
+  function isoDisp(v, len, sep){
+    var s=String(v==null?'':v).trim();
+    if(!s) return '';
+    len=len||16; sep=(sep===undefined)?' ':sep;
+    function cut(x){ return x.replace('T',sep).slice(0,len); }
+    if(!/([Zz]|[+-]\d{2}:?\d{2})$/.test(s)) return cut(s);
+    // `+0530` 처럼 콜론이 없는 오프셋은 Date.parse 가 엔진마다 갈린다. 먼저 `+05:30` 으로 편다.
+    var t=Date.parse(s.replace(/([+-]\d{2})(\d{2})$/,'$1:$2'));
+    if(isNaN(t)) return cut(s);
+    var p=parts(t), d=p.y+'-'+pad(p.mo)+'-'+pad(p.d);
+    if(len<=10) return d;
+    var out=d+sep+pad(p.h)+':'+pad(p.mi);
+    return (len>=19) ? (out+':'+pad(p.s)) : out;
+  }
   function dayStr(d){ const p=parts(d); return p.y+'-'+pad(p.mo)+'-'+pad(p.d); }
   function parseDay(s){ const a=s.split('-'); return new Date(fromParts(+a[0],+a[1],+a[2])); }
   function daysBetween(a,b){ return Math.round((parseDay(b)-parseDay(a))/DAYMS); }
@@ -164,7 +191,7 @@ window.CMTimeFilter = window.CMTimeFilter || (function(){
   }
 
   return { dayStr, parseDay, daysBetween, tzLabel, presetRange, mount, LABELS,
-           parts, fromParts, inputToEpoch, epochToInput, hhmm, hourOf, weekdayKo };
+           parts, fromParts, inputToEpoch, epochToInput, hhmm, hourOf, weekdayKo, isoDisp };
 })();
 """#
 

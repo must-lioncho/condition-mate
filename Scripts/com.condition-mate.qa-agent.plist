@@ -23,7 +23,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/lioncho/Work/departtment_service/projects/condition-mate/Scripts/qa-scan.sh</string>
+        <string>/Users/lioncho/Work/lion_work/organization/lion/lion-condition-mate/Scripts/qa-scan.sh</string>
     </array>
 
     <!-- BASE tick: wake every 60s. The ACTUAL scan period is decided by qa-scan.sh's

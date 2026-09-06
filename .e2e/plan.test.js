@@ -1,9 +1,20 @@
 // E2E for the rail nav AFTER the 계획(plan) menu removal (2026-07-19), bound to the REAL
 // sources (SessionRail.swift, AppDelegate.swift). Asserts:
-//   1) the rail nav is a 3×3 set in flow order 대화→스킬→크론→위임→팀위임→작업→메모장→미정×2 —
-//      the plan item, its overlay (#cmPlanOverlay) and cmNav/cmNavReflect plan branches are
-//      GONE; the two 미정 slots are inert (class "off", no onclick). (메모장 filled the
-//      first reserved slot 2026-07-21 — see memo.test.js for its own coverage.)
+//   1) the rail nav is a 3-column grid of TWELVE anchors in flow order
+//      대화→플러그인→크론→위임→팀위임→작업→번역→에이전트→루프 엔지니어링→이슈 + two
+//      reserved cells — the plan item, its overlay (#cmPlanOverlay) and cmNav/cmNavReflect
+//      plan branches are GONE.
+//      2026-09-05: 이슈 (/issues) took a TENTH live slot, which opens a fourth ROW, and the
+//      two leftover cells of that row wear .cmrail-item.off. The column count MUST stay at
+//      3 — going to 4 columns shrinks the label box from 60px to 42px and re-breaks
+//      루프 엔지니어링 / 에이전트 / 플러그인. So this file asserts BOTH numbers: 12 anchors
+//      matched by the regex, of which exactly the last two are inert.
+//      The previous판 asserted "NO slot is inert any more" (true only while the grid was
+//      exactly 3×3). That assertion is inverted back here: the regression to catch now is a
+//      LIVE slot going inert, or the reserved pair growing/shrinking.
+//      The label regex must accept class="cmr-lbl wrap2" as well as bare class="cmr-lbl":
+//      루프 엔지니어링 is the one label that wraps to two lines, and pinning the regex to
+//      the bare class silently dropped the ninth item (the test read 8 of 9 for a day).
 //   2) the goal page's sendTeamKick still consumes a stashed cmPlanKick with preset:'plan'
 //      (legacy "계획:" goals keep working) — and team kick wins over a stale plan kick
 //   3) server contract stays for legacy sessions: /api/plan/delegate mints a "계획:" goal;
@@ -43,19 +54,38 @@ function check(name, got, want) {
 const tick = () => new Promise(r => setTimeout(r, 0));
 
 async function run() {
-  // 1) nav grid: nine items, NO plan item, 미정×3 inert.
+  // 1) nav grid: nine items, NO plan item, no reserved 미정 slot left.
   const nav = (SR.match(/<nav class="cmrail-nav"[\s\S]*?<\/nav>/) || [''])[0];
-  const items = [...nav.matchAll(/<a class="(cmrail-item[^"]*)" data-nav="([^"]+)"([^>]*)>[\s\S]*?<span class="cmr-lbl">([^<]+)<\/span><\/a>/g)]
-    .map(m => ({ cls: m[1], nav: m[2], attrs: m[3], lbl: m[4] }));
-  check('nav has 9 items', items.length, 9);
-  check('nav flow order (plan removed)', items.map(x => x.nav),
-        ['chat', 'skills', 'cron', 'delegate', 'team', 'work', 'memo', 'tbd2', 'tbd3']);
+  // class="(cmr-lbl[^"]*)" — NOT the bare class="cmr-lbl". The ninth item carries
+  // "cmr-lbl wrap2" (루프 엔지니어링 wraps to two lines) and the narrow regex missed it.
+  const items = [...nav.matchAll(/<a class="(cmrail-item[^"]*)" data-nav="([^"]+)"([^>]*)>[\s\S]*?<span class="(cmr-lbl[^"]*)">([^<]+)<\/span><\/a>/g)]
+    .map(m => ({ cls: m[1], nav: m[2], attrs: m[3], lblCls: m[4], lbl: m[5] }));
+  check('nav has 12 anchors (10 live + 2 reserved)', items.length, 12);
+  check('nav flow order (plan removed, 이슈 tenth)', items.map(x => x.nav),
+        ['chat', 'skills', 'cron', 'delegate', 'team', 'work', 'slack', 'agents', 'loop',
+         'issues', 'reserved1', 'reserved2']);
   check('nav labels', items.map(x => x.lbl),
-        ['대화', '스킬', '크론', '위임', '팀위임', '작업', '메모장', '미정', '미정']);
-  check('미정 slots are inert (off, no onclick)',
-        items.slice(7).every(x => x.cls.includes('off') && !x.attrs.includes('onclick')), true);
-  check('active items are clickable', items.slice(0, 7).every(x => x.attrs.includes("cmNav('" + x.nav + "')")), true);
+        ['대화', '플러그인', '크론', '위임', '팀위임', '작업', '번역', '에이전트', '루프 엔지니어링',
+         '이슈', '미정', '미정']);
+  const live = items.filter(x => !x.cls.includes('off'));
+  const off = items.filter(x => x.cls.includes('off'));
+  check('exactly ten live slots', live.length, 10);
+  check('the two inert slots are the last two', items.slice(10).every(x => x.cls.includes('off')), true);
+  check('inert slots carry no cmNav call', off.every(x => !x.attrs.includes('cmNav(')), true);
+  check('live items are clickable', live.every(x => x.attrs.includes("cmNav('" + x.nav + "')")), true);
   check('.off style exists', SR.includes('.cmrail-item.off{'), true);
+  // The grid must stay 3 columns. 4 columns would cut the text box from 60px to 42px and
+  // re-break 루프 엔지니어링 / 에이전트 / 플러그인 — the fourth ROW is what carries 이슈.
+  check('rail grid stays 3 columns',
+        /\.cmrail-nav\{[^}]*grid-template-columns:repeat\(3,1fr\)/.test(SR), true);
+  // 루프 엔지니어링 must break at the space (루프 / 엔지니어링), never mid-word. keep-all is
+  // what makes that true; break-all yields 루프 엔지니 / 어링. See SPEC LOOP-1.
+  check('ninth label wraps via wrap2', items[8].lblCls, 'cmr-lbl wrap2');
+  check('wrap2 keeps words whole (keep-all, not break-all)',
+        /\.cmr-lbl\.wrap2\{[^}]*word-break:keep-all/.test(SR), true);
+  // The ninth slot navigates to the renamed page and lights up from CM_PAGE='loop'.
+  check('loop slot navigates to /loop-engineering', SR.includes("location.href='/loop-engineering'"), true);
+  check('cmNavReflect lights the loop slot', SR.includes("window.CM_PAGE==='loop'"), true);
 
   // plan UI is gone: no overlay markup, no open/submit wiring, no nav branches.
   check('plan overlay markup removed', SR.includes('id="cmPlanOverlay"'), false);

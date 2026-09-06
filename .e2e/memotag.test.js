@@ -60,8 +60,19 @@ eq('칸 키 처리보다 목록이 먼저다',
   PAD.indexOf('if(sugKey(ev)) return;') <
   PAD.indexOf("if(((ev.metaKey||ev.ctrlKey) && ev.key==='Enter') || ev.key==='Escape')"), true);
 eq('칸이 접히면 목록도 닫힌다', /if\(sugRow===row\) sugClose\(\);/.test(PAD), true);
-eq('스크롤·리사이즈에 목록이 따라 떠 있지 않는다',
-  /addEventListener\('scroll', function\(\)\{ closeMenu\(\); sugClose\(\); \}, true\)/.test(PAD), true);
+// 뿌리 D — 이 단정은 핸들러 '본문 전체' 를 정규식으로 고정하고 있었다. 2026-08 에 같은
+// 핸들러에 tipHide() 한 줄이 더해지자(툴팁도 같이 닫는다) 약속한 행동은 그대로 지켜지는데
+// 시험만 붉어졌다. 소스 문자열을 통째로 고정하면 기능 추가가 곧 시험 실패가 된다.
+// 여기서 지킬 것은 "스크롤·리사이즈에 후보 목록과 메뉴를 닫는다" 뿐이니 그것만 본다.
+const handlerBody = (evt) => {
+  const m = PAD.match(new RegExp("addEventListener\\('" + evt + "', function\\(\\)\\{([^{}]*)\\}"));
+  return m ? m[1] : '';
+};
+['scroll', 'resize'].forEach((evt) => {
+  const body = handlerBody(evt);
+  eq(evt + ' 에 후보 목록이 따라 떠 있지 않는다', /sugClose\(\);/.test(body), true);
+  eq(evt + ' 에 메뉴도 같이 닫힌다', /closeMenu\(\);/.test(body), true);
+});
 eq('바깥 클릭은 닫되 자기 칸 클릭은 살려 둔다',
   /if\(sugEl && ev\.target!==sugInp && !sugEl\.contains\(ev\.target\)\) sugClose\(\);/.test(PAD), true);
 

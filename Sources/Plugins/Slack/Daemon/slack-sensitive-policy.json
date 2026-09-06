@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "_why": "자동 응답을 아예 만들지 않는 자리. 2026-08-31 PIP 스레드 사고 뒤에 생겼다. 응답 정책(slack-reply-policy.json)은 채널 ID 거부 목록이라, 어제 만들어진 그룹 DM 처럼 ID 를 미리 알 수 없는 자리를 담을 방법이 없다. 그래서 자리가 아니라 주제로 판정한다. patterns 는 대소문자를 구분하고 patternsI 는 구분하지 않는다. except 는 매치된 그 자리가 예외 표현 안에 들어 있을 때만 그 매치를 버린다.",
+  "domains": {
+    "hr": {
+      "label": "인사 · 고용상태 · 징계",
+      "why": "사람의 신분이 걸린 자리다. 기계가 먼저 말해서 얻을 것이 없고, 잘못 말했을 때의 비용이 법적으로 실재한다. 이 스레드의 답은 사람이 쓴다.",
+      "patterns": ["\\bPIP\\b"],
+      "patternsI": [
+        "performance\\s+improvement\\s+(plan|program|notice)",
+        "notice\\s+of\\s+termination",
+        "terminat(e|ed|ion)\\s+(of\\s+)?employment",
+        "disciplinary",
+        "written\\s+warning",
+        "probation(ary)?\\s+period",
+        "severance",
+        "letter\\s+of\\s+resignation",
+        "notice\\s+period",
+        "grievance",
+        "성과\\s*개선\\s*(계획|프로그램)?",
+        "해고",
+        "권고\\s*사직",
+        "징계",
+        "시말서",
+        "경위서",
+        "수습\\s*기간",
+        "퇴직\\s*(통보|권고|처리)",
+        "인사\\s*(통보|조치|위원회)",
+        "pip[-_ ]?notice",
+        "(^|[^a-z])hr[-_ ]",
+        "people[-_ ]?(ops|culture)"
+      ],
+      "except": [
+        "pip\\s+(install|freeze|uninstall|list|show|download|cache|config)",
+        "\\bpip3\\b",
+        "python\\s*-m\\s*pip",
+        "requirements\\.txt"
+      ]
+    },
+    "compensation": {
+      "label": "보상 · 급여",
+      "why": "개인의 금전 조건은 당사자와 인사만 말할 자리다. 추정으로 한 줄이라도 나가면 정정이 되지 않는다.",
+      "patternsI": [
+        "\\bsalary\\b",
+        "\\bpayroll\\b",
+        "compensation\\s+(package|review|band|adjustment)",
+        "stock\\s+option",
+        "equity\\s+grant",
+        "offer\\s+letter",
+        "연봉",
+        "급여\\s*(명세|조정|인상)",
+        "스톡\\s*옵션",
+        "보상\\s*(패키지|협의|조정)"
+      ]
+    },
+    "legal": {
+      "label": "법무 · 분쟁",
+      "why": "회사의 입장이 되는 문장이다. 기계가 먼저 낸 한 줄이 나중에 증거로 읽힌다.",
+      "patternsI": [
+        "lawsuit",
+        "litigation",
+        "cease\\s+and\\s+desist",
+        "subpoena",
+        "legal\\s+counsel",
+        "breach\\s+of\\s+contract",
+        "소송",
+        "고소",
+        "내용\\s*증명",
+        "법률\\s*자문",
+        "손해\\s*배상"
+      ]
+    },
+    "medical": {
+      "label": "건강 · 의료",
+      "why": "민감정보다. 요약해서 되돌려 주는 것만으로도 공개 범위가 넓어진다.",
+      "patternsI": [
+        "medical\\s+(certificate|leave|record|report)",
+        "sick\\s+leave",
+        "diagnos(is|ed|tic)",
+        "진단서",
+        "병가",
+        "산재"
+      ]
+    }
+  }
+}

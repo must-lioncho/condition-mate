@@ -36,10 +36,35 @@ import Foundation
 //   - 보드의 루프 컷(릴리즈) — 서버(MemoStore.harvestLoop)가 같은 스탬프를 찍고, 그
 //     제목들을 릴리즈 기록(notes)에 실어 '완료된 루프' 로그에 '노트' 태그로 보인다
 //     (AI 세션으로 굴린 보드 목표 = session 태그와 구분).
-// 묻힌 줄은 기본 보기에서 사라지고 미완료·바틀넥은 다음 루프로 넘어간다. 스탬프도 여느
-// 줄처럼 판번호·병합·히스토리의 보호를 그대로 받는다. 묻힌 완료는 보기 콤보의
-// '이전 루프 포함' 으로 언제든 다시 본다(완료 체크와 다른 축). 완료에서 상태를 되돌리면
-// 스탬프가 떨어져 현재 루프로 복귀한다 — 다시 완료하는 순간 또 묻히지 않도록.
+// 묻힌 줄은 기본 보기에서 사라진다. 스탬프도 여느 줄처럼 판번호·병합·히스토리의 보호를
+// 그대로 받는다. 묻힌 완료는 보기 콤보의 '이전 루프 포함' 으로 언제든 다시 본다(완료
+// 체크와 다른 축). 완료에서 상태를 되돌리면 스탬프가 떨어져 현재 루프로 복귀한다 —
+// 다시 완료하는 순간 또 묻히지 않도록.
+//
+// 루프 하나에 메모장 한 벌(2026-08-30): 기본 보기가 감추는 조건은 이제 스탬프 하나가
+// 아니라 '지난 루프의 줄인가' 다. 그전까지는 완료 줄만 묻히고 미완료·바틀넥·평문은 다음
+// 루프로 넘어갔는데, 그러면 보드에서 루프를 완료해 번호가 26-54 → 26-55 로 올라가도
+// 패드는 지난 루프에 적은 것을 그대로 안고 있었다. 사람이 기대한 것은 '새 루프 = 새
+// 메모장' 이고 본 것은 '번호만 바뀐 같은 메모장' 이라, 매번 손으로 지우고 새로 시작하는
+// 일이 반복됐다(그게 애초에 '지난 루프 하나 보기' 를 만든 까닭이기도 하다).
+// 이제 컷 뒤에 만든 줄만 기본 보기에 남고, 컷 이전의 줄은 완료 여부와 무관하게 그 루프에
+// 묻힌다. 어느 루프의 줄인지는 새 스탬프 없이 이미 있는 것으로 정하므로(loopOf — 묻힌
+// 스탬프가 있으면 그 루프, 없으면 '@생성' 이 어느 컷 사이였나) 저장 텍스트는 한 글자도
+// 바뀌지 않는다: 감춤은 CSS(data-lold) 뿐이고 되돌리는 데 ⌘Z 도 필요 없다.
+// 대신 이월이 자동이 아니게 됐다 — 지난 루프의 미완료를 이번 루프에서도 보려면 그 루프를
+// 열어 이번 루프로 다시 적는다. 그것이 이 설계가 사람에게 요구하는 한 가지다.
+// 감추지 않는 두 경우는 그대로 지킨다: 보드를 아직 못 받았을 때(근거 없이 패드를 비우지
+// 않는다)와 생성 시각이 없는 옛 줄(어느 루프인지 지어내지 않는다).
+//
+// 지난 루프 하나 보기(2026-08-27): 위의 둘 — 현재 루프만 / 이전 루프 포함 — 은 '지금
+// 처리할 것' 을 고르는 축이라, 컷이 지나고 나면 "그 루프에 내가 무슨 메모를 했나" 를
+// 되짚을 길이 없었다. 그래서 사람이 패드를 통째로 지우고 새로 시작하는 일이 반복됐다.
+// 이제 보기 콤보의 루프 절에 지난 루프 코드가 줄 수와 함께 나열되고, 하나를 고르면 그
+// 루프의 메모만 남는다(다시 누르면 현재 루프로 돌아온다). 어느 줄이 어느 루프인지는
+// 새 스탬프 없이 이미 있는 것으로 정한다 — 묻힌 '@루프' 스탬프가 있으면 그 루프, 없으면
+// '@생성' 시각이 어느 컷과 컷 사이였는지로(loopOf). 그래서 이 기능이 생기기 전에 적은
+// 메모도 그대로 루프별로 보인다. 고른 루프는 세션 안에서만 산다(다음에 열면 현재 루프) —
+// 과거 보기를 켜 둔 채 잊으면 새로 적는 줄이 곧바로 감춰져 '적었는데 사라졌다' 가 된다.
 //
 // 저장 포맷(순수 텍스트 그대로, /api/memo):
 //     - [ ] 할 일        미완료
@@ -110,7 +135,12 @@ enum MemoPad {
           .cmmemo{ display:flex; flex-direction:column; box-sizing:border-box;
             background:var(--panel,#141821); border:1px solid var(--line,#222a36);
             border-radius:14px; padding:12px 14px; margin-bottom:14px }
-          .cmmemo-hd{ display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; margin-bottom:7px }
+          /* 줄바꿈하지 않는다(2026-08-20) — 예전에는 flex-wrap:wrap 이라 '저장 중…' ↔
+             '저장됨' 처럼 meta 글자 길이가 바뀔 때마다 줄 수가 흔들려 화면이 출렁였다.
+             이제 한 줄에 다 안 들어가면(JS: hdLayout) 뒤쪽 버튼부터 .cmmemo-hd2(둘째 줄)로
+             옮기고 첫 줄 끝에 ＋ 하나만 남긴다 — 다 들어가면 ＋ 도 둘째 줄도 사라진다. */
+          .cmmemo-hd{ display:flex; flex-wrap:nowrap; align-items:baseline; gap:8px;
+            margin-bottom:7px; overflow:hidden }
           .cmmemo-hd .sp{ flex:1 }
           .cmmemo-hd .meta{ font-size:11px; color:var(--mut,var(--dim,#8a93a3)); white-space:nowrap }
           /* 확장 토글 — 기본 3줄, 펼치면 10줄. 무한정 늘리지 않는다(카드가 화면을 삼키지 않도록). */
@@ -120,6 +150,11 @@ enum MemoPad {
             font-size:11px; line-height:1.6; font-family:inherit }
           .cmmemo-hd .exp:hover, .cmmemo-hd .cmm-add:hover{ color:var(--fg,var(--txt,#e6e9ef));
             border-color:var(--accent,#5b8cff) }
+          /* 둘째 줄(hd2)도 cmmemo-hd 클래스를 같이 달아 위 버튼 스타일을 그대로 물려받는다 —
+             달라지는 건 줄바꿈·펼침 여부뿐. 평소엔 높이 0 으로 접혀 있어 자리를 차지하지
+             않는다(펼쳐도 그 아래 본문이 밀려날 뿐, 첫 줄은 절대 흔들리지 않는다). */
+          .cmmemo-hd.cmmemo-hd2{ flex-wrap:wrap; margin:0; height:0; visibility:hidden; overflow:hidden }
+          .cmmemo-hd.cmmemo-hd2[data-open]{ height:auto; visibility:visible; margin:-1px 0 7px }
 
           /* 힌트 줄 — 기능을 눈에 보이게 하는 유일한 장치. 좁은 카드에서는 접는다(자리가 없다). */
           .cmmemo .cmm-hint{ display:none; margin-top:9px; font-size:11px; line-height:1.9;
@@ -148,15 +183,19 @@ enum MemoPad {
              저마다 .row{display:flex} 같은 전역 규칙을 갖고 있어서, 이름이 겹치면 행이 옆으로 흐른다. */
           .cmmemo .cmm-row{ display:block; margin:0; padding:1px 0 }
           .cmmemo .cmm-ln{ display:flex; align-items:flex-start; gap:9px; margin:0 }
-          /* 제목은 반드시 한 줄 — 넘치면 말줄임(…). 잘린 글은 편집(포커스) 중일 때만 아래로
-             펼쳐진다. 마우스만 올렸을 때는 행을 부풀리지 않고 마우스 옆 툴팁(.cmmemo-tip)으로
-             전문을 띄운다(2026-08-09 — hover 마다 행이 두세 줄로 출렁이면 목록의 줄 감각이
-             흐트러진다는 피드백). min-width:0 은 flex 자식이 내용 폭만큼 버티며 말줄임을
-             무시하는 것을 막는다. */
-          .cmmemo .cmm-tx{ flex:1; min-width:0; outline:none; white-space:nowrap; overflow:hidden;
-            text-overflow:ellipsis; word-break:break-word;
+          /* 제목 줄바꿈은 UI 모드마다 다르다(2026-08-21 피드백). 기본은 쓰는 게 목적이라
+             말줄임 없이 그대로 펼쳐 보인다 — 적어 둔 게 눈앞에 다 보여야 잊지 않는다.
+             집중(발표·공유)은 예전 그대로 한 줄로 자르고(…), 편집(포커스) 중일 때만
+             아래로 펼쳐진다 — 마우스만 올렸을 때는 행을 부풀리지 않고 마우스 옆
+             툴팁(.cmmemo-tip)으로 전문을 띄운다(2026-08-09 — hover 마다 행이 두세 줄로
+             출렁이면 목록의 줄 감각이 흐트러진다는 피드백). min-width:0 은 flex 자식이
+             내용 폭만큼 버티며 줄바꿈을 무시하는 것을 막는다. */
+          .cmmemo .cmm-tx{ flex:1; min-width:0; outline:none; white-space:pre-wrap; overflow:visible;
+            text-overflow:clip; word-break:break-word;
             min-height:24px; padding:1px 2px; border-radius:5px }
-          .cmmemo .cmm-tx:focus{
+          .cmmemo[data-ui="focus"] .cmm-tx{ white-space:nowrap; overflow:hidden;
+            text-overflow:ellipsis }
+          .cmmemo[data-ui="focus"] .cmm-tx:focus{
             white-space:pre-wrap; overflow:visible; text-overflow:clip }
           .cmmemo .cmm-tx:empty::before{ content:attr(data-ph);
             color:var(--mut,var(--dim,#8a93a3)); opacity:.6 }
@@ -302,8 +341,8 @@ enum MemoPad {
           .cmmemo-sug button.cmm-snew{ color:var(--accent,#5b8cff) }
 
           /* ── 보기 필터 ────────────────────────────────────────────────────
-             처리에 집중할 때는 완료한 줄이 안 보이는 게 낫고(기본), 리포트를 쓸 때는
-             무엇을 했는지 봐야 한다. 그 전환을 헤더의 다중 선택 콤보 하나로 한다. */
+             기본은 셋 다 보임. 처리에 집중할 때 완료를 꺼서 남은 것만 보거나,
+             리포트를 쓸 때 다시 켜는 전환을 헤더의 다중 선택 콤보 하나로 한다. */
           .cmmemo .cmm-row[data-st="done"]{ display:block }
           .cmmemo[data-hide~="done"] .cmm-row[data-st="done"],
           .cmmemo[data-hide~="block"] .cmm-row[data-st="block"],
@@ -341,13 +380,45 @@ enum MemoPad {
           .cmmemo .cmm-row[data-lp]{ display:none }
           .cmmemo[data-loops="all"] .cmm-row[data-lp]{ display:block }
           .cmmemo[data-loops="all"] .cmm-row[data-lp][data-fx]{ display:none }
+          /* 지난 루프의 줄(data-lold)도 같이 감춘다 — 2026-08-30. 그전에는 감춤의 조건이
+             '완료 스탬프(@루프)가 찍혔나' 하나뿐이라, 보드에서 루프 컷을 눌러 번호가
+             26-54 → 26-55 로 넘어가도 패드는 지난 루프에 적은 줄을 그대로 안고 있었다.
+             사람이 기대한 것은 '새 루프 = 새 메모장' 인데 화면은 '번호만 바뀐 같은 메모장'
+             이었고, 그래서 매번 손으로 지우고 새로 시작하는 일이 반복됐다.
+             이제 기본 보기의 뜻은 '이번 루프에 적은 것' 하나다: 컷 뒤에 만든 줄만 남고,
+             컷 이전의 줄은 완료든 미완료든 그 루프에 묻힌다. 어느 루프의 줄인지는 paint 가
+             loopOf 로 정하므로(묻힌 스탬프 → 없으면 만든 시각) 새 스탬프를 찍지 않는다 —
+             저장 텍스트는 한 글자도 바뀌지 않고, 되돌리는 데 ⌘Z 도 필요 없다.
+             지난 루프의 줄은 '이전 루프 포함' 이나 루프 코드를 골라 언제든 다시 본다. */
+          .cmmemo .cmm-row[data-lold]{ display:none }
+          .cmmemo[data-loops="all"] .cmm-row[data-lold]{ display:block }
+          .cmmemo[data-loops="all"] .cmm-row[data-lold][data-fx]{ display:none }
+          .cmmemo[data-loops="all"] .cmm-row[data-lold][data-cx]{ display:none }
+          /* 지난 루프 하나만 보기(2026-08-27, data-loops="pick"). 위의 두 모드가
+             '지금 처리할 것' 을 고르는 축이라면, 이것은 '그 루프에 내가 무엇을 적었나' 를
+             통째로 꺼내 보는 축이다. 고른 루프에 속한 줄만 남기므로 감춤의 방향이 반대다 —
+             기본은 전부 감추고 그 루프 줄(data-lsel)만 되살린다. 어느 루프에 속하는지는
+             paint 가 정한다(묻힌 스탬프가 있으면 그 루프, 없으면 만든 시각이 어느 루프
+             기간이었나). 빈 줄은 언제나 남는다 — 과거를 보는 중에도 이어 쓸 자리는 있어야
+             한다. 필드 필터(data-fx)는 여기서도 그대로 걸린다. */
+          .cmmemo[data-loops="pick"] .cmm-row{ display:none }
+          .cmmemo[data-loops="pick"] .cmm-row[data-lsel]{ display:block }
+          .cmmemo[data-loops="pick"] .cmm-row[data-lsel][data-fx]{ display:none }
+          /* 상태 보기(위 data-hide)는 지난 루프에서도 그대로 걸린다 — 되살리는 규칙이
+             같은 무게라 다시 적어 준다. 안 적으면 '미완료 감추기' 를 켜 둔 채 지난 루프를
+             열었을 때 감춘 것이 도로 나온다. */
+          .cmmemo[data-loops="pick"][data-hide~="done"] .cmm-row[data-lsel][data-st="done"],
+          .cmmemo[data-loops="pick"][data-hide~="block"] .cmm-row[data-lsel][data-st="block"],
+          .cmmemo[data-loops="pick"][data-hide~="todo"] .cmm-row[data-lsel][data-st="todo"]{ display:none }
           /* ── 생성 날짜 ────────────────────────────────────────────────────
-             기본은 '오늘 만든 줄만'(2026-08-10). 아침에 패드를 열었을 때 어제·엊그제·
-             그 전 줄까지 한꺼번에 눈에 들어오면, 오늘 머릿속에 있는 것을 꺼내 적기 전에
-             지난 것을 정리하느라 시간을 다 쓴다. 그 정리는 사람이 손으로 할 일이 아니라
-             골(목표) 기반으로 팀별 정리거리를 적립해 두고 AI 에이전트가 훑을 일이다.
-             지난 줄은 '보기 > 생성 날짜' 에서 넓혀 본다. 루프(위)와 다른 축이다 —
-             루프는 '완료를 언제 묻었나', 여기는 '이 줄을 언제 만들었나'.
+             2026-08-29 부터 이 축은 기본에서 아무것도 감추지 않는다. 감추는 일은 루프
+             축(위) 하나가 맡는다 — 메모의 단위는 날짜가 아니라 루프이고, 루프를 종료해야
+             한 벌이 넘어간다. 예전 기본('오늘 만든 줄만', 2026-08-10)은 두 축의 기준이
+             달라 루프가 살아 있는데도 날짜가 먼저 잘라 버렸다: 8/29 아침, 종료한 적 없는
+             26-48 을 돌면서 패드가 통째로 비어 보였다(그날 만든 줄이 하나도 없었다).
+             날짜는 이제 사람이 직접 좁힐 때만 쓰는 도구다 — '보기 > 생성 날짜'.
+             루프(위)와 다른 축인 것은 그대로다 — 루프는 '완료를 언제 묻었나', 여기는
+             '이 줄을 언제 만들었나'.
              하루의 경계는 자정이 아니라 새벽 4시다(DAYCUT) — 밤샘 작업 중 자정이 지났다고
              30분 전에 적은 줄이 사라지면 안 된다.
              감춤은 늘 CSS 만(data-cx) — 텍스트도 골번호도 그대로다. */
@@ -493,6 +564,10 @@ enum MemoPad {
           body.cmmemo-only .cmmemo{ flex:1; min-height:0; margin:0; padding:0;
             background:transparent; border-color:transparent }
           body.cmmemo-only .cmmemo-hd{ margin-bottom:12px }
+          /* 접힌 둘째 줄은 문서형에서도 자리를 차지하면 안 된다 — 위 margin-bottom 규칙을
+             다시 0 으로 되돌리고, 펼쳤을 때만 문서형 간격을 준다. */
+          body.cmmemo-only .cmmemo-hd.cmmemo-hd2{ margin-bottom:0 }
+          body.cmmemo-only .cmmemo-hd.cmmemo-hd2[data-open]{ margin-bottom:12px }
           /* 문서형은 이미 화면 전체를 쓰므로 확장 토글이 의미가 없다. */
           body.cmmemo-only .cmmemo-hd .exp{ display:none }
           body.cmmemo-only .cmmemo .cmm-doc{ flex:1; height:auto; min-height:0; max-height:none;
@@ -531,7 +606,7 @@ enum MemoPad {
             white-space:pre-wrap; word-break:break-word; pointer-events:none }
         </style>
         <section class="cmmemo" data-cmmemo>
-          <div class="cmmemo-hd">
+          <div class="cmmemo-hd" data-cmmemo-hd>
             <span class="sp"></span>
             <span class="meta" data-cmmemo-meta></span>
             <button type="button" class="cmm-view" data-cmmemo-ui aria-expanded="false"
@@ -539,14 +614,19 @@ enum MemoPad {
             <button type="button" class="cmm-view cmm-flt" data-cmmemo-flt aria-expanded="false"
                     aria-haspopup="true" data-why="flt">필터 <i data-cmmemo-flt-n>0</i> ▾</button>
             <button type="button" class="cmm-view" data-cmmemo-view aria-expanded="false"
-                    aria-haspopup="true" data-why="view">보기 <b data-cmmemo-view-cr>오늘</b> <i data-cmmemo-view-n>2</i> ▾</button>
+                    aria-haspopup="true" data-why="view">보기 <b data-cmmemo-view-cr>루프</b> <i data-cmmemo-view-n>2</i> ▾</button>
             <button type="button" class="cmm-view" data-cmmemo-sort aria-expanded="false"
                     aria-haspopup="true" data-why="sort">정렬 ▾</button>
             <button type="button" class="cmm-view" data-cmmemo-hist aria-expanded="false"
                     aria-haspopup="true" data-why="hist">히스토리 ▾</button>
             <button type="button" class="cmm-add" data-cmmemo-add>＋ 체크리스트</button>
             <button type="button" class="exp" data-cmmemo-exp>확장</button>
+            <!-- 첫 줄에 다 못 담을 때만 JS(hdLayout)가 드러낸다 — 누르면 뒤로 밀린 버튼이
+                 둘째 줄(.cmmemo-hd2)에 펼쳐진다. 평소엔 없는 셈 치는 버튼. -->
+            <button type="button" class="cmm-view cmm-more" data-cmmemo-more aria-expanded="false"
+                    aria-haspopup="true" title="더 보기" style="display:none">＋</button>
           </div>
+          <div class="cmmemo-hd cmmemo-hd2" data-cmmemo-hd2></div>
           <div class="cmm-doc" data-cmmemo-doc contenteditable="true" spellcheck="false"></div>
           <!-- 초집중 편집면 — 지금 덩어리 하나만 담는 순수 textarea(위 CSS 절 참조).
                다른 모드에서는 감춰져 있고, 행 편집기(.cmm-doc)와 서로 건드리지 않는다. -->
@@ -589,29 +669,46 @@ enum MemoPad {
                  '"완료만 빼고 나머지 전부" 같은 조합을 만들 수 없다.\n\n'+
                  '오른쪽 숫자는 각 상태의 줄 수. 감추는 것은 표시일 뿐이라 글도 골번호도 '+
                  '지워지지 않는다 — 다시 켜면 그 자리에 그대로 있다.',
-            cr:  '왜 기본이 "오늘 만든 것만" 인가\n\n'+
-                 '아침에 패드를 열었을 때 어제 것, 엊그제 것, 그 전부터 쌓인 것이 한꺼번에 '+
-                 '눈에 들어오면 — 오늘 머릿속에 있는 것을 꺼내 적기도 전에 지난 것들을 '+
-                 '정리하느라 시간을 다 쓴다. 하루의 첫 시간은 정리가 아니라 산출에 써야 한다.\n\n'+
-                 '게다가 그 정리는 애초에 사람이 손으로 할 일이 아니다. 골(목표) 기반으로 '+
-                 '팀별 정리거리를 적립해 두고 AI 에이전트가 대신 훑는다 — 사람이 아침마다 '+
-                 '같은 목록을 다시 읽는 것은 비효율이다.\n\n'+
-                 '그래서 기본은 오늘 만든 줄만이고, 지난 것을 봐야 할 때만 여기서 어제부터 · '+
-                 '최근 7일 · 전체로 넓힌다. 하루의 경계는 자정이 아니라 새벽 4시다 — 밤을 새워 '+
-                 '이어 쓰는 중에 자정이 지났다고 30분 전에 적은 줄이 사라지면 안 되니까. 새벽 '+
-                 '3시에 적은 줄은 그날 밤 작업의 일부, 즉 어제의 업무일로 센다.\n\n'+
-                 '"전체" 에서만 보이는 줄도 있다: 이 기능이 생기기 전부터 있던 줄(@생성: 이전). '+
-                 '언제 만들었는지 알 길이 없어 날짜를 지어내지 않았다.',
+            cr:  '왜 기본이 "해제" 인가 — 메모의 단위는 날짜가 아니라 루프다\n\n'+
+                 '2026-08-10 부터 기본은 "오늘 만든 줄만" 이었다. 아침의 첫 시간을 지난 '+
+                 '목록을 정리하는 데 쓰지 말자는 뜻이었는데, 감추는 축이 둘(루프·날짜)이 '+
+                 '되면서 기준이 서로 어긋났다.\n\n'+
+                 '2026-08-29 아침에 이렇게 터졌다. 보드는 26-48 을 돌고 있었고 루프를 '+
+                 '종료한 적도 없는데 패드가 통째로 비어 보였다 — 109줄 가운데 그날 만든 '+
+                 '줄이 하나도 없었기 때문이다. 루프는 살아 있는데 날짜가 먼저 잘라 버린 '+
+                 '것이고, 사람 눈에는 "끝내지도 않았는데 메모가 사라졌다" 로 읽힌다. '+
+                 '히스토리 복원이 안 먹는 것처럼 보인 것도 같은 원인이었다 — 되살린 줄이 '+
+                 '옛 생성 스탬프를 달고 있어 복원되자마자 이 축에 감춰졌다.\n\n'+
+                 '그래서 감추는 일은 루프 축 하나가 맡는다. 루프 종료로 묻힌 완료 줄만 '+
+                 '사라지고, 미완료·바틀넥은 루프를 넘어 그대로 따라온다. 보드가 26-48 이면 '+
+                 '패드도 26-48 한 벌이다.\n\n'+
+                 '날짜는 사람이 직접 좁힐 때만 쓰는 도구로 남았다 — 오늘만 · 어제부터 · '+
+                 '최근 7일. 하루의 경계는 자정이 아니라 새벽 4시다 — 밤을 새워 이어 쓰는 '+
+                 '중에 자정이 지났다고 30분 전에 적은 줄이 사라지면 안 되니까. 새벽 3시에 '+
+                 '적은 줄은 그날 밤 작업의 일부, 즉 어제의 업무일로 센다.\n\n'+
+                 '"해제" 에서만 보이는 줄도 있다: 이 기능이 생기기 전부터 있던 줄(@생성: 이전). '+
+                 '언제 만들었는지 알 길이 없어 날짜를 지어내지 않았다.\n\n'+
+                 '오른쪽 숫자는 "이걸 고르면 몇 줄이 보이나" 다 — 루프 축이 지금 감추고 있는 '+
+                 '줄은 세지 않는다. 무엇을 골라도 화면에 안 나올 줄이라, 세면 그 약속이 깨진다. '+
+                 '그래서 위쪽 "보기" 절의 숫자와 자릿수가 안 맞는 것이 정상이다: 두 절은 다른 '+
+                 '것을 센다. 보기는 상태가 달린 체크리스트 줄만 세고, 여기는 글이 적힌 줄이면 '+
+                 '상태가 없어도 전부 센다 — 이 메모에서도 체크리스트 줄은 109줄 가운데 '+
+                 '23줄뿐이었다.',
             loop:'왜 날짜가 아니라 루프인가\n\n'+
-                 '새벽까지 이어지는 작업에서 "어제 끝낸 것" 의 경계는 애매하다. 그래서 완료한 '+
-                 '줄을 묻는 단위는 날짜가 아니라 보드(트래커)의 스프린트·릴리즈와 같은 '+
-                 '일련번호로 잡았다.\n\n'+
-                 '"루프 종료" 를 누르면 그때까지의 완료 줄에 현재 루프 코드가 찍혀 기본 보기에서 '+
-                 '사라지고, 미완료·바틀넥만 다음 루프로 넘어간다. 지난 사이클에 무엇을 했는지 '+
-                 '다시 봐야 하면 "이전 루프 포함".\n\n'+
-                 '완료를 되돌리면 스탬프가 떨어져 현재 루프로 돌아온다 — 다시 하는 일은 이번 '+
-                 '루프의 일이기 때문. 잘못 눌렀으면 ⌘Z 한 번이면 된다.\n\n'+
-                 '생성 날짜와는 다른 축이다: 루프는 "완료를 언제 묻었나", 생성 날짜는 '+
+                 '새벽까지 이어지는 작업에서 "어제 끝낸 것" 의 경계는 애매하다. 그래서 이 '+
+                 '패드의 단위는 날짜가 아니라 보드(트래커)의 스프린트·릴리즈와 같은 '+
+                 '일련번호다.\n\n'+
+                 '루프 하나에 메모장 한 벌이다. 보드에서 루프를 완료하면 새 번호가 열리고 '+
+                 '패드도 빈 채로 새로 시작한다 — 완료든 미완료든 그 컷 이전에 적은 줄은 '+
+                 '지난 루프의 기록으로 남는다. 지난 루프의 줄은 "이전 루프 포함" 으로 함께 '+
+                 '보거나, 아래 목록에서 루프 코드를 골라 그 한 벌만 꺼내 본다.\n\n'+
+                 '감추는 것이지 지우는 것이 아니다. 저장 텍스트는 한 글자도 바뀌지 않으므로 '+
+                 '언제든 그대로 다시 나온다. 다만 이월은 자동이 아니다 — 지난 루프에 못 끝낸 '+
+                 '일을 이번 루프에서도 보려면 그 루프를 열어 이번 루프로 다시 적는다.\n\n'+
+                 '"루프 종료" 는 컷을 기다리지 않고 그때까지의 완료 줄만 먼저 묻는 버튼이다 '+
+                 '(현재 루프 코드를 찍는다). 완료를 되돌리면 스탬프가 떨어져 돌아온다 — '+
+                 '잘못 눌렀으면 ⌘Z 한 번.\n\n'+
+                 '생성 날짜와는 다른 축이다: 루프는 "어느 사이클의 줄인가", 생성 날짜는 '+
                  '"이 줄을 언제 만들었나".',
             sort:'왜 정렬이 따로 있나\n\n'+
                  '저장 순서(적은 순서)는 생각이 흘러간 순서라 건드리지 않는다. 하지만 일을 '+
@@ -695,10 +792,12 @@ enum MemoPad {
           // 생성 스탬프 값 — 저장은 언제나 UTC('2026-08-10T04:12Z'). '이전' 은 이 기능이
           // 생기기 전부터 있던 줄(언제 만들었는지 알 길이 없다)의 자리표다. 그 외는 스탬프가
           // 아니다 — 사람이 직접 고쳐 쓴 이상한 값으로 줄이 사라지면 안 되므로 상세로 남긴다.
+          // 두 모양을 다 받는다: 분까지만 적힌 옛 스탬프와 초까지 적는 새 스탬프(crNow).
+          // 옛 것을 거부하면 디스크에 있는 줄이 통째로 상세 텍스트로 강등된다.
           function ccode(v){
             v=String(v||'').trim();
             if(v==='이전') return '이전';
-            return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/.test(v) ? v : '';
+            return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?Z$/.test(v) ? v : '';
           }
 
           // ── 링크 판정 ──────────────────────────────────────────────────
@@ -777,14 +876,14 @@ enum MemoPad {
           }
 
           // ── 보기 필터 ──────────────────────────────────────────────────
-          // 기본은 "완료 숨김" — 처리하는 동안에는 남은 일만 보이는 게 집중에 낫다.
-          // 리포트를 쓸 때 완료를 켜면 무엇을 했는지 그대로 드러난다. 선택은 저장된다.
+          // 기본은 셋 다 보임 — 체크가 완료·바틀넥 두 상태만 오가는 지금은(2026-08-20)
+          // 완료를 숨기면 방금 누른 줄이 그대로 사라져 버린다. 감출지는 선택이고 저장된다.
           // 감춤은 CSS 만 건드린다 — 텍스트도 번호도 그대로다(감춘 줄은 사라진 게 아니다).
           var VIEWS=[{s:'todo',n:'미완료'},{s:'done',n:'완료'},{s:'block',n:'바틀넥'}];
           function viewShown(){
             try{ var v=localStorage.getItem('cmMemoView');
                  if(v!==null) return v ? v.split(',') : []; }catch(e){}
-            return ['todo','block'];                       // 기본: 완료만 숨김
+            return ['todo','done','block'];                // 기본: 전부 보임
           }
           function viewSet(list){
             try{ localStorage.setItem('cmMemoView', list.join(',')); }catch(e){}
@@ -812,9 +911,22 @@ enum MemoPad {
           // '루프 종료' 가 완료 줄에 '@루프: <보드 루프 코드>' 를 찍으면 그 줄은 이전
           // 루프로 묻혀 기본 보기에서 사라지고, 미완료·바틀넥은 다음 루프로 넘어간다.
           // (보드의 루프 컷도 서버에서 같은 스탬프를 찍는다 — MemoStore.harvestLoop.)
-          // 보기 모드는 둘: 기본(현재 루프만) / 'all'(이전 루프 포함). 상태의 진실은
-          // 메모리(loopState) — localStorage 는 다음에 열 때를 위한 best-effort 영속이다
-          // (필드 필터와 같은 원칙: 저장소가 막힌 웹뷰에서도 동작해야 한다).
+          // 보기 모드는 셋: 기본(현재 루프만) / 'all'(이전 루프 포함) / 지난 루프 코드 하나
+          // (2026-08-27 — '그 루프에 내가 무슨 메모를 했나'). 앞의 둘은 '지금 처리할 것' 을
+          // 고르는 축이고, 세 번째는 끝난 루프 한 벌을 통째로 꺼내 보는 축이다.
+          //
+          // 왜 루프 하나를 고를 수 있어야 하나: 루프는 대체로 하루 단위로 돌고, 그 하루에
+          // 적은 메모는 그 루프의 기록이다. 그런데 지금까지 패드가 아는 것은 '묻혔나 아닌가'
+          // 둘뿐이라, 컷이 지나면 지난 메모를 되짚을 길이 없어 사람이 통째로 지우고 새로
+          // 시작해야 했다. 고를 수 있게 되면 지울 이유가 없다 — 26-46 을 고르면 그날 적은
+          // 것이 그대로 나온다.
+          //
+          // 상태의 진실은 메모리(loopState) — localStorage 는 다음에 열 때를 위한
+          // best-effort 영속이다(필드 필터와 같은 원칙: 저장소가 막힌 웹뷰에서도 동작해야
+          // 한다). 다만 영속되는 것은 ''/'all' 뿐이다: 고른 지난 루프는 세션 안에서만 산다.
+          // 지난 루프를 켜 둔 채 창을 닫았다가 다음 날 열면, 새로 적는 줄이 곧바로 감춰지는
+          // 화면을 만나게 된다 — 그건 '적었는데 사라졌다' 로 읽힌다. 과거 보기는 잠깐 꺼내
+          // 보는 동작이지 사는 자리가 아니다.
           var loopState=null;
           function loopMode(){
             if(loopState!==null) return loopState;
@@ -822,17 +934,23 @@ enum MemoPad {
             catch(e){ loopState=''; }
             return loopState;
           }
+          // 지금 고른 지난 루프 코드('' = 안 고름). loopMode() 가 ''/'all' 이 아니면 그것이
+          // 곧 루프 코드다 — 모드와 코드를 한 값에 담아 두 상태가 어긋날 자리를 없앤다.
+          function loopPick(){ var m=loopMode(); return (m==='all'||m==='') ? '' : m; }
           function loopSet(m){
-            loopState = m==='all' ? 'all' : '';
-            try{ localStorage.setItem('cmMemoLoop', loopState); }catch(e){}
+            loopState = (m==='all' || (m && m!=='cur')) ? String(m) : '';
+            // 지난 루프 코드는 영속하지 않는다(위 주석) — 저장은 ''/'all' 두 값만.
+            try{ localStorage.setItem('cmMemoLoop', loopState==='all' ? 'all' : ''); }catch(e){}
             loopPaint();
           }
           function loopPaint(){
-            var m=loopMode();
+            var m=loopMode(), a = m==='all' ? 'all' : (m ? 'pick' : '');
             pads.forEach(function(p){
-              if(m) p.el.setAttribute('data-loops', m); else p.el.removeAttribute('data-loops');
+              if(a) p.el.setAttribute('data-loops', a); else p.el.removeAttribute('data-loops');
               ultraEnsure(p);            // 초집중의 '지금 줄' 이 방금 묻혔으면 옮긴다
             });
+            meta(stat());                // 어느 줄이 그 루프에 속하는지는 paint 가 다시 매긴다
+            crBtnPaint();                // 헤더 표찰 — 지난 루프를 보는 중이면 코드가 보인다
             if(menuEl && menuEl.dataset.view==='1') paintMenu();
           }
           // 진행 중인 루프 번호 폴백 — 보드(/data.json)를 모르는 환경(스텁·오프라인)에서만
@@ -846,65 +964,194 @@ enum MemoPad {
           // 루프 종료 — 아직 스탬프 없는 완료 줄 전부에 현재 루프 코드(보드와 같은 일련번호,
           // 예: 26-38)를 찍는다. 사람의 액션 한 단계 — 잘못 눌렀으면 ⌘Z 로 그대로 돌아온다.
           // 릴리즈 컷(서버 harvestLoop)도 같은 문법으로 찍는다 — 어느 쪽이 먼저든 한 루프다.
+          //
+          // 찍기 전에 보드를 **강제로** 다시 읽는다(2026-08-29). 그전에는 bgLoop.cur 를 그냥
+          // 읽었고, 그 값이 언제 받은 것인지는 묻지 않았다. focus 없이 60초 스로틀 창 안에서
+          // 누르면 보드가 26-51 인데 26-49 가 찍혔다. 표찰이 낡는 것은 다음 focus 에 스스로
+          // 낫지만 여기서 찍힌 값은 '@루프: <code>' 로 직렬화되어 memo.json 에 **영구히**
+          // 박힌다(lineOf) — 사람이 수백 줄에서 손으로 찾아 지워야 낫는다.
+          // 스로틀을 건너뛰어도 되는 이유: 그 60초는 창을 오갈 때 배경 폴링이 쏟아지는 것을
+          // 막는 자리이고, 여기는 사람이 뜻을 담아 누른 한 번이다. bgBusy(동시 요청)는
+          // 그대로 지킨다 — 이미 도는 조회가 있으면 그것에 올라탄다.
+          //
+          // 조회 결과로 세 갈래다.
+          //   1. 성공 → 방금 받은 bgLoop.cur 로 찍는다.
+          //   2. 실패했는데 보드 지식이 아예 없다(bgLoop null) → 숫자 폴백으로 찍는다.
+          //      스텁·오프라인이라 애초에 다른 체계이고, 이건 지어내는 것이 아니다.
+          //   3. 실패했는데 낡은 보드 지식은 있다 → **찍지 않는다.** 낡은 줄 알면서 찍으면
+          //      틀린 값이 디스크에 영구히 남고, 안 찍으면 사람이 다시 누르면 그만이다.
+          //      되돌릴 수 없는 쪽으로 틀리지 않는다.
+          // 왜 못 찍었는지는 이 패드가 이미 쓰는 자리(le 라벨 + disabled)로 말한다 —
+          // 배너는 만들지 않는다(앱 규칙).
+          var loopEndBusy=false, loopEndStale=false;
           function loopEnd(pad){
-            var code=(bgLoop&&bgLoop.cur)||String(loopCur(pad));
-            var hit=rows(pad).filter(function(r){ return r.dataset.st==='done' && !r.dataset.lp; });
-            if(!hit.length) return;
-            hit.forEach(function(r){ r.dataset.lp=code; });
-            onEdit(pad, true);
+            if(loopEndBusy) return;
+            var pend=function(){ return rows(pad).filter(function(r){
+              return r.dataset.st==='done' && !r.dataset.lp; }); };
+            if(!pend().length) return;                     // 찍을 줄이 없으면 조회도 하지 않는다
+            var stamp=function(code){
+              var hit=pend();                              // 조회를 기다리는 동안 바뀌었을 수 있다
+              if(!hit.length) return;
+              hit.forEach(function(r){ r.dataset.lp=code; });
+              onEdit(pad, true);
+            };
+            var seen=bgSeq, p=boardFetch(true);
+            var settle=function(){
+              loopEndBusy=false;
+              if(bgSeq>seen) stamp((bgLoop&&bgLoop.cur)||String(loopCur(pad)));   // 1
+              else if(!bgLoop) stamp(String(loopCur(pad)));                       // 2
+              else loopEndStale=true;                                             // 3
+              paintMenu();
+            };
+            if(!p){ settle(); return; }                    // 조회를 시작조차 못 했다
+            loopEndBusy=true; loopEndStale=false; paintMenu();
+            p.then(settle, settle);
+          }
+
+          // ── 줄이 속한 루프 ────────────────────────────────────────────
+          // 한 줄은 정확히 한 루프에 속한다. 판정은 두 단계고, 순서가 곧 규칙이다.
+          //   1. 묻힌 스탬프(@루프)가 있으면 그 루프 — 그 루프에서 마감한 일이다.
+          //   2. 없으면 만든 시각(@생성)이 어느 루프 기간이었는지로 정한다.
+          // 두 번째가 이 기능의 핵심이다. 새 스탬프를 만들지 않고 이미 찍혀 있는 생성
+          // 시각만으로 지난 루프를 되짚을 수 있다는 뜻이라, **이 기능을 켜기 전에 적은 글도
+          // 그대로 루프별로 보인다.** 스탬프를 새로 도입했다면 오늘 이후에 적은 것만
+          // 보였을 것이고, 정작 사람이 되짚고 싶은 것은 어제까지의 메모다.
+          //
+          // 루프 기간의 경계는 릴리즈(컷)가 일어난 시각이다: 어떤 줄이 속한 루프 =
+          // 그 줄이 만들어진 뒤 처음 일어난 컷의 루프. 컷 뒤에 만든 줄은 아직 컷이 없으니
+          // 진행 중인 루프에 속한다. 시작 시각이 아니라 종료 시각으로 자르는 이유는,
+          // 스프린트는 여럿이 동시에 열려 있을 수 있어(Backlog·Dump out) '언제 시작했나'
+          // 로는 한 순간이 어느 루프인지 갈리지 않기 때문이다. 컷은 하나씩 차례로 일어나므로
+          // 경계로서 애매하지 않다.
+          //
+          // 생성 시각이 없거나 '이전'(이 스탬프가 생기기 전의 옛 글)인 줄은 어느 루프인지
+          // 알 길이 없다 — 날짜를 지어내지 않고 '' 로 둔다. 그런 줄은 '전체' 에서만 보인다.
+          //
+          // 눈금이 다른 두 시계를 비교하는 자리다(2026-08-30 결함). 컷의 경계(releasedAt)는
+          // 초 단위인데 생성 스탬프는 분 단위였다 — 그래서 21:53:40 에 컷이 나고 21:53:50 에
+          // 적은 줄이 21:53:00 으로 내려앉아 '컷 이전' 으로 판정됐고, 지난 루프의 줄이라
+          // 곧바로 감춰졌다(data-lold). 사람 눈에는 컷 직후 1분 동안 '쓰면 사라지는' 패드다.
+          // 그래서 스탬프를 한 점이 아니라 **폭 있는 구간**으로 읽는다: 스탬프가 말하는
+          // 시간은 [sec, sec+grain) 이고, 컷이 그 구간 안에 들어오면 이 줄이 컷 앞인지 뒤인지
+          // 스탬프로는 알 수 없다. 알 수 없는 것을 과거로 미는 것은 지어내는 일이므로
+          // 그때는 묻지 않는다 — 이 파일의 규칙대로 틀리려면 '너무 많이 보이는' 쪽으로 틀린다.
+          function loopOf(row){
+            if(row.dataset.lp) return row.dataset.lp;
+            var sec=crEpoch(row.dataset.cr);
+            if(!sec) return '';
+            var g=crGrain(row.dataset.cr);
+            var T=(bgLoop&&bgLoop.cuts)||[];
+            // 구간 전체가 컷보다 이른 줄만 그 루프에 묻는다(오름차순).
+            for(var i=0;i<T.length;i++) if(sec+g<=T[i].at) return T[i].code;
+            return (bgLoop&&bgLoop.cur)||'';
+          }
+          // 보기 콤보에 늘어놓을 지난 루프 목록 — 보드가 아는 릴리즈 코드(최신순)와, 보드가
+          // 모르는 스탬프 코드(숫자 폴백·수동 스탬프)를 합친다. 줄이 하나도 없는 루프는
+          // 넣지 않는다: 메뉴는 '가 볼 수 있는 곳' 의 목록이지 루프 대장이 아니다.
+          function loopList(cnt){
+            var out=[], seen={}, cur=(bgLoop&&bgLoop.cur)||'';
+            ((bgLoop&&bgLoop.cuts)||[]).slice().reverse().forEach(function(c){
+              if(c.code && c.code!==cur && !seen[c.code]){ seen[c.code]=1; out.push(c.code); } });
+            Object.keys(cnt||{}).forEach(function(c){
+              if(c && c!==cur && !seen[c]){ seen[c]=1; out.push(c); } });
+            return out.filter(function(c){ return (cnt&&cnt[c])>0; }).slice(0, 12);
           }
 
           // ── 생성 날짜 ──────────────────────────────────────────────────
-          // 왜(2026-08-10): 아침에 패드를 열면 어제·엊그제·그 전에 만든 줄이 한꺼번에
-          // 눈에 들어온다. 그러면 오늘 머릿속에 있는 것을 꺼내 적기 전에 지난 것들을
-          // 정리하느라 시간을 다 쓴다. 그 정리는 사람이 손으로 할 일이 아니다 — 골(목표)
-          // 기반으로 팀별 정리거리를 적립해 두고 AI 에이전트가 대신 훑는다. 그래서 패드의
-          // 기본은 '오늘 만든 줄만' 이고, 지난 것을 볼 필요가 있을 때만 여기서 날짜를 넓힌다.
+          // 2026-08-29 이후로 이 축은 **기본에서 아무것도 감추지 않는다**. 메모의 단위는
+          // 날짜가 아니라 루프다(위 루프 절) — 보드가 26-48 을 돌고 있으면 패드도 26-48
+          // 한 벌이고, 루프를 종료해야 다음 벌로 넘어간다.
           //
-          // 루프와 다른 축이다: 루프는 '완료를 언제 묻었나'(끝낸 일), 여기는 '이 줄을 언제
-          // 만들었나'(태어난 날). 미완료로 남아 있어도 어제 만든 줄은 어제 것이다.
+          // 왜 바꿨나: 2026-08-10 부터 기본이 '오늘 만든 줄만' 이었는데, 두 축의 기준이
+          // 서로 달라 실제로는 이런 일이 벌어졌다 — 8/29 아침, 진행 중인 루프는 아직
+          // 26-48 이고 종료한 적이 없는데도 패드가 통째로 비어 보였다. 메모 109줄 가운데
+          // 그날 만든 줄이 하나도 없었기 때문이다(가장 최근 생성 스탬프가 8/28). 루프는
+          // 살아 있는데 날짜가 먼저 잘라 버린 것이고, 사람 눈에는 '루프를 끝내지도 않았는데
+          // 메모가 사라졌다' 로 읽힌다. 히스토리 복원이 먹지 않는 것처럼 보인 것도 같은
+          // 원인이다 — 되살린 줄이 옛 생성 스탬프를 그대로 달고 있어 복원되자마자 이 축에
+          // 감춰졌다. 되살아난 글이 화면에 없으니 복원이 실패한 것으로 보였다.
+          //
+          // 그래서 감추는 일은 루프 축 하나가 맡는다: 루프 종료로 묻힌 완료 줄(@루프)만
+          // 사라지고, 미완료·바틀넥은 루프를 넘어 그대로 따라온다. 날짜는 감추는 축에서
+          // 좁혀 보는 도구로 내려왔다 — 오늘 적은 것만 보고 싶을 때 사람이 직접 고른다.
+          //
+          // 루프와 다른 축인 것은 그대로다: 루프는 '완료를 언제 묻었나'(끝낸 일), 여기는
+          // '이 줄을 언제 만들었나'(태어난 날). 미완료로 남아 있어도 어제 만든 줄은 어제 것이다.
           //
           // 하루 경계는 자정이 아니라 새벽 4시(DAYCUT). 밤을 새워 이어 쓰는 중에 자정이
           // 지났다고 30분 전에 적은 줄이 '어제 것' 으로 사라지면 안 된다 — 새벽 3시에 적은
           // 줄은 그날 밤 작업의 일부, 즉 어제의 업무일로 센다(루프 절이 날짜 기준 자체를
           // 버린 그 문제를, 여기서는 경계를 옮겨 푼다). 스탬프는 저장 텍스트에
           // '@생성: <UTC>' 로 남고, 감춤은 늘 CSS 만(data-cx) — 글도 골번호도 그대로다.
+          //
+          // '해제' 는 다섯 번째 값이 아니다 — 'all' 이 곧 해제다(2026-08-29). crFit(age,'all')
+          // 은 이미 무조건 true 이고 crMode() 는 모르는 값·없는 값을 전부 'all' 로 떨어뜨리니,
+          // 해제의 동작은 처음부터 코드에 있었고 표시만 거짓말을 하고 있었다('전체' 에 체크가
+          // 서고 그 옆에 109 가 붙어, 루프로 정리했는데도 날짜가 걸려 있는 것처럼 읽혔다).
+          // 그렇다고 값을 하나 더 두면 '전체'(체크됨·아무것도 안 감춤)와 '해제'(체크 안 됨·
+          // 아무것도 안 감춤)가 똑같은 줄을 보여 주는 구별 없는 구별이 생긴다. 그래서 저장
+          // 키(cmMemoCr2)도 네 값도 그대로 두고, 라디오 목록에서 '전체' 만 빼고 그 자리에
+          // crSet('all') 을 부르는 '해제' 행을 얹었다 — 마이그레이션이 필요 없다.
           var DAYCUT=4;
-          var CRS=[{s:'',   n:'오늘만',    d:'기본'},
+          // 좁힘 셋만 늘어놓는다. 'all' 은 이 목록에 없다 — 메뉴에서 따로 짓는 '해제' 행이
+          // 그 값을 맡는다(위 주석). 해제 행의 숫자 자리는 비운다: 사람이 '걸려 있다' 로
+          // 읽은 것이 바로 그 자리에 서 있던 큰 숫자였다.
+          var CRS=[{s:'',   n:'오늘만',    d:''},
                    {s:'2',  n:'어제부터',  d:''},
-                   {s:'7',  n:'최근 7일',  d:''},
-                   {s:'all',n:'전체',      d:'예전 줄까지'}];
+                   {s:'7',  n:'최근 7일',  d:''}];
           // 버튼 표찰 — 메뉴를 열지 않고도 지금 어디까지 보이는지 알 수 있어야 한다.
-          var CRLBL={'':'오늘','2':'어제부터','7':'7일','all':'전체'};
+          // 'all' 은 여기 나오지 않는다: 기본이라 감추는 것이 없고, 그 자리에는 지금 도는
+          // 루프 코드가 걸린다(crBtnPaint).
+          var CRLBL={'':'오늘','2':'어제부터','7':'7일'};
+          // 저장 키가 cmMemoCr 에서 바뀐 이유: 옛 키의 '' 는 '오늘만' 이라는 뜻이었고 그것이
+          // 곧 옛 기본값이었다. 같은 키를 이어 읽으면 한 번도 이 메뉴를 만진 적 없는 사람이
+          // 옛 기본을 '내가 고른 것' 으로 물려받아, 고쳐 놓고도 여전히 빈 패드를 본다.
           var crState=null;
           function crMode(){
             if(crState!==null) return crState;
-            try{ var v=localStorage.getItem('cmMemoCr');
-                 crState = (v==='2'||v==='7'||v==='all') ? v : ''; }
-            catch(e){ crState=''; }
+            try{ var v=localStorage.getItem('cmMemoCr2');
+                 crState = (v==='2'||v==='7'||v==='') ? v : 'all'; }
+            catch(e){ crState='all'; }
             return crState;
           }
           function crSet(m){
-            crState = (m==='2'||m==='7'||m==='all') ? m : '';
-            try{ localStorage.setItem('cmMemoCr', crState); }catch(e){}
+            crState = (m==='2'||m==='7'||m==='') ? m : 'all';
+            try{ localStorage.setItem('cmMemoCr2', crState); }catch(e){}
             meta(stat());                                  // 감춤은 paint 가 행마다 다시 매긴다
             crBtnPaint();
             if(menuEl && menuEl.dataset.view==='1') paintMenu();
           }
           function crBtnPaint(){
-            var l=CRLBL[crMode()]||'오늘';
+            // 헤더의 이 한 글자가 '지금 무엇이 보이고 있나' 의 전부다. 순서가 곧 규칙이다:
+            //   1. 지난 루프를 골라 보는 중이면 그 코드 — 그때는 날짜 축이 쉬고 있고
+            //      (paint 참조), '지금 과거를 보고 있다' 가 헤더에서 바로 보여야 한다.
+            //   2. 날짜를 직접 좁혀 뒀으면 그 범위 — 감추고 있는 축을 숨기지 않는다.
+            //   3. 아무것도 안 좁혔으면(기본) 지금 도는 루프 코드. 메모의 단위가 루프라는
+            //      것을 여기서 한 번 더 말해 준다 — 보드가 26-48 이면 패드도 26-48 이다.
+            //      보드를 아직 못 받았으면 '루프' 라고만 적는다(숫자를 지어내지 않는다).
+            var l=loopPick() || CRLBL[crMode()]
+                  || (bgLoop && bgLoop.cur) || '루프';
             pads.forEach(function(p){ if(p.viewCr) p.viewCr.textContent=l; });
           }
           // 지금 UTC 를 스탬프 문자열로. 저장은 언제나 UTC — 표시 타임존이 바뀌어도
           // '언제 만들었나' 는 한 순간 그대로다(칸의 시각 저장과 같은 원칙).
+          // 초까지 적는다(2026-08-30). 분까지만 적던 스탬프는 루프 경계(초 단위인 컷)와
+          // 눈금이 달라, 컷과 같은 분에 적은 줄이 컷 이전으로 판정돼 그대로 감춰졌다
+          // (loopOf 의 주석). 옛 분 단위 스탬프는 디스크에 그대로 남아 있으므로 읽는 쪽은
+          // 두 모양을 다 받는다 — 새로 찍는 것만 초를 단다.
           function crNow(){
             var d=new Date(now());
             return d.getUTCFullYear()+'-'+p2(d.getUTCMonth()+1)+'-'+p2(d.getUTCDate())
-                   +'T'+p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())+'Z';
+                   +'T'+p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())+':'+p2(d.getUTCSeconds())+'Z';
           }
           function crEpoch(v){
-            var m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})Z$/.exec(String(v||''));
-            return m ? Math.floor(Date.UTC(+m[1],+m[2]-1,+m[3],+m[4],+m[5])/1000) : 0;
+            var m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?Z$/.exec(String(v||''));
+            return m ? Math.floor(Date.UTC(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+(m[6]||0))/1000) : 0;
+          }
+          // 이 스탬프가 말하는 시간의 폭(초). 초까지 적힌 새 스탬프는 1초, 분까지만 적힌 옛
+          // 스탬프는 60초다. loopOf 가 컷을 이 폭과 견준다.
+          function crGrain(v){
+            return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/.test(String(v||'')) ? 60 : 1;
           }
           // 그 순간이 속한 '업무일' 의 날짜 문자열. 표시 타임존의 벽시계에서 새벽
           // 4시를 하루의 시작으로 본다(= 4시간 당겨 읽는다).
@@ -1081,8 +1328,15 @@ enum MemoPad {
           function ultraFit(pad, r){
             if(!r || !r.classList || !r.classList.contains('cmm-row')) return false;
             if(r.dataset.fx || r.dataset.cx) return false;
-            if(r.dataset.lp && loopMode()!=='all') return false;
-            return (pad.el.getAttribute('data-hide')||'').split(' ')
+            // 지난 루프 하나를 보는 중이면 그 루프 줄만 후보다 — 화면에 없는 줄에 커서가
+            // 앉으면 초집중이 빈 화면에 쓰는 것처럼 보인다.
+            if(loopPick()){ if(!r.dataset.lsel) return false; }
+            else if((r.dataset.lp || r.dataset.lold) && loopMode()!=='all') return false;
+            // 아무것도 안 감췄으면(기본값) data-hide 는 빈 문자열 — ''.split(' ') 는 ['']
+            // 이라 상태 없는 평문 줄(dataset.st 도 '')을 '감춰졌다' 로 잘못 읽는다
+            // (filter(Boolean) 없이는 초집중이 체크리스트 하나 없는 순수 텍스트 메모에서
+            // 지금 줄 후보를 하나도 못 찾는다). 감출 상태 목록에만 물어야 한다.
+            return (pad.el.getAttribute('data-hide')||'').split(' ').filter(Boolean)
                      .indexOf(r.dataset.st||'')<0;
           }
           // 지금 줄 표시를 세워 둔다 — 캐럿 줄 우선, 없으면 이전 표시 유지, 그도
@@ -1090,6 +1344,7 @@ enum MemoPad {
           function ultraEnsure(pad){
             if(uiMode()!=='ultra'){
               rows(pad).forEach(function(r){ if(r.dataset && r.dataset.cur) delete r.dataset.cur; });
+              pad.uaIdx=null;                   // 초집중을 나가면 순번 기억도 함께 놓는다
               return;
             }
             // 초집중에서 '지금 덩어리' 를 정하는 것은 textarea 다(2026-08-13). 편집면
@@ -1098,14 +1353,29 @@ enum MemoPad {
             // 그 행이 사라졌을 때만 아래의 폴백 사슬로 내려간다.
             var rs=rows(pad);
             var mark=(pad.ua && pad.uaRow && rs.indexOf(pad.uaRow)>=0) ? pad.uaRow : ultraRowAt(pad);
+            var sure=!!mark;                    // 위 두 갈래는 '확실히 그 덩어리' 라는 근거가 있다
+            // render() 는 .cmm-doc 의 행 DOM 을 통째로 새로 만든다(innerHTML='' 후 재조립) —
+            // 되돌리기(undo)·서버 병합(adopt, 다른 창이 먼저 저장했을 때의 충돌 합치기)을
+            // 거치면 위 두 갈래가 찾던 참조도 dataset.cur 도 함께 사라진다. 그 직전까지
+            // '확실하게' 지목하던 자리를 순번으로 먼저 되찾는다(2026-08-20) — 캐럿
+            // 되돌리기(caretRestore)가 행을 순번으로 되찾는 것과 같은 원리다. 병합은 항상
+            // 뒤에 새 줄을 덧붙일 뿐(mergeLines) 앞쪽 행 순서를 흔들지 않으니, 구조가
+            // 그대로면 정확히 같은 덩어리에 머문다. 순번 자체가 '확실한 적' 이 없었으면
+            // (예: 문서를 통째로 갈아 끼운 setText 직후) 이 폴백은 쓰지 않는다 — 엉뚱한
+            // 옛 순번이 완전히 다른 문서의 아무 행이나 가리키는 사고를 막는다.
+            if(!sure && pad.uaIdx!=null && rs[pad.uaIdx] && ultraFit(pad, rs[pad.uaIdx])){
+              mark=rs[pad.uaIdx]; sure=true;
+            }
             if(!mark || rs.indexOf(mark)<0){
               mark=rs.filter(function(r){ return r.dataset.cur==='1'; })[0]||null;
               if(mark && !ultraFit(pad,mark)) mark=null;
               if(!mark) for(var i=rs.length-1;i>=0;i--)
                 if(ultraFit(pad,rs[i])){ mark=rs[i]; break; }
               if(!mark) mark=rs[rs.length-1]||null;
+              sure=false;                        // 여기까지 왔으면 근거 없는 최후의 추측이다
             }
             ultraMark(pad, mark);
+            pad.uaIdx = sure && mark ? rs.indexOf(mark) : null;
           }
 
           // ── 초집중 편집면: 지금 덩어리 하나 = textarea 하나 ──────────────
@@ -1470,12 +1740,20 @@ enum MemoPad {
               // 체크리스트로만 만들고 싶을 때는 ⌘⇧K 와 '- ' 타이핑이 그대로 남아 있다.
               if(!row.dataset.st){
                 row.dataset.st='done';
-                row.dataset.qk='1';    // 평문에서 한 번에 완료된 줄 — 취소는 곧장 평문으로
+                row.dataset.qk='1';    // 평문에서 한 번에 완료된 줄 — todo 를 건너뛰고 시작
                 onEdit(pad, true); return;
               }
-              // 그 줄을 다시 누르면 취소다. 원래 평문이었으니 todo·바틀넥을 거치지 않고
-              // 곧바로 평문으로 되돌린다(잘못 누른 손이 세 번 더 누르지 않도록).
-              if(row.dataset.qk){ delete row.dataset.qk; setChecklist(pad,row,false); return; }
+              // 평문에서 승격된 줄(qk)도 이제 완료·바틀넥 두 상태를 오간다 — "나중에
+              // 처리하기" 로 미뤄 두고 싶을 때 곧장 평문으로 사라지면 안 되기 때문
+              // (2026-08-20). 바틀넥에서 한 번 더 누르면 그제서야 원래 평문으로 되돌아간다
+              // (todo 는 건너뛴다 — 애초에 이 줄엔 빈 미완료 마크가 없었다).
+              if(row.dataset.qk){
+                if(row.dataset.st==='done'){
+                  row.dataset.st='block'; delete row.dataset.lp;   // 완료에서 벗어남 — 이전 루프에서 꺼내 온다
+                  onEdit(pad, true); return;
+                }
+                delete row.dataset.qk; setChecklist(pad,row,false); return;
+              }
               var i=STATES.indexOf(row.dataset.st);
               row.dataset.st=STATES[(i+1)%STATES.length];
               // 완료에서 벗어나면 이전 루프에서 꺼내 온다 — 다시 진행하는 일은 현재
@@ -1770,24 +2048,63 @@ enum MemoPad {
 
           // 보드(트래커) 골 제목 조회 — 부모 칸에 적힌 번호가 메모 안에 없으면 /data.json 의
           // goals 에서 찾는다. 게으르게 한 번 받고 60초 캐시. 실패는 조용히(스텁 환경).
-          var bgMap=null, bgAt=0, bgBusy=false, bgLoop=null;
-          function boardFetch(){
+          // bgSeq 는 '보드 지식이 실제로 새로 들어온 횟수' 다 — loopEnd 가 강제 조회의
+          // 성공·실패를 이 값으로만 판정한다(bgAt 은 실패해도 올라가므로 쓸 수 없다).
+          // bgP 는 지금 도는 조회의 약속 — bgBusy 일 때 부르는 쪽이 거기 올라타라고 돌려준다.
+          var bgMap=null, bgAt=0, bgBusy=false, bgLoop=null, bgP=null, bgSeq=0;
+          // force 는 '사람이 뜻을 담아 누른 한 번' 전용이다(loopEnd). 건너뛰는 것은 60초
+          // 스로틀 **하나뿐**이고 bgBusy(동시 요청)는 그대로다. 무인자 호출(refresh·
+          // openView·mount)에서는 force 가 undefined 라 조건식이 예전과 글자 그대로 같다.
+          // 돌려주는 값은 조회의 약속(또는 스로틀에 막혔으면 null) — 무인자 호출은 이 값을
+          // 쓰지 않으므로 그쪽 동작은 바뀌지 않는다.
+          function boardFetch(force){
             var t=(Date.now?Date.now():new Date().getTime());
-            if(bgBusy || (bgMap && t-bgAt<60000)) return;
+            if(bgBusy) return bgP;
+            if(!force && bgMap && t-bgAt<60000) return null;
             bgBusy=true;
-            fetch('/data.json').then(function(r){ return r.json(); }).then(function(j){
+            bgP=fetch('/data.json').then(function(r){ return r.json(); }).then(function(j){
               bgBusy=false; bgAt=(Date.now?Date.now():new Date().getTime());
+              // 보드는 /data.json 의 'review' 아래에 있다 — goals·sprints·releases 가
+              // 거기 담긴다(AppDelegate.reviewJSON). 2026-08-27 까지 이 자리는 맨 위에서
+              // 찾고 있었고, 그래서 진짜 앱에서는 골 제목도 루프 코드도 단 한 번도 잡히지
+              // 않았다: 부모 꼬리표는 늘 '번호 확인' 이었고, 루프는 보드의 26-47 대신 숫자
+              // 폴백(#N)으로 굴러 메모와 보드가 서로 다른 번호를 쓰고 있었다. 시험은
+              // 스텁이 평평한 모양을 주는 바람에 통과했다 — 그래서 두 모양을 다 받는다.
+              var R=(j&&j.review)||j||{};
               var m={};
-              ((j&&j.goals)||[]).forEach(function(g){ if(g && g.seq>0) m[g.seq]=g.text||''; });
+              ((R&&R.goals)||[]).forEach(function(g){ if(g && g.seq>0) m[g.seq]=g.text||''; });
               bgMap=m;
               // 루프 코드 — 보드와 같은 일련번호(2026-08-07). 현재 = 열린 스프린트 중 가장
               // 이른 번호의 코드(완료 컷의 이월이 향하는 그 루프), 이전 = 최신 릴리즈 코드.
-              var open=((j&&j.sprints)||[]).filter(function(s){ return s && !s.closed && s.number>0 && s.code; })
+              var open=((R&&R.sprints)||[]).filter(function(s){ return s && !s.closed && s.number>0 && s.code; })
                         .sort(function(a,b){ return a.number-b.number; })[0];
-              var rel=((j&&j.releases)||[])[0];
-              bgLoop={ cur:(open&&open.code)||'', prev:(rel&&rel.code)||'' };
+              var rel=((R&&R.releases)||[])[0];
+              // 컷의 시간축(오름차순) — '이 줄은 어느 루프였나' 를 만든 시각으로 되짚을 때
+              // 쓰는 경계다(loopOf). 릴리즈는 최신순으로 오므로 뒤집어 쌓고, 시각이 없는
+              // 옛 기록은 경계로 쓸 수 없으니 뺀다.
+              var cuts=((R&&R.releases)||[]).filter(function(x){ return x && x.code && x.releasedAt>0; })
+                        .map(function(x){ return { code:x.code, at:Math.floor(x.releasedAt) }; })
+                        .sort(function(a,b){ return a.at-b.at; });
+              bgLoop={ cur:(open&&open.code)||'', prev:(rel&&rel.code)||'', cuts:cuts };
+              bgSeq++;                            // 여기까지 와야 '받았다' 다(loopEnd 가 읽는다)
+              loopEndStale=false;                 // '못 받았다' 표시는 받은 순간 걷는다
               meta(stat());                       // 꼬리표·루프 표기를 새 지식으로 다시 그린다
+              crBtnPaint();                       // 헤더 표찰의 '루프' 가 진짜 코드(26-48)로
+              // 열어 둔 콤보도 같이 다시 그린다. 이 줄은 바로 위 meta(stat()) 과 **중복**이다
+              // — stat() 이 이미 `menuEl && (view||flt)` 면 paintMenu() 를 부른다.
+              // 2026-08-29 까지 이 자리의 주석은 '이 줄이 없으면 헤더는 새 코드, 메뉴는 옛
+              // 코드가 되어 한 화면이 서로 다른 말을 한다' 고 적고 있었다. **그건 사실이
+              // 아니다** — 확인하지 않고 단정한 것이 코드에 그대로 남았다. 그런 화면은 나온
+              // 적이 없다.
+              // 그래도 이 줄을 남기는 이유는 형제들(loopPaint·crSet)이 똑같이 중복으로 달고
+              // 있어서다. 여기서만 빼면 이 자리가 예외가 되고, 다음 사람이 '빠졌네' 하고
+              // 되돌린다. 반대로 '이 줄은 늘 중복' 이라는 규칙도 거짓이다 — viewPaint 는
+              // stat() 을 부르지 않으므로 거기서는 이 줄이 진짜로 필요하다.
+              // 동작 위험은 0이다: 이 줄의 조건(view)은 stat() 의 조건(view||flt)의
+              // 진부분집합이라, stat() 이 안 그리는데 이것만 그리는 경우가 없다.
+              if(menuEl && menuEl.dataset.view==='1') paintMenu();
             }).catch(function(){ bgBusy=false; bgAt=(Date.now?Date.now():new Date().getTime()); });
+            return bgP;
           }
           function goalTitle(no, byNo){
             if(byNo && byNo[no]!=null) return byNo[no];
@@ -1828,6 +2145,11 @@ enum MemoPad {
             var n=0, done=0, block=0, todo=0, lp=0, F=fltGet(), FN=fltCount(F);
             // 생성 날짜 — 오늘부터 7일치 업무일 문자열을 한 번 세어 두고 행마다 나이를 잰다.
             var CK=crKeys(), CM=crMode(), c1=0, c2=0, c7=0, cAll=0;
+            // 루프 — 줄마다 속한 루프를 세어 두면 콤보가 '그 루프에 몇 줄이 있나' 를 보여
+            // 줄 수 있다. 지난 루프 하나를 고른 상태면 그 루프 줄에만 표를 달고(data-lsel),
+            // 생성 날짜 축은 쉰다: 고른 것이 이미 '언제' 이므로 그 위에 날짜를 또 걸면
+            // 26-46 을 골랐는데 아무것도 안 나오는 화면이 된다.
+            var LK=loopPick(), LM=loopMode(), LC={}, LCUR=(bgLoop&&bgLoop.cur)||'';
             // 부모 꼬리표용 — 이 메모 안의 골번호 → 제목.
             var byNo={};
             rows(pad).forEach(function(r){ var g=+r.dataset.gno||0;
@@ -1840,17 +2162,48 @@ enum MemoPad {
                         && !row.querySelector('.cmm-tx').textContent;
               if(FN && !blank && !fltMatch(F, f)) row.dataset.fx='1';
               else delete row.dataset.fx;
+              // 이 줄이 어느 루프의 것인가 — 아래 두 곳이 같이 쓴다(루프 개수와 날짜 개수).
+              // 날짜 개수가 이것을 먼저 알아야 하므로 루프 집계보다 위로 올려 둔다.
+              var rlp = blank ? '' : loopOf(row);
+              // 지난 루프의 줄인가 — 기본 보기에서 감출 조건(위 CSS 의 data-lold).
+              // 보드를 아직 못 받았으면(LCUR '') 아무것도 감추지 않는다: 그 순간에 감추면
+              // 근거 없이 패드가 통째로 비고, 그건 '적었는데 사라졌다' 로 읽힌다.
+              // 루프를 알 수 없는 줄(rlp '' — 생성 시각이 없는 옛 글)도 감추지 않는다.
+              // 어느 루프의 것인지 모르는 줄을 과거로 미는 것은 지어내는 일이다.
+              var rold = !blank && !!LCUR && !!rlp && rlp!==LCUR;
+              if(rold) row.dataset.lold='1'; else delete row.dataset.lold;
               // 생성 날짜 — 고른 범위 밖의 줄을 감춘다(빈 줄은 예외: 이어 쓸 자리).
-              // 개수는 범위와 무관하게 늘 센다 — 콤보에서 '넓히면 몇 개가 더 나오나' 를
-              // 보고 고르는 것이므로.
+              // 개수는 '이걸 고르면 몇 줄이 보이나' 라는 약속이다. 그래서 날짜 범위와는
+              // 무관하게 세지만, **루프 축이 지금 감추고 있는 줄은 세지 않는다** — 그 줄들은
+              // 무엇을 골라도 화면에 안 나오므로, 세면 약속을 어긴다(예: 최근 7일이 39 를
+              // 약속하고 35 를 주던 상태). 모집단은 CSS 가 실제로 쓰는 조건과 한 글자도
+              // 다르지 않게 맞춘다: 기본은 묻히지 않은 줄, 'all' 은 전부, 지난 루프를
+              // 고른 중이면 그 루프의 줄.
+              //
+              // 2026-08-29 — 이 자리는 loopOf(row)===bgLoop.cur 로 세면 안 된다고 적고
+              // 있었다. 까닭은 옳았다: 릴리즈 컷 직후에는 열린 스프린트가 곧바로 다음
+              // 코드로 넘어가는데(그날 13:31 에 26-48 컷 → 26-49) 메모의 생성 스탬프는 그
+              // 전날이라 그 정의로는 걸리는 줄이 0개가 되고, CSS 는 그 줄들을 여전히 보여
+              // 주고 있었으니 숫자만 거짓말을 했다.
+              // 2026-08-30 — 그 어긋남이 사라졌다. 이제 CSS 도 같은 정의로 감춘다
+              // (data-lold). 컷 직후에 0 이 나오는 것은 이제 사고가 아니라 사실이다 —
+              // 새 루프의 패드는 실제로 비어 있고, 숫자는 그 화면을 그대로 말한다.
+              // 규칙은 하나로 남는다: 모집단은 CSS 가 감추지 않는 줄과 한 글자도 다르지
+              // 않게 맞춘다.
               if(!blank){
                 var age=crAge(row, CK);
-                cAll++;
-                if(age===0) c1++;
-                if(age>=0 && age<=1) c2++;
-                if(age>=0) c7++;
-                if(!crFit(age, CM)) row.dataset.cx='1'; else delete row.dataset.cx;
+                if(LK ? (rlp===LK) : (LM==='all' || (!row.dataset.lp && !rold))){
+                  cAll++;
+                  if(age===0) c1++;
+                  if(age>=0 && age<=1) c2++;
+                  if(age>=0) c7++;
+                }
+                if(!crFit(age, CM) && !LK) row.dataset.cx='1'; else delete row.dataset.cx;
               } else delete row.dataset.cx;
+              // 루프 — 이 줄이 어느 루프의 것인지 세고, 고른 루프면 표를 단다. 빈 줄은
+              // 어느 루프에도 안 세지만 표는 단다: 과거를 보는 중에도 이어 쓸 자리는 남는다.
+              if(rlp) LC[rlp]=(LC[rlp]||0)+1;
+              if(LK && (blank || rlp===LK)) row.dataset.lsel='1'; else delete row.dataset.lsel;
               if(body || fld) row.dataset.has='1';
               else if(row.dataset.open!=='1' && row.dataset.fs!=='1') delete row.dataset.has;
               // 감춰 둔 게 없으면 알약에 글자도 남기지 않는다 — 지우면 흔적 없이 사라져야 한다.
@@ -1909,9 +2262,10 @@ enum MemoPad {
               // 원에는 골번호가 먼저다. 채번 전(스텁·오프라인)에만 위치 번호가 보인다.
               row.querySelector('.cmm-no').textContent=row.dataset.gno||n;
               row.querySelector('.cmm-mk').textContent=MARK[st];
-              // 이전 루프에 묻힌 줄은 상태 집계에서 뺀다 — 보기 콤보의 완료 개수는
-              // '이번 루프에 끝낸 것' 이다(묻힌 것은 '이전 루프' 줄이 따로 센다).
-              if(row.dataset.lp) lp++;
+              // 이전 루프의 줄은 상태 집계에서 뺀다 — 보기 콤보의 완료 개수는 '이번
+              // 루프에 끝낸 것' 이다(지난 루프 줄은 '이전 루프' 가 따로 센다). 묻힌
+              // 스탬프(lp)든 컷 이전에 만든 줄(lold)이든 화면에 없는 것은 같다.
+              if(row.dataset.lp || row.dataset.lold) lp++;
               else if(st==='done') done++; else if(st==='block') block++; else todo++;
             });
             treePaint(pad);
@@ -1920,14 +2274,14 @@ enum MemoPad {
             // 쓰고 있는 손은 덮지 않는다 — uaLoad 가 포커스·조합 중이면 물러난다.
             if(uiMode()==='ultra') uaLoad(pad, false, false);
             return { n:n, done:done, block:block, todo:todo, lp:lp,
-                     c1:c1, c2:c2, c7:c7, cAll:cAll };
+                     c1:c1, c2:c2, c7:c7, cAll:cAll, lc:LC };
           }
           // 헤더에는 집계를 늘어놓지 않는다(2026-08-04). 개수는 '보기' 콤보 안에서만 보인다 —
           // 평소 화면은 비워 두고, 숫자는 무엇을 감출지 고를 때만 필요하다.
-          var COUNT={n:0,done:0,block:0,todo:0,lp:0,c1:0,c2:0,c7:0,cAll:0};
+          var COUNT={n:0,done:0,block:0,todo:0,lp:0,c1:0,c2:0,c7:0,cAll:0,lc:{}};
           function stat(){
             COUNT = pads.length ? paint(pads[0])
-                                : {n:0,done:0,block:0,todo:0,lp:0,c1:0,c2:0,c7:0,cAll:0};
+                                : {n:0,done:0,block:0,todo:0,lp:0,c1:0,c2:0,c7:0,cAll:0,lc:{}};
             pads.forEach(function(p,i){ if(i) paint(p); });
             if(menuEl && (menuEl.dataset.view==='1'||menuEl.dataset.flt==='1')) paintMenu();
             allocSoon();                                 // 번호 없는 체크리스트 줄이 있으면 채번
@@ -2033,6 +2387,21 @@ enum MemoPad {
           // 일이 없어진다(충돌 병합은 그래도 남는 마지막 경주 몇 초의 뒷받침일 뿐).
           // 편집·저장이 걸려 있으면 손대지 않는다. 판번호 없는 서버(옛 빌드·스텁)도 덮지 않는다.
           function refresh(){
+            // 보드도 같이 맞춘다(2026-08-29). 대시보드 웹뷰는 몇 시간씩 열려 있는데
+            // boardFetch 는 mount 와 '보기' 콤보를 열 때만 불렸다 — 그래서 루프가 한 바퀴
+            // 돌아 보드가 26-51 이 되어도 패드는 26-49 로 굳어 있었다. 새 타이머를 두는
+            // 대신 이미 있는 갱신 경로(focus·visibilitychange)에 얹는다. 요청이 쏟아지는
+            // 것은 boardFetch 자신의 60초 스로틀이 막는다.
+            //
+            // 아래 가드보다 위인 이유: 그 가드는 '서버 텍스트가 타이핑을 덮는 것' 을 막는
+            // 자리다. boardFetch 는 텍스트를 한 글자도 건드리지 않고 표찰과 집계만 바꾸므로
+            // 같은 가드를 받을 이유가 없다. 그리고 이것은 표찰만의 문제가 아니다 —
+            // loopEnd() 가 bgLoop.cur 를 받아 dataset.lp 로 쓰고, 그것이 직렬화되어 저장
+            // 텍스트에 '@루프: <code>' 로 박힌다(bgLoop.cur 가 저장 텍스트에 닿는 유일한
+            // 경로다). 가드 안에 넣으면 편집 중인 사람(dirty)이 보드 갱신을 영원히 못 받고,
+            // 그 사람이 바로 곧 '루프 종료' 를 누를 사람이다 — 두 루프 전의 코드가 디스크에
+            // 남는다. 낡은 표찰이 아니라 틀린 값이 파일에 박히는 문제다.
+            boardFetch();
             if(!loaded || timer || pending || retry || dirty) return;
             fetch('/api/memo').then(function(r){ return r.json(); }).then(function(j){
               if(timer || pending || dirty) return;
@@ -2050,6 +2419,12 @@ enum MemoPad {
           // struct=true 는 '구조가 바뀐 편집' — 줄을 합치거나 지우거나 상태를 토글한 경우.
           // 되돌리기에서 한 덩어리로 묶이지 않고 언제나 한 단계가 된다.
           function onEdit(src, struct){
+            // 지난 루프를 보는 중에 글을 쓰면 현재 루프로 돌아온다(2026-08-27). 새로 적는
+            // 줄은 언제나 지금 루프의 것이라, 26-46 을 펼쳐 둔 채로는 방금 친 글자가 그
+            // 자리에서 감춰진다 — 이 패드에서 가장 나쁜 사고('적었는데 사라졌다')다.
+            // 그래서 쓰기 시작하는 순간 오늘로 돌려보낸다. 텍스트는 건드리지 않으므로
+            // ⌘Z 히스토리에도 흔적이 없고, 헤더 표찰이 코드에서 날짜로 바뀌어 눈에 보인다.
+            if(loopPick()) loopSet('');
             crStampNew(src);          // 방금 생긴 줄에 '@생성: 지금' — 저장 텍스트로 나가기 전에
             text=serialize(src);
             histNote(src, text, !!struct);
@@ -2568,18 +2943,6 @@ enum MemoPad {
             });
             // 루프 축 — 상태(위)와 다른 축. 이전 루프에 묻힌 완료를 볼지 말지 고르고(라디오),
             // 지금 사이클을 여기서 끝낸다(액션). 종료도 편집 한 단계 — ⌘Z 로 돌아온다.
-            // 생성 날짜 축 — 상태·루프와 또 다른 축. '오늘 만든 것만' 이 기본이고,
-            // 지난 것을 볼 필요가 있을 때만 여기서 넓힌다(생성 날짜 절 참조).
-            var cd1=document.createElement('div'); cd1.className='cmm-vd'; menuEl.appendChild(cd1);
-            var ct=document.createElement('div'); ct.className='cmm-vt';
-            ct.textContent='생성 날짜'; ct.setAttribute('data-why','cr');
-            menuEl.appendChild(ct);
-            var copts=CRS.map(function(o){
-              var b=opt(o.n);
-              b.addEventListener('mousedown', function(e){ e.preventDefault(); crSet(o.s); });
-              menuEl.appendChild(b);
-              return { o:o, b:b };
-            });
             var ld1=document.createElement('div'); ld1.className='cmm-vd'; menuEl.appendChild(ld1);
             var lt=document.createElement('div'); lt.className='cmm-vt';
             lt.setAttribute('data-why','loop'); menuEl.appendChild(lt);
@@ -2589,12 +2952,58 @@ enum MemoPad {
             var la=opt('이전 루프 포함');
             la.addEventListener('mousedown', function(e){ e.preventDefault(); loopSet('all'); });
             menuEl.appendChild(la);
+            // 지난 루프 하나 — 앞의 둘이 '지금 처리할 것' 을 고르는 라디오라면, 여기 목록은
+            // 끝난 루프 한 벌을 통째로 꺼내 보는 자리다(2026-08-27). 목록은 보드를 받은
+            // 뒤에야 채워지고 줄 수도 편집에 따라 바뀌므로, 만들 때가 아니라 그릴 때
+            // (menuPaint) 다시 세운다 — 콤보를 연 채로 보드가 도착해도 그 자리에서 나타난다.
+            var lw=document.createElement('div'); menuEl.appendChild(lw);
+            var lwSig='';
+            function lwPaint(){
+              var list=loopList(COUNT.lc), cur=loopPick();
+              var sig=list.join(',')+'|'+cur+'|'+list.map(function(c){ return (COUNT.lc||{})[c]||0; }).join(',');
+              if(sig===lwSig) return;
+              lwSig=sig;
+              lw.innerHTML='';
+              if(!list.length) return;
+              list.forEach(function(code){
+                var b=opt(code);
+                b.setAttribute('aria-checked', code===cur ? 'true' : 'false');
+                b.cnt.textContent=((COUNT.lc||{})[code]||0)+'줄';
+                b.addEventListener('mousedown', function(e){ e.preventDefault();
+                  // 같은 루프를 다시 누르면 현재 루프로 돌아온다 — 들어간 문이 곧 나오는 문이다.
+                  loopSet(code===loopPick() ? '' : code); });
+                lw.appendChild(b);
+              });
+            }
             var ld2=document.createElement('div'); ld2.className='cmm-vd'; menuEl.appendChild(ld2);
             var le=document.createElement('button');
             le.type='button';
             le.addEventListener('mousedown', function(e){ e.preventDefault();
               if(!le.disabled) loopEnd(pad); });
             menuEl.appendChild(le);
+            // 생성 날짜 축 — 맨 아래다. 감추는 축은 루프 하나이고(2026-08-29), 여기는
+            // 사람이 스스로 좁힐 때만 쓰는 도구라 메뉴에서도 루프 뒤에 선다. 위치가 곧
+            // '무엇이 이 패드의 단위인가' 의 답이다.
+            var cd1=document.createElement('div'); cd1.className='cmm-vd'; menuEl.appendChild(cd1);
+            var ct=document.createElement('div'); ct.className='cmm-vt';
+            ct.setAttribute('data-why','cr');            // 소제목 글은 menuPaint 가 매번 쓴다
+            menuEl.appendChild(ct);
+            // 맨 위가 '해제' 다 — crSet('all'). 다섯 번째 값이 아니라 이미 있는 'all' 을
+            // 부르는 행이고(CRS 근처 주석), 오른쪽 숫자 자리는 비운다.
+            var coff=opt('해제');
+            coff.cnt.textContent='';
+            coff.addEventListener('mousedown', function(e){ e.preventDefault();
+              if(coff.disabled) return; crSet('all'); });
+            menuEl.appendChild(coff);
+            var copts=CRS.map(function(o){
+              var b=opt(o.n);
+              b.addEventListener('mousedown', function(e){ e.preventDefault();
+                // 지난 루프를 보는 중이면 이 절은 쉰다 — 낯빛만이 아니라 실제로도 막는다
+                // ('루프 종료' 와 같은 방어).
+                if(b.disabled) return; crSet(o.s); });
+              menuEl.appendChild(b);
+              return { o:o, b:b };
+            });
             menuPaint=function(){
               var on=viewShown();
               all.setAttribute('aria-checked', on.length===VIEWS.length ? 'true' : 'false');
@@ -2602,13 +3011,30 @@ enum MemoPad {
                 o.b.setAttribute('aria-checked', on.indexOf(o.v.s)>=0 ? 'true' : 'false');
                 o.b.cnt.textContent=COUNT[o.v.s]||0;
               });
-              // 생성 날짜 — 라디오(하나만). 오른쪽 숫자는 '이 범위로 넓히면 몇 줄이 보이나'.
-              var cm=crMode(), CN={'':COUNT.c1||0, '2':COUNT.c2||0,
-                                   '7':COUNT.c7||0, 'all':COUNT.cAll||0};
+              // 생성 날짜 — 라디오(하나만). 오른쪽 숫자는 '이 범위로 좁히면 몇 줄이 보이나'
+              // 이고, 루프 축이 지금 감추지 않는 줄만 센 값이다(paint 참조).
+              var cm=crMode(), CN={'':COUNT.c1||0, '2':COUNT.c2||0, '7':COUNT.c7||0};
+              var cLk=!!loopPick();
+              coff.setAttribute('aria-checked', cm==='all' ? 'true' : 'false');
+              coff.disabled=cLk;
               copts.forEach(function(x){
                 x.b.setAttribute('aria-checked', x.o.s===cm ? 'true' : 'false');
                 x.b.cnt.textContent=CN[x.o.s];
+                x.b.disabled=cLk;
               });
+              // 소제목이 이 축의 상태를 말한다 — 헤더 표찰은 감추고 있는 축(루프)을 말하므로,
+              // 날짜가 걸렸는지 안 걸렸는지는 여기서 글로 읽힌다. 지난 루프를 보는 중이면
+              // 이 절은 아예 쉬고 있고(paint 가 cx 를 안 단다), 그 사실을 먼저 말한다.
+              // 소제목에 숫자를 안 적는다(2026-08-29). cAll 은 모집단이라 '오늘만' 을 고른
+              // 상태에서 '보이는 N줄' 이 거짓이 되고, 그 항목의 실제 수는 이미 체크된 항목
+              // 오른쪽에 붙어 있어 같은 숫자를 두 번 적는 꼴이었다. 숫자의 근거는 WHY.cr 로
+              // 옮겼다 — 소제목은 걸렸는지 쉬는지만 글로 말하고, 거짓말할 표면을 안 만든다.
+              ct.textContent = cLk
+                ? '생성 날짜 — 지난 루프를 보는 중에는 쉰다'
+                : (cm==='all'
+                     ? '생성 날짜 — 안 걸림'
+                     : ('생성 날짜 — '
+                        + (CRS.filter(function(o){ return o.s===cm; })[0]||{}).n));
               // 항목 오른쪽에 루프 번호를 단다 — 보드와 같은 일련번호: 현재 = 열린 스프린트
               // 코드(26-38), 이전 = 최신 릴리즈 코드(26-37). 보드를 모르는 환경에서만
               // 숫자 스탬프 폴백(#N). 아직 이전 루프가 없으면 빈칸.
@@ -2616,10 +3042,23 @@ enum MemoPad {
               lt.textContent='루프';
               lc.setAttribute('aria-checked', lm ? 'false' : 'true');
               lc.cnt.textContent = L.cur || ('#'+fb);
-              la.setAttribute('aria-checked', lm ? 'true' : 'false');
+              la.setAttribute('aria-checked', lm==='all' ? 'true' : 'false');
               la.cnt.textContent = L.prev || (fb>1 ? '#'+(fb-1) : '');
-              le.disabled=!COUNT.done;
-              le.textContent='루프 종료 — 완료 '+(COUNT.done||0)+'건을 이전 루프로';
+              lwPaint();                                   // 지난 루프 목록(있을 때만 자리를 쓴다)
+              // 루프 종료는 '지금 루프' 의 액션이다 — 지난 루프를 보는 중에는 잠근다.
+              // 그 화면에서 눌리면 눈앞에 없는 줄(현재 루프의 완료)이 묻히고, 사람은
+              // 무엇이 일어났는지 볼 수 없다.
+              // 강제 보드 조회의 두 상태가 앞선다(loopEnd 주석). 도는 동안은 잠그고,
+              // 낡은 지식만 있어 못 찍은 뒤에는 왜 아무 일도 안 일어났는지 여기서 말한다 —
+              // 다음 성공한 조회가 loopEndStale 을 걷으면 평소 라벨로 돌아온다.
+              le.disabled=loopEndBusy || loopEndStale || !COUNT.done || !!loopPick();
+              le.textContent = loopEndBusy
+                ? '루프 종료 — 보드 확인 중…'
+                : (loopEndStale
+                     ? '루프 종료 — 보드를 못 받았다. 다시 눌러 달라'
+                     : (loopPick()
+                          ? ('루프 종료 — 지난 루프(' + loopPick() + ')를 보는 중')
+                          : ('루프 종료 — 완료 '+(COUNT.done||0)+'건을 이전 루프로')));
             };
             paintMenu();
             document.body.appendChild(menuEl);
@@ -3150,11 +3589,26 @@ enum MemoPad {
             return n;
           }
           function moveOK(row, up){ return !!moveTarget(row, up); }
+          // 같은 상태 그룹의 맨 끝(위쪽) 행 — 한 칸 이동을 갈 데까지 이어 붙인 자리다.
+          function edgeTarget(row, up){
+            var t=null, n=moveTarget(row, up);
+            while(n){ t=n; n=moveTarget(n, up); }
+            return t;
+          }
           function moveRow(pad, row, up){
             var t=moveTarget(row, up);
             if(!t) return;
             if(up) pad.doc.insertBefore(row, t);
             else pad.doc.insertBefore(row, t.nextElementSibling);   // t 바로 뒤로
+            onEdit(pad, true);
+          }
+          // 맨 위로 — 같은 상태 그룹의 첫 행 앞으로 한 번에 올린다. 우선순위를 지금
+          // 제일 위로 끌어올릴 때, 한 칸씩 여러 번 누르지 않게 한다.
+          function moveEdge(pad, row, up){
+            var t=edgeTarget(row, up);
+            if(!t) return;
+            if(up) pad.doc.insertBefore(row, t);
+            else pad.doc.insertBefore(row, t.nextElementSibling);
             onEdit(pad, true);
           }
           function openMenu(pad, x, y, row){
@@ -3165,6 +3619,10 @@ enum MemoPad {
             var items=[];
             if(row){
               // 막힌 방향도 항목은 남긴다(흐리게) — 메뉴가 열 때마다 늘었다 줄면 손이 헤맨다.
+              // '맨 위로 이동'을 맨 위에 둔다 — 우선순위를 끌어올릴 때 가장 자주 쓰는 동작이라
+              // 손이 먼저 닿는 자리에 있는 편이 낫다.
+              items.push(['맨 위로 이동', function(){ moveEdge(pad, row, true); }, !moveOK(row, true),
+                          false, '같은 상태(미완료·완료·바틀넥) 줄들 중 맨 위로 올립니다']);
               items.push(['위로 이동', function(){ moveRow(pad, row, true); }, !moveOK(row, true)]);
               items.push(['아래로 이동', function(){ moveRow(pad, row, false); }, !moveOK(row, false)]);
               items.push(null);                          // 구분선
@@ -3227,6 +3685,55 @@ enum MemoPad {
             }, true);
           }
 
+          // ── 헤더 줄 넘침 관리 (2026-08-20) ──────────────────────────────
+          // .cmmemo-hd 는 줄바꿈하지 않는다 — 예전엔 flex-wrap:wrap 이라 meta 글자 길이가
+          // 바뀔 때마다('저장 중…' ↔ '저장됨') 줄 수가 흔들리며 화면이 출렁였다. 이제 첫
+          // 줄에 다 못 들어가면 뒤(오른쪽)의 버튼부터 순서대로 둘째 줄(hd2)로 옮기고, 첫
+          // 줄 끝에 ＋ 버튼 하나만 남긴다 — 다 들어가면 ＋ 도 둘째 줄도 함께 사라진다.
+          // 판단은 오직 실제 렌더 폭(offsetWidth)이라 글자·창 너비가 어떻게 바뀌든 같은
+          // 규칙 하나로 맞다 — meta() 를 포함해 낱낱이 호출부를 좇지 않아도 된다.
+          function hdWire(pad){
+            if(!pad.hd || !pad.hd2 || !pad.more) return;
+            var order=[pad.ui, pad.flt, pad.view, pad.sort, pad.hist, pad.addBtn, pad.exp].filter(Boolean);
+            var scheduled=false;
+            function layout(){
+              scheduled=false;
+              if(!pad.hd.isConnected) return;
+              var avail=pad.hd.clientWidth, gap=8, base=pad.meta.offsetWidth;
+              var full=base; order.forEach(function(it){ full+=gap+it.offsetWidth; });
+              var showN=order.length;
+              if(full>avail){
+                var w=base+gap+(pad.more.offsetWidth||26); showN=0;
+                for(var i=0;i<order.length;i++){
+                  var nw=w+gap+order[i].offsetWidth;
+                  if(nw>avail) break;
+                  w=nw; showN=i+1;
+                }
+              }
+              var overflow=showN<order.length;
+              order.forEach(function(it,i){
+                var wantHd=i<showN;
+                if(wantHd===(it.parentElement===pad.hd)) return;
+                if(wantHd) pad.hd.insertBefore(it, pad.more); else pad.hd2.appendChild(it);
+              });
+              pad.more.style.display=overflow?'inline-flex':'none';
+              if(!overflow) pad.hd2Open=false;
+              var open=overflow && pad.hd2Open;
+              if(open) pad.hd2.setAttribute('data-open',''); else pad.hd2.removeAttribute('data-open');
+              pad.more.setAttribute('aria-expanded', open?'true':'false');
+            }
+            function schedule(){ if(scheduled) return; scheduled=true; requestAnimationFrame(layout); }
+            pad.more.addEventListener('click', function(){ pad.hd2Open=!pad.hd2Open; layout(); });
+            // 첫 줄 안의 어떤 글자 변화든(meta 의 저장 상태, 필터 숫자, 정렬·보기 라벨…) 여기
+            // 한 곳에서 잡는다. 우리가 버튼을 옮기는 것도 같은 관찰 대상이지만, 다음 판은
+            // 이미 맞는 자리라 한 번 더 돌고 스스로 멈춘다(무한 루프 없음).
+            var mo=new MutationObserver(schedule);
+            var moOpt={subtree:true, childList:true, characterData:true, attributes:true, attributeFilter:['style']};
+            mo.observe(pad.hd, moOpt); mo.observe(pad.hd2, moOpt);
+            if(window.ResizeObserver) new ResizeObserver(schedule).observe(pad.hd);
+            schedule();
+          }
+
           function mount(el){
             if(!el || el.dataset.cmmemoOn) return null;
             el.dataset.cmmemoOn='1';
@@ -3240,11 +3747,16 @@ enum MemoPad {
                       hist:el.querySelector('[data-cmmemo-hist]'),
                       flt:el.querySelector('[data-cmmemo-flt]'),
                       fltN:el.querySelector('[data-cmmemo-flt-n]'),
+                      // 헤더 줄 넘침 관리 — hd=첫 줄, hd2=접히는 둘째 줄, more=＋ 버튼, addBtn=＋체크리스트.
+                      hd:el.querySelector('[data-cmmemo-hd]'), hd2:el.querySelector('[data-cmmemo-hd2]'),
+                      more:el.querySelector('[data-cmmemo-more]'), addBtn:el.querySelector('[data-cmmemo-add]'),
+                      hd2Open:false,
                       // 초집중 편집면 — 지금 덩어리 하나를 담는 textarea.
                       // uaRow=묶여 있는 행, uaWant=머리글 예약, uaComposing/uaStamping=IME·재진입 방어.
                       ua:el.querySelector('[data-cmmemo-ua]'),
                       uaRow:null, uaWant:false, uaComposing:false, uaStamping:false };
             if(!pad.doc || !pad.meta) return null;
+            hdWire(pad);
             if(pad.exp) pad.exp.addEventListener('click', expToggle);
             if(pad.view) pad.view.addEventListener('mousedown', function(e){
               e.preventDefault(); openView(pad, pad.view); });
@@ -3276,6 +3788,13 @@ enum MemoPad {
             // '나갈 때 저장' 같은 늦은 반영은 이 앱에서 글이 사라지는 길이다.
             if(pad.ua){
               pad.ua.addEventListener('beforeinput', function(ev){ uaStampMark(pad, ev); });
+              // 편집 메뉴의 '실행 취소'·트랙패드 제스처는 키가 아니라 beforeinput 으로
+              // 온다(.cmm-doc 과 같은 이유 — 아래 keydown 참고). 브라우저 네이티브
+              // 되돌리기로 새지 않게 여기서도 가로챈다.
+              pad.ua.addEventListener('beforeinput', function(ev){
+                if(ev.inputType==='historyUndo'){ ev.preventDefault(); undo(pad); }
+                else if(ev.inputType==='historyRedo'){ ev.preventDefault(); redo(pad); }
+              });
               pad.ua.addEventListener('input', function(ev){
                 if(pad.uaStamping) return;                  // 우리가 넣은 머리글의 메아리
                 uaSync(pad);
@@ -3286,6 +3805,19 @@ enum MemoPad {
               pad.ua.addEventListener('compositionend', function(){ pad.uaComposing=false;
                 setTimeout(function(){ uaStampApply(pad); }, 0); });
               pad.ua.addEventListener('keydown', function(ev){
+                // ⌘Z / ⌘⇧Z(⌘Y) — .cmm-doc 과 똑같이 우리 히스토리로 가로챈다. 브라우저
+                // 네이티브 되돌리기에 맡기면 이 textarea 가 예전에 담았던 다른 덩어리의
+                // 되돌리기 기록과 뒤섞일 길이 열린다 — 초집중은 '메모장처럼' 한 덩어리
+                // 안에만 머물러야 하니, 저장 텍스트 스냅숏 기반의 이 히스토리 하나로
+                // 통일한다(2026-08-20).
+                if((ev.metaKey||ev.ctrlKey) && !ev.altKey && (ev.code==='KeyZ' || ev.key==='z' || ev.key==='Z')){
+                  ev.preventDefault();
+                  if(ev.shiftKey) redo(pad); else undo(pad);
+                  return;
+                }
+                if((ev.metaKey||ev.ctrlKey) && !ev.altKey && ev.code==='KeyY'){
+                  ev.preventDefault(); redo(pad); return;
+                }
                 if(ev.isComposing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
                 // 머리글 예약은 beforeinput 이 맡지만, IME 첫 타(key='Process'/keyCode 229)를
                 // beforeinput 으로 늦게 주는 엔진이 있어 키에서도 한 번 더 짚는다
@@ -3418,6 +3950,11 @@ enum MemoPad {
             sortPaint();
             uiPaint();
             fltBtnPaint();
+            // 보드의 루프 코드를 곧바로 청한다. 예전에는 '보기' 콤보를 열 때만 받았는데,
+            // 이제 헤더 표찰이 그 코드를 달고 있어(crBtnPaint) 메뉴를 한 번도 안 여는
+            // 사람도 지금 도는 루프가 무엇인지 봐야 한다. 실패는 조용하다 — 표찰이
+            // '루프' 로 남을 뿐이다(숫자를 지어내지 않는다).
+            boardFetch();
             pad.meta.textContent = loaded ? stat() : '불러오는 중…';
             return pad;
           }
@@ -3472,7 +4009,28 @@ enum MemoPad {
           function boot(){
             var els=document.querySelectorAll('[data-cmmemo]');
             for(var i=0;i<els.length;i++) mount(els[i]);
-            if(pads.length){ expPaint(); load(); }
+            if(pads.length){ expPaint(); load();
+              // 보드를 주기로 다시 읽는다(2026-08-29). 이벤트 경로만으로는 부족하다 —
+              // boardFetch 를 부르는 자리는 mount·openView·refresh(focus/visibilitychange)·
+              // loopEnd 의 강제 조회뿐이고 **전부 사람 동작에 매여 있다**. 그런데 사람은 앱
+              // *안에서* 루프를 끝낸다. 그 동작은 창 수준 focus 도 visibilitychange 도 만들지
+              // 않는다 — 값을 바꾸는 바로 그 행동이, 갱신을 일으키지 않는 유일한 행동이다.
+              // 그래서 보드는 26-52 인데 패드 헤더는 26-51 로 굳은 화면이 계속 관측됐다.
+              // 주기가 길었던 게 아니라 주기가 아예 없었다.
+              //
+              // 30초인 이유: boardFetch 자신의 60초 스로틀이 실제 요청을 분당 1회로 누른다.
+              // 그래서 **무인자로** 부른다 — force 를 주면 요청 수를 누르는 그 자리가 죽는다.
+              // document.hidden 이면 건너뛴다: 숨은 탭에서 돌 이유가 없고, 돌아오는 순간
+              // visibilitychange 가 이미 refresh() 를 부른다.
+              //
+              // 이 패널만 특별한 게 아니다 — 이 대시보드의 형제 패널은 전부 폴링한다
+              // (BGMPlayerContent 1.5·5·30초, EquipmentContent 15초, GoalAddContent 5초).
+              // MemoPad 만 예외였다.
+              //
+              // 이 if 안쪽인 이유: 패드를 하나라도 마운트했을 때만 건다. 패드가 없는
+              // 페이지에서 타이머가 돌면 아무도 안 보는 화면을 위해 /data.json 을 친다.
+              setInterval(function(){ if(!document.hidden) boardFetch(); }, 30000);
+            }
           }
           if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot); else boot();
           window.addEventListener('pagehide', flush);
@@ -3554,10 +4112,24 @@ enum MemoPad {
           });
 
           return { mount:mount, flush:flush, count:function(){ return pads.length; },
+                   // 보드가 방금 바뀌었다 — 같은 화면의 보드 쪽이 루프를 완료한 직후에
+                   // 부른다(DashboardContent.releaseSprintGroup). 이 길이 없던 동안 패드는
+                   // 자기 폴링으로만 컷을 알았다: 30초 틱에 boardFetch 의 60초 스로틀이
+                   // 겹쳐 실제 반영이 60~90초 뒤였고, 사람은 '눌렀는데 한참 뒤에 바뀐다'
+                   // 를 봤다. 스로틀을 건드리지 않고 이 한 번만 건너뛴다 — 루프 종료
+                   // 버튼과 같은 근거다(사람이 뜻을 담아 누른 한 번).
+                   boardChanged:function(){ boardFetch(true); },
                    expand:expToggle, expanded:expOn,
                    strike:function(){ if(pads[0]) strike(pads[0], document.activeElement); },
                    text:function(){ return text; },
-                   setText:function(s){ text=s||''; pads.forEach(function(p){ render(p, text); });
+                   setText:function(s){ text=s||'';
+                     // 바깥에서 글을 통째로 갈아 끼우는 것 — adopt()/undo 의 '같은 문서를
+                     // 다시 그린다' 와는 다르다. 초집중이 순번으로 기억해 둔 '지금 덩어리'
+                     // (pad.uaIdx)는 이 갈아 끼우기 전 문서 기준이라 새 문서에서는 아무
+                     // 근거가 없다 — 들고 가면 완전히 다른 행을 '지금 덩어리' 로 잘못
+                     // 짚는다(2026-08-20). 여기서 먼저 놓는다.
+                     pads.forEach(function(p){ p.uaRow=null; p.uaIdx=null; });
+                     pads.forEach(function(p){ render(p, text); });
                      // 바깥에서 통째로 갈아 끼운 것도 되돌릴 수 있어야 한다(한 단계).
                      if(pads[0]) histNote(pads[0], text, true);
                      meta(stat()); schedule(); },

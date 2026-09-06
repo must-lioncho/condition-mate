@@ -42,12 +42,23 @@ check('all children done -> parent done', derivedStatus(g3, g3[0]) === 'done', d
 const g4 = [G('p', 'backlog'), G('a', 'done', 'p'), G('b', 'in_progress', 'p')];
 check('in_progress child wins over done sibling', derivedStatus(g4, g4[0]) === 'on_track');
 
-// parent's own in_progress is ignored for display (rollup overrides) — but a
-// manually-done parent stays done regardless of children.
+// parent's own in_progress is ignored for display (rollup overrides).
 const g5 = [G('p', 'in_progress'), G('a', 'backlog', 'p')];
 check('parent own status ignored; backlog children -> backlog', derivedStatus(g5, g5[0]) === 'backlog');
+
+// 수동 완료(done) 부모는 살아 있는 자식이 남아 있으면 on_track 으로 되살아난다.
+// derivedStatus 는 라벨만이 아니라 가시성 게이트(effStatus → passesDoneCutoff)를 먹인다.
+// 완료한 부모 밑에 새 과제를 붙였을 때 부모가 done 으로 굳으면 컷오프에 걸려
+// 새 과제가 부모와 함께 보드에서 사라진다. 그래서 살아 있는 자식이 하나라도 있으면 부활한다.
 const g6 = [G('p', 'done'), G('a', 'in_progress', 'p')];
-check('manually-done parent stays done', derivedStatus(g6, g6[0]) === 'done', derivedStatus(g6, g6[0]));
+check('manual-done parent revives to on_track while a child is live',
+      derivedStatus(g6, g6[0]) === 'on_track', derivedStatus(g6, g6[0]));
+
+// "Manual done wins" 는 여기서 지켜진다 — 자식이 전부 종료(완료/취소)라
+// 자동 롤업만으로는 backlog(done 자식 0개)로 떨어질 자리인데, 수동 done 이 이겨 done 이 남는다.
+const g6b = [G('p', 'done'), G('a', 'cancelled', 'p'), G('b', 'cancelled', 'p')];
+check('manual done wins when every child is terminal',
+      derivedStatus(g6b, g6b[0]) === 'done', derivedStatus(g6b, g6b[0]));
 
 // partial progress: some done + rest backlog -> on_track (work has started)
 const g7 = [G('p', 'backlog'), G('a', 'done', 'p'), G('b', 'backlog', 'p')];

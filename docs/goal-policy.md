@@ -12,9 +12,9 @@
 
 골과 정책은 서로 다른 디렉터리에 기록한다.
 
-- 정책 문서: `/Users/lioncho/Work/departtment_service/projects/condition-mate/.doc`
+- 정책 문서: `/Users/lioncho/Work/departtment_service/projects/org-lion/lion-condition-mate/.doc`
   - 본 문서(goal-policy.md)를 포함해 규칙·정의·정책을 모아 둔다.
-- 골 페이지 문서: `/Users/lioncho/Work/departtment_service/projects/condition-mate/.issue`
+- 골 페이지 문서: `/Users/lioncho/Work/departtment_service/projects/org-lion/lion-condition-mate/.issue`
   - 개별 골은 이 디렉터리 아래 번호 폴더 `goal-NN/`에 둔다. 한 골의 산출물(두 버전 문서·첨부·대화)을 한곳에 모은다.
     - `goal-NN/goal-core.md` — 핵심 버전 (사람이 보는 용도)
     - `goal-NN/goal-detail.md` — 디테일 버전 (AI가 실행하는 용도)

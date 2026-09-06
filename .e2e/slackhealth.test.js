@@ -286,8 +286,10 @@ if (probe) {
     esc: (s) => String(s == null ? '' : s),
   };
   // 페이지 전역(cache/hDetail/hSig)을 매번 새로 세운 스코프에 심고 실제 함수를 돌린다.
-  // syncErr/items = 리액션 동기화 실패 맵 — 연결 상태와 한 칩으로 합쳐졌으므로
-  // 같은 함수가 둘 다 본다.
+  // syncErr/items = 리액션 동기화 실패 맵. 연결 상태(connBad)와 개별 리액션
+  // 동기화 실패(syncBad)는 서로 다른 문제라 같은 함수가 보되 문구·색은 갈라 낸다 —
+  // 연결이 진짜 고장났을 때만 "연결 및 동기화 실패"로 합치고, 연결은 멀쩡한데
+  // 동기화만 실패했을 때는 "동기화 실패 N건"이라고만 말한다(연결 칩 도용 금지).
   // RT_EVENTS = 실시간 수신에 필요한 유저 이벤트 목록. 배너 안내가 이 배열을 그대로
   // 읽으므로 스텁에도 소스에서 떼어 심는다 (테스트에 목록을 다시 적지 않는다).
   const rtConst = (PAGE.match(/const RT_EVENTS = \[[^\]]*\];/) || [])[0];
@@ -361,7 +363,10 @@ if (probe) {
   ok(/message\.channels/.test(els.hBanner.innerHTML),
     '이때만 실시간 켜는 법(이벤트 목록)을 안내한다');
 
-  // ---- 연결 + 동기화 = 하나의 상태 표시 ----
+  // ---- 연결은 정상, 동기화만 실패 = 제목·색은 연결 상태를 따르고 실패는 별도 섹션 ----
+  // 예전엔 이 경우에도 칩·배너 제목이 "연결 및 동기화 실패"/"슬랙 동기화 실패"로
+  // 덮어써져, 본문엔 "지금은 정상입니다"가 그대로 남아 모순된 문구가 떴다
+  // (실측 2026-08-21). 연결과 동기화 실패는 서로 다른 문제이므로 갈라서 보여준다.
   const okH = { state: 'ok', title: '연결됨', detail: '슬랙 실시간 수신 중입니다.',
                 advice: '', command: '', needsUser: false, ageSec: 3 };
   const errs = { syncErr: { 'C1:1': { error: 'missing_scope', action: 'reaction.remove', at: 1 } },
@@ -369,11 +374,19 @@ if (probe) {
 
   run(okH, false, errs);
   ok(els.hChip.className.includes('warn'),
-    '연결은 정상이어도 동기화 실패가 남아 있으면 상태 칩이 주의색 하나로 합쳐진다');
-  ok(/연결 및 동기화 실패/.test(els.hChipT.textContent),
-    '칩 문구가 연결·동기화를 하나로 말한다: ' + els.hChipT.textContent);
+    '연결은 정상이어도 동기화 실패가 남아 있으면 칩은 여전히 주의색이다');
+  ok(els.hChipT.textContent === '동기화 실패 1건',
+    '연결은 멀쩡하므로 칩 문구가 "연결" 단어를 도용하지 않는다: ' + els.hChipT.textContent);
   ok(els.hBanner.style.display === '' && /missing_scope/.test(els.hBanner.innerHTML),
     '칩을 누르지 않아도(실패 상태) 배너에 실제 에러 내용이 나온다');
+  ok(/슬랙 리액션 동기화 실패 1건/.test(els.hBanner.innerHTML),
+    '배너 제목이 "슬랙 동기화 실패"로 뭉뚱그려지지 않고 리액션 동기화 문제임을 명시한다');
+  ok(/연결은 정상입니다/.test(els.hBanner.innerHTML),
+    '연결 자체는 정상이라는 사실을 배너에서 바로 말해 준다');
+  ok(!/^슬랙 동기화 실패$|<h3>슬랙 동기화 실패<\/h3>/.test(els.hBanner.innerHTML),
+    '연결 상태 제목을 "슬랙 동기화 실패"로 덮어쓰지 않는다');
+  ok(!/지금은 정상입니다/.test(els.hBanner.innerHTML),
+    '실패 제목 아래 "지금은 정상입니다" 필러 문구를 반복해 모순으로 보이지 않게 한다');
   ok(/동기화 재시도/.test(els.hBanner.innerHTML), '배너에서 바로 재시도할 수 있다');
 
   run(okH, false);
@@ -382,6 +395,16 @@ if (probe) {
   ok(els.hBanner.style.display === 'none',
     '정상 상태에서 칩을 눌러 열지 않는 한 에러 문구가 남지 않는다');
   ok(!/syncWarn/.test(PAGE), '별도 동기화 실패 칩은 없다 (상태 표시는 하나)');
+
+  // ---- 연결도 고장 + 동기화도 실패 = 이때만 "연결 및 동기화 실패"로 합친다 ----
+  run({ state: 'blocked', title: '슬랙 접속 차단됨', detail: 'slack.com API에 닿지 못합니다 (fetch failed).',
+        advice: 'VPN을 켜거나 네트워크를 바꾼 뒤 다시 연결을 눌러 주세요.',
+        command: "curl -sS https://slack.com/api/api.test", needsUser: true, ageSec: 4 },
+      false, errs);
+  ok(/연결 및 동기화 실패 1/.test(els.hChipT.textContent),
+    '연결 자체가 고장났을 때는 지금까지처럼 연결·동기화를 하나로 합쳐 말한다: ' + els.hChipT.textContent);
+  ok(/슬랙 접속 차단됨/.test(els.hBanner.innerHTML) && /missing_scope/.test(els.hBanner.innerHTML),
+    '연결 실패 설명 아래 리액션 실패 목록이 이어서 붙는다');
 
   ok(/hchip.*wait|\.hchip\.wait/.test(PAGE), '대기 상태 전용 스타일이 있다');
   ok(!/#(7bd88f|2ecc71|00ff00)/i.test(PAGE.split('.hchip')[1] || ''),

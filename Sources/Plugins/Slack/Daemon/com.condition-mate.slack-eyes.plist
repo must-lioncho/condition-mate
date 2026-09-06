@@ -1,25 +1,39 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  launchd agent: Slack 👀 번역 데몬 — keeps slack-eyes-daemon.mjs running 24/7.
-  Socket Mode WebSocket listener: when the user reacts :eyes: to a Slack message,
-  the daemon translates it to Korean and appends to
-  ~/.condition-mate/slack-translate/items.jsonl (dashboard renders it).
+  launchd agent 템플릿: Slack 👀 번역 데몬.
 
-  Install:
-    cp Sources/Plugins/Slack/Daemon/com.condition-mate.slack-eyes.plist ~/Library/LaunchAgents/
-    launchctl load ~/Library/LaunchAgents/com.condition-mate.slack-eyes.plist
+  이 파일은 참고용 원본이다. 실제로 쓰이는 ~/Library/LaunchAgents/ 의 사본은
+  앱이 직접 쓰고 유지한다 — Sources/Plugins/Slack/SlackDaemonInstall.swift 가
+  /Applications/ConditionMate.app 로 실행될 때마다 경로를 검사하고, 어긋나 있으면
+  다시 써서 재등록한다. 손으로 고칠 필요는 없다.
 
-  Stop / uninstall:
+  왜 앱 소유인가 (2026-08-21 사고):
+  예전에는 이 plist가 개발 작업트리의 .mjs를 직접 가리켰다. 즉 운영 기능이 개발
+  폴더에서 돌고 있었다. 레포를 org-lion/ 아래로 옮기자 경로가 무효가 되어 node가
+  MODULE_NOT_FOUND로 즉사했고, launchd는 job을 띄우는 데 성공했으므로 앱의
+  kickstart도 계속 성공을 리턴했다 — 19시간 동안 아무것도 수집되지 않았다.
+  이제 데몬은 앱 번들에 실려 나가고(Scripts/build-app.sh), plist는 업데이트에도
+  변하지 않는 번들 경로를 가리킨다. 개발 트리를 어디로 옮기든 운영은 영향받지 않는다.
+
+  ProgramArguments 의 경로는 앱이 실행 시점에 결정한다:
+    node    존재하는 후보 중 하나 (~/.local/bin, ~/.hermes, homebrew, /usr/local)
+    script  /Applications/ConditionMate.app/Contents/Resources/slack-eyes-daemon.mjs
+  아래 값은 그 형태를 보여주기 위한 예시다.
+
+  최초 설치:
+    ./Scripts/build-app.sh --install     # 앱이 plist까지 함께 잡는다
+
+  중지 / 제거:
     launchctl unload ~/Library/LaunchAgents/com.condition-mate.slack-eyes.plist
-    rm ~/Library/LaunchAgents/com.condition-mate.slack-eyes.plist
+    rm    ~/Library/LaunchAgents/com.condition-mate.slack-eyes.plist
 
-  Toggle OFF without unloading (cron-page pattern):
-    touch ~/.condition-mate/slack-translate-disabled   # daemon idles
-    rm    ~/.condition-mate/slack-translate-disabled   # daemon reconnects
+  언로드 없이 끄기 (cron-page pattern):
+    touch ~/.condition-mate/slack-translate-disabled   # 데몬이 idle
+    rm    ~/.condition-mate/slack-translate-disabled   # 재연결
 
-  REQUIRES keychain items cm-slack-app-token (xapp-) and cm-slack-user-token
-  (xoxp-). Without them the daemon exits 78 and launchd throttles restarts.
+  키체인 항목 cm-slack-app-token (xapp-) 과 cm-slack-user-token (xoxp-) 이 필요하다.
+  없으면 데몬은 exit 78 로 죽고 launchd가 재시작을 throttle 한다.
 -->
 <plist version="1.0">
 <dict>
@@ -29,7 +43,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/Users/lioncho/.local/bin/node</string>
-        <string>/Users/lioncho/Work/departtment_service/projects/condition-mate/Sources/Plugins/Slack/Daemon/slack-eyes-daemon.mjs</string>
+        <string>/Applications/ConditionMate.app/Contents/Resources/slack-eyes-daemon.mjs</string>
     </array>
 
     <!-- Long-running daemon: start at load, restart if it dies. -->

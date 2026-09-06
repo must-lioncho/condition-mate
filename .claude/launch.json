@@ -21,7 +21,7 @@
         "http.server",
         "8932",
         "--directory",
-        "/Users/lioncho/Work/departtment_service/projects/condition-mate"
+        "/Users/lioncho/Work/departtment_service/projects/org-lion/lion-condition-mate"
       ],
       "port": 8932
     },
@@ -29,7 +29,7 @@
       "name": "parent-stub",
       "runtimeExecutable": "node",
       "runtimeArgs": [
-        "/Users/lioncho/Work/departtment_service/projects/condition-mate/.e2e/parentstub.js"
+        "/Users/lioncho/Work/departtment_service/projects/org-lion/lion-condition-mate/.e2e/parentstub.js"
       ],
       "port": 8934
     },
@@ -43,7 +43,7 @@
       "name": "memo-stub",
       "runtimeExecutable": "node",
       "runtimeArgs": [
-        "/Users/lioncho/Work/departtment_service/projects/condition-mate/.e2e/memostub.js"
+        "/Users/lioncho/Work/departtment_service/projects/org-lion/lion-condition-mate/.e2e/memostub.js"
       ],
       "port": 8933,
       "autoPort": true

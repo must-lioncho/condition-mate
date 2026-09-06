@@ -26,6 +26,8 @@ import Foundation
 //   auth         토큰 만료·취소 → 사용자가 키체인에 재등록해야 함
 //   stuck        3회 재시작에도 응답 없음 → 앱/기기 차원의 조치가 필요
 //   notInstalled launchd에 데몬이 없음 → 설치가 필요
+//   brokenPath   plist가 가리키는 .mjs가 실제로 없음 → 앱이 먼저 스스로 고치고,
+//                실패했을 때만 재설치를 요청한다 (2026-08-21 사고의 그 상태)
 //
 // 소유권: <data>/slack-translate/health.json 은 앱 소유(데몬은 HTTP로만 보고).
 // 앱이 재시작해도 마지막 하트비트 시각을 잃지 않도록 디스크에 남긴다.
@@ -49,6 +51,11 @@ public enum SlackHealth {
     // 재시작·복구 이벤트를 호스트 앱에 알리는 훅 (워커 상태 행·로그 연결).
     // 이 타깃은 앱 타입을 모른다 — 배선은 AppDelegate가 한다.
     public static var onEvent: ((_ why: String, _ effect: String, _ ok: Bool) -> Void)?
+
+    // 사용자 조치가 필요한 상태로 "전환"될 때만 부른다 (배너 도배 방지).
+    // 워커 표와 슬랙 페이지에만 남기면 그 화면을 열기 전까지 아무도 모른다 —
+    // 2026-08-21 경로 사고 때 정확히 그래서 19시간이 그냥 지나갔다. 배선은 AppDelegate.
+    public static var onNeedsUser: ((_ title: String, _ detail: String) -> Void)?
 
     static var file: URL { SlackTranslateStore.dir.appendingPathComponent("health.json") }
     // 수집 OFF 토글 (워커 상태 행의 꺼짐) — 데몬도 같은 파일을 폴링한다.
@@ -76,6 +83,9 @@ public enum SlackHealth {
     private static var frameKicks = 0
     private static var lastFrameSeen = 0
     private static var lastFrameKickAt: Date?
+    // plist가 가리키는 데몬 파일이 없을 때, 앱이 스스로 고쳐보고도 실패했는가.
+    // 자동 수리가 도는 동안에는 사용자를 부르지 않는다 (no-user-facing-failure).
+    private static var pathRepairFailed = false
 
     // ----- 하트비트 수신 -----
 
@@ -188,6 +198,25 @@ public enum SlackHealth {
         }
 
         // 하트비트가 끊겼다 (또는 한 번도 없었다).
+
+        // 프로세스가 못 뜨는 원인 1순위: plist가 가리키는 스크립트가 사라졌다
+        // (레포 폴더 이동·이름 변경·git clean). 이 부류는 kickstart로 절대 낫지
+        // 않는데, launchd는 job을 띄우는 데 성공하므로 재시작은 매번 0을 리턴한다
+        // — 그래서 '재시작 3회 실패'라는 뭉뚱그린 결론만 나오고 진짜 이유는 stderr에
+        // 갇힌다. 파일 존재 여부는 즉시 알 수 있으니 여기서 먼저 잘라낸다.
+        if SlackDaemonInstall.scriptMissing() {
+            let script = SlackDaemonInstall.currentScriptPath()
+            lock.lock(); let repairFailed = pathRepairFailed; lock.unlock()
+            return Status(state: "brokenPath", title: repairFailed ? "데몬 파일 없음" : "경로 수리 중",
+                          detail: "등록된 경로에 데몬 스크립트가 없습니다 — 폴더를 옮겼거나 지운 것 같습니다.\n\(script)",
+                          advice: repairFailed
+                            ? "앱이 자동으로 찾아 고치지 못했습니다. 앱을 다시 설치(Scripts/build-app.sh --install)하면 "
+                            + "데몬이 앱 번들 안의 고정 경로로 다시 잡힙니다."
+                            : "",
+                          command: repairFailed ? "./Scripts/build-app.sh --install" : "",
+                          needsUser: repairFailed, ageSec: age)
+        }
+
         if !installed {
             let script = (b["script"] as? String) ?? ""
             return Status(state: "notInstalled", title: "데몬 미설치",
@@ -199,8 +228,12 @@ public enum SlackHealth {
         }
         if kickCount >= maxKicks {
             let why = kickErr.isEmpty ? "" : " (\(kickErr))"
+            // 데몬이 뜨자마자 죽으면 이유는 stderr에만 남는다 — 앱은 하트비트만 보므로
+            // 그대로 두면 사용자도 우리도 "왜"를 영영 못 본다. 마지막 오류 줄을 붙인다.
+            let derr = lastDaemonError()
             return Status(state: "stuck", title: "자동 복구 실패",
-                          detail: "데몬을 \(maxKicks)회 다시 시작했지만 응답이 없습니다\(why).",
+                          detail: "데몬을 \(maxKicks)회 다시 시작했지만 응답이 없습니다\(why)."
+                                + (derr.isEmpty ? "" : "\n데몬 오류: \(derr)"),
                           advice: "데몬 프로세스가 뜨지 못하는 상태입니다. 아래 명령을 실행하거나, "
                                 + "앱을 완전히 종료했다가 다시 실행해 주세요. 그래도 안 되면 "
                                 + "/tmp/cm-slack-eyes.err.log 를 확인해 주세요.",
@@ -211,6 +244,22 @@ public enum SlackHealth {
                       detail: age < 0 ? "데몬 응답을 기다리는 중입니다."
                                       : "데몬이 \(age)초째 응답하지 않아 자동으로 다시 시작하는 중입니다.",
                       advice: "", command: "", needsUser: false, ageSec: age)
+    }
+
+    // 데몬 stderr의 마지막 오류 줄. 데몬이 뜨자마자 죽는 부류(모듈 없음, 권한, 문법
+    // 오류)는 하트비트를 한 번도 못 보내므로 앱이 볼 수 있는 유일한 단서가 이 파일이다.
+    // 스택 프레임은 버리고 사람이 읽을 첫 줄만 고른다. stuck일 때만 호출된다.
+    private static func lastDaemonError() -> String {
+        guard let h = FileHandle(forReadingAtPath: "/tmp/cm-slack-eyes.err.log") else { return "" }
+        defer { try? h.close() }
+        let size = (try? h.seekToEnd()) ?? 0
+        let take: UInt64 = 4096          // 꼬리만 — 이 파일은 재시작 루프에서 MB 단위로 큰다
+        try? h.seek(toOffset: size > take ? size - take : 0)
+        let data = (try? h.readToEnd()) ?? Data()
+        let lines = String(decoding: data, as: UTF8.self)
+            .split(separator: "\n").map(String.init)
+        let hit = lines.last { $0.contains("Error:") || $0.contains("error:") } ?? ""
+        return String(hit.trimmingCharacters(in: .whitespaces).prefix(200))
     }
 
     // 마지막 프레임 수신 경과. -1 = 이 데몬은 프레임을 보고하지 않는다(구버전) —
@@ -306,6 +355,18 @@ public enum SlackHealth {
         // 토큰 문제로 죽은 데몬은 되살려도 같은 이유로 즉시 죽는다 — 사용자에게 맡긴다.
         if !authErr.isEmpty { return }
 
+        // 스크립트 자체가 없으면 kickstart는 무의미하다. launchd는 job을 띄우는 데
+        // 성공하고 node만 즉사하므로 재시작은 매번 '성공'으로 보고되고, 3회를 채워
+        // '자동 복구 실패'로 끝난다 — 원인은 하나도 안 밝혀진 채로. 앱이 자기 번들의
+        // 데몬을 가리키도록 plist를 다시 써서 그 자리에서 고친다.
+        if SlackDaemonInstall.scriptMissing() {
+            let r = SlackDaemonInstall.ensureInstalled()
+            lock.lock(); pathRepairFailed = !(r.changed && r.ok); lock.unlock()
+            onEvent?("데몬 경로 파손 감지", r.detail, r.changed && r.ok)
+            return
+        }
+        lock.lock(); pathRepairFailed = false; lock.unlock()
+
         refreshLaunchd()
         lock.lock(); let installed = launchdLoaded; lock.unlock()
         if !installed {
@@ -350,6 +411,7 @@ public enum SlackHealth {
         guard prev != s.state, !prev.isEmpty || s.needsUser else { return }
         if s.needsUser {
             onEvent?(s.title, s.detail, false)
+            onNeedsUser?(s.title, s.detail)
         } else if s.state == "ok" {
             onEvent?("연결 정상", "슬랙 실시간 수신 중", true)
         } else if s.state == "degraded" {

@@ -562,6 +562,13 @@ enum GoalAddContent {
         // Slack 번역함 GUI세션에서 넘어온 원 메시지 id — GUI시작으로 목표가 만들어지면
         // 그 seq를 이 id에 연결해 둔다 (다음부터 "세션 이어가기").
         let _gaSlackId=_qs.get('slackId')||'';
+        // 컨텍스트 공유하기(?slackCtx=1): 목표가 만들어진 직후 슬랙 원 대화를 긁어
+        // 이 목표 폴더에 문서로 저장한 뒤에야 첫 턴을 쏜다 (gaSlackCtxThenStart).
+        let _gaSlackCtx=(_qs.get('slackCtx')==='1');
+        // 첫 턴 프리앰블 선택 (chat2 preset). 'slack' = 슬랙 대화 대응 세션.
+        let _gaPreset=_qs.get('preset')||'';
+        // 보드에 걸릴 제목 — 넘어온 초안 전체가 아니라 이 한 줄이 목표 이름이 된다.
+        let _gaTitle=_qs.get('gtitle')||'';
         (function(){
           if(_qs.get('resume')==='1'){
             // 대시보드의 이어쓰기 칩: 마지막으로 열었던 대상(cm.gaCtx) 그대로 복원.
@@ -1133,14 +1140,42 @@ enum GoalAddContent {
         // 첫 턴에 서버가 동봉한다. 실패 시 배너 없이 버튼만 되살린다 (no-user-facing-failure).
         function gaStart(){ const inp=$('gaText'); const t=String(inp.value||'').trim(); if(!t) return;
           const btn=$('gaStartGui'); if(btn&&btn.disabled) return; if(btn) btn.disabled=true;
-          post('/api/goal/add',gaPayload(t)).then(r=>r.json()).then(d=>{
+          const payload=gaPayload(t);
+          // 제목이 따로 넘어온 진입(번역함 컨텍스트 공유하기)에서는 목표 이름을 그 한 줄로
+          // 두고, 길게 조립된 컨텍스트는 첫 턴 메시지로만 보낸다.
+          if(_gaTitle) payload.text=_gaTitle;
+          post('/api/goal/add',payload).then(r=>r.json()).then(d=>{
             if(!(d&&d.ok&&d.seq>0)){ if(btn) btn.disabled=false; return; }
             gaClearDraft();
             // Slack 번역함에서 온 GUI세션(?slackId=)이면 어느 목표로 열렸는지 남긴다 —
             // 그래야 그 메시지의 버튼이 "세션 이어가기"가 되고 이 세션으로 되돌아온다.
-            if(_gaSlackId){ post('/api/slack/gui/link',{id:_gaSlackId,seq:d.seq}); _gaSlackId=''; }
+            if(_gaSlackId){ post('/api/slack/gui/link',{id:_gaSlackId,seq:d.seq}); }
+            if(_gaSlackId&&_gaSlackCtx){ gaSlackCtxThenStart(d.seq,t); _gaSlackId=''; return; }
+            _gaSlackId='';
             gsEnter(d.seq,t);
           }).catch(()=>{ if(btn) btn.disabled=false; }); }
+        // 컨텍스트 공유하기의 두 번째 걸음: 슬랙 원 대화를 긁어 goal-NN/attachments/
+        // slack-context.md 로 저장하고(슬랙 왕복이라 몇 초 걸린다), 저장된 경로를 첫 턴에
+        // 실어 세션을 연다. 수집이 실패해도 세션은 그대로 시작한다 — 대신 실패했다는
+        // 사실을 첫 턴에 적어 세션이 없는 문서를 찾아 헤매지 않게 한다.
+        function gaSlackCtxThenStart(seq,text){
+          const id=_gaSlackId;
+          let goal=''; try{ goal=localStorage.getItem('cm.gaSlackGoal')||''; }catch(e){}
+          const btn=$('gaStartGui'); if(btn) btn.textContent='슬랙 원 대화 수집 중…';
+          post('/api/slack/context',{id:id,seq:seq,goal:goal}).then(r=>r.json()).then(d=>{
+            try{ localStorage.removeItem('cm.gaSlackGoal'); }catch(e){}
+            let t=text;
+            if(d&&d.ok&&d.path){
+              t+='\n\n[슬랙 원 대화 전문] '+d.path
+                +'\n메시지 '+(d.n||0)+'개'+(d.thread?(' · 스레드 답글 '+d.thread+'개'):'')
+                +' — Read 도구로 먼저 읽고 시작해줘.';
+            } else {
+              t+='\n\n(슬랙 원 대화 수집 실패'+((d&&d.error)?': '+d.error:'')
+                +' — 위 메시지 컨텍스트만으로 진행해줘.)';
+            }
+            gsEnter(seq,t);
+          }).catch(()=>{ gsEnter(seq,text); });
+        }
         function gaAi(){ const inp=$('gaText'); const t=String(inp.value||'').trim(); if(!t) return;
           // 검색 모드의 primary 버튼은 AI검색으로 리라벨된다 — 같은 findOnly 경로로 보낸다.
           if(_gaSearchMode){ gaAiSearch(); return; }
@@ -1394,7 +1429,7 @@ enum GoalAddContent {
           vtev('sessOpen goal-'+pad2(seq)); window.cmView='sess';
           _gs={seq:seq,sess:false,mode:_gaComp.mode||'bypassPermissions',allow:[],es:null,cur:null,text:'',sawText:false,
                think:null,thinkText:'',tools:null,toolCount:0,toolCards:{},running:false,lastMode:'',
-               startedAt:0,tokens:0,workLabel:''};
+               startedAt:0,tokens:0,workLabel:'',preset:_gaPreset||''};
           document.body.classList.add('sess');
           document.title='goal-'+pad2(seq)+' 세션';
           gsSetCtx(seq);
@@ -1525,6 +1560,8 @@ enum GoalAddContent {
             return;
           }
           const body={seq:_gs.seq,task:'',text:text,mode:_gs.mode,model:'',allow:_gs.allow};
+          // 프리앰블은 새 세션의 첫 턴에만 붙는다 (서버 chat2RunTurn) — 여기서도 한 번만 보낸다.
+          if(_gs.preset){ body.preset=_gs.preset; _gs.preset=''; }
           if(images&&images.length) body.images=images;
           if(override) body.modeOverride=true;
           post('/api/goal/chat2/say',body).then(r=>r.json()).then(d=>{

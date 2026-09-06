@@ -47,7 +47,7 @@ enum SessionRail {
              sitting on the same row as (to the right of) the native traffic-light window buttons.
              The traffic lights occupy ~78px at top-left, so pad the left to clear them. */
           .cmrail-brand{ display:flex; align-items:center; gap:2px; padding:2px 10px 6px 84px; min-height:30px }
-          /* Top-of-rail mode navigation (대화/스킬/크론/위임/팀위임/작업 + 미정×3) — a horizontal
+          /* Top-of-rail mode navigation (대화/스킬/크론/위임/팀위임/작업/번역/에이전트/루프 엔지니어링) — a horizontal
              segmented switcher like the Claude-Code shell's Chat/Cowork/Code control. Nine items form
              a 3-column × 3-row grid of vertical mini-tabs (icon over label), ordered by the intended
              work flow: 대화로 목표를 만들고(대화) → 실행한다. 대화/스킬/크론/작업 route to real
@@ -55,8 +55,15 @@ enum SessionRail {
              team-discussion composer (#cmTeamOverlay). The 계획 menu (planning composer overlay)
              was removed 2026-07-19 — planning now happens inside a goal session itself; the server
              side (/api/plan/delegate, preset:'plan') stays for legacy "계획:" goals. The 메모장
-             focus shortcut was removed 2026-07-21. The three 미정 slots are reserved
-             placeholders (disabled). */
+             focus shortcut was removed 2026-07-21. 에이전트 opens the standalone agent-inventory
+             page (/agents) — the whole inventory across 전역/스킬/프로젝트, which the 위임
+             overlay (global folder only) cannot show. 루프 엔지니어링 fills the ninth slot
+             (2026-08-23, previously a disabled 미정 placeholder) with the standalone
+             /loop-engineering page: 에이전트 answers "what parts exist", 루프 엔지니어링 answers
+             "which routes actually ran per project and where they stall". 이슈 takes a TENTH
+             slot (2026-09-05) and so opens a fourth ROW — /issues answers "what did I delegate
+             and what of it is actually finished", read from the lion-work-queue cards. The
+             column count stays at 3 on purpose: see the 60px label-box note below. */
           .cmrail-nav{ display:grid; grid-template-columns:repeat(3,1fr); gap:4px; padding:6px;
             margin:0 8px 6px; background:#0f141d; border:1px solid #1c2230; border-radius:12px }
           .cmrail-item{ position:relative; display:flex; flex-direction:column; align-items:center;
@@ -74,8 +81,24 @@ enum SessionRail {
           .cmrail-item.on .cmr-lbl{ color:#7db0ff }
           .cmrail-item.on .cmr-ico svg{ color:#5b8cff }
           .cmrail-item .cmr-lbl{ max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
-          /* 미정(reserved) slots: visible so the 3×3 grid reads complete, but clearly inert. */
+          /* Reserved-slot styling: visible so the grid reads complete, but clearly inert.
+             In use again since 2026-09-05: 이슈 took a TENTH slot, which opens a fourth row,
+             and the two leftover cells wear this so the row reads as reserved rather than broken.
+             (Kept unused between 2026-08-23 and 2026-09-05, when the 3×3 grid was exactly full.) */
           .cmrail-item.off{ opacity:.35; pointer-events:none }
+          /* 루프 엔지니어링 is the one label too long for its column at 12px. It wraps to two
+             lines instead of ellipsing to "루프 엔…", which would hide what the menu is.
+             The grid row simply grows; all three items in the row share the height.
+             The usable TEXT box is 60px, not the 68px this comment used to claim: the rail is
+             240px, .cmrail-nav takes 8px of margin on each side (224px) and 6px of padding
+             (212px), three columns with two 4px gaps make a 68px column, and .cmrail-item's
+             own 4px side padding leaves 60px for the text.
+             word-break:keep-all (NOT break-all) is load-bearing. At 10.5px a Hangul glyph
+             advances ~10.3px, so 60px fits five. Greedy break-all ignores the space and
+             yields 루프 엔지니 / 어링 — a break in the middle of a word. keep-all breaks only
+             at the space: 루프 / 엔지니어링 (second line ~51.5px, inside 60px). */
+          .cmrail-item .cmr-lbl.wrap2{ white-space:normal; word-break:keep-all;
+            font-size:10.5px; line-height:1.15; letter-spacing:-.02em }
           .cmrail-item .cmr-cap{ flex:none; font-size:8.5px; line-height:1; color:#5d6678; background:#141a26;
             border:1px solid #222c3e; border-radius:999px; padding:2px 5px }
           .cmrail-seclabel{ padding:10px 16px 6px; font-size:11px; letter-spacing:.04em; color:#5d6678; text-transform:uppercase }
@@ -338,6 +361,10 @@ enum SessionRail {
           .cmcond-tog{ flex:none; border:1px solid #2f3a54; background:#20283a; color:#e7ecf4; border-radius:999px;
             padding:4px 12px; font-size:12px; font-weight:600; cursor:pointer }
           .cmcond-tog.on{ background:#1f5bd0; border-color:#2f6bff }
+          /* 음소거가 위에서 덮어쓴 스위치 — 스위치 자신의 상태는 그대로 보여 주되(마스터가
+             풀리면 이 값으로 돌아온다) 지금은 들리지 않는다는 걸 흐림+옆 문구로 알린다. */
+          .cmcond-tog.ovr{ opacity:.45 }
+          .cmcond-hint{ color:#6b7589; font-size:11px; font-weight:400 }
           .cmcond-now{ color:#8792a5; font-size:11.5px; padding:6px 10px; border-top:1px solid #202838; margin-top:2px }
           .cmcond-full{ width:100%; margin-top:4px; border:0; background:#20283a; color:#e7ecf4; border-radius:9px;
             padding:9px 10px; font-size:12.5px; font-weight:600; cursor:pointer; text-align:left }
@@ -437,10 +464,23 @@ enum SessionRail {
                 <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 5.2c0-.6.5-1.1 1.1-1.1h2.1l1.1 1.3h4.4c.6 0 1.1.5 1.1 1.1v4.9c0 .6-.5 1.1-1.1 1.1H3.7c-.6 0-1.1-.5-1.1-1.1V5.2Z"/></svg></span><span class="cmr-lbl">작업</span></a>
               <a class="cmrail-item" data-nav="slack" onclick="cmNav('slack')" title="슬랙 👀 리액션 메시지를 한국어로 번역해 모아 봅니다">
                 <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.4"/><path d="M2.6 8h10.8M8 2.6c-1.7 1.5-2.5 3.3-2.5 5.4s.8 3.9 2.5 5.4c1.7-1.5 2.5-3.3 2.5-5.4S9.7 4.1 8 2.6Z"/></svg></span><span class="cmr-lbl">번역</span></a>
-              <a class="cmrail-item off" data-nav="tbd2" title="준비 중입니다">
-                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 8.2h.01M8 8.2h.01M12.4 8.2h.01"/></svg></span><span class="cmr-lbl">미정</span></a>
-              <a class="cmrail-item off" data-nav="tbd3" title="준비 중입니다">
-                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 8.2h.01M8 8.2h.01M12.4 8.2h.01"/></svg></span><span class="cmr-lbl">미정</span></a>
+              <a class="cmrail-item" data-nav="agents" onclick="cmNav('agents')" title="전역·스킬·프로젝트의 에이전트를 관리하고 교체합니다">
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="3.9" r="1.8"/><circle cx="4" cy="12.1" r="1.8"/><circle cx="12" cy="12.1" r="1.8"/><path d="M8 5.7v2.6M4 10.3V8.3h8v2"/></svg></span><span class="cmr-lbl">에이전트</span></a>
+              <a class="cmrail-item" data-nav="loop" onclick="cmNav('loop')" title="프로젝트별로 어떤 위임 라우트가 실제로 돌았고 어디서 막히는지 봅니다">
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 3.2v6.1c0 .7.6 1.3 1.3 1.3h7.9"/><path d="M10.6 8.7l2 1.9-2 1.9"/><circle cx="3.4" cy="2.6" r="1.3"/><path d="M6.6 5.9h3.1"/></svg></span><span class="cmr-lbl wrap2">루프 엔지니어링</span></a>
+              <!-- 10번째 = 네 번째 행의 첫 칸 (2026-09-05). 열을 4개로 늘리지 않고 행을 늘렸다:
+                   grid-template-columns 를 바꾸면 위 주석이 지키라고 못박은 60px 글자 상자가
+                   42px 로 줄어 기존 9개 라벨이 전부 다시 조판돼야 한다. 항목만 늘리면 CSS grid 가
+                   4번째 행을 알아서 만든다 — 그래서 CSS 는 한 줄도 안 고쳤다. '이슈'는 2글자라
+                   60px 에 여유롭게 들어가므로 .wrap2 가 필요 없다. -->
+              <a class="cmrail-item" data-nav="issues" onclick="cmNav('issues')" title="lion_work 에서 위임한 일이 무엇이고 무엇이 끝났는지 한 곳에서 봅니다">
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.8 4.3l1.2 1.2 2-2.2"/><path d="M2.8 9.6l1.2 1.2 2-2.2"/><path d="M8.2 4.6h5M8.2 9.9h5"/></svg></span><span class="cmr-lbl">이슈</span></a>
+              <!-- 남는 두 칸. 행이 깨진 것이 아니라 예약된 것으로 읽히게 .off 를 입힌다 —
+                   그 스타일은 2026-08-23 부터 아무도 안 쓴 채 정확히 이 상황을 기다리고 있었다. -->
+              <a class="cmrail-item off" data-nav="reserved1" title="예약된 칸">
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="4.6" stroke-dasharray="2.2 2.2"/></svg></span><span class="cmr-lbl">미정</span></a>
+              <a class="cmrail-item off" data-nav="reserved2" title="예약된 칸">
+                <span class="cmr-ico"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="4.6" stroke-dasharray="2.2 2.2"/></svg></span><span class="cmr-lbl">미정</span></a>
             </nav>
             <!-- 메모장 'AI로 정리해서 복사' 잡. 세션 묶음 '위'에 선다 — 몇 분 걸리는 일을
                  맡겨 두고 딴 일을 하러 가는 자리라, 무엇이 돌고 있는지 늘 눈에 있어야 한다.
@@ -485,7 +525,12 @@ enum SessionRail {
           <div class="cmcond-menu" id="cmCondMenu" style="display:none">
             <div class="cmcond-row"><span class="lbl">BGM 음악</span>
               <button class="cmcond-tog" id="cmCondBgmTog" onclick="cmCondToggleBgm(event)">—</button></div>
-            <div class="cmcond-row"><span class="lbl">음소거</span>
+            <!-- 효과음: 세션 시작·정지 큐, 포모도로 완주·수확, 레일 내비 클릭 같은 원샷 이펙트음.
+                 음악과 따로 끄는 세 번째 스위치 — 집중을 깨는 건 흐르는 음악이 아니라 불쑥
+                 튀어나오는 소리라서, 음악은 켜 둔 채 이것만 끌 수 있어야 한다. -->
+            <div class="cmcond-row"><span class="lbl">효과음<span class="cmcond-hint" id="cmCondSfxHint" style="display:none"> · 음소거로 함께 꺼짐</span></span>
+              <button class="cmcond-tog" id="cmCondSfxTog" onclick="cmCondToggleSfx(event)">—</button></div>
+            <div class="cmcond-row"><span class="lbl">음소거<span class="cmcond-hint"> · 음악 + 효과음</span></span>
               <button class="cmcond-tog" id="cmCondMuteTog" onclick="cmChMuteToggle(event)">—</button></div>
             <div class="cmcond-now" id="cmCondNow">컨디션 상태를 불러오는 중…</div>
             <button class="cmcond-full" onclick="cmCondFull(event)"><span class="cmcond-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M4 2.6v10.8M8 2.6v10.8M12 2.6v10.8"/><path d="M2.5 5.5h3M6.5 10h3M10.5 7h3"/></svg></span>시스템관리</button>
@@ -731,6 +776,10 @@ enum SessionRail {
           // Optimistic on click (instant feel), then confirmed by the /api/session/state poll so
           // this dial stays in sync with ⌘S/⌘M, the menu, and the BGM player.
           var cmChRun=false, cmChMuted=false, cmChSecs=0;
+          // 효과음 스위치(서버 Settings.sfxEnabled)의 로컬 사본. 음소거와 AND로 묶여
+          // 실제 침묵 여부가 되고, 그 판정은 window.cmSfxSilenced로 다른 페이지 스크립트
+          // (대시보드 완료 '카칭' 등 웹에서 직접 내는 소리)도 같이 쓴다.
+          var cmSfxOn=true;
           var cmChWall=0;                               // wall-clock secs since start (포모도로 기준시계)
           var cmChToday=0;                              // today's TOTAL active seconds (무제한 mode readout)
           var cmChCountdown=null, cmChCdTimer=null;     // 5→1 pre-start countdown (null = not counting)
@@ -1041,6 +1090,8 @@ enum SessionRail {
               // BGM master switch state for the condition popup toggle.
               var tog=document.getElementById('cmCondBgmTog');
               if(tog){ var on=!!d.bgm; tog.classList.toggle('on',on); tog.textContent=on?'켜짐':'꺼짐'; }
+              if(typeof d.sfx==='boolean') cmSfxOn=d.sfx;
+              cmCondRenderSfx();
             }).catch(function(){});
           }
           cmChRender();            // reflect the saved mode on the selector before the first poll resolves
@@ -1197,12 +1248,35 @@ enum SessionRail {
                   + (has ? '<button class="go" onclick="cmCondReveal(event,\''+key+'\')" title="Finder에서 열기">↗</button>' : '')
                   + '</div>';
               }
+              // 이슈 폴더 — 위임 이슈 파일이 만들어지는 곳. 기본값은 경로 하나가 아니라 규칙이다
+              // ("에이전트를 부른 폴더"), 그래서 기본값일 때는 규칙을 쓰고 그 규칙이 지금 가리키는
+              // 실제 폴더를 아래 tip 에 예시로 붙인다. 고른 폴더가 있으면 그 경로가 정본이므로
+              // 다른 저장 폴더 행들과 똑같이 클릭=복사·↗=Finder 가 붙는다.
+              function issueRow(){
+                var isDef = !!p.issueIsDefault, pth = p.issue || '';
+                var h = '<div class="cmcond-path"'
+                  + (isDef ? ' style="cursor:default" onclick="event.stopPropagation()"'
+                           : ' onclick="cmCondCopyPath(event,this)" data-p="'+esc(pth)+'" title="'+('클릭하여 복사: '+esc(pth))+'"')
+                  + '>'
+                  + '<span class="k">이슈 폴더</span>'
+                  + (isDef ? '<span class="v unset">'+esc(p.issueLabel||'에이전트를 부른 폴더')+'</span>'
+                           : '<span class="v">&lrm;'+esc(pth)+'</span>')
+                  + (isDef ? '' : '<button class="go" onclick="cmCondReveal(event,\'issue\')" title="Finder에서 열기">↗</button>')
+                  + '<button class="go" onclick="cmCondPickIssueFolder(event)" title="이슈가 생성될 폴더를 고릅니다">변경</button>'
+                  + (isDef ? '' : '<button class="go" onclick="cmCondResetIssueFolder(event)" title="에이전트를 부른 폴더로 되돌립니다">기본값</button>')
+                  + '</div>';
+                if(isDef && p.issueDefault)
+                  h += '<div class="tip" style="margin:2px 0 0">지금 기준 → '+esc(p.issueDefault)+'</div>';
+                return h;
+              }
               // 표시 타임존 선택 — 저장·기준은 항상 UTC(epoch), 화면 표기만 이 tz를 따른다.
               // 선택 즉시 서버에 저장하고 새로고침해 페이지 전체(레일·본문)가 새 tz로 그려진다.
               function tzRow(){
                 if(!tz) return '';
                 var cur=tz.tz||'system';
-                var opts=[['system','시스템 (맥 설정)'],['Asia/Seoul','KST (UTC+9)'],['UTC','UTC (+0)']];
+                // 인도(Asia/Kolkata, UTC+05:30)는 이 팀이 실제로 쓰는 자리라 목록에 둔다 — 없으면
+                // `시스템` 으로만 갈 수 있고, 그러면 맥 설정을 바꾸지 않는 한 못 고른다.
+                var opts=[['system','시스템 (맥 설정)'],['Asia/Seoul','KST (UTC+9)'],['Asia/Kolkata','IST (UTC+5:30)'],['UTC','UTC (+0)']];
                 var seen=false;
                 var o=opts.map(function(x){ if(x[0]===cur) seen=true;
                   return '<option value="'+x[0]+'"'+(x[0]===cur?' selected':'')+'>'+x[1]+'</option>'; }).join('');
@@ -1285,14 +1359,27 @@ enum SessionRail {
                 + row('data','데이터',p.data)
                 + row('bgm','BGM 음원',p.bgm)
                 + row('claude','Claude 세션',p.claude)
+                + issueRow()
                 + tzRow()
                 + dbgRow()
                 + gwRows()
-                + '<div class="tip">행 클릭=경로 복사 · ↗=Finder에서 열기 · 타임존=시간 표기 기준 · 연결=자동이면 로컬 Claude 로그인 사용</div>';
+                + '<div class="tip">행 클릭=경로 복사 · ↗=Finder에서 열기 · 이슈 폴더=비워 두면 에이전트를 부른 폴더의 issue/ · 타임존=시간 표기 기준 · 연결=자동이면 로컬 Claude 로그인 사용</div>';
               // 앱 실행 후 처음 패널을 열면 상태가 없다 — 이때 한 번만 자동으로 확인한다.
               // (이후에는 서버가 기억한 결과를 그대로 보여주고, '다시 확인'이 갱신한다.)
               if(gw && !gw.state && !window.cmCondGwBusy) cmCondGwTest(null);
             }).catch(function(){ box.innerHTML='<div class="tip">경로를 불러오지 못했습니다</div>'; });
+          };
+          // 이슈 폴더 변경 — 네이티브 폴더 선택기를 연다. 취소해도 같은 payload 가 돌아오므로
+          // 패널을 다시 그리는 것만으로 충분하다 (설정 토글과 같은 닫고-열기 방식).
+          window.cmCondPickIssueFolder=function(ev){ if(ev) ev.stopPropagation();
+            fetch('/api/settings/issue-folder/pick',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+              .then(function(){ cmCondSettings(); cmCondSettings(); }).catch(function(){});
+          };
+          // 기본값 — 빈 문자열을 보내면 설정이 지워지고 다시 "에이전트를 부른 폴더"를 따른다.
+          window.cmCondResetIssueFolder=function(ev){ if(ev) ev.stopPropagation();
+            fetch('/api/settings/issue-folder',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({folder:''})}).then(function(){ cmCondSettings(); cmCondSettings(); })
+              .catch(function(){});
           };
           window.cmCondSetDbg=function(ev,on){ if(ev) ev.stopPropagation();
             fetch('/api/settings/debug-buttons',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -1351,6 +1438,28 @@ enum SessionRail {
             fetch('/api/bgm/control',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({action: on?'stop':'play'})}).then(cmCondRefresh).catch(function(){});
           };
+          // 효과음 스위치. 낙관적으로 먼저 그리고(즉각 반응) 서버에 알린다 — 2초 폴이 확인한다.
+          window.cmCondToggleSfx=function(ev){ if(ev) ev.stopPropagation();
+            cmSfxOn=!cmSfxOn; cmCondRenderSfx();
+            fetch('/api/session/sfx',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({on:cmSfxOn})}).catch(function(){});
+          };
+          // 스위치 자신의 상태를 그대로 보여 준다(BGM 음악 행과 같은 규칙). 음소거 중이면
+          // 흐리게 + '음소거로 함께 꺼짐'을 붙여, 켜짐인데 안 들리는 상황을 설명한다.
+          function cmCondRenderSfx(){
+            var t=document.getElementById('cmCondSfxTog');
+            if(t){ t.classList.toggle('on', cmSfxOn); t.classList.toggle('ovr', cmChMuted);
+              t.textContent = cmSfxOn?'켜짐':'꺼짐';
+              t.title = cmChMuted ? '음소거 중이라 효과음도 함께 꺼져 있습니다 — 음소거를 풀면 이 스위치 상태로 돌아갑니다'
+                      : (cmSfxOn ? '효과음 끄기 — 음악은 그대로, 알림음만 끕니다'
+                                 : '효과음 켜기 — 세션 시작·완주·수확음이 다시 울립니다'); }
+            var h=document.getElementById('cmCondSfxHint');
+            if(h) h.style.display = cmChMuted ? 'inline' : 'none';
+          }
+          // 웹에서 직접 내는 소리(대시보드 완료 '카칭')도 같은 판정을 쓰도록 노출한다 —
+          // 네이티브 이펙트음은 서버의 applySfxGate가 막지만, 페이지가 스스로 만드는
+          // Web Audio 소리는 서버를 거치지 않아 여기서 막아야 한다.
+          window.cmSfxSilenced=function(){ return !!cmChMuted || !cmSfxOn; };
           window.cmCondFull=function(ev){ if(ev) ev.stopPropagation();
             fetch('/api/window/mode',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({mode:'condition'})}).catch(function(){});
@@ -1370,6 +1479,7 @@ enum SessionRail {
             if(s) s.textContent = (cmChMuted?'음소거됨 · ':'') + (cmCondSubBase||'대기 중');
             var tog=document.getElementById('cmCondMuteTog');
             if(tog){ tog.classList.toggle('on', cmChMuted); tog.textContent = cmChMuted?'켜짐':'꺼짐'; }
+            cmCondRenderSfx();   // 음소거는 효과음까지 덮어쓴다 — 같은 순간에 같이 그린다
           }
           function cmCondRefresh(){
             fetch('/api/bgm/now').then(function(r){return r.json();}).then(function(n){
@@ -1794,7 +1904,7 @@ enum SessionRail {
           .cmpl-act .ago{ color:#8792a5; font-size:12.5px; min-width:62px; text-align:right }
           .cmpl-actmore{ padding:9px 16px; color:#5d6678; font-size:12.5px }
           /* ===== 연동 칸 =====
-             플러그인 카드 안(슬랙 토큰)과 LLM 연동 섹션(모델 키)이 같은 마크업을 쓴다 —
+             플러그인 카드 안(슬랙 토큰)과 모델 키 카드가 같은 마크업을 쓴다 —
              한 화면에서 두 가지 모양으로 키를 다루면 사용자가 매번 다시 배워야 한다.
              입력 칸은 값을 되돌려 받지 않는다: 저장된 키는 마스킹(뒤 4자리)만 보인다. */
           .cmig-row{ padding:12px 16px; border-bottom:1px solid #10151f }
@@ -1821,8 +1931,8 @@ enum SessionRail {
           .cmig-cap.ok{ background:none; color:#8792a5 }
           .cmig-cap b{ color:#eef2f8; font-weight:600 }
           .cmig-cap button{ margin-left:8px }
-          /* ===== MCP 연동 =====
-             인스턴스 한 줄이 곧 '토큰 하나 = MCP 서버 하나'다. 등록 스위치를 상태 필과
+          /* ===== 연동 =====
+             인스턴스 한 줄이 곧 '토큰 하나 = 붙는 곳 하나'(MCP면 MCP 서버 하나)다. 등록 스위치를 상태 필과
              같은 줄에 두지 않는 이유: 토큰이 유효한가(연결 테스트)와 Claude에 붙였는가
              (등록)는 다른 사실이고, 한 칸에 섞으면 어느 쪽이 실패했는지 알 수 없다. */
           .cmig-fields{ display:flex; gap:7px; margin-top:9px; flex-wrap:wrap }
@@ -1839,14 +1949,64 @@ enum SessionRail {
             font-family:ui-monospace,SFMono-Regular,Menlo,monospace }
           /* 테스트 줄 — 등록 스위치 바로 아래. 두 일이 이어져 있다는 것을 자리로
              보여주되(등록 → 테스트), 버튼은 따로 둔다. */
+          /* 클라이언트별 연결 줄 — 등록 스위치 바로 아래. 여기서 답하는 질문은
+             "연결했는데 왜 코덱스에서는 안 보이지"이고, 그 답은 붙은 곳과 안 붙은
+             곳을 한 줄에 나란히 놓아야만 보인다. */
+          .cmig-hosts{ display:flex; align-items:center; gap:7px; margin-top:7px; flex-wrap:wrap }
+          .cmig-hosts .lb{ color:#5d6678; font-size:11.5px; margin-right:2px }
+          .cmig-host{ display:inline-flex; align-items:center; gap:5px; font-size:11.5px;
+            font-weight:600; padding:3px 9px; border-radius:999px;
+            color:#77839a; background:rgba(119,131,154,.08); border:1px solid rgba(119,131,154,.25) }
+          .cmig-host::before{ content:''; width:6px; height:6px; border-radius:50%; background:currentColor }
+          .cmig-host.on{ color:#8fd0e8; background:rgba(143,208,232,.1); border-color:rgba(143,208,232,.3) }
+          /* 이 맥에 없는 클라이언트는 '안 붙음'이 아니라 '없음'이다 — 같은 회색으로
+             그리면 안 쓰는 도구가 영원히 미연결로 남아 목록을 흐린다. */
+          .cmig-host.none{ opacity:.45 }
+          /* 목록 위 한 줄 — 카드를 펼치기 전에 "어디까지 붙일 수 있는 판인가"를 먼저
+             말한다. 연동이 사는 곳이 하나가 아니라는 사실 자체를 모르면, 아래 카드의
+             회색 칩이 무슨 뜻인지 읽을 수 없다. */
+          .cmint-hosts{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin:0 0 10px }
+          .cmint-hosts:empty{ display:none }
+          .cmint-hosts .lb{ color:#5d6678; font-size:11.5px }
+          /* 주의사항 — 안내(회색)와 다른 색이어야 한다. 이건 "이렇게 하세요"가 아니라
+             "이렇게 하면 이런 것이 남습니다"이고, 둘을 같은 회색으로 적으면 읽히지
+             않는다. 경고(빨강)도 아니다 — 지금 뭔가 고장 난 것이 아니다. */
+          .cmig-caution{ display:flex; gap:7px; align-items:flex-start; margin-top:7px;
+            padding:8px 11px; border-radius:8px; font-size:12px; line-height:1.6;
+            color:#e0b16a; background:rgba(224,177,106,.07); border:1px solid rgba(224,177,106,.22) }
+          .cmig-caution::before{ content:'!'; flex:none; width:15px; height:15px; margin-top:1px;
+            border-radius:50%; border:1px solid currentColor; font-size:10px; font-weight:800;
+            display:flex; align-items:center; justify-content:center }
+          .cmint-note{ width:100%; color:#5d6678; font-size:11.5px; line-height:1.6; margin-top:2px }
           .cmig-test{ display:flex; align-items:center; gap:9px; margin-top:7px; flex-wrap:wrap }
           .cmig-test .pd{ color:#5d6678; font-size:11.5px }
           .cmig-add{ background:#0d1219 }
           .cmig-add .cmig-nm{ font-size:13px }
+          /* 연동 상세 — 인스턴스 하나가 실제로 무엇에 닿는지. 요약 칩은 늘 보이고,
+             본문(조직·레포·서명)은 접어 둔다: 인스턴스를 여러 개 등록하면 카드
+             하나가 화면 몇 개 분량이 되어, 정작 비교하려던 '차이'가 안 보인다. */
+          .cmig-sum{ display:flex; align-items:center; gap:6px; margin-top:7px; flex-wrap:wrap }
+          .cmig-more{ background:none; border:0; color:#7f9fe0; font-size:12px; cursor:pointer; padding:0 }
+          .cmig-more:hover{ text-decoration:underline }
+          .cmig-scan{ margin-top:9px; border:1px solid #1a2230; border-radius:9px;
+            background:#0b0f16; padding:10px 12px }
+          .cmig-srow{ display:flex; gap:10px; padding:5px 0; border-bottom:1px solid #131a26 }
+          .cmig-srow:last-child{ border-bottom:0 }
+          .cmig-sk{ width:62px; flex:none; color:#5d6678; font-size:11.5px; padding-top:1px }
+          .cmig-sv{ flex:1; color:#a9b6cc; font-size:12.5px; line-height:1.6; min-width:0 }
+          .cmig-sv b{ color:#eef2f8; font-weight:600 }
+          .cmig-sv .sub{ color:#6b7589; font-size:11.5px }
+          .cmig-sv .warn{ color:#e0b16a }
+          .cmig-sv a{ color:#7f9fe0; text-decoration:none }
+          .cmig-sv a:hover{ text-decoration:underline }
+          .cmig-repo{ display:flex; gap:8px; padding:3px 0; align-items:baseline; flex-wrap:wrap }
+          .cmig-repo .own{ color:#eef2f8; font-weight:600; font-size:12.5px }
+          .cmig-repo .nm{ color:#6b7589; font-size:11.5px;
+            font-family:ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all }
           /* 인증 방식 세그먼트 — 이름 칸보다 위에 둔다. 아래 폼의 모양이 이 선택에
              따라 바뀌므로, 읽는 순서와 고르는 순서가 같아야 한다. */
           .cmig-modes{ display:flex; gap:7px; margin-top:9px; flex-wrap:wrap }
-          /* LLM 연동 섹션 — 연동된 것만 보이고, 나머지는 '연동 추가'로 펼친다. */
+          /* 연동 카드 — 붙어 있는 것만 보이고, 나머지는 '연동 추가'로 펼친다. */
           .cmsk-seclbl .add{ margin-left:auto; letter-spacing:0; text-transform:none;
             background:#20283a; border:1px solid #2f3a54; color:#c8cfdb; border-radius:7px;
             padding:3px 10px; font-size:12px; cursor:pointer }
@@ -1867,7 +2027,7 @@ enum SessionRail {
               <div class="cmsk-title">플러그인</div>
               <div class="cmsk-actions">
                 <button class="cmsk-icon" title="검색" onclick="cmSkToggleSearch()">🔍</button>
-                <input class="cmsk-search" id="cmSkSearch" placeholder="플러그인·연동·스킬 검색…" oninput="cmSkRender();cmPlRender();cmLlmRender();cmMcpRender()" style="display:none">
+                <input class="cmsk-search" id="cmSkSearch" placeholder="연동·스킬 검색…" oninput="cmSkRender();cmIntRender()" style="display:none">
                 <button class="cmsk-btn" onclick="cmSkReveal('')">스킬 폴더 열기</button>
                 <button class="cmsk-icon cmsk-close" title="닫기 (Esc)" onclick="cmSkClose();if(window.cmNavReflect)cmNavReflect()">✕</button>
               </div>
@@ -1878,26 +2038,21 @@ enum SessionRail {
               <button class="cmsk-tab" data-tab="history" onclick="cmSkTab('history')">히스토리</button>
             </div>
             <div id="cmSkTabCurrent" class="cmsk-list">
-              <!-- 플러그인: 설치형(설치=연결)·폴더형(폴더 선택+검증) 카드. 접힌 행은 상태만,
-                   조작(제거·폴더 변경·옵션 토글)은 전부 펼친 안에. 설치는 찾아보기 탭에서만. -->
-              <div class="cmsk-seclbl">플러그인 <span class="cnt" id="cmPlCount"></span></div>
-              <div id="cmPlList"><div class="cmsk-empty">불러오는 중…</div></div>
-              <!-- MCP 연동: 앱이 직접 부르는 API가 아니라 Claude 세션이 도구로 쓰는 외부
-                   서비스(노션·지라·깃허브). 토큰은 여기서 받고 키체인에만 두며, 등록 스위치가
-                   claude mcp add/remove 를 대신 눌러 준다. 같은 서비스라도 계정·조직·사이트가
-                   여럿이므로 인스턴스를 이름 붙여 여러 개 만든다. -->
-              <div class="cmsk-seclbl">MCP 연동 <span class="cnt" id="cmMcpCount"></span>
-                <button class="add" id="cmMcpAddBtn" onclick="cmMcpToggleAll()">연동 추가</button></div>
-              <div id="cmMcpList"><div class="cmsk-empty">불러오는 중…</div></div>
-              <!-- LLM 연동: 플러그인이 빌려 쓰는 모델 연결. 플러그인 다음, 스킬 앞.
-                   모델은 많고 대부분은 안 쓰므로 연동된 것만 보이고 나머지는 '연동 추가'로
-                   펼친다. 여기의 상태가 곧 플러그인 카드의 경고 문구의 근거다. -->
-              <div class="cmsk-seclbl">LLM 연동 <span class="cnt" id="cmLlmCount"></span>
-                <button class="add" id="cmLlmAddBtn" onclick="cmLlmToggleAll()">연동 추가</button></div>
-              <div id="cmLlmList"><div class="cmsk-empty">불러오는 중…</div></div>
-              <!-- 스킬: 임시적 도구 — 플러그인과 별개의 독립 섹션 (스킬 폴더 그대로).
+              <!-- 연동 — 플러그인·MCP 서버·모델 키가 한 목록에 산다. 사용자에게 이 셋은
+                   같은 물건이다: 붙여서 쓰는 것. 나눠 두면 같은 서비스가 두 자리에 앉고
+                   (슬랙 토큰은 플러그인 카드, 노션 토큰은 연동 섹션, 번역 모델은 또 LLM
+                   섹션), 카드마다 기능이 늘수록 그 분산이 심해진다. 카드 이름은 붙는
+                   대상이고(슬랙 연동·Notion 연동), 그 안에서 도는 것이 기능이다.
+                   접힌 행은 상태만, 조작(제거·폴더 변경·토큰·MCP 등록)은 전부 펼친 안에.
+                   기본은 붙어 있는 것만 보이고, 아직 안 붙인 연동은 '연동 추가'로 펼친다.
+                   설치형 플러그인의 설치는 예전처럼 찾아보기 탭에서만. -->
+              <div class="cmsk-seclbl">연동 <span class="cnt" id="cmIntCount"></span>
+                <button class="add" id="cmIntAddBtn" onclick="cmIntToggleAll()">연동 추가</button></div>
+              <div id="cmIntHosts" class="cmint-hosts"></div>
+              <div id="cmIntList"><div class="cmsk-empty">불러오는 중…</div></div>
+              <!-- 스킬: 임시적 도구 — 연동과 별개의 독립 섹션 (스킬 폴더 그대로).
                    스크립트로 대체되면 사라지고 모델 업그레이드로 동작이 달라지는, 수명이 짧은 존재다. -->
-              <div class="cmsk-seclbl">스킬 <span class="cnt">· 임시적 도구 — 플러그인과 별개</span></div>
+              <div class="cmsk-seclbl">스킬 <span class="cnt">· 임시적 도구 — 연동과 별개</span></div>
               <div class="cmsk-folderbar">
                 <span class="lbl">스킬 폴더</span>
                 <span class="pth" id="cmSkRoot" title="">~/.claude</span>
@@ -2170,30 +2325,18 @@ enum SessionRail {
             }
             return h;
           }
-          // 현재 탭 목록: 폴더형은 항상, 설치형은 설치된 것만 (미설치는 카탈로그에서만).
-          window.cmPlRender=function(){
-            var box=document.getElementById('cmPlList'); if(!box) return;
-            var si=document.getElementById('cmSkSearch'); var q=((si&&si.value)||'').trim().toLowerCase();
-            var list=_pl.filter(function(p){ return p.kind==='folder'||p.installed; })
-              .filter(function(p){ if(!q) return true;
-                return (p.name||'').toLowerCase().indexOf(q)>=0||(p.desc||'').toLowerCase().indexOf(q)>=0; });
-            var cnt=document.getElementById('cmPlCount'); if(cnt) cnt.textContent='· '+list.length;
-            if(!list.length){ box.innerHTML='<div class="cmsk-empty">'+(q?'검색 결과가 없습니다':'플러그인이 없습니다 — 찾아보기 탭에서 설치하세요')+'</div>'; return; }
-            box.innerHTML='';
-            list.forEach(function(p){
-              var pill=plPill(p);
-              var opts=(p.id==='draw'||p.id==='camera-guard')?'<span class="cmpl-chip opt">옵션 1</span>':'';
-              var card=document.createElement('div');
-              card.className='cmpl-card'+(_plOpen[p.id]?' open':'');
-              card.innerHTML='<div class="cmpl-head" onclick="cmPlToggle(\''+esc2(p.id)+'\')">'
-                +'<span class="nm">'+esc2(p.name)+'</span>'
-                +'<span class="cmpl-chip type">'+(p.kind==='folder'?'폴더형':'설치형')+'</span>'+opts
-                +'<div class="right"><span class="cmpl-pill '+pill[0]+'">'+pill[1]+'</span><span class="caret">▶</span></div></div>'
-                +'<div class="cmpl-sm">'+esc2(p.desc||'')+'</div>'
-                +'<div class="cmpl-body" onclick="event.stopPropagation()">'+plBodyHtml(p)+'</div>';
-              box.appendChild(card);
-            });
-          };
+          // 카드 하나 그리기 — 설치형·폴더형. 목록에 앉히는 일은 cmIntRender가 한다.
+          function plCardHtml(p){
+            var pill=plPill(p);
+            var opts=(p.id==='draw'||p.id==='camera-guard')?'<span class="cmpl-chip opt">옵션 1</span>':'';
+            return '<div class="cmpl-card'+(_plOpen[p.id]?' open':'')+'">'
+              +'<div class="cmpl-head" onclick="cmPlToggle(\''+esc2(p.id)+'\')">'
+              +'<span class="nm">'+esc2(p.name)+'</span>'
+              +'<span class="cmpl-chip type">'+(p.kind==='folder'?'폴더형':'설치형')+'</span>'+opts
+              +'<div class="right"><span class="cmpl-pill '+pill[0]+'">'+pill[1]+'</span><span class="caret">▶</span></div></div>'
+              +'<div class="cmpl-sm">'+esc2(p.desc||'')+'</div>'
+              +'<div class="cmpl-body" onclick="event.stopPropagation()">'+plBodyHtml(p)+'</div></div>';
+          }
           // 찾아보기 탭: 카탈로그 카드 — 설치의 유일한 진입점.
           window.cmPlCatRender=function(){
             var box=document.getElementById('cmPlCat'); if(!box) return;
@@ -2219,10 +2362,10 @@ enum SessionRail {
 
           /* ===== 연동 (GET /api/integrations) =====
              한 곳에서 받은 payload를 두 화면이 나눠 쓴다: 플러그인 카드 안의 키 칸과
-             아래 LLM 연동 섹션. 카탈로그·상태·기능 게이팅이 모두 서버의 단일 원본
+             아래 연동 목록의 모델 카드. 카탈로그·상태·기능 게이팅이 모두 서버의 단일 원본
              (IntegrationStore)에서 오므로, 여기서는 그리기만 하고 판단하지 않는다. */
           var _intg={credentials:[],providers:[],capabilities:[]};
-          var _llmAll=false;                 // 연동 안 된 제공자까지 펼쳐 보기
+          var _intAll=false;                 // 아직 안 붙인 연동까지 펼쳐 보기 (목록 공통)
           var _llmOpen={};                   // 제공자 카드 펼침 상태
           function intgLoad(){
             fetch('/api/integrations',{cache:'no-store'}).then(function(r){return r.json();})
@@ -2250,6 +2393,16 @@ enum SessionRail {
             if(c.state==='fail'||c.state==='missing') return false;
             return !!c.present;
           }
+          /* 제공자 카드의 상태 필. 서버가 '몇 개 중 몇 개가 서 있는가'와 '이게 다인가'를
+             같이 주므로 여기서 다시 세지 않는다. 전부 있어야 하는 연동(지라: 이슈 MCP와
+             골)이 반만 붙어 있으면 '1/2 연결'이라고 말한다 — 그걸 '연결됨'으로 부르면
+             나머지 절반이 왜 안 되는지 아무도 모른다. */
+          function intgProvPill(p,bad){
+            if(!p.connected) return ['off','연동 안 됨'];
+            if(bad) return ['warn','일부 실패'];
+            if(p.full===false) return ['warn',(p.liveCount||0)+'/'+(p.credCount||0)+' 연결'];
+            return ['on','연결됨'];
+          }
           function intgPluginNeedsAttention(p){
             var creds=(p.credentials||[]).map(intgCred).filter(Boolean);
             for(var i=0;i<creds.length;i++){ if(!intgLive(creds[i])) return true; }
@@ -2272,6 +2425,17 @@ enum SessionRail {
             if((c.missingScopes||[]).length){
               h+='<div class="cmig-err">⚠ 토큰은 유효하지만 스코프가 빠져 일부 동작이 조용히 실패합니다 — 누락: '
                 +esc2(c.missingScopes.join(', '))+'</div>';
+            }
+            // 상세를 가진 단일 자격증명(gh CLI 로그인) — 인스턴스 줄과 같은 칩·펼침을
+            // 쓴다. 토큰은 gh가 들고 있으니 앱 입장에선 PAT 인스턴스와 같은 모양의
+            // 상세(계정·조직·레포·서명)를 그릴 수 있다.
+            if(c.scan){
+              var sInst={scan:c.scan,needsToken:true,scannedAt:0};
+              var sOpen=!!_mcpDet[c.id];
+              h+='<div class="cmig-sum">'+mcpScanChips(sInst)
+                +'<button class="cmig-more" onclick="cmMcpDetToggle(\''+esc2(c.id)+'\')">'
+                +(sOpen?'상세 접기 ▲':'상세 보기 ▼')+'</button></div>';
+              if(sOpen) h+=mcpScanBody(c,sInst);
             }
             if(typed){
               // 저장된 값은 절대 되돌려 받지 않는다 — 마스킹만 보이고, 입력 칸은 늘 비어 있다.
@@ -2300,10 +2464,14 @@ enum SessionRail {
           function intgCapsHtml(p){
             var caps=(_intg.capabilities||[]).filter(function(c){ return c.owner===p.id; });
             if(!caps.length) return '';
-            return caps.map(function(c){
+            // 카드 이름은 붙는 대상(슬랙 연동)이고, 실제로 도는 것은 그 위의 기능들이다.
+            // 그 목록을 먼저 한 줄로 보여줘야 '슬랙 연동이 뭘 해주는데'가 안 남는다.
+            var head='<div class="cmpl-part"><span class="cmpl-chip opt">기능 '+caps.length+'</span>'
+              +'<span class="pd">'+caps.map(function(c){ return esc2(c.name); }).join(' · ')+'</span></div>';
+            return head+caps.map(function(c){
               if(!c.message) return '<div class="cmig-cap ok"><b>'+esc2(c.name)+'</b> 정상 동작 중입니다.</div>';
               var jump=(c.level==='none'||c.level==='nobackup'||c.level==='backup')
-                ? '<button class="cmpl-btn" onclick="cmLlmFocus()">LLM 연동으로 이동</button>' : '';
+                ? '<button class="cmpl-btn" onclick="cmIntFocus()">연동 추가 열기</button>' : '';
               return '<div class="cmig-cap"><b>'+esc2(c.name)+'</b> — '+esc2(c.message)+jump+'</div>';
             }).join('');
           }
@@ -2345,14 +2513,15 @@ enum SessionRail {
               .catch(function(){})
               .finally(function(){ if(btn){ btn.disabled=false; btn.textContent=label; } });
           };
-          /* ===== MCP 연동 섹션 =====
-             LLM 섹션과 같은 카드 골격을 쓰되, 카드 본문이 '자격증명 한 줄'이 아니라
+          /* ===== MCP 인스턴스형 연동 =====
+             모델 카드와 같은 카드 골격을 쓰되, 카드 본문이 '자격증명 한 줄'이 아니라
              '인스턴스 목록 + 추가 폼'이다. 값은 언제나 서버에서 온 것만 그린다 —
              저장 성공 여부를 화면이 낙관적으로 먼저 반영하면, 실패했을 때 사용자는
              등록된 줄 알고 그다음 단계(MCP 등록)로 넘어간다. */
-          var _mcpAll=false;                 // 연동 안 된 제공자까지 펼쳐 보기
           var _mcpOpen={};                   // 제공자 카드 펼침 상태
           var _mcpAddOpen={};                // 인스턴스 추가 폼 펼침 상태 (credId별)
+          var _notionCandidates=null;        // 비밀 없는 Keychain service/account 목록
+          var _notionCandidateError='';
           var _mcpMode={};                   // 추가 폼에서 고른 인증 방식 (credId별)
           // 지금 고른 방식. 아직 안 골랐으면 첫 번째(=토큰) — 예전 화면과 같은 자리다.
           function mcpMode(c){
@@ -2366,6 +2535,39 @@ enum SessionRail {
           function mcpSay(id,cls,msg){
             var st=document.getElementById(id); if(!st) return;
             st.className=cls; st.textContent=msg;
+          }
+          /* 클라이언트별 연결 상태 한 줄.
+             한 번 연결하면 끝이 아니다 — 노션을 Claude Code에 붙여 놓고 코덱스로
+             넘어가면 거기엔 없다. 예전 화면은 ~/.claude.json 하나만 보고 초록불을
+             켰기 때문에, 코덱스 세션에 도구가 없는 이유를 물을 자리가 화면 어디에도
+             없었다. 서버가 판정한 사실(inst.hosts)만 그린다 — 여기서 다시 세면
+             화면과 서버가 서로 다른 답을 하게 된다. */
+          function mcpHostsHtml(inst){
+            var hs=inst.hosts||[]; if(!hs.length) return '';
+            var chips=hs.map(function(h){
+              var cls=h.registered?'on':(h.present?'':'none');
+              // 이 맥에 없는 클라이언트에 '등록 안 됨'이라고 쓰면 할 일이 남은 것처럼
+              // 읽힌다. 없는 것은 없다고 쓴다.
+              var txt=h.registered?'연결됨':(h.present?'연결 안 됨':'이 맥에 없음');
+              return '<span class="cmig-host '+cls+'">'+esc2(h.name)+' · '+txt+'</span>';
+            }).join('');
+            var off=hs.filter(function(h){ return h.present&&!h.registered; });
+            // 앱이 등록할 수 있는 곳은 위 스위치가 처리한다. 나머지는 그 도구에서
+            // 직접 붙여야 하고, 그 사실을 말하지 않으면 사용자는 이 회색 칩을 앱의
+            // 버그로 읽는다.
+            var manual=off.filter(function(h){ return !h.managed; }).map(function(h){ return h.name; });
+            // 붙어 있는 곳 중 계정에 매인 곳. 이미 붙어 있을 때만 말한다 — 안 붙은
+            // 곳의 계정 사정은 지금 물어야 할 일이 아니고, 매번 뜨면 벽지가 된다.
+            var acct=hs.filter(function(h){ return h.registered&&h.caution; });
+            var cs={}; acct.forEach(function(h){ (cs[h.caution]=cs[h.caution]||[]).push(h.name); });
+            var notes=Object.keys(cs).map(function(t){
+              return '<div class="cmig-caution">'+esc2(cs[t].join(' · '))+' — '+esc2(t)+'</div>';
+            }).join('');
+            return '<div class="cmig-hosts"><span class="lb">클라이언트</span>'+chips+'</div>'
+              +(manual.length?('<div class="cmig-hint" style="margin-top:5px">'
+                +esc2(manual.join(' · '))+' 에는 앱이 등록하지 않습니다 — 그 도구에서 직접 붙여야 '
+                +'같은 연동을 거기서도 씁니다 (예: codex mcp add)</div>'):'')
+              +notes;
           }
           /* MCP 서버의 실검사 상태. 등록됨과 명확히 구분한다 — 등록은 설정 파일에
              줄 하나를 넣는 일이라 언제나 성공하고, 그것만으로는 붙는지 알 수 없다.
@@ -2400,6 +2602,127 @@ enum SessionRail {
             }
             return '';
           }
+          /* ===== 연동 상세 =====
+             "붙는다"만으로는 인스턴스가 여럿일 때 아무 정보가 없다. MUST 토큰과
+             Global MPC 토큰은 둘 다 '연결됨'이지만 닿는 레포가 전혀 다르고, 사용자가
+             구분하려는 것은 정확히 그 차이다. 아래는 전부 서버가 검사 때 알아낸
+             사실(inst.scan)만 그린다 — 화면이 추정해서 채우면, 확인한 적 없는 것을
+             확인한 것처럼 보여주게 된다. */
+          var _mcpDet={};                    // 상세 펼침 상태 (credId-key)
+          window.cmMcpDetToggle=function(id){ _mcpDet[id]=!_mcpDet[id]; cmMcpRender(); };
+          // 요약 칩 — 접혀 있어도 보이는 줄. 인스턴스끼리 비교할 때 필요한 최소치다.
+          function mcpScanChips(inst){
+            var s=inst.scan; if(!s) return '';
+            var out=[];
+            if(s.auth&&s.auth.kind) out.push(esc2(s.auth.kind));
+            if(s.account&&s.account.login) out.push('@'+esc2(s.account.login));
+            if(s.repos&&s.repos.count) out.push('레포 '+s.repos.count+(s.repos.more?'+':''));
+            if(s.orgs&&s.orgs.length) out.push('조직 '+s.orgs.length);
+            if(s.signing&&s.signing.matched===true) out.push('서명 확인됨');
+            var h=out.map(function(t){ return '<span class="cmpl-chip type">'+t+'</span>'; }).join('');
+            // 손봐야 하는 것은 접혀 있어도 보여야 한다 — 만료 임박·조직 미승인은
+            // 펼쳐 봐야 알 수 있으면 결국 만료된 다음에 알게 된다.
+            var d=(s.auth&&s.auth.expiresInDays);
+            if(d!==undefined&&d!==null&&d<=30){
+              h+='<span class="cmpl-pill warn">'+(d<=0?'토큰 만료됨':'만료 D-'+d)+'</span>';
+            }
+            if(s.org&&s.org.status&&s.org.status!=='member'&&s.org.status!=='repos'){
+              h+='<span class="cmpl-pill warn">'+esc2(s.org.login)+' 접근 안 됨</span>';
+            }
+            return h;
+          }
+          function mcpSRow(k,v){ return '<div class="cmig-srow"><div class="cmig-sk">'+k
+            +'</div><div class="cmig-sv">'+v+'</div></div>'; }
+          function mcpScanBody(c,inst){
+            var s=inst.scan;
+            // 브라우저 승인 인스턴스는 앱이 토큰을 갖지 않는다 — 부를 API가 없으니
+            // 레포 목록을 만들 방법도 없다. 없는 것을 없다고 말하는 편이 낫다.
+            if(inst.needsToken===false){
+              return '<div class="cmig-scan">'
+                +mcpSRow('승인','<b>브라우저 승인 (OAuth)</b><div class="sub">깃허브 로그인 권한을 그대로 씁니다. '
+                  +'승인 기록은 mcp-remote 가 ~/.mcp-auth 에 보관합니다.</div>')
+                +mcpSRow('레포','<span class="sub">앱이 토큰을 갖지 않아 접근 레포를 확인해 드릴 수 없습니다 — '
+                  +'무엇에 닿는지까지 보려면 PAT 방식으로 인스턴스를 하나 더 등록하세요.</span>')
+                +'</div>';
+            }
+            if(!s){
+              return '<div class="cmig-scan">'+mcpSRow('상세',
+                '<span class="sub">아직 확인하지 않았습니다 — [연결 테스트]를 누르면 이 토큰의 승인 형태·조직·'
+                +'접근 레포·커밋 서명까지 확인해 여기에 적습니다.</span>')+'</div>';
+            }
+            var h='<div class="cmig-scan">';
+            // 승인 형태 — "OAuth인가 PAT인가"에 답하는 자리.
+            var a=s.auth||{};
+            var av='<b>'+esc2(a.kind||'알 수 없는 형식')+'</b>';
+            if(a.expires){
+              var d=(a.expiresInDays!==undefined&&a.expiresInDays!==null)?a.expiresInDays:null;
+              av+=' <span class="'+((d!==null&&d<=30)?'warn':'sub')+'">만료 '+esc2(a.expires)
+                +(d!==null?(' · '+(d<=0?'만료됨':'D-'+d)):'')+'</span>';
+            } else if(a.expiresNote){ av+=' <span class="sub">'+esc2(a.expiresNote)+'</span>'; }
+            if(a.scopes&&a.scopes.length){
+              av+='<div class="sub">스코프: '+a.scopes.map(esc2).join(', ')+'</div>';
+            } else if(a.scopeNote){ av+='<div class="sub">'+esc2(a.scopeNote)+'</div>'; }
+            h+=mcpSRow('승인',av);
+            // 계정
+            var ac=s.account||{};
+            if(ac.login){
+              var accv='<b>'+esc2(ac.login)+'</b>'
+                +(ac.name?(' <span class="sub">'+esc2(ac.name)+'</span>'):'')
+                +(ac.type?(' <span class="sub">· '+esc2(ac.type)+'</span>'):'');
+              if(ac.url) accv+=' <a href="'+escAttr(ac.url)+'" target="_blank" rel="noopener">열기 ↗</a>';
+              h+=mcpSRow('계정',accv);
+            }
+            // 조직 — 인스턴스에 이름을 적어 뒀으면 그 조직에 실제로 닿는지 먼저 말한다.
+            var ov='';
+            if(s.org&&s.org.login){
+              var okOrg=(s.org.status==='member'||s.org.status==='repos');
+              ov+='<b>'+esc2(s.org.login)+'</b> <span class="'+(okOrg?'sub':'warn')+'">'
+                +esc2(s.org.note||'')+'</span>';
+            }
+            if(s.orgs&&s.orgs.length){
+              ov+=(ov?'<div class="sub">':'<span class="sub">')+'보이는 조직: '
+                +s.orgs.map(function(o){ return esc2(o.login); }).join(' · ')
+                +(ov?'</div>':'</span>');
+            } else if(s.orgsNote){ ov+=(ov?'<div class="sub">':'<span class="sub">')+esc2(s.orgsNote)+(ov?'</div>':'</span>'); }
+            if(ov) h+=mcpSRow('조직',ov);
+            // 레포 — 소유자별로 묶는다. 어느 조직 것에 닿는지가 요점이라, 이름 나열보다
+            // '어느 소유자 밑에 몇 개'가 먼저 읽혀야 한다.
+            var rp=s.repos||{};
+            var rv='<b>'+(rp.count||0)+'개</b>'+(rp.more?' <span class="sub">(첫 100개 기준 · 더 있음)</span>':'');
+            if(rp.note) rv+=' <span class="warn">'+esc2(rp.note)+'</span>';
+            (rp.owners||[]).forEach(function(o){
+              var names=(o.names||[]).map(esc2).join(', ');
+              var extra=(o.count>(o.names||[]).length)?(' <span class="sub">+'+(o.count-(o.names||[]).length)+'</span>'):'';
+              rv+='<div class="cmig-repo"><span class="own">'+esc2(o.login)+'</span>'
+                +'<span class="sub">'+o.count+'개 · 비공개 '+(o.private||0)+' · push '+(o.push||0)
+                +(o.admin?(' · admin '+o.admin):'')+'</span>'
+                +'<span class="nm">'+names+extra+'</span></div>';
+            });
+            h+=mcpSRow('레포',rv);
+            // 커밋 서명 — 계정에 키가 있는가와 이 맥이 서명을 켜 뒀는가는 다른 사실이다.
+            var sg=s.signing||{};
+            var sv='<b>'+esc2(sg.verdict||'')+'</b>';
+            var loc=sg.local||{};
+            sv+='<div class="sub">계정 등록: GPG '+(sg.gpgCount||0)+' · SSH 서명키 '+(sg.sshCount||0)
+              +' / 이 맥 git: '+(loc.sign?'commit.gpgsign=true':'서명 꺼짐')
+              +' · 형식 '+esc2(loc.format||'-')
+              +(loc.key?(' · 키 '+esc2(loc.key)):'')+'</div>';
+            sv+='<div class="sub">이 맥의 전역 git 설정입니다 — 레포별 로컬 설정이 있으면 그쪽이 이깁니다.</div>';
+            if(sg.note) sv+='<div class="sub warn">'+esc2(sg.note)+'</div>';
+            h+=mcpSRow('서명',sv);
+            if(s.rate){
+              h+=mcpSRow('한도','<span class="sub">API 잔여 '+s.rate.remaining+' / '+s.rate.limit+'</span>');
+            }
+            if(inst.scannedAt){
+              h+=mcpSRow('확인','<span class="sub">'+esc2(cmMcpWhen(inst.scannedAt))+'</span>');
+            }
+            return h+'</div>';
+          }
+          // 이 모드에서 그릴 비밀 아닌 필드. tokenOnly 칸(깃허브 조직)은 앱이 토큰을
+          // 들고 대조할 때만 뜻이 있어 OAuth 인스턴스에선 아예 그리지 않는다.
+          function mcpFieldsFor(c,needsToken){
+            return (c.fields||[]).filter(function(f){ return needsToken||!f.tokenOnly; });
+          }
           // 인스턴스 한 줄. 상태 필은 자격증명 한 줄(intgPill)과 같은 사다리를 쓴다.
           function mcpInstHtml(c,inst){
             // 브라우저 승인 인스턴스는 검사할 토큰이 없다 — 상태 사다리가 다르다.
@@ -2416,10 +2739,21 @@ enum SessionRail {
               +' data-oauth="'+(oauth?'1':'0')+'" style="margin-left:auto">'+pill[1]+'</span></div>';
             if(inst.detail) h+='<div class="cmig-det">'+esc2(inst.detail)+'</div>';
             if(inst.error) h+='<div class="cmig-err">⚠ '+esc2(inst.error)+'</div>';
+            // 상세를 가진 연동(지금은 깃허브)은 요약 칩 + 펼침 버튼을 둔다. 칩은 접혀
+            // 있어도 보인다 — 인스턴스가 셋이면 카드가 화면 몇 개가 되고, 그러면
+            // 비교하려던 차이가 오히려 안 보인다.
+            if(c.provider==='github'){
+              var dkey=c.id+'-'+inst.key, dopen=!!_mcpDet[dkey];
+              h+='<div class="cmig-sum">'+mcpScanChips(inst)
+                +'<button class="cmig-more" onclick="cmMcpDetToggle(\''+esc2(dkey)+'\')">'
+                +(dopen?'상세 접기 ▲':'상세 보기 ▼')+'</button></div>';
+              if(dopen) h+=mcpScanBody(c,inst);
+            }
             // 비밀 아닌 필드(지라 사이트·이메일)는 그대로 보이고 그 자리에서 고친다.
-            if((c.fields||[]).length){
+            var instFields=mcpFieldsFor(c,!oauth);
+            if(instFields.length){
               h+='<div class="cmig-fields">';
-              (c.fields||[]).forEach(function(f){
+              instFields.forEach(function(f){
                 var v=(inst.fields||{})[f.key]||'';
                 h+='<label>'+esc2(f.label)
                   +'<input id="cmmc-f-'+esc2(c.id)+'-'+esc2(inst.key)+'-'+esc2(f.key)+'"'
@@ -2428,20 +2762,30 @@ enum SessionRail {
               });
               h+='</div>';
             }
+            // 이 방식으로 붙이면 무엇이 남는가. 붙이는 법(modeHint) 바로 앞에 둔다 —
+            // 승인 창을 띄우기 전에 읽어야 뜻이 있고, 뒤에 두면 이미 누른 다음이다.
+            if(inst.modeCaution) h+='<div class="cmig-caution">'+esc2(inst.modeCaution)+'</div>';
             if(oauth){
               // 붙여넣을 것이 없으므로 칸을 그리지 않는다. 빈 토큰 칸을 남겨 두면
               // 사용자는 '아직 뭔가 넣어야 하나'에서 멈춘다.
               h+='<div class="cmig-hint" style="margin-top:6px">'+esc2(inst.modeHint||'')+'</div>'
                 +'<div class="cmig-in">'
-                +'<button class="cmpl-btn danger" onclick="cmMcpRemove(\''+esc2(c.id)+'\',\''+esc2(inst.key)+'\',\''+escAttr(inst.label)+'\')">삭제</button>'
+                +'<button class="cmpl-btn danger" onclick="cmMcpRemove(\''+esc2(c.id)+'\',\''+esc2(inst.key)+'\',\''+escAttr(inst.label)+'\')">'
+                +(c.id==='notion-token'?'연결 해제':'삭제')+'</button>'
                 +'</div>';
             } else {
-              h+='<div class="cmig-in">'
-                +'<input id="cmmc-t-'+esc2(c.id)+'-'+esc2(inst.key)+'" type="password" autocomplete="off"'
-                +' spellcheck="false" placeholder="'+escAttr(inst.present?'새 토큰으로 교체하려면 붙여넣기':'토큰 붙여넣기')+'">'
-                +'<button class="cmpl-btn cmpl-pri" onclick="cmMcpSave(\''+esc2(c.id)+'\',\''+esc2(inst.key)+'\',this)">저장</button>'
-                +'<button class="cmpl-btn" onclick="cmIntgTest([\''+esc2(inst.id)+'\'],this)">연결 테스트</button>'
-                +'<button class="cmpl-btn danger" onclick="cmMcpRemove(\''+esc2(c.id)+'\',\''+esc2(inst.key)+'\',\''+escAttr(inst.label)+'\')">삭제</button>'
+              if(c.id==='notion-token'){
+                h+='<div class="cmig-det">Keychain: <b>'+esc2(inst.keychainService||'')+'</b> · '+esc2(inst.keychainAccount||'')+'</div>'
+                  +'<div class="cmig-in"><button class="cmpl-btn cmpl-pri" onclick="cmNotionFind(this)">Keychain에서 찾기</button>';
+              } else {
+                h+='<div class="cmig-in">'
+                  +'<input id="cmmc-t-'+esc2(c.id)+'-'+esc2(inst.key)+'" type="password" autocomplete="off"'
+                  +' spellcheck="false" placeholder="'+escAttr(inst.present?'새 토큰으로 교체하려면 붙여넣기':'토큰 붙여넣기')+'">'
+                  +'<button class="cmpl-btn cmpl-pri" onclick="cmMcpSave(\''+esc2(c.id)+'\',\''+esc2(inst.key)+'\',this)">저장</button>';
+              }
+              h+='<button class="cmpl-btn" onclick="cmIntgTest([\''+esc2(inst.id)+'\'],this)">연결 테스트</button>'
+                +'<button class="cmpl-btn danger" onclick="cmMcpRemove(\''+esc2(c.id)+'\',\''+esc2(inst.key)+'\',\''+escAttr(inst.label)+'\')">'
+                +(c.id==='notion-token'?'연결 해제':'삭제')+'</button>'
                 +'</div>';
             }
             // 등록 스위치 — 실제 등록 여부(mcpRegistered)를 그린다. 앱이 기억하는
@@ -2455,6 +2799,7 @@ enum SessionRail {
                 +'<span class="pd">'+esc2(inst.mcpName||'')+'</span>'
                 +'<span class="pd" style="margin-left:auto">'
                 +esc2(inst.mcpSummary||(c.mcp&&c.mcp.summary)||'')+'</span></div>';
+              h+=mcpHostsHtml(inst);
               // 등록과 테스트는 다른 일이므로 버튼도 따로 둔다. 테스트를 눌러야만
               // '붙는다'가 사실이 되고, 그 전까지는 주황으로 남는다.
               h+='<div class="cmig-test">'
@@ -2476,6 +2821,44 @@ enum SessionRail {
           }
           // 추가 폼. 토큰까지 한 번에 받는다 — 만들고 다시 키를 넣는 두 단계로 나누면
           // 값 없는 껍데기 인스턴스가 목록에 남는다.
+          /* 아직 인스턴스가 하나도 없는 갈래 한 줄. 없는 것은 화면에서 통째로
+             사라지므로, 그냥 두면 '인스턴스 추가' 버튼만 남아 무엇이 빠졌는지 물을
+             자리가 없다 — 지라를 반만 붙인 사람이 나머지 반의 이름을 여기서 본다. */
+          function mcpEmptyHtml(c){
+            return '<div class="cmig-row"><div class="cmig-top">'
+              +'<span class="cmig-nm">'+esc2(c.name)+'</span>'
+              +'<span class="cmpl-chip type">'+esc2(c.kindLabel||'')+'</span>'
+              +(c.mcp?'<span class="cmpl-chip opt">MCP</span>':'')
+              +'<span class="cmpl-pill off" style="margin-left:auto">연동 안 됨</span></div>'
+              +'<div class="cmig-role">'+esc2(c.role||'')+'</div></div>';
+          }
+          /* 앱 밖에서 이미 붙어 있는 서버 한 줄. 연결로 세되, 앱이 만든 것이 아니라는
+             사실을 같이 적는다 — 여기서 끄거나 고칠 수 없는 것을 앱이 관리하는 것처럼
+             그리면, 지우려고 이 카드를 뒤지다 아무것도 못 찾는다. */
+          function mcpExternalHtml(c){
+            var xs=c.externals&&c.externals.length?c.externals:(c.external?[c.external]:[]);
+            if(!xs.length) return '';
+            // 직접 등록도 클라이언트마다 따로다. 한 줄만 보여 주면 "Claude엔 직접
+            // 붙여 뒀고 코덱스엔 없다"가 화면에서 사라지는데, 그 차이가 사용자가
+            // 여기서 찾는 답이다.
+            var rows=xs.map(function(x){
+              return '<div class="cmig-det">'+esc2(x.hostName||'Claude Code')+' 설정('
+                +esc2(x.scope||'')+' 스코프)에 '+esc2(x.name||'')
+                +' 서버가 이미 등록돼 있어 연결로 봅니다 — '+esc2(x.target||'')+'</div>';
+            }).join('');
+            var where=xs.map(function(x){ return x.hostName||'Claude Code'; }).join(' · ');
+            return '<div class="cmig-row"><div class="cmig-top">'
+              +'<span class="cmig-nm">'+esc2(c.name)+'</span>'
+              +'<span class="cmpl-chip type">MCP</span>'
+              +'<span class="cmig-svc">'+esc2(xs[0].name||'')+'</span>'
+              +'<span class="cmpl-pill on" style="margin-left:auto">연결됨 · 직접 등록</span></div>'
+              +'<div class="cmig-role">'+esc2(c.role||'')+'</div>'
+              +rows
+              +'<div class="cmig-hosts"><span class="lb">직접 등록된 곳</span>'
+              +'<span class="cmig-host on">'+esc2(where)+'</span></div>'
+              +'<div class="cmig-hint">앱이 만든 것이 아니라 여기서 끄거나 고칠 수 없습니다 (해당 도구의 mcp 명령으로 관리). '
+              +'앱이 관리하는 토큰으로 따로 붙이려면 아래에서 인스턴스를 추가하세요.</div></div>';
+          }
           function mcpAddHtml(c){
             var open=!!_mcpAddOpen[c.id];
             if(!open){
@@ -2499,6 +2882,9 @@ enum SessionRail {
                 }).join('')
                 +'</div>'
                 +'<div class="cmig-det">'+esc2((mode&&mode.desc)||'')+'</div>';
+              // 방식을 고르는 그 자리에서 대가를 말한다. 등록이 끝난 뒤에 알려주면
+              // 되돌리는 일이 되고, 브라우저 승인은 되돌리기가 특히 번거롭다.
+              if(mode&&mode.caution) h+='<div class="cmig-caution">'+esc2(mode.caution)+'</div>';
             }
             h+='<div class="cmig-fields"><label>이름'
               +'<input id="cmmc-n-'+esc2(c.id)+'" type="text" autocomplete="off" placeholder="예: 개인 계정 · MUST 조직"></label>'
@@ -2507,15 +2893,22 @@ enum SessionRail {
               +(c.mcp?('<label>MCP 서버 이름 (영문, 비우면 자동)'
                 +'<input id="cmmc-s-'+esc2(c.id)+'" type="text" autocomplete="off" spellcheck="false"'
                 +' placeholder="예: personal · must"></label>'):'');
-            (c.fields||[]).forEach(function(f){
+            var needsToken=!mode||mode.needsToken!==false;
+            mcpFieldsFor(c,needsToken).forEach(function(f){
               h+='<label>'+esc2(f.label)+'<input id="cmmc-nf-'+esc2(c.id)+'-'+esc2(f.key)+'"'
                 +' type="text" autocomplete="off" spellcheck="false" placeholder="'+escAttr(f.placeholder||'')+'"></label>';
             });
-            var needsToken=!mode||mode.needsToken!==false;
-            h+='</div><div class="cmig-in">'
-              +(needsToken?('<input id="cmmc-nt-'+esc2(c.id)+'" type="password" autocomplete="off" spellcheck="false"'
+            h+='</div>';
+            if(c.id==='notion-token'){
+              h+=notionCandidatesHtml();
+            }
+            h+='<div class="cmig-in">'
+              +(needsToken&&c.id!=='notion-token'?('<input id="cmmc-nt-'+esc2(c.id)+'" type="password" autocomplete="off" spellcheck="false"'
                 +' placeholder="'+escAttr(c.placeholder||'토큰 붙여넣기')+'">'):'')
-              +'<button class="cmpl-btn cmpl-pri" onclick="cmMcpAdd(\''+esc2(c.id)+'\',this)">추가</button>'
+              +(c.id==='notion-token'?'<button class="cmpl-btn cmpl-pri" onclick="cmNotionFind(this)">Keychain에서 찾기</button>':'')
+              +(c.id==='notion-token'&&_notionCandidates&&_notionCandidates.length===0
+                ?'<button class="cmpl-btn" onclick="cmNotionRegister(this)">터미널에서 안전하게 등록</button>':'')
+              +(c.id!=='notion-token'?'<button class="cmpl-btn cmpl-pri" onclick="cmMcpAdd(\''+esc2(c.id)+'\',this)">추가</button>':'')
               +'<button class="cmpl-btn" onclick="cmMcpAddToggle(\''+esc2(c.id)+'\')">취소</button></div>';
             // 안내는 방식마다 다르다 — 토큰은 발급 경로가, OAuth는 승인이 언제
             // 일어나는지가 사용자가 다음에 할 일이다.
@@ -2524,10 +2917,53 @@ enum SessionRail {
             if(hint) h+='<div class="cmig-hint">'+hint+'</div>';
             return h+'<div class="cmig-st" id="cmmc-nst-'+esc2(c.id)+'"></div></div>';
           }
-          window.cmMcpToggleAll=function(){ _mcpAll=!_mcpAll; cmMcpRender(); };
-          window.cmMcpProvToggle=function(id){ _mcpOpen[id]=!_mcpOpen[id]; cmMcpRender(); };
+          window.cmMcpProvToggle=function(id){ _mcpOpen[id]=!_mcpOpen[id]; cmIntRender(); };
           window.cmMcpAddToggle=function(credId){ _mcpAddOpen[credId]=!_mcpAddOpen[credId]; cmMcpRender(); };
           window.cmMcpModePick=function(credId,mode){ _mcpMode[credId]=mode; cmMcpRender(); };
+          function notionCandidatesHtml(){
+            if(_notionCandidateError) return '<div class="cmig-err">⚠ '+esc2(_notionCandidateError)+'</div>';
+            if(!_notionCandidates) return '<div class="cmig-hint">비밀값은 읽지 않고 Keychain의 service/account 이름만 찾습니다.</div>';
+            if(!_notionCandidates.length) return '<div class="cmig-hint">추천 후보가 없습니다. 터미널의 숨김 입력으로 등록할 수 있습니다.</div>';
+            return '<div class="cmig-fields">'+_notionCandidates.map(function(x){
+              return '<div class="cmig-in"><span class="cmig-svc">'+esc2(x.service)+' · '+esc2(x.account)+'</span>'
+                +'<button class="cmpl-btn cmpl-pri" onclick="cmNotionConnect(\''+escAttr(x.service)+'\',\''+escAttr(x.account)+'\',this)">이 항목 연결</button></div>';
+            }).join('')+'</div>';
+          }
+          window.cmNotionFind=function(btn){
+            if(btn) btn.disabled=true;
+            fetch('/api/integrations/notion/candidates').then(function(r){return r.json();}).then(function(j){
+              _notionCandidateError=(!j||!j.ok)?((j&&j.error)||'Keychain 조회 실패'):'';
+              _notionCandidates=(j&&j.ok)?(j.candidates||[]):[];
+              _mcpAddOpen['notion-token']=true; cmMcpRender();
+            }).catch(function(){ _notionCandidateError='Keychain 조회 요청 실패'; cmMcpRender(); })
+              .finally(function(){ if(btn) btn.disabled=false; });
+          };
+          window.cmNotionConnect=function(service,account,btn){
+            if(btn) btn.disabled=true;
+            fetch('/api/integrations/notion/connect',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({service:service,account:account})})
+              .then(function(r){return r.json();}).then(function(j){
+                if(!j||!j.ok){ _notionCandidateError=(j&&j.error)||'연결 실패'; cmMcpRender(); return; }
+                _mcpAddOpen['notion-token']=false; intgLoad();
+              }).catch(function(){ _notionCandidateError='연결 요청 실패'; cmMcpRender(); })
+              .finally(function(){ if(btn) btn.disabled=false; });
+          };
+          window.cmNotionRegister=function(btn){
+            if(btn) btn.disabled=true;
+            fetch('/api/integrations/notion/register',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+              .then(function(r){return r.json();}).then(function(j){
+                if(!j||!j.ok){ _notionCandidateError=(j&&j.error)||'Terminal 실행 실패'; cmMcpRender(); return; }
+                var timer=setInterval(function(){
+                  fetch('/api/integrations/notion/register/status?id='+encodeURIComponent(j.id))
+                    .then(function(r){return r.json();}).then(function(s){
+                      if(!s||s.state==='waiting') return;
+                      clearInterval(timer);
+                      if(s.state==='saved') cmNotionConnect(j.service,j.account,null);
+                      else { _notionCandidateError='등록이 취소됐거나 Keychain 저장에 실패했습니다'; cmMcpRender(); }
+                    });
+                },800);
+              }).finally(function(){ if(btn) btn.disabled=false; });
+          };
           // 마지막 확인 시각은 '얼마나 지났나'로만 쓴다 — 경과 시간은 표시 시간대와
           // 무관해서, 시간대 설정이 무엇이든 같은 문장이 된다.
           window.cmMcpWhen=function(ts){
@@ -2630,7 +3066,9 @@ enum SessionRail {
             var fields={};
             (c.fields||[]).forEach(function(f){ fields[f.key]=mcpInputVal('cmmc-nf-'+credId+'-'+f.key); });
             var stId='cmmc-nst-'+credId;
-            var label=mcpInputVal('cmmc-n-'+credId);
+            // 단일 슬롯 연동은 이름을 묻지 않는다 — 자격증명 이름을 그대로 쓴다
+            // (서버도 같은 규칙으로 덮어쓰지만, 화면에 없는 칸을 비웠다고 막으면 안 된다).
+            var label=c.singleInstance?c.name:mcpInputVal('cmmc-n-'+credId);
             if(!label){ mcpSay(stId,'cmig-err','⚠ 이름을 입력하세요'); return; }
             if(btn) btn.disabled=true;
             mcpSay(stId,'cmig-det','만들고 연결을 확인하는 중…');
@@ -2650,7 +3088,10 @@ enum SessionRail {
               .finally(function(){ if(btn) btn.disabled=false; });
           };
           window.cmMcpRemove=function(credId,key,label){
-            if(!confirm('['+label+'] 인스턴스를 삭제할까요? 키체인의 토큰과 MCP 등록도 함께 지워집니다.')) return;
+            var msg=credId==='notion-token'
+              ? ('['+label+'] 연결 설정을 해제할까요? 선택했던 Keychain 항목은 삭제하지 않습니다.')
+              : ('['+label+'] 인스턴스를 삭제할까요? 키체인의 토큰과 MCP 등록도 함께 지워집니다.');
+            if(!confirm(msg)) return;
             fetch('/api/integrations/instance/remove',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({credId:credId,key:key})})
               .then(function(){ intgLoad(); }).catch(function(){});
@@ -2685,101 +3126,124 @@ enum SessionRail {
               .catch(function(){ if(el) el.checked=!want; mcpSay(stId,'cmig-err','⚠ 등록 요청 실패'); })
               .finally(function(){ if(el) el.disabled=false; });
           };
-          window.cmMcpRender=function(){
-            var box=document.getElementById('cmMcpList'); if(!box) return;
-            var si=document.getElementById('cmSkSearch'); var q=((si&&si.value)||'').trim().toLowerCase();
-            var all=(_intg.providers||[]).filter(function(p){ return p.section==='mcp'; });
-            var live=all.filter(function(p){ return p.connected; });
-            var list=(_mcpAll?all:live).filter(function(p){ if(!q) return true;
-              return (p.name||'').toLowerCase().indexOf(q)>=0||(p.desc||'').toLowerCase().indexOf(q)>=0; });
-            var regd=0;
-            all.forEach(function(p){ regd+=(p.mcpCount||0); });
-            var cnt=document.getElementById('cmMcpCount');
-            if(cnt) cnt.textContent='· 연결 '+live.length+' / '+all.length+' · 등록 '+regd;
-            var ab=document.getElementById('cmMcpAddBtn');
-            if(ab) ab.textContent=_mcpAll?'연동된 것만 보기':'연동 추가';
-            if(!list.length){
-              box.innerHTML='<div class="cmsk-empty">'
-                +(q?'검색 결과가 없습니다':'연동된 MCP가 없습니다 — \'연동 추가\'로 토큰을 등록하세요')+'</div>';
-              return;
-            }
-            box.innerHTML='';
-            list.forEach(function(p){
-              var creds=(p.credentials||[]).map(intgCred).filter(Boolean);
-              var bad=creds.some(function(c){
-                return (c.instances||[]).some(function(i){ return i.state==='fail'; }); });
-              var pill=p.connected?(bad?['warn','일부 실패']:['on','연결됨']):['off','연동 안 됨'];
-              var body='';
-              creds.forEach(function(c){
-                if(!c.multi){ body+=intgCredRow(c); return; }
-                (c.instances||[]).forEach(function(inst){
-                  body+=mcpInstHtml(c,inst);
-                  // 페이지를 새로 열었는데 검사가 아직 돌고 있으면 폴링을 이어붙인다 —
-                  // 안 그러면 스피너가 켜진 채 영원히 멈춰 있는다.
-                  var ph=inst.probe&&inst.probe.phase;
-                  if(ph==='starting'||ph==='auth'||ph==='handshake') cmMcpPollStart(c.id,inst.key);
-                });
-                body+=mcpAddHtml(c);
+          // 카드 하나 그리기 — 이름 붙인 인스턴스 여럿을 태우는 연동(노션·지라·깃허브).
+          function mcpCardHtml(p){
+            var creds=(p.credentials||[]).map(intgCred).filter(Boolean);
+            var bad=creds.some(function(c){
+              return c.state==='fail'
+                ||(c.instances||[]).some(function(i){ return i.state==='fail'; }); });
+            var pill=intgProvPill(p,bad);
+            var body='';
+            creds.forEach(function(c){
+              if(!c.multi){ body+=intgCredRow(c); return; }
+              if(c.external) body+=mcpExternalHtml(c);
+              else if(!(c.instances||[]).length) body+=mcpEmptyHtml(c);
+              (c.instances||[]).forEach(function(inst){
+                body+=mcpInstHtml(c,inst);
+                // 페이지를 새로 열었는데 검사가 아직 돌고 있으면 폴링을 이어붙인다 —
+                // 안 그러면 스피너가 켜진 채 영원히 멈춰 있는다.
+                var ph=inst.probe&&inst.probe.phase;
+                if(ph==='starting'||ph==='auth'||ph==='handshake') cmMcpPollStart(c.id,inst.key);
               });
-              var card=document.createElement('div');
-              card.className='cmpl-card'+(_mcpOpen[p.id]?' open':'');
-              card.innerHTML='<div class="cmpl-head" onclick="cmMcpProvToggle(\''+esc2(p.id)+'\')">'
-                +'<span class="nm">'+esc2(p.name)+'</span>'
-                +'<span class="cmpl-chip type">'+(p.instanceCount||0)+'개'+'</span>'
-                +((p.mcpCount||0)?('<span class="cmpl-chip opt">MCP 등록 '+p.mcpCount+'</span>'):'')
-                +'<div class="right"><span class="cmpl-pill '+pill[0]+'">'+pill[1]+'</span>'
-                +'<span class="caret">▶</span></div></div>'
-                +'<div class="cmpl-sm">'+esc2(p.desc||'')+'</div>'
-                +'<div class="cmpl-body" onclick="event.stopPropagation()">'+body+'</div>';
-              box.appendChild(card);
+              body+=mcpAddHtml(c);
             });
+            return '<div class="cmpl-card'+(_mcpOpen[p.id]?' open':'')+'">'
+              +'<div class="cmpl-head" onclick="cmMcpProvToggle(\''+esc2(p.id)+'\')">'
+              +'<span class="nm">'+esc2(p.name)+'</span>'
+              +'<span class="cmpl-chip type">'+(p.instanceCount||0)+'개'+'</span>'
+              +((p.mcpCount||0)?('<span class="cmpl-chip opt">MCP 등록 '+p.mcpCount+'</span>'):'')
+              +'<div class="right"><span class="cmpl-pill '+pill[0]+'">'+pill[1]+'</span>'
+              +'<span class="caret">▶</span></div></div>'
+              +'<div class="cmpl-sm">'+esc2(p.desc||'')+'</div>'
+              +'<div class="cmpl-body" onclick="event.stopPropagation()">'+body+'</div></div>';
+          }
+          window.cmLlmProvToggle=function(id){ _llmOpen[id]=!_llmOpen[id]; cmIntRender(); };
+          // 카드 하나 그리기 — 키 한 줄로 끝나는 연동(Claude·Gemini·OpenAI·Ollama).
+          function llmCardHtml(p){
+            var creds=(p.credentials||[]).map(intgCred).filter(Boolean);
+            var bad=p.connected&&creds.some(function(c){ return c.state==='fail'; });
+            var pill=intgProvPill(p,bad);
+            return '<div class="cmpl-card'+(_llmOpen[p.id]?' open':'')+'">'
+              +'<div class="cmpl-head" onclick="cmLlmProvToggle(\''+esc2(p.id)+'\')">'
+              +'<span class="nm">'+esc2(p.name)+'</span>'
+              +(p.via?('<span class="cmpl-chip type">'+esc2(p.via)+'</span>'):'')
+              +'<div class="right"><span class="cmpl-pill '+pill[0]+'">'+pill[1]+'</span>'
+              +'<span class="caret">▶</span></div></div>'
+              +'<div class="cmpl-sm">'+esc2(p.desc||'')+'</div>'
+              +'<div class="cmpl-body" onclick="event.stopPropagation()">'
+              +intgCredsHtml(p.credentials)
+              +'<div class="cmpl-foot"><button class="cmpl-btn" onclick="cmIntgTest('
+              +escAttr(JSON.stringify(p.credentials||[]))+',this)">전체 연결 테스트</button>'
+              +'<span class="sp">키 값은 저장 후 다시 표시되지 않습니다</span></div></div></div>';
+          }
+          /* ===== 한 목록 =====
+             플러그인과 연동을 구분하지 않는다. 사용자에게 둘은 같은 물건이다 —
+             붙여서 쓰는 것 하나이고, 카드마다 자기 기능·자격증명·인스턴스를 안에
+             담는다. 나눠 두면 같은 서비스가 두 자리에 앉는다: 슬랙 토큰은 플러그인
+             카드에, 노션 토큰은 연동 섹션에, 번역에 쓰는 모델은 또 LLM 섹션에.
+             카드마다 기능이 늘수록 그 분산이 심해지므로 한 줄로 합친다.
+             갈리는 것은 카드 본문을 만드는 법 셋뿐이다(설치형·폴더형 / MCP 인스턴스형 /
+             키 한 줄형), 그리고 그 차이는 카드를 펼쳐야 보인다. */
+          window.cmIntToggleAll=function(){ _intAll=!_intAll; cmIntRender(); };
+          // 기능 게이팅 줄의 '연동 추가 열기' — 같은 목록 안에서 아직 안 붙인 것까지 펼친다.
+          window.cmIntFocus=function(){
+            _intAll=true; cmIntRender();
+            var box=document.getElementById('cmIntList');
+            if(box) box.scrollIntoView({behavior:'smooth',block:'start'});
           };
-          window.cmLlmToggleAll=function(){ _llmAll=!_llmAll; cmLlmRender(); };
-          window.cmLlmProvToggle=function(id){ _llmOpen[id]=!_llmOpen[id]; cmLlmRender(); };
-          // 플러그인 카드의 '연동으로 이동' — 같은 화면 안에서 섹션으로 스크롤한다.
-          window.cmLlmFocus=function(){
-            _llmAll=true; cmLlmRender();
-            var box=document.getElementById('cmLlmList');
-            if(box) box.scrollIntoView({behavior:'smooth',block:'center'});
-          };
-          // LLM 연동 섹션. 모델이 워낙 많으니 기본은 연동된 것만 — 나머지는 '연동 추가'.
-          window.cmLlmRender=function(){
-            var box=document.getElementById('cmLlmList'); if(!box) return;
+          window.cmIntRender=function(){
+            var box=document.getElementById('cmIntList'); if(!box) return;
             var si=document.getElementById('cmSkSearch'); var q=((si&&si.value)||'').trim().toLowerCase();
-            var all=(_intg.providers||[]).filter(function(p){ return p.isLLM; });
-            var live=all.filter(function(p){ return p.connected; });
-            var list=(_llmAll?all:live).filter(function(p){ if(!q) return true;
-              return (p.name||'').toLowerCase().indexOf(q)>=0||(p.desc||'').toLowerCase().indexOf(q)>=0; });
-            var cnt=document.getElementById('cmLlmCount');
-            if(cnt) cnt.textContent='· 연결 '+live.length+' / '+all.length;
-            var ab=document.getElementById('cmLlmAddBtn');
-            if(ab) ab.textContent=_llmAll?'연동된 것만 보기':'연동 추가';
-            if(!list.length){
-              box.innerHTML='<div class="cmsk-empty">'
-                +(q?'검색 결과가 없습니다':'연동된 LLM이 없습니다 — \'연동 추가\'로 키를 등록하세요')+'</div>';
-              return;
+            function hit(p){ if(!q) return true;
+              return (p.name||'').toLowerCase().indexOf(q)>=0||(p.desc||'').toLowerCase().indexOf(q)>=0; }
+            // 폴더형은 항상, 설치형은 설치된 것만 (미설치는 찾아보기 탭 카탈로그에서).
+            var pls=(_pl||[]).filter(function(p){ return p.kind==='folder'||p.installed; });
+            // 제공자는 여덟인데 실제로 쓰는 건 보통 둘셋이다 — 전부 펼쳐 두면 쓰는 것이
+            // 안 쓰는 것에 묻힌다. 기본은 붙어 있는 것만, 나머지는 '연동 추가'로.
+            var provs=(_intg.providers||[]).filter(function(p){ return p.section==='mcp'||p.isLLM; });
+            var liveP=provs.filter(function(p){ return p.connected; });
+            var shownP=_intAll?provs:liveP;
+            var html=pls.filter(hit).map(plCardHtml)
+              .concat(shownP.filter(hit).map(function(p){
+                return p.section==='mcp'?mcpCardHtml(p):llmCardHtml(p); }));
+            var regd=0; provs.forEach(function(p){ regd+=(p.mcpCount||0); });
+            var hidden=provs.length-shownP.length;
+            var cnt=document.getElementById('cmIntCount');
+            if(cnt) cnt.textContent='· '+html.length+(regd?(' · MCP 등록 '+regd):'')
+              +((hidden&&!q)?(' · 미연동 '+hidden+' 숨김'):'');
+            var ab=document.getElementById('cmIntAddBtn');
+            if(ab) ab.textContent=_intAll?'연동된 것만 보기':'연동 추가';
+            var hb=document.getElementById('cmIntHosts');
+            if(hb){
+              var hs=(_intg.mcpHosts||[]).filter(function(h){ return h.present; });
+              // 칩 → 왜 여러 줄인지 한 줄 → 계정에 매인 곳의 주의사항. 순서가 뜻이다:
+              // 칩만 보면 '왜 코덱스가 따로 있지'에서 멈추고, 주의사항을 먼저 띄우면
+              // 아직 상태도 못 본 사람에게 경고부터 읽히게 된다.
+              var chips=hs.map(function(h){
+                return '<span class="cmig-host'+((h.serverCount||0)?' on':'')+'" title="'
+                  +escAttr(h.configPath||'')+'">'+esc2(h.name)+' · '+(h.serverCount||0)+'개'
+                  +(h.managed?'':' (읽기만)')+'</span>';
+              }).join('');
+              // 같은 주의사항을 계정 홈 수만큼 반복하지 않는다 — 문장이 같으면 한 번만
+              // 적고, 어느 곳들에 해당하는지를 앞에 붙인다.
+              var cs={}; hs.forEach(function(h){
+                if(!h.caution) return;
+                (cs[h.caution]=cs[h.caution]||[]).push(h.name);
+              });
+              var notes=Object.keys(cs).map(function(t){
+                return '<div class="cmig-caution">'+esc2(cs[t].join(' · '))+' — '+esc2(t)+'</div>';
+              }).join('');
+              hb.innerHTML=hs.length?('<span class="lb">MCP 클라이언트</span>'+chips
+                +(_intg.mcpHostNote?('<div class="cmint-note">'+esc2(_intg.mcpHostNote)+'</div>'):'')
+                +notes):'';
             }
-            box.innerHTML='';
-            list.forEach(function(p){
-              var creds=(p.credentials||[]).map(intgCred).filter(Boolean);
-              var bad=p.connected&&creds.some(function(c){ return c.state==='fail'; });
-              var pill=p.connected?(bad?['warn','일부 실패']:['on','연결됨']):['off','연동 안 됨'];
-              var card=document.createElement('div');
-              card.className='cmpl-card'+(_llmOpen[p.id]?' open':'');
-              card.innerHTML='<div class="cmpl-head" onclick="cmLlmProvToggle(\''+esc2(p.id)+'\')">'
-                +'<span class="nm">'+esc2(p.name)+'</span>'
-                +(p.via?('<span class="cmpl-chip type">'+esc2(p.via)+'</span>'):'')
-                +'<div class="right"><span class="cmpl-pill '+pill[0]+'">'+pill[1]+'</span>'
-                +'<span class="caret">▶</span></div></div>'
-                +'<div class="cmpl-sm">'+esc2(p.desc||'')+'</div>'
-                +'<div class="cmpl-body" onclick="event.stopPropagation()">'
-                +intgCredsHtml(p.credentials)
-                +'<div class="cmpl-foot"><button class="cmpl-btn" onclick="cmIntgTest('
-                +escAttr(JSON.stringify(p.credentials||[]))+',this)">전체 연결 테스트</button>'
-                +'<span class="sp">키 값은 저장 후 다시 표시되지 않습니다</span></div></div>';
-              box.appendChild(card);
-            });
+            box.innerHTML=html.length?html.join('')
+              :('<div class="cmsk-empty">'+(q?'검색 결과가 없습니다'
+                :'아직 붙어 있는 것이 없습니다 — \'연동 추가\'로 키를 등록하거나 찾아보기 탭에서 설치하세요')+'</div>');
           };
+          // 예전 호출부(로드·저장·토글)는 자기 섹션만 다시 그리던 이름을 부른다.
+          // 목록이 하나가 됐으니 셋 다 같은 곳으로 보낸다.
+          window.cmPlRender=cmIntRender; window.cmMcpRender=cmIntRender; window.cmLlmRender=cmIntRender;
         })();
         </script>
         <div class="cmag-overlay" id="cmAgOverlay" style="display:none">
@@ -2931,7 +3395,7 @@ enum SessionRail {
                 if(rc===0) return String(a.name||'').localeCompare(String(b.name||'')); return _agDir*rc; }
               var c=((a.runs||0)-(b.runs||0)); if(c===0) c=String(a.name||'').localeCompare(String(b.name||'')); return _agDir*c; });
             var cnt=document.getElementById('cmAgCount'); if(cnt) cnt.textContent=list.length+'개';
-            if(!list.length){ box.innerHTML='<div class="cmag-empty">'+(_ag.length?'검색 결과가 없습니다':'에이전트가 없습니다 — ~/.claude/agents/ 에 .md 에이전트를 두면 여기 나타납니다')+'</div>'; return; }
+            if(!list.length){ box.innerHTML='<div class="cmag-empty">'+(_ag.length?'검색 결과가 없습니다':'이 폴더에는 에이전트가 없습니다 — 레일의 \'에이전트\' 메뉴를 열면 프로젝트·스킬에 있는 에이전트까지 모두 보입니다')+'</div>'; return; }
             box.innerHTML='';
             list.forEach(function(a){
               var rate=Math.round((a.recentRate||0)*100);
@@ -3043,6 +3507,11 @@ enum SessionRail {
           window.cmNavReflect=function(){
             // 독립 크론 페이지(/cron)에선 '크론'을 항상 켠다 — 대시보드 뷰 상태와 무관.
             if(window.CM_PAGE==='cron'){ setActive('cron'); return; }
+            if(window.CM_PAGE==='slack'){ setActive('slack'); return; }     // 독립 번역 페이지(/slack-translate)
+            if(window.CM_PAGE==='agents'){ setActive('agents'); return; }   // 독립 에이전트 페이지(/agents)
+            if(window.CM_PAGE==='loop'){ setActive('loop'); return; }       // 독립 루프 엔지니어링 페이지(/loop-engineering)
+            if(window.CM_PAGE==='issues'){ setActive('issues'); return; }   // 독립 이슈 페이지(/issues)
+
             var tm=document.getElementById('cmTeamOverlay');
             if(tm && tm.style.display!=='none'){ setActive('team'); return; }   // 팀위임 오버레이가 떠 있으면 '팀위임'
             var sk=document.getElementById('cmSkOverlay');
@@ -3079,6 +3548,17 @@ enum SessionRail {
             if(kind==='chat'){ if(typeof cmComposeAi==='function') cmComposeAi(); else location.href='/goal-add'; return; }
             // 크론: 대시보드 뷰가 아니라 자체 페이지(/cron)로 이동한다(의존성 분리).
             if(kind==='cron'){ if(window.CM_PAGE!=='cron') location.href='/cron'; return; }
+            // 에이전트: 에이전트 인벤토리 관리 페이지(/agents). 위임 오버레이가 전역 폴더 하나만
+            // 보는 것과 달리, 전역·스킬 하네스·프로젝트별 정의를 전부 모아 보고 교체까지 한다.
+            if(kind==='agents'){ if(window.CM_PAGE!=='agents') location.href='/agents'; return; }
+            // 루프 엔지니어링: 병목과 대기 페이지(/loop-engineering). 에이전트 화면이 "어떤 파트가
+            // 있는가"를 답한다면, 이쪽은 "그 파트들로 짜인 라우트가 실제로 돌았고 어디서 막히는가"를
+            // 세션 기록·원장·launchd 에서 재구성해 답한다.
+            if(kind==='loop'){ if(window.CM_PAGE!=='loop') location.href='/loop-engineering'; return; }
+            // 이슈: 위임한 일의 목록 페이지(/issues). 루프 엔지니어링이 "라우트가 어디서 막히는가"를
+            // 답한다면, 이쪽은 "내가 무엇을 위임했고 그중 무엇이 실제로 끝났는가"를 큐의 트랙 카드에서
+            // 답한다. 완료 판정은 카드가 든 폴더가 아니라 카드의 status 값으로 한다.
+            if(kind==='issues'){ if(window.CM_PAGE!=='issues') location.href='/issues'; return; }
             // 번역: 슬랙 👀 번역함도 자체 페이지(/slack-translate)로 이동한다.
             if(kind==='slack'){ location.href='/slack-translate'; return; }
             if(kind==='work'){

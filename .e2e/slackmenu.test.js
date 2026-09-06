@@ -74,8 +74,12 @@ const check = (n, ok, extra) => { console.log((ok ? 'PASS ' : 'FAIL ') + n + (ex
   check('액션 툴바가 pin으로 남는다', after.pinned === true);
   check('메뉴가 실제로 화면에 보인다 (클리핑 없음)', after.visible === true,
     `${after.w}x${after.h}`);
-  check('메뉴 내용이 나온다 (슬랙에서 열기 · 처리완료)',
-    after.labels.length === 2 && /슬랙에서 열기/.test(after.labels[0]) && /처리완료/.test(after.labels[1]),
+  // 메뉴 = 슬랙에서 열기 · 처리완료 + "세션 추출" 구분 아래 두 갈래(단순 추출 ·
+  // 컨텍스트 공유하기). 세션 추출 자체의 동작은 slackextract.test.js 가 본다.
+  check('메뉴 내용이 나온다 (슬랙에서 열기 · 처리완료 · 세션 추출)',
+    after.labels.length === 5 && /슬랙에서 열기/.test(after.labels[0]) && /처리완료/.test(after.labels[1])
+    && after.labels[2] === '세션 추출' && after.labels[3] === '단순 추출'
+    && after.labels[4] === '컨텍스트 공유하기',
     JSON.stringify(after.labels));
   check('펼침 캐럿이 ▾로 바뀐다', after.caret === '▾');
 

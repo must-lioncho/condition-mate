@@ -55,7 +55,7 @@ Suno가 경로/모델을 바꾸면 위 값과 `src/suno.ts`를 그에 맞게 수
 ## 3단계: Claude Code에 등록
 
 ```
-claude mcp add --scope user suno -- node /Users/lioncho/Work/departtment_service/projects/condition-mate/Sources/ConditionMate/Plugins/suno-mcp/dist/index.js
+claude mcp add --scope user suno -- node /Users/lioncho/Work/departtment_service/projects/org-lion/lion-condition-mate/Sources/ConditionMate/Plugins/suno-mcp/dist/index.js
 ```
 
 서버는 시작 시 같은 폴더의 `.env`를 자동으로 읽습니다(`src/env.ts`). 따라서 `.env`만

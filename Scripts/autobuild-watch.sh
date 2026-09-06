@@ -43,7 +43,9 @@ PY
 }
 
 newest_src_mtime() {
-    { find Sources -name '*.swift' -not -path '*/node_modules/*' -print0
+    # .mjs도 센다: 데몬은 이제 번들에 실려 나가는 산출물이라, 데몬만 고친 변경도
+    # 리빌드 대상이어야 한다 (예전엔 .swift만 봐서 데몬 수정이 영영 반영되지 않았다).
+    { find Sources \( -name '*.swift' -o -name '*.mjs' -o -name 'slack-*.json' \) -not -path '*/node_modules/*' -print0
       printf '%s\0' Package.swift Info.plist Scripts/build-app.sh
     } | xargs -0 stat -f '%m' 2>/dev/null | sort -n | tail -1
 }

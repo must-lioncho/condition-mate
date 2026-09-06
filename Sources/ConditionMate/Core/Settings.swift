@@ -39,8 +39,10 @@ final class Settings {
         static let uiPrefs        = "cm.uiPrefs"
         static let conditionMate  = "cm.conditionMate"
         static let skillsRoot     = "cm.skillsRoot"
+        static let issueFolder    = "cm.issueFolder"
         static let bgmWindow      = "cm.bgmWindowEnabled"
         static let timeZone       = "cm.timeZone"
+        static let timeZoneKSTMigrated = "cm.timeZoneKSTMigrated"
         static let activeGoalSeq  = "cm.activeGoalSeq"
         static let activeGoalAt   = "cm.activeGoalAt"
         static let recentTasks    = "cm.recentTasks"
@@ -55,6 +57,8 @@ final class Settings {
         static let debugCapture   = "cm.debugCapture"
         static let bgmVenue       = "cm.bgmVenue"
         static let muted          = "cm.muted"
+        static let sfxEnabled     = "cm.sfxEnabled"
+        static let voiceDuckOn    = "cm.voiceDuckOn"
         static let gwMode         = "cm.gwMode"
         static let gwBaseURL      = "cm.gwBaseURL"
         static let gwScheme       = "cm.gwScheme"
@@ -77,6 +81,8 @@ final class Settings {
         K.drawEnabled: true,
         K.cameraGuardOn: true,
         K.debugButtons: true,
+        K.sfxEnabled: true,
+        K.voiceDuckOn: true,
         K.gwMode: "auto",
         K.gwScheme: "bearer",
         K.gwKeyService: "claude-code-token"
@@ -161,6 +167,15 @@ final class Settings {
         set { set(newValue, K.skillsRoot) }
     }
 
+    // Folder where a delegation issue file is created. Empty/absent means "follow the
+    // folder the agent was invoked in" (IssueFolder.defaultRoot) — the default the user
+    // asked for so 40 parallel projects each keep their issues next to their own code.
+    // Set from the rail's ⚙️설정 panel. Resolution lives in IssueFolder, not here.
+    var issueFolder: String? {
+        get { string(K.issueFolder) }
+        set { set(newValue, K.issueFolder) }
+    }
+
     var trackedApps: [String] {
         get { (get(K.trackedApps) as? [String]) ?? [] }
         set { set(newValue, K.trackedApps) }
@@ -241,6 +256,23 @@ final class Settings {
     var muted: Bool {
         get { bool(K.muted) }
         set { set(newValue, K.muted) }
+    }
+
+    // 효과음(원샷 이펙트: 세션 시작·정지 큐, 포모도로 완주·수확, 레일 내비 클릭) 스위치.
+    // 음악과 따로 끌 수 있어야 한다 — BGM은 집중을 돕지만 불쑥 튀는 알림음은 그 집중을 깬다.
+    // 마스터 음소거(`muted`)와는 AND로 묶인다: 음소거면 이 값과 무관하게 전부 침묵
+    // (AppDelegate.applySfxGate가 두 스위치를 합쳐 SoundEffects에 밀어 넣는 유일한 지점).
+    var sfxEnabled: Bool {
+        get { bool(K.sfxEnabled) }
+        set { set(newValue, K.sfxEnabled) }
+    }
+
+    // 받아쓰기(superwhisper) 중 음악을 잠깐 눌러 두는 스위치. 기본은 켜짐 — 말하는 동안 음악이
+    // 마이크로 새는 것을 막는 게 대부분의 경우 원하는 동작이다. 끄면 감시 자체를 멈춰서
+    // 전역 키 모니터와 폴더 감시가 모두 내려간다(꺼 두면 비용도 0).
+    var voiceDuckOn: Bool {
+        get { bool(K.voiceDuckOn) }
+        set { set(newValue, K.voiceDuckOn) }
     }
 
     var drawEnabled: Bool {
@@ -486,11 +518,29 @@ final class Settings {
 
     // 표시 타임존. Storage stays epoch (UTC-based) everywhere; this only decides which
     // wall clock timestamps are RENDERED in — both the dashboard JS (via window.CM_TZ)
-    // and the Swift-side display formatters. "system" (default) = the machine's local
-    // timezone; anything else must be an IANA identifier ("Asia/Seoul", "UTC", …).
+    // and the Swift-side display formatters. "Asia/Seoul" (default, KST) = 라이언의 하루;
+    // "system" = the machine's local timezone; anything else must be a valid IANA
+    // identifier ("UTC", …).
+    //
+    // WHY the default is KST and not "system" (2026-09-05, issue/2026-09-05-token-view-
+    // timezone-directive.md): the app already hardcodes Asia/Seoul in three places
+    // (AppLog.logTimeZone, isoWeek(of:), aiTaskNameParts), so a "system" display default
+    // makes two different "오늘" coexist inside one app. This product counts a HUMAN's
+    // workday, and a workday's boundary is decided by where the person lives, not by
+    // whatever the laptop happens to be set to — this Mac is set to IST (UTC+5.5), which
+    // was never a chosen value, and it silently shifted every day boundary by 3h30m.
+    // Reversible: the header selector still offers 시스템 / Asia/Seoul / UTC.
     var timeZoneID: String {
-        get { string(K.timeZone) ?? "system" }
+        get { string(K.timeZone) ?? "Asia/Seoul" }
         set { set(newValue, K.timeZone) }
+    }
+
+    // 1회 마이그레이션 플래그 — 기본값을 "system" → "Asia/Seoul" 로 바꾼 날(2026-09-05)에
+    // 이미 디스크에 "system" 이 저장돼 있던 설치본을 한 번만 KST 로 옮기기 위한 것.
+    // (AppDelegate.migrateTimeZoneKSTDefault() 가 유일한 소비자.)
+    var timeZoneKSTMigrated: Bool {
+        get { bool(K.timeZoneKSTMigrated) }
+        set { set(newValue, K.timeZoneKSTMigrated) }
     }
 
     // Target hosts probed by the 네트워크 진단 (DiagProbe) — the sites whose reachability we
@@ -587,11 +637,13 @@ final class Settings {
         return s.replacingOccurrences(of: "</", with: "<\\/")
     }
 
-    // The setting resolved to an actual TimeZone; invalid identifiers fall back to local
-    // so a hand-edited settings.json can never break rendering.
+    // The setting resolved to an actual TimeZone; invalid identifiers fall back to the
+    // KST default so a hand-edited settings.json can never break rendering.
+    // "system" stays an EXPLICIT, honored choice (the header selector's 시스템 (맥 설정)),
+    // so only the FALLBACK moved to Asia/Seoul on 2026-09-05 — not the "system" branch.
     var displayTimeZone: TimeZone {
         let id = timeZoneID
         if id == "system" { return .current }
-        return TimeZone(identifier: id) ?? .current
+        return TimeZone(identifier: id) ?? TimeZone(identifier: "Asia/Seoul") ?? .current
     }
 }

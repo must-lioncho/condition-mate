@@ -52,7 +52,7 @@ public enum MCPRegistrar {
     #!/bin/sh
     # ConditionMate MCP 런처 — 앱이 자동 생성합니다 (직접 고치지 마세요).
     #
-    # 사용: cm-mcp-launch.sh <kind> <keychain-service> [extra...]
+    # 사용: cm-mcp-launch.sh <kind> <keychain-service> <keychain-account> [extra...]
     # 비밀값은 인자로 받지 않는다. 여기서 키체인을 읽어 환경변수로만 넘긴다.
     set -e
     # GUI에서 뜬 Claude 프로세스는 PATH가 좁다 — node/npx가 사는 곳을 앞에 붙인다.
@@ -61,7 +61,8 @@ public enum MCPRegistrar {
 
     kind="$1"
     svc="$2"
-    shift 2 || exit 64
+    acct="$3"
+    shift 3 || exit 64
 
     # OAuth 종류는 키체인을 쓰지 않는다 — 승인 토큰은 mcp-remote 가 ~/.mcp-auth 에
     # 들고 있고, 없으면 자기가 브라우저를 열어 받아 온다. 여기서 키를 요구하면
@@ -71,9 +72,13 @@ public enum MCPRegistrar {
         token=""
         ;;
       *)
-        token=$(/usr/bin/security find-generic-password -w -s "$svc" 2>/dev/null || true)
+        if [ "$acct" = "-" ]; then
+          token=$(/usr/bin/security find-generic-password -w -s "$svc" 2>/dev/null || true)
+        else
+          token=$(/usr/bin/security find-generic-password -w -s "$svc" -a "$acct" 2>/dev/null || true)
+        fi
         if [ -z "$token" ]; then
-          echo "cm-mcp-launch: 키체인 항목 $svc 를 읽지 못했습니다 (앱의 플러그인 > MCP 연동에서 토큰을 다시 저장하세요)" >&2
+          echo "cm-mcp-launch: 키체인 항목 $svc 를 읽지 못했습니다 (앱의 플러그인 > 연동에서 토큰을 다시 저장하세요)" >&2
           exit 69
         fi
         ;;
@@ -95,6 +100,42 @@ public enum MCPRegistrar {
         AUTH_HEADER="Bearer $token"
         export AUTH_HEADER
         exec npx -y mcp-remote https://api.githubcopilot.com/mcp/ --header 'Authorization:${AUTH_HEADER}'
+        ;;
+      github-oauth)
+        # GitHub은 mcp-remote 가 즉석으로 자기 자신을 등록(dynamic client
+        # registration)하는 걸 허용하지 않는다 — 그래서 직접 만든 OAuth App의
+        # client_id/secret을 미리 쥐어 줘야 승인 화면까지 갈 수 있다. 그 값은
+        # 'cm-github-oauth-app' 자격증명 키체인 항목에 "id:secret" 한 줄로 있다
+        # (서비스 이름은 $1로 넘어온다 — svc 칸은 이 kind에서 안 쓴다).
+        app_svc="$1"
+        if [ -z "$app_svc" ]; then
+          echo "cm-mcp-launch: GitHub OAuth App 정보가 없습니다 (연동 페이지 > GitHub OAuth App 에 Client ID:Secret을 먼저 저장하세요)" >&2
+          exit 64
+        fi
+        app_info=$(/usr/bin/security find-generic-password -w -s "$app_svc" 2>/dev/null || true)
+        if [ -z "$app_info" ]; then
+          echo "cm-mcp-launch: 키체인 항목 $app_svc 를 읽지 못했습니다 (GitHub OAuth App 연동에서 값을 다시 저장하세요)" >&2
+          exit 69
+        fi
+        case "$app_info" in
+          *:*) ;;
+          *)
+            echo "cm-mcp-launch: GitHub OAuth App 값 형식이 잘못됐습니다 — 'Client ID:Client Secret' 형태로 다시 저장하세요" >&2
+            exit 69
+            ;;
+        esac
+        client_id="${app_info%%:*}"
+        client_secret="${app_info#*:}"
+        # JSON을 argv에 남기지 않으려고(ps에 secret이 안 보이게) 임시 파일로 넘긴다.
+        # set -e 아래서 npx가 비정상 종료하면(인증 실패·중단 등) 뒷정리 코드가 통째로
+        # 건너뛰어지므로, 실행 후 지우려 하지 않는다 — 0600 권한으로 $TMPDIR에 두고
+        # exec로 넘긴다(다른 kind들과 같은 패턴). macOS가 주기적으로 비운다.
+        info_file="$(mktemp "${TMPDIR:-/tmp}/cm-gh-oauth.XXXXXX")"
+        chmod 600 "$info_file"
+        printf '{"client_id":"%s","client_secret":"%s"}' "$client_id" "$client_secret" > "$info_file"
+        # 포트는 고정이어야 한다 — GitHub OAuth App의 Authorization callback URL이
+        # 이 포트로 정확히 등록돼 있어야 승인 리다이렉트가 돌아온다.
+        exec npx -y mcp-remote https://api.githubcopilot.com/mcp/ 33417 --static-oauth-client-info "@$info_file"
         ;;
       jira)
         email="$1"
@@ -146,14 +187,26 @@ public enum MCPRegistrar {
         let kind = opt.mcpKind.isEmpty ? spec.kind : opt.mcpKind
         // 키체인을 안 읽는 경로에는 service 이름을 넘기지 않는다 — 존재하지도 않는
         // 항목 이름이 설정 파일에 남으면 나중에 읽는 사람이 그게 쓰인다고 오해한다.
-        var args: [String] = [kind, opt.needsToken
-                              ? CredInstance.service(base: cred.service, key: inst.key) : "-"]
+        let service = inst.keychainService.isEmpty
+            ? CredInstance.service(base: cred.service, key: inst.key) : inst.keychainService
+        let account = inst.keychainAccount.isEmpty ? cred.account : inst.keychainAccount
+        var args: [String] = [kind, opt.needsToken ? service : "-", opt.needsToken ? account : "-"]
         if kind == "jira" {
             let email = (inst.fields["email"] ?? "").trimmingCharacters(in: .whitespaces)
             guard !email.isEmpty else {
                 return Result(ok: false, error: "계정 이메일을 먼저 입력하세요", name: name)
             }
             args.append(email)
+        }
+        if kind == "github-oauth" {
+            // 이 인스턴스 자신은 토큰이 없다(needsToken: false) — mcp-remote 가
+            // GitHub에 자기 자신을 등록할 때 쓰는 앱 자격증명은 별도의
+            // github-oauth-app 자격증명 키체인 항목에 있다. 여기선 그 서비스
+            // 이름만 넘긴다 — 값은 런처가 뜨는 순간 키체인에서 읽는다.
+            guard let appCred = IntegrationCatalog.credential("github-oauth-app") else {
+                return Result(ok: false, error: "github-oauth-app 자격증명이 카탈로그에 없습니다", name: name)
+            }
+            args.append(appCred.service)
         }
         let payload: [String: Any] = [
             "type": "stdio",
@@ -192,14 +245,61 @@ public enum MCPRegistrar {
 
     // MARK: 등록 상태 (읽기 전용)
 
-    // 지금 실제로 등록돼 있는 서버 이름들. claude mcp list 는 서버마다 연결을
+    // 지금 실제로 등록돼 있는 서버 이름들 — 앱이 등록하는 곳(Claude Code 사용자
+    // 스코프)만 센다. 앱은 --scope user 로만 등록하므로, 여기서 프로젝트 스코프까지
+    // 세면 남이 만든 동명의 서버를 앱이 만든 것으로 착각하게 된다.
+    // 어디를 어떻게 읽는지는 MCPHosts 가 안다 — claude mcp list 는 서버마다 연결을
     // 시도해서 느리므로(헬스체크), 화면 갱신용으로는 설정 파일을 그대로 읽는다.
     public static func registeredNames() -> Set<String> {
-        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
-        guard let data = try? Data(contentsOf: url),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let servers = obj["mcpServers"] as? [String: Any] else { return [] }
-        return Set(servers.keys)
+        registeredNames(hostId: MCPHosts.claudeCodeId)
+    }
+
+    // 호스트 하나에 등록된, 앱이 만든 서버 이름들. 화면이 "Claude엔 붙었고 코덱스엔
+    // 안 붙었다"를 한 줄로 말할 수 있게 하는 값이다.
+    public static func registeredNames(hostId: String) -> Set<String> {
+        let servers = MCPHosts.servers(hostId: hostId)
+        guard hostId == MCPHosts.claudeCodeId else { return Set(servers.map { $0.name }) }
+        return Set(servers.filter { $0.scope == "사용자" }.map { $0.name })
+    }
+
+    // 앱이 만들지 않은, 같은 곳에 붙는 서버. 사람은 claude mcp add / codex mcp add 로
+    // 서버를 직접 등록하고, 그렇게 등록한 것은 대개 지금 쓰는 프로젝트에 매여 있다 —
+    // 그래서 사용자 스코프만 읽으면 '있는데 없다'가 된다. MCPHosts 가 두 스코프를 다
+    // 훑어 주고, 여기서는 앱이 만든 서버(cm- 접두어)만 뺀다: 이 함수가 답하는 질문은
+    // "앱 밖에서 이미 붙어 있는가"이고, 앱이 만든 것은 이름으로 이미 셀 수 있다.
+    public struct ExternalServer {
+        public let name: String    // 사용자가 붙인 서버 이름 ("atlassian")
+        public let scope: String   // "사용자" / "프로젝트"
+        public let target: String  // 실제로 붙는 곳 (url 또는 명령줄)
+        public let hostId: String  // 어느 클라이언트의 설정에서 나왔는가
+        public let hostName: String
+
+        public init(name: String, scope: String, target: String,
+                    hostId: String = MCPHosts.claudeCodeId, hostName: String = "Claude Code") {
+            self.name = name
+            self.scope = scope
+            self.target = target
+            self.hostId = hostId
+            self.hostName = hostName
+        }
+    }
+
+    // 호스트별로 하나씩. 같은 노션이라도 Claude엔 있고 코덱스엔 없을 수 있고,
+    // 사용자가 알고 싶은 것이 정확히 그 차이다.
+    public static func externalServers(host: String) -> [ExternalServer] {
+        guard !host.isEmpty else { return [] }
+        return MCPHosts.hosts().compactMap { h -> ExternalServer? in
+            guard let hit = MCPHosts.servers(hostId: h.id).first(where: { s in
+                !s.name.hasPrefix("cm-") && s.target.contains(host)
+            }) else { return nil }
+            return ExternalServer(name: hit.name, scope: hit.scope, target: hit.target,
+                                  hostId: h.id, hostName: h.name)
+        }
+    }
+
+    // 예전 호출부가 쓰던 '하나만' 형태 — 앱이 등록하는 곳을 먼저 본다.
+    public static func externalServer(host: String) -> ExternalServer? {
+        externalServers(host: host).first
     }
 
     // MARK: 내부

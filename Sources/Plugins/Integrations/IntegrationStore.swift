@@ -1,6 +1,6 @@
 import Foundation
 
-// 연동 상태의 단일 창구. 화면(플러그인 페이지의 연동 칸·LLM 연동 섹션, 슬랙
+// 연동 상태의 단일 창구. 화면(플러그인 페이지의 연동 목록, 슬랙
 // 페이지의 연동 모달)과 게이팅(무엇이 없어서 이 기능이 못 도는가)이 전부 여기를
 // 통해 같은 사실을 본다.
 //
@@ -50,6 +50,12 @@ public enum IntegrationStore {
             let name = MCPRegistrar.serverName(c, inst)
             return (!name.isEmpty && registeredMCP.contains(name), "")
         }
+        if !inst.keychainService.isEmpty, !inst.keychainAccount.isEmpty {
+            return (CMKeychain.exists(service: inst.keychainService, account: inst.keychainAccount), "")
+        }
+        if c.id == "notion-token" {
+            return (CMKeychain.exists(service: CredInstance.service(base: c.service, key: inst.key)), "")
+        }
         return presence(c, inst.key)
     }
 
@@ -67,8 +73,45 @@ public enum IntegrationStore {
         return names
     }
 
+    // 앱이 만들지 않았지만 같은 곳에 붙는 서버. 클라이언트마다 따로 나온다 —
+    // 같은 노션이라도 Claude엔 붙어 있고 코덱스엔 없을 수 있고, 사용자가 알고 싶은
+    // 것이 정확히 그 차이다. 목록이 5초마다 다시 그려지므로 파일 읽기를 그때마다
+    // 하지 않도록 mcpNames 와 같은 창으로 캐시한다.
+    private static var externalCache: [String: (hits: [MCPRegistrar.ExternalServer], at: Date)] = [:]
+    static func externalServers(_ c: Credential) -> [MCPRegistrar.ExternalServer] {
+        guard let host = c.mcp?.externalHost, !host.isEmpty else { return [] }
+        lock.lock()
+        if let cached = externalCache[host], Date().timeIntervalSince(cached.at) < 10 {
+            lock.unlock(); return cached.hits
+        }
+        lock.unlock()
+        let hits = MCPRegistrar.externalServers(host: host)
+        lock.lock(); externalCache[host] = (hits, Date()); lock.unlock()
+        return hits
+    }
+
+    static func externalServer(_ c: Credential) -> MCPRegistrar.ExternalServer? {
+        externalServers(c).first
+    }
+
+    // 호스트별로 등록된 서버 이름. 인스턴스 한 줄이 "어디에 붙어 있나"를 말하려면
+    // 클라이언트 수만큼 설정 파일을 읽어야 하는데, 그것을 인스턴스마다 하면 페이지
+    // 한 번 그리는 데 파일을 수십 번 연다 — 한 번 읽어 창을 공유한다.
+    private static var hostNamesCache: (map: [String: Set<String>], at: Date)?
+    private static func hostNames() -> [String: Set<String>] {
+        lock.lock()
+        if let hit = hostNamesCache, Date().timeIntervalSince(hit.at) < 10 {
+            lock.unlock(); return hit.map
+        }
+        lock.unlock()
+        var map: [String: Set<String>] = [:]
+        for h in MCPHosts.hosts() { map[h.id] = MCPRegistrar.registeredNames(hostId: h.id) }
+        lock.lock(); hostNamesCache = (map, Date()); lock.unlock()
+        return map
+    }
+
     private static func invalidateMCP() {
-        lock.lock(); mcpNamesCache = nil; lock.unlock()
+        lock.lock(); mcpNamesCache = nil; externalCache.removeAll(); hostNamesCache = nil; lock.unlock()
     }
 
     private static func cachedCheck(_ id: String) -> CheckResult? {
@@ -95,13 +138,42 @@ public enum IntegrationStore {
     // primaryOverrides: 기능의 '기본' 경로가 사용자 설정에 따라 달라질 때
     // (슬랙 번역 모델 선택) 호출자가 좁혀 준다.
     public static func statusJSON(primaryOverrides: [String: [String]] = [:]) -> String {
+        ensureLegacyNotionReference()
         var out = "{\"ok\":true"
         out += ",\"providers\":\(providersJSON())"
         out += ",\"credentials\":\(credentialsJSON())"
         out += ",\"capabilities\":\(capabilitiesJSON(primaryOverrides: primaryOverrides))"
+        out += ",\"mcpHosts\":\(mcpHostsJSON())"
+        out += ",\"mcpHostNote\":\(esc(MCPHosts.perClientNote))"
         out += ",\"slackUserScopes\":[\(IntegrationCatalog.slackUserScopes.map(esc).joined(separator: ","))]"
         out += "}"
         return out
+    }
+
+    private static func ensureLegacyNotionReference() {
+        guard IntegrationInstances.all(credId: "notion-token").isEmpty,
+              CMKeychain.exists(service: "cm-notion-token") else { return }
+        let account = CMKeychain.account(service: "cm-notion-token", fallback: "notion")
+        _ = IntegrationInstances.upsert(CredInstance(
+            credId: "notion-token", key: "legacy", label: "기존 Notion 연결", mode: "token",
+            keychainService: "cm-notion-token", keychainAccount: account))
+    }
+
+    // 이 맥에서 MCP 서버가 앉을 수 있는 곳들. 화면 위쪽에 한 줄로 놓여서, 카드를
+    // 펼치기 전에 "어디까지 붙일 수 있는 판인가"를 먼저 말한다. 설정 파일이 없는
+    // 클라이언트는 '등록 안 됨'이 아니라 '이 맥에 없음'이다 — 둘을 같은 회색으로
+    // 그리면 안 쓰는 도구가 늘 빨간불로 남는다.
+    private static func mcpHostsJSON() -> String {
+        let names = hostNames()
+        let items = MCPHosts.hosts().map { h -> String in
+            var s = "{\"id\":\(esc(h.id)),\"name\":\(esc(h.name))"
+            s += ",\"present\":\(h.present),\"managed\":\(h.managed)"
+            s += ",\"accountScoped\":\(h.accountScoped),\"caution\":\(esc(h.caution))"
+            s += ",\"configPath\":\(esc(h.configPath))"
+            s += ",\"serverCount\":\((names[h.id] ?? []).count)}"
+            return s
+        }.joined(separator: ",")
+        return "[\(items)]"
     }
 
     private static func providersJSON() -> String {
@@ -112,9 +184,13 @@ public enum IntegrationStore {
             // 등록했거나(키) 검사를 통과한 것만 센다. 브라우저 세션처럼 검증할 수
             // 없는 항목까지 세면, 아무것도 안 한 제공자가 늘 연결된 것처럼 보인다.
             // 다중 인스턴스 자격증명은 인스턴스가 하나라도 등록돼 있으면 연결로 본다.
+            // 앱이 등록한 인스턴스가 없어도, 사람이 직접 등록해 둔 같은 서버가 이미
+            // 붙어 있으면 그것도 연결이다 — 도구는 이미 세션에 있는데 화면만 '연동
+            // 안 됨'이라고 하면, 사용자는 같은 서버를 하나 더 만들게 된다.
             let live = creds.filter { c in
-                c.multi ? IntegrationInstances.all(credId: c.id)
+                c.multi ? (IntegrationInstances.all(credId: c.id)
                             .contains { instPresence(c, $0, registeredMCP).present }
+                           || externalServer(c) != nil)
                         : registered(c)
             }
             let instCount = creds.reduce(0) { $0 + ($1.multi ? IntegrationInstances.all(credId: $1.id).count : 0) }
@@ -126,6 +202,11 @@ public enum IntegrationStore {
             s += ",\"isLLM\":\(p.isLLM),\"section\":\(esc(p.section))"
             s += ",\"instanceCount\":\(instCount),\"mcpCount\":\(mcpCount)"
             s += ",\"connected\":\(!live.isEmpty)"
+            // 하나만 서 있어도 되는 제공자와, 전부 서야 하는 제공자(지라)를 가른다.
+            // full이 false면 붙긴 붙었는데 절반이다 — 그 상태를 '연결됨'이라고
+            // 부르면 나머지 절반이 왜 안 되는지 화면 어디서도 알 수 없게 된다.
+            s += ",\"liveCount\":\(live.count),\"credCount\":\(creds.count)"
+            s += ",\"full\":\(p.requireAll ? live.count == creds.count : !live.isEmpty)"
             // 어떤 방식으로 연결돼 있는지 — "API 키" / "CLI 구독" 같은 한 줄 (중복 제거).
             var seen = Set<String>()
             let vias = live.map { kindLabel($0.kind) }.filter { seen.insert($0).inserted }
@@ -148,22 +229,43 @@ public enum IntegrationStore {
             s += ",\"service\":\(esc(c.service)),\"account\":\(esc(c.account))"
             s += ",\"role\":\(esc(c.role)),\"placeholder\":\(esc(c.placeholder))"
             s += ",\"issueURL\":\(esc(c.issueURL)),\"issueHint\":\(esc(c.issueHint))"
-            s += ",\"multi\":\(c.multi)"
+            s += ",\"multi\":\(c.multi),\"singleInstance\":\(c.singleInstance)"
             s += ",\"fields\":[\(fieldsJSON(c))]"
             if let m = c.mcp {
                 s += ",\"mcp\":{\"kind\":\(esc(m.kind)),\"summary\":\(esc(m.summary))}"
             } else {
                 s += ",\"mcp\":null"
             }
+            let exts = externalServers(c)
+            if let ext = exts.first {
+                s += ",\"external\":{\"name\":\(esc(ext.name)),\"scope\":\(esc(ext.scope))"
+                s += ",\"target\":\(esc(ext.target)),\"hostId\":\(esc(ext.hostId))"
+                s += ",\"hostName\":\(esc(ext.hostName))}"
+            } else {
+                s += ",\"external\":null"
+            }
+            // 클라이언트별 전부. 하나만 실으면 "Claude엔 직접 등록해 뒀고 코덱스엔
+            // 없다"가 화면에서 사라진다 — 그 차이가 사용자가 여기서 찾는 답이다.
+            s += ",\"externals\":[\(exts.map(externalJSON).joined(separator: ","))]"
             s += ",\"authOptions\":[\(authOptionsJSON(c))]"
             s += ",\"instances\":[\(instancesJSON(c, registeredMCP))]"
             s += ",\"present\":\(p.present),\"masked\":\(esc(p.masked))"
             s += ",\"state\":\(esc(chk?.state.rawValue ?? "unknown"))"
             s += ",\"detail\":\(esc(chk?.detail ?? "")),\"error\":\(esc(chk?.error ?? ""))"
-            s += ",\"missingScopes\":[\((chk?.missingScopes ?? []).map(esc).joined(separator: ","))]}"
+            s += ",\"missingScopes\":[\((chk?.missingScopes ?? []).map(esc).joined(separator: ","))]"
+            // 인스턴스 없는 자격증명의 상세(gh CLI 로그인의 계정·조직·레포). 이미 JSON.
+            let scan = chk?.scan ?? ""
+            s += ",\"scan\":\(scan.isEmpty ? "null" : scan)}"
             return s
         }.joined(separator: ",")
         return "[\(items)]"
+    }
+
+    private static func externalJSON(_ e: MCPRegistrar.ExternalServer) -> String {
+        var s = "{\"name\":\(esc(e.name)),\"scope\":\(esc(e.scope))"
+        s += ",\"target\":\(esc(e.target)),\"hostId\":\(esc(e.hostId))"
+        s += ",\"hostName\":\(esc(e.hostName))}"
+        return s
     }
 
     // 인증 경로 목록. 하나뿐인 자격증명은 빈 배열로 나가고, 화면은 그때 세그먼트를
@@ -173,7 +275,7 @@ public enum IntegrationStore {
         return c.authOptions.map { o -> String in
             var s = "{\"id\":\(esc(o.id)),\"name\":\(esc(o.name)),\"desc\":\(esc(o.desc))"
             s += ",\"needsToken\":\(o.needsToken),\"summary\":\(esc(o.mcpSummary))"
-            s += ",\"hint\":\(esc(o.hint))}"
+            s += ",\"hint\":\(esc(o.hint)),\"caution\":\(esc(o.caution))}"
             return s
         }.joined(separator: ",")
     }
@@ -181,9 +283,24 @@ public enum IntegrationStore {
     private static func fieldsJSON(_ c: Credential) -> String {
         c.fields.map { f -> String in
             var s = "{\"key\":\(esc(f.key)),\"label\":\(esc(f.label))"
-            s += ",\"placeholder\":\(esc(f.placeholder)),\"required\":\(f.required)}"
+            s += ",\"placeholder\":\(esc(f.placeholder)),\"required\":\(f.required)"
+            s += ",\"tokenOnly\":\(f.tokenOnly)}"
             return s
         }.joined(separator: ",")
+    }
+
+    // 서버 이름 하나가 어느 클라이언트에 앉아 있는가. 이름이 비면(=MCP가 없는
+    // 자격증명) 빈 배열이고, 화면은 그때 호스트 줄을 통째로 안 그린다.
+    private static func hostStatusJSON(_ name: String) -> [String] {
+        guard !name.isEmpty else { return [] }
+        let names = hostNames()
+        return MCPHosts.hosts().map { h in
+            var s = "{\"id\":\(esc(h.id)),\"name\":\(esc(h.name))"
+            s += ",\"present\":\(h.present),\"managed\":\(h.managed)"
+            s += ",\"accountScoped\":\(h.accountScoped),\"caution\":\(esc(h.caution))"
+            s += ",\"registered\":\((names[h.id] ?? []).contains(name))}"
+            return s
+        }
     }
 
     // 인스턴스 목록 — 화면이 한 줄씩 그릴 수 있는 형태. 앱이 기억하는 '등록해 뒀다'와
@@ -199,14 +316,27 @@ public enum IntegrationStore {
             s += ",\"id\":\(esc(inst.compositeId))"
             s += ",\"mode\":\(esc(inst.mode)),\"modeName\":\(esc(opt.name))"
             s += ",\"needsToken\":\(opt.needsToken),\"modeHint\":\(esc(opt.hint))"
+            // 붙이는 법(hint)과 붙이고 나면 무엇이 남는가(caution)는 다른 사실이다 —
+            // 같은 줄에 섞으면 경고가 안내문에 묻힌다.
+            s += ",\"modeCaution\":\(esc(opt.caution))"
             s += ",\"mcpSummary\":\(esc(opt.mcpSummary))"
             s += ",\"fields\":{\(inst.fields.map { "\(esc($0.key)):\(esc($0.value))" }.sorted().joined(separator: ","))}"
+            s += ",\"keychainService\":\(esc(inst.keychainService.isEmpty ? CredInstance.service(base: c.service, key: inst.key) : inst.keychainService))"
+            s += ",\"keychainAccount\":\(esc(inst.keychainAccount.isEmpty ? c.account : inst.keychainAccount))"
             s += ",\"mcpWanted\":\(inst.mcp),\"mcpName\":\(esc(name))"
             s += ",\"mcpRegistered\":\(!name.isEmpty && registeredMCP.contains(name))"
+            // 클라이언트마다 따로. 한 번 연결하면 끝인 것처럼 보이던 자리를 여기서
+            // 가른다 — 같은 이름의 서버가 Claude엔 있고 코덱스엔 없으면, 코덱스
+            // 세션에는 이 도구가 없다는 뜻이고 화면이 그렇게 말해야 한다.
+            s += ",\"hosts\":[\(hostStatusJSON(name).joined(separator: ","))]"
             // 실검사 상태 — 등록됨과 별개다. 지금 돌고 있는 검사가 있으면 그 단계가
             // 마지막 결과를 덮는다 (화면은 그 사이 스피너를 돌린다).
             s += ",\"testedAt\":\(Int(inst.testedAt)),\"testOk\":\(inst.testOk)"
             s += ",\"testNote\":\(esc(inst.testNote)),\"testUrl\":\(esc(inst.testUrl))"
+            // 마지막 검사가 알아낸 상세(깃허브: 승인 형태·조직·레포·서명). 이미 JSON
+            // 문자열이라 그대로 실는다 — 다시 감싸면 화면에서 두 번 파싱해야 한다.
+            s += ",\"scan\":\(inst.scan.isEmpty ? "null" : inst.scan)"
+            s += ",\"scannedAt\":\(Int(inst.scannedAt))"
             if let st = MCPProbe.state(inst.compositeId) {
                 s += ",\"probe\":{\"phase\":\(esc(st.phase)),\"detail\":\(esc(st.detail))"
                 s += ",\"tools\":\(st.tools),\"error\":\(esc(st.error)),\"url\":\(esc(st.url))}"
@@ -311,7 +441,9 @@ public enum IntegrationStore {
                                   : ids.filter { IntegrationCatalog.credential($0) != nil }
         guard !targets.isEmpty else { return "{\"ok\":false,\"error\":\"검사할 항목이 없습니다\"}" }
         let t0 = Date()
-        let results = IntegrationChecks.checkAll(targets)
+        // 사람이 '연결 확인'을 누른 경로 — 여기서만 깊게 본다. 목록을 그리는 쪽은
+        // 같은 검사를 얕게 부른다 (지라 골은 깊은 검사가 파이썬 실행이라 비싸다).
+        let results = IntegrationChecks.checkAll(targets, deep: true)
         for (id, r) in results { store(id, r) }
         var out = "{\"ok\":true,\"at\":\(Int(Date().timeIntervalSince1970))"
         out += ",\"ms\":\(Int(Date().timeIntervalSince(t0) * 1000))"
@@ -382,6 +514,62 @@ public enum IntegrationStore {
         return ok ? "{\"ok\":true,\"cleared\":true}" : "{\"ok\":false,\"error\":\"키체인 삭제 실패\"}"
     }
 
+    // MARK: Notion Keychain 연결
+
+    public static func notionCandidatesJSON() -> String {
+        switch CMKeychain.notionCandidates() {
+        case .unavailable(let why):
+            return "{\"ok\":false,\"code\":\"keychain_unavailable\",\"error\":\(esc(why))}"
+        case .found(let rows):
+            let items = rows.map { "{\"service\":\(esc($0.service)),\"account\":\(esc($0.account))}" }
+                .joined(separator: ",")
+            return "{\"ok\":true,\"candidates\":[\(items)],\"empty\":\(rows.isEmpty)}"
+        }
+    }
+
+    public static func connectNotionCandidateJSON(service: String, account: String,
+                                                   label rawLabel: String = "") -> String {
+        guard CMKeychain.isSafeName(service), CMKeychain.isSafeName(account),
+              service.range(of: "notion", options: .caseInsensitive) != nil ||
+              account.range(of: "notion", options: .caseInsensitive) != nil else {
+            return "{\"ok\":false,\"error\":\"Notion Keychain 후보가 아닙니다\"}"
+        }
+        let isTerminalOwned = service == "cm-notion-token-registered" && account == "notion"
+        let isDiscovered: Bool
+        if case .found(let rows) = CMKeychain.notionCandidates() {
+            isDiscovered = rows.contains { $0.service == service && $0.account == account }
+        } else {
+            isDiscovered = false
+        }
+        guard isDiscovered || isTerminalOwned else {
+            return "{\"ok\":false,\"error\":\"현재 추천 목록에 없는 Keychain 항목입니다\"}"
+        }
+        guard CMKeychain.exists(service: service, account: account) else {
+            return "{\"ok\":false,\"error\":\"Keychain 항목을 찾지 못했거나 접근이 거절됐습니다\"}"
+        }
+        let c = IntegrationCatalog.credential("notion-token")!
+        let baseLabel = rawLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = baseLabel.isEmpty ? "Notion · \(service)" : baseLabel
+        let existing = IntegrationInstances.all(credId: c.id).first {
+            $0.keychainService == service && $0.keychainAccount == account
+        }
+        let key = existing?.key ?? IntegrationInstances.uniqueSlug(
+            credId: c.id, desired: IntegrationInstances.slug(service + "-" + account, fallback: "keychain"))
+        let inst = CredInstance(credId: c.id, key: key, label: label, mode: "token",
+                                keychainService: service, keychainAccount: account)
+        guard IntegrationInstances.upsert(inst) else {
+            return "{\"ok\":false,\"error\":\"연결 설정을 저장하지 못했습니다\"}"
+        }
+        let id = inst.compositeId
+        invalidate(id)
+        let result = IntegrationChecks.check(id, deep: true)
+        store(id, result)
+        _ = IntegrationInstances.setTest(credId: c.id, key: key, ok: result.state == .ok,
+                                         note: result.state == .ok ? result.detail : result.error)
+        return "{\"ok\":true,\"id\":\(esc(id)),\"state\":\(esc(result.state.rawValue))," +
+            "\"detail\":\(esc(result.detail)),\"error\":\(esc(result.error))}"
+    }
+
     // MARK: 인스턴스 (다중 연동)
 
     // 인스턴스 생성·수정. 토큰 값이 함께 오면 키체인에도 저장하고 곧바로 검사한다 —
@@ -392,7 +580,11 @@ public enum IntegrationStore {
         guard let c = IntegrationCatalog.credential(credId), c.multi else {
             return "{\"ok\":false,\"error\":\"여러 개를 등록할 수 있는 연동이 아닙니다\"}"
         }
-        let label = rawLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 단일 슬롯 연동(지금은 깃허브)은 이름·키를 사용자에게 묻지 않는다 — 고정
+        // 키("token")와 자격증명 이름을 그대로 써서 늘 같은 인스턴스 하나로 upsert된다.
+        // 그래서 '추가'가 곧 '저장'이고, 화면에 '인스턴스'라는 개념이 아예 안 보인다.
+        let rawKey = c.singleInstance ? "token" : rawKey
+        let label = c.singleInstance ? c.name : rawLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !label.isEmpty else { return "{\"ok\":false,\"error\":\"이름을 입력하세요\"}" }
         // 방식은 새로 만들 때만 정한다. 기존 인스턴스면 저장된 값이 이기고(upsert가
         // 보존한다), 화면이 보낸 값은 무시된다.
@@ -418,9 +610,11 @@ public enum IntegrationStore {
             clean[f.key] = f.key == "site" ? v.trimmingCharacters(in: CharacterSet(charactersIn: "/")) : v
         }
         // 기존 인스턴스 수정이면 key가 오고, 새로 만들면 라벨에서 슬러그를 만든다.
+        // 단일 슬롯 연동은 key가 고정("token")이라 처음 저장하는 순간에도 이미
+        // "존재하는" 키로 온다 — 그게 최초 생성인지 수정인지는 upsert가 알아서 가른다.
         let key: String
         if !rawKey.isEmpty {
-            guard existing != nil else {
+            guard existing != nil || c.singleInstance else {
                 return "{\"ok\":false,\"error\":\"없는 인스턴스입니다\"}"
             }
             key = rawKey
@@ -433,6 +627,10 @@ public enum IntegrationStore {
                                     : IntegrationInstances.slug(hint, fallback: "inst")
             key = IntegrationInstances.uniqueSlug(credId: credId, desired: base)
         }
+        // 지금 막 만든 것인지(=값이 거부되면 빈 껍데기를 치워야 하는지) — rawKey가
+        // 아니라 이걸로 가른다. 단일 슬롯 연동은 key가 늘 고정값("token")이라
+        // rawKey.isEmpty가 더는 '새로 만듦'의 신호가 아니다.
+        let wasNew = existing == nil
         guard IntegrationInstances.upsert(CredInstance(credId: credId, key: key,
                                                        label: label, fields: clean,
                                                        mode: mode)) else {
@@ -455,7 +653,7 @@ public enum IntegrationStore {
             if !saved.contains("\"saved\":true") {
                 // 키가 거부되면 방금 만든 빈 인스턴스는 치운다 — 값 없는 껍데기가
                 // 목록에 남으면 사용자는 '추가에 성공했다'고 오해한다.
-                if rawKey.isEmpty { IntegrationInstances.remove(credId: credId, key: key) }
+                if wasNew { IntegrationInstances.remove(credId: credId, key: key) }
                 return saved
             }
         } else if !presence(c, key).present {
@@ -485,7 +683,11 @@ public enum IntegrationStore {
             return "{\"ok\":false,\"error\":\"없는 인스턴스입니다\"}"
         }
         if c.mcp != nil { _ = MCPRegistrar.unregister(cred: c, inst: inst) }
-        _ = CMKeychain.clear(service: CredInstance.service(base: c.service, key: key))
+        // 외부 Keychain 후보를 연결한 Notion 인스턴스는 참조만 지운다. 사용자가
+        // 앱 밖에서 만든 원본 비밀을 앱의 '연결 해제'가 삭제하면 안 된다.
+        if inst.keychainService.isEmpty {
+            _ = CMKeychain.clear(service: CredInstance.service(base: c.service, key: key))
+        }
         let ok = IntegrationInstances.remove(credId: credId, key: key)
         invalidate("\(credId):\(key)")
         invalidateMCP()
@@ -573,9 +775,11 @@ public enum IntegrationStore {
     public static func kindLabel(_ k: AuthKind) -> String {
         switch k {
         case .apiKey:     return "API 키"
-        case .cliSession: return "CLI 구독"
+        case .cliSession: return "CLI 로그인"
         case .webSession: return "웹 세션"
         case .endpoint:   return "엔드포인트"
+        // 브라우저 동의로 만들어진 자격증명 한 벌 — 앱이 받아 저장하는 키가 아니다.
+        case .oauthApp:   return "OAuth 앱"
         }
     }
 

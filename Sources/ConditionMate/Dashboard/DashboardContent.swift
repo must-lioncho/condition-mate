@@ -856,7 +856,7 @@ enum DashboardContent {
 
     <!-- TOKEN VIEW (토큰 — 완료 항목의 토큰 사용량을 완료일·루프로 묶어 본다) -->
     <div id="tokenView" style="display:none">
-      <div class="muted" style="font-size:12px;margin:0 0 6px"><b>일별 토큰 사용량</b> — 모든 Claude 세션 트랜스크립트(~/.claude/projects)에서 그날 실제로 쓴 토큰을 날짜별로 합산합니다. 신규 입력·출력·캐시 생성만 셉니다(캐시 재사용 제외, 같은 응답이 블록별로 중복 기재된 라인은 1회만). 막대는 구성비 — <b>컨텍스트</b>(프롬프트 쪽 전부)를 다시 4분할합니다: <span style="color:#3a4356">■ 재적재</span>(이전 턴 히스토리 재캐시+시스템 프롬프트) · <span style="color:#54627f">■ 도구결과</span>(파일 읽기·명령 출력·도구 스크린샷) · <span style="color:#96a5c8">■ 타이핑</span>(직접 친 프롬프트) · <span style="color:#c8b1e8">■ 사진</span>(첨부 이미지 — 장수·용량 병기). 출력 쪽은 <span style="color:#e8a13a">■ 생각</span>(thinking) · <span style="color:#8f6fe3">■ 응답</span>(보이는 텍스트) · <span style="color:#4f79c9">■ 도구</span>(도구 호출 인자). 하위 분할은 추정(텍스트=글자 가중, 이미지=w×h÷750 공식)이며 재적재는 잔차입니다. <b>비용($)</b>은 메시지별 모델(도중 교체 포함)에 공시 단가를 적용한 추정 — 캐시 읽기(×0.1)·캐시 쓰기(5분 ×1.25, 1시간 ×2)까지 반영하므로 토큰 K와 비례하지 않습니다. <b>AI 가동</b> = 프롬프트를 보낸 뒤 AI가 실제로 돌아간 시간의 합(응답이 끝난 뒤 방치한 시간은 포함 안 됨). <b>리드</b> = 응답이 끝난 뒤 다음 프롬프트 입력까지(이해+작성, 30분 초과 이탈 제외). <b>일 행을 클릭하면 세션별 상세</b>(토큰·$·구성비·모델·AI 가동·리드)가 펼쳐집니다.</div>
+      <div class="muted" style="font-size:12px;margin:0 0 6px"><b>일별 토큰 사용량</b> — 모든 Claude 세션 트랜스크립트(~/.claude/projects)에서 그날 실제로 쓴 토큰을 날짜별로 합산합니다. 신규 입력·출력·캐시 생성만 셉니다(캐시 재사용 제외, 같은 응답이 블록별로 중복 기재된 라인은 1회만). 막대는 구성비 — <b>컨텍스트</b>(프롬프트 쪽 전부)를 다시 4분할합니다: <span style="color:#3a4356">■ 재적재</span>(이전 턴 히스토리 재캐시+시스템 프롬프트) · <span style="color:#54627f">■ 도구결과</span>(파일 읽기·명령 출력·도구 스크린샷) · <span style="color:#96a5c8">■ 타이핑</span>(직접 친 프롬프트) · <span style="color:#c8b1e8">■ 사진</span>(첨부 이미지 — 장수·용량 병기). 출력 쪽은 <span style="color:#e8a13a">■ 생각</span>(thinking) · <span style="color:#8f6fe3">■ 응답</span>(보이는 텍스트) · <span style="color:#4f79c9">■ 도구</span>(도구 호출 인자). 하위 분할은 추정(텍스트=글자 가중, 이미지=w×h÷750 공식)이며 재적재는 잔차입니다. <b>비용($)</b>은 메시지별 모델(도중 교체 포함)에 공시 단가를 적용한 추정 — 캐시 읽기(×0.1)·캐시 쓰기(5분 ×1.25, 1시간 ×2)까지 반영하므로 토큰 K와 비례하지 않습니다. <b>AI 가동</b> = 프롬프트를 보낸 뒤 AI가 실제로 돌아간 시간의 합(응답이 끝난 뒤 방치한 시간은 포함 안 됨). <b>리드</b> = 응답이 끝난 뒤 다음 프롬프트 입력까지(이해+작성, 30분 초과 이탈 제외). <b>일 행을 클릭하면 세션별 상세</b>(토큰·$·구성비·모델·AI 가동·리드)가 펼쳐집니다. <b>창</b>은 그 세션이 쓴 모델의 컨텍스트 윈도우 크기이고, 그 옆 <b>%</b>는 마지막 어시스턴트 요청 하나에 실린 프롬프트 총량(input+cache_read+cache_creation, 서브에이전트 제외)을 그 창으로 나눈 <b>창 점유율</b>입니다 — 바로 옆의 구성비(<b>컨</b> …%)와는 다른 축이니 섞어 읽지 마십시오. 창 크기는 공시 기본값(대부분 200K)에서 시작하되 <b>관측된 세션이 그 기본값을 넘으면 1M로 승격</b>합니다(1M 컨텍스트 베타로 띄운 창이 실제로 있어, 표만 믿으면 점유율이 400%로 나옵니다). 공시 창 크기를 모르는 모델(<code>glm-*</code> 등)은 숫자를 지어내지 않고 <b>창 —</b>로 두고 절대 토큰만 보입니다.</div>
       <div class="row" style="margin:0 0 6px;gap:6px;align-items:center;flex-wrap:wrap">
         <button class="btn primary" id="tkm_tok" onclick="setTkMode('tok')" title="세션이 실제로 쓴 토큰(K)">토큰량</button>
         <button class="btn" id="tkm_val" onclick="setTkMode('val')" title="토큰효율·시간효율을 반영한 투입 지수(무단위 pt). 성과(가치)가 아니라 투입(비용) 측 지표">투입 지수</button>
@@ -876,6 +876,18 @@ enum DashboardContent {
         <span class="muted" style="font-size:12px">~</span>
         <input type="date" id="tkTo" class="btn" onchange="onTkDate()" style="color-scheme:dark;padding:5px 8px" title="끝 날짜">
         <button class="btn" onclick="loadTokenDaily(true)" style="margin-left:auto" title="일별 토큰 새로고침">새로고침</button>
+      </div>
+      <!-- MULTI-LLM & ACCOUNT FILTER BAR -->
+      <div class="row" id="tkAccountBar" style="margin:0 0 6px;gap:6px;align-items:center;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">도구·계정</span>
+        <button class="btn primary" id="tkacc_all" onclick="setTkAccFilter('all')" title="모든 도구 및 계정">전체</button>
+        <span id="tkAccChips" style="display:inline-flex;gap:5px;flex-wrap:wrap"></span>
+      </div>
+      <!-- MODEL & EFFORT ROUTING BAR -->
+      <div class="row" id="tkModelBar" style="margin:0 0 10px;gap:6px;align-items:center;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">모델·라우팅</span>
+        <button class="btn primary" id="tkm_all" onclick="setTkModelFilter('all')" title="모든 모델">전체</button>
+        <span id="tkModelChipsHost" style="display:inline-flex;gap:5px;flex-wrap:wrap"></span>
       </div>
       <div id="tokenDailyRange" class="muted" style="font-size:11px;margin:0 0 8px">불러오는 중…</div>
       <div id="tokenDailyHost"></div>
@@ -1060,7 +1072,8 @@ requestAnimationFrame(perfLoop);
   fetch('/api/settings/timezone',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(tz){
     if(!tz){ return; }
     var cur=tz.tz||'system';
-    var opts=[['system','시스템 (맥 설정)'],['Asia/Seoul','KST (UTC+9)'],['UTC','UTC (+0)']];
+    // 인도(Asia/Kolkata, UTC+05:30)를 목록에 둔다 — 레일 설정 메뉴와 같은 목록이어야 한다.
+    var opts=[['system','시스템 (맥 설정)'],['Asia/Seoul','KST (UTC+9)'],['Asia/Kolkata','IST (UTC+5:30)'],['UTC','UTC (+0)']];
     var seen=false, html=opts.map(function(x){ if(x[0]===cur) seen=true;
       return '<option value="'+x[0]+'"'+(x[0]===cur?' selected':'')+'>'+x[1]+'</option>'; }).join('');
     if(!seen) html+='<option value="'+cur+'" selected>'+(tz.label||cur)+'</option>';
@@ -1942,6 +1955,10 @@ function _clack(c,t0,freq,amp,dur){
 }
 function playDing(){
   try{
+    // 효과음 게이트 — 음소거(⌃⌘M)거나 레일의 '효과음' 스위치가 꺼져 있으면 울리지 않는다.
+    // 네이티브 이펙트음은 서버가 막지만 이건 페이지가 직접 만드는 Web Audio 소리라
+    // 레일이 노출한 같은 판정을 여기서 읽는다(레일이 없는 페이지면 그대로 울린다).
+    if(window.cmSfxSilenced && window.cmSfxSilenced()) return;
     // Duck the native BGM under the effect (fire-and-forget; ignore if server busy).
     fetch('/api/duck',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).catch(()=>{});
     const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
@@ -2908,8 +2925,15 @@ const TK_W=IDX_PER_MONTH/FULL_MONTH_K;        // pt/K (투입 지수 가중치)
 const BASE_RATE=IDX_PER_MONTH/FULL_MONTH_H;   // pt/시간 (풀타임 기준선)
 function tkIndex(k){ return (k||0)*TK_W; }
 function fmtIdx(v){ return Math.round(v).toLocaleString()+' pt'; }   // 무단위 지수 — $ 아님
-// 표시 헬퍼: 토큰량 모드면 'N K', 투입 지수 모드면 'N pt'. 뷰 전체가 이 함수를 통해 숫자를 그린다.
-function tkAmount(k){ return (_tkMode==='val') ? fmtIdx(tkIndex(k)) : ((k||0)+' K'); }
+// 저장 단위는 K를 유지하되 1,000K부터 M으로 축약해 크기를 즉시 읽을 수 있게 한다.
+// M은 최대 소수점 한 자리까지만 보여주고 불필요한 .0은 제거한다 (예: 864 K, 1M, 113.1M).
+function fmtTokenK(k){
+  const n=Number(k)||0;
+  if(Math.abs(n)<1000) return n.toLocaleString()+' K';
+  return (Math.round(n/100)/10).toLocaleString(undefined,{maximumFractionDigits:1})+'M';
+}
+// 표시 헬퍼: 토큰량 모드면 크기에 따라 K/M, 투입 지수 모드면 'N pt'. 뷰 전체가 이 함수를 통해 숫자를 그린다.
+function tkAmount(k){ return (_tkMode==='val') ? fmtIdx(tkIndex(k)) : fmtTokenK(k); }
 // [4] 활동량(breadth): 부모 goal 하나에 매달린 세션(자식) 수 = 그 목표가 만든 산출물 폭(가치 아님). 1세션=1.
 function childSessionCount(g,all){ let n=0; (all||[]).forEach(k=>{ if(k.parent===g.id) n++; }); return n; }
 let _tkMode='tok';   // 'tok' 토큰량 | 'val' 투입 지수(pt)
@@ -2926,8 +2950,108 @@ function setTkMode(m){ _tkMode=m; reflectTkMode(); renderTokenDaily(); if(_revie
 // 캐시된 전체에서 선택 범위만 잘라 렌더 — 범위가 캐시 안이면 재fetch 없이 무비용.
 let _tkDaily=null, _tkDailyLoading=false, _tkFetchedDays=0;
 let _tkStart='', _tkEnd='', _tkPreset='3m';
+let _tkAccFilter='all', _tkAccounts=[];
+let _tkModelFilter='all';
 function syncTkInputs(){ const a=$('tkFrom'),b=$('tkTo'); if(a)a.value=_tkStart; if(b)b.value=_tkEnd; }
 function reflectTkBtn(){ ['today','yesterday','7d','1m','3m'].forEach(k=>{ const b=$('tr_'+k); if(b) b.classList.toggle('primary', k===_tkPreset); }); }
+function loadTokenAccounts(){
+  fetch('/tokens-accounts.json').then(x=>x.json()).then(j=>{
+    _tkAccounts=(j&&j.accounts)||[];
+    renderTkAccChips();
+  }).catch(()=>{});
+}
+function setTkAccFilter(aid){
+  _tkAccFilter=aid;
+  renderTkAccChips();
+  renderTokenDaily();
+}
+function setTkModelFilter(mid){
+  _tkModelFilter=mid;
+  renderTkModelChips();
+  renderTokenDaily();
+}
+function renderTkAccChips(){
+  const allBtn=$('tkacc_all');
+  if(allBtn) allBtn.classList.toggle('primary', _tkAccFilter==='all');
+  const host=$('tkAccChips');
+  if(!host) return;
+  host.innerHTML=_tkAccounts.map(a=>{
+    const sel=(_tkAccFilter===a.id);
+    const col=a.color||'#64748b';
+    const bg=sel? col : col+'22';
+    const fg=sel? '#ffffff' : col;
+    const bd=col+(sel?'cc':'55');
+    return '<button class="btn" onclick="setTkAccFilter(\''+a.id+'\')" '
+      +'style="background:'+bg+';color:'+fg+';border:1px solid '+bd+';font-weight:'+(sel?'bold':'normal')+';padding:3px 8px;font-size:11px" '
+      +'title="'+esc(a.org||a.email||a.id)+'">'+esc(a.label)+'</button>';
+  }).join('');
+}
+function renderTkModelChips(){
+  const allBtn=$('tkm_all');
+  if(allBtn) allBtn.classList.toggle('primary', _tkModelFilter==='all');
+  const host=$('tkModelChipsHost');
+  if(!host) return;
+
+  const modelStats={};
+  const efforts=new Set();
+  (_tkDaily||[]).forEach(d=>{
+    for(const m in (d.models||{})){
+      const u=d.models[m]||{};
+      const sName=m.replace(/^claude-/,'');
+      if(!modelStats[sName]) modelStats[sName]={tokens:0,efforts:new Set()};
+      modelStats[sName].tokens += (u.in||0) + (u.out||0);
+      if(u.effort){
+        modelStats[sName].efforts.add(u.effort);
+        efforts.add(u.effort.toLowerCase());
+      }
+    }
+  });
+
+  const sortedModels=Object.keys(modelStats).sort((a,b)=>modelStats[b].tokens-modelStats[a].tokens);
+  let html=sortedModels.map(m=>{
+    const sel=(_tkModelFilter===m);
+    let col='#38bdf8';
+    if(m.includes('opus')) col='#c084fc';
+    else if(m.includes('haiku')) col='#34d399';
+    else if(m.includes('glm')) col='#fb923c';
+    else if(m.includes('gemini')) col='#60a5fa';
+    else if(m.includes('o1')||m.includes('o3')||m.includes('gpt')) col='#10b981';
+
+    const bg=sel? col : col+'22';
+    const fg=sel? '#ffffff' : col;
+    const bd=col+(sel?'cc':'55');
+    const effArr=Array.from(modelStats[m].efforts);
+    const effBadge=effArr.length? (' '+effArr.map(e=>e.toUpperCase()).join('/')) : '';
+    return '<button class="btn" onclick="setTkModelFilter(\''+esc(m)+'\')" '
+      +'style="background:'+bg+';color:'+fg+';border:1px solid '+bd+';font-weight:'+(sel?'bold':'normal')+';padding:3px 8px;font-size:11px" '
+      +'title="모델: '+esc(m)+' ('+tkAmount(Math.round(modelStats[m].tokens/1000))+')">'
+      +esc(m)+(effBadge? '<span style="font-size:9px;opacity:0.85;margin-left:3px">'+esc(effBadge)+'</span>' : '')
+      +'</button>';
+  }).join('');
+
+  if(efforts.size>0){
+    html += '<span style="border-left:1px solid #334155;margin:0 4px;height:16px;display:inline-block"></span>';
+    const effOrder=['high','medium','low','thinking','max'];
+    effOrder.forEach(eff=>{
+      if(!Array.from(efforts).some(e=>e.includes(eff))) return;
+      const key='effort:'+eff;
+      const sel=(_tkModelFilter===key);
+      let col='#f87171';
+      if(eff==='medium') col='#fbbf24';
+      else if(eff==='low') col='#60a5fa';
+      else if(eff==='thinking') col='#c084fc';
+      const bg=sel? col : col+'22';
+      const fg=sel? '#ffffff' : col;
+      const bd=col+(sel?'cc':'55');
+      html += '<button class="btn" onclick="setTkModelFilter(\''+key+'\')" '
+        +'style="background:'+bg+';color:'+fg+';border:1px solid '+bd+';font-weight:'+(sel?'bold':'normal')+';padding:3px 8px;font-size:11px" '
+        +'title="Effort: '+eff.toUpperCase()+' 필터링">'
+        +'⚡ '+eff.toUpperCase()+'</button>';
+    });
+  }
+
+  host.innerHTML=html;
+}
 function setTkRange(preset){
   _tkPreset=preset;
   _tkStart=histPresetStart(preset);
@@ -2947,13 +3071,14 @@ function refreshTokenGoals(){ if(_review) renderTokenView(_review); }
 function loadTokenDaily(force){
   if(!_tkStart){ _tkPreset='3m'; _tkEnd=histDayStr(new Date()); _tkStart=histPresetStart('3m'); syncTkInputs(); }  // 최초 진입 기본값: 3달
   reflectTkBtn();
+  if(!_tkAccounts.length) loadTokenAccounts();
   if(_tkDailyLoading) return;
   const need=Math.max(1, daysBetween(_tkStart, histDayStr(new Date()))+1);   // 시작~오늘을 덮을 일수
-  if(_tkDaily && !force && need<=_tkFetchedDays){ renderTokenDaily(); return; }  // 캐시 우선
+  if(_tkDaily && !force && need<=_tkFetchedDays){ renderTkModelChips(); renderTokenDaily(); return; }  // 캐시 우선
   _tkDailyLoading=true;
   const rng=$('tokenDailyRange'); if(rng) rng.textContent='불러오는 중…';
   fetch('/tokens.json?days='+need).then(x=>x.json()).then(j=>{
-    _tkDaily=(j&&j.days)||[]; _tkFetchedDays=need; _tkDailyLoading=false; renderTokenDaily();
+    _tkDaily=(j&&j.days)||[]; _tkFetchedDays=need; _tkDailyLoading=false; renderTkModelChips(); renderTokenDaily();
   }).catch(()=>{ _tkDailyLoading=false; const h=$('tokenDailyHost'); if(h) h.innerHTML='<div class="muted" style="padding:6px 0">일별 토큰을 불러오지 못했습니다</div>'; });
 }
 // 리드타임(초) 표시 — 60초 미만은 초, 그 위는 분. 케이브맨 효과가 한눈에 보이게 짧은 단위 유지.
@@ -2973,6 +3098,41 @@ function tkCompStr(d,short){
   return short
     ? '컨 '+p(d.inTok)+ctxSub+'·생 '+p(d.thinkTok)+'·응 '+p(d.textTok)+'·도 '+p(d.toolTok)+'%'
     : '컨텍스트 '+p(d.inTok)+'%'+ctxSub+' · 생각 '+p(d.thinkTok)+'% · 응답 '+p(d.textTok)+'% · 도구 '+p(d.toolTok)+'%';
+}
+// 창 점유 — "이 세션이 그 모델의 창을 얼마나 채웠나". 옆의 `컨 77%` 는 구성비지 창 점유가 아니다.
+// 분자는 마지막 어시스턴트 요청의 input+cache_read+cache_creation (서브에이전트 제외),
+// 분모는 그 모델의 창. 옛 응답에는 이 필드가 없으므로 null 이면 칩을 아예 그리지 않는다 —
+// 0 으로 떨어뜨려 0% 를 그리면 "창을 안 썼다" 는 거짓말이 된다.
+function tkCtxWinFmt(w){
+  if(!(w>0)) return '—';
+  if(w<1000000) return Math.round(w/1000)+'K';
+  const m=w/1000000; return (Math.round(m*10)/10)+'M';   // 1048576 → 1M (1.0M 이 아니라)
+}
+function tkCtxWinStr(s){
+  if(s==null || s.ctxFinal==null) return '';
+  const fin=s.ctxFinal||0, peak=(s.ctxPeak!=null? s.ctxPeak : fin), win=(s.ctxWin!=null? s.ctxWin : 0);
+  const model=(s.ctxModel||'').trim();
+  const tipTail=' · 산식 input + cache_read + cache_creation (마지막 어시스턴트 요청, 서브에이전트 제외)';
+  if(!(win>0)){
+    // 창 크기를 모르는 모델(glm-* 등) — 숫자를 지어내지 않고 절대 토큰만 보인다.
+    const tip=(model||'모델 미상')+' · 창 미상 · 최종 컨텍스트 '+tkFmtTok(fin)+' · 피크 '+tkFmtTok(peak)+tipTail;
+    return '<span class="muted" title="'+esc(tip)+'">창 — · '+tkFmtTok(fin)+'</span>';
+  }
+  const pct=(s.ctxPct!=null? s.ctxPct : (100*fin/win));
+  const peakPct=100*peak/win;
+  const col=(pct>=80)? '#e5534b' : (pct>=50? '#d29922' : '');
+  const body='창 '+tkCtxWinFmt(win)+' · '+(pct<10? pct.toFixed(1) : Math.round(pct))+'%'
+    +((peak>fin)? '(최대 '+(peakPct<10? peakPct.toFixed(1) : Math.round(peakPct))+'%)' : '');
+  const tip=(model||'모델 미상')+' · 창 '+tkCtxWinFmt(win)+' · 최종 컨텍스트 '+tkFmtTok(fin)+' · 피크 '+tkFmtTok(peak)+tipTail;
+  return col
+    ? '<span style="color:'+col+';font-weight:600" title="'+esc(tip)+'">'+body+'</span>'
+    : '<span class="muted" title="'+esc(tip)+'">'+body+'</span>';
+}
+// 일 행·기간 요약의 창 점유 분포 한 조각. 창을 아는 세션이 하나도 없으면 통째로 뺀다.
+function tkCtxDistStr(d){
+  if(d==null || d.ctxMedPct==null || !(d.ctxSessN>0)) return '';
+  const m=d.ctxMedPct;
+  return '창 점유 중앙 '+(m<10? m.toFixed(1) : Math.round(m))+'% · 80%↑ '+(d.ctxHighN||0)+'개';
 }
 // 첨부 이미지 용량 표시 (원본 바이트 기준)
 function tkFmtMB(b){ if(!(b>0)) return ''; const mb=b/1048576; return mb>=10? Math.round(mb)+'MB' : mb>=1? mb.toFixed(1)+'MB' : Math.max(1,Math.round(b/1024))+'KB'; }
@@ -2998,20 +3158,92 @@ const TK_PRICE=[
   ['claude-sonnet',3,15],                      // sonnet-5 · 4.6 · 4.5 (sonnet-5 인트로가 반영 전 정식가)
   ['claude-3-5-haiku',0.8,4],['claude-3-haiku',0.25,1.25],
   ['claude-haiku',1,5],
+  // GLM(z.ai) — 접두어가 긴 것을 먼저. glm-claude 로 띄운 창이 여기 걸린다.
+  ['glm-4.5-air',0.2,1.1],['glm-4.6',0.6,2.2],
+  ['glm-5',0.5,1.5],['glm-4',0.5,1.5],
+  ['gemini-2',0.1,0.4],['gemini-1.5',0.35,1.05],
+  ['o1',15,60],['o3',10,40],['gpt-4o',2.5,10],
 ];
 function tkRate(m){ for(const r of TK_PRICE){ if(m&&m.startsWith(r[0])) return r; } return null; }
+// 모델 이름 → provider. 서버의 provider 귀속(AppDelegate.providerForModel 및 각 수집기가
+// 붙이는 provider)과 같은 축이어야 한다 — 계정으로 걸렀을 때 그 계정의 모델만 남기려고 쓴다.
+function tkProviderOfModel(m){
+  const s=String(m||'').toLowerCase();
+  if(s.startsWith('glm')) return 'glm';
+  if(s.startsWith('gemini')) return 'antigravity';
+  if(s.startsWith('gpt')||s.startsWith('o1')||s.startsWith('o3')||s.startsWith('codex')) return 'codex';
+  return 'claude';
+}
 function tkModelCost(m,u){ const r=tkRate(m); if(!r) return 0;
   return ((u.in||0)*r[1] + (u.cr||0)*r[1]*0.1 + (u.c5m||0)*r[1]*1.25 + (u.c1h||0)*r[1]*2 + (u.out||0)*r[2])/1e6; }
 function tkCost(models){ let c=0; for(const m in (models||{})) c+=tkModelCost(m,models[m]); return c; }
 function tkFmtCost(c){ if(!(c>0)) return '-'; return '$'+(c>=100? Math.round(c) : c>=10? c.toFixed(1) : c.toFixed(2)); }
-// 모델 칩: 비용 비중 상위 2개 — "fable-5 91% · opus-4-8 9%"
+
+function tkEffortTag(effort){
+  if(!effort || effort==='none' || effort==='off' || effort==='default') return '';
+  const eff = String(effort).toLowerCase();
+  let bg='rgba(100,116,139,0.25)', fg='#94a3b8', label=String(effort).toUpperCase();
+  if (eff.includes('high') || eff.includes('max')) {
+    bg='rgba(239, 68, 68, 0.25)'; fg='#f87171'; label=eff.includes('max') ? 'MAX' : (eff.includes('xhigh') ? 'X-HIGH' : 'HIGH');
+  } else if (eff.includes('med')) {
+    bg='rgba(245, 158, 11, 0.25)'; fg='#fbbf24'; label='MED';
+  } else if (eff.includes('low')) {
+    bg='rgba(59, 130, 246, 0.25)'; fg='#60a5fa'; label='LOW';
+  } else if (eff.includes('think')) {
+    bg='rgba(168, 85, 247, 0.25)'; fg='#c084fc'; label='THINK';
+  }
+  return '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:'+bg+';color:'+fg+';margin-left:4px;font-weight:700;letter-spacing:0.4px">'+label+'</span>';
+}
+
+function tkSessionModelBadge(s){
+  const models = s.models || {};
+  const entries = Object.keys(models);
+  if(!entries.length){
+    if(s.provider==='codex') return '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:#05966922;color:#059669;border:1px solid #05966955;font-weight:600">codex</span>';
+    if(s.provider==='antigravity') return '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:#ea580c22;color:#ea580c;border:1px solid #ea580c55;font-weight:600">Gemini Pro/Flash</span>';
+    if(s.provider==='glm') return '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:#fb923c22;color:#fb923c;border:1px solid #fb923c55;font-weight:600">GLM (z.ai)</span>';
+    return '';
+  }
+  entries.sort((a,b)=> ((models[b].in||0)+(models[b].out||0)) - ((models[a].in||0)+(models[a].out||0)));
+  const topM = entries[0];
+  const u = models[topM] || {};
+  const eff = u.effort || s.effort || '';
+  const shortName = topM.replace(/^claude-/,'');
+
+  let mColor = '#38bdf8';
+  if (shortName.includes('opus')) mColor = '#c084fc';
+  else if (shortName.includes('haiku')) mColor = '#34d399';
+  else if (shortName.includes('glm')) mColor = '#fb923c';
+  else if (shortName.includes('gemini')) mColor = '#60a5fa';
+  else if (shortName.includes('o1')||shortName.includes('o3')||shortName.includes('gpt')) mColor = '#10b981';
+
+  return '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:'+mColor+'20;color:'+mColor+';border:1px solid '+mColor+'55;font-weight:600;display:inline-flex;align-items:center;flex:0 0 auto" title="모델: '+esc(topM)+(eff?' | 에포트: '+esc(eff):'')+'">'
+    + esc(shortName)
+    + tkEffortTag(eff)
+    + (entries.length > 1 ? '<span style="font-size:9px;opacity:0.6;margin-left:3px">+' + (entries.length - 1) + '</span>' : '')
+    + '</span>';
+}
+
+// 모델 칩: 비용 비중 상위 3개 + 에포트 태그
 function tkModelChips(models){
-  const list=[]; for(const m in (models||{})) list.push([m.replace(/^claude-/,''), tkModelCost(m,models[m])]);
+  const list=[];
+  for(const m in (models||{})){
+    const u = models[m] || {};
+    list.push({
+      name: m.replace(/^claude-/,''),
+      cost: tkModelCost(m, u),
+      effort: u.effort || '',
+      tokens: (u.in || 0) + (u.out || 0)
+    });
+  }
   if(!list.length) return '';
-  const tot=list.reduce((a,x)=>a+x[1],0);
-  list.sort((a,b)=>b[1]-a[1]);
-  if(!(tot>0)) return esc(list.map(x=>x[0]).join('·'));
-  return list.slice(0,2).map(x=>'<b>'+esc(x[0])+'</b> '+Math.round(100*x[1]/tot)+'%').join(' · ')+(list.length>2?' 외':'');
+  const tot=list.reduce((a,x)=>a+x.cost,0);
+  list.sort((a,b)=> (b.cost-a.cost) || (b.tokens-a.tokens));
+  return list.slice(0,3).map(x=>{
+    const effTag = tkEffortTag(x.effort);
+    const pct = (tot>0) ? (' '+Math.round(100*x.cost/tot)+'%') : '';
+    return '<b>'+esc(x.name)+'</b>'+effTag+pct;
+  }).join(' · ')+(list.length>3?' 외':'');
 }
 // ===== 비용 상세 툴팁 — $ 셀에 마우스를 올리면 모델×과금버킷(입력·캐시읽기·캐시쓰기
 // 5분/1시간·출력) 5개를 각각 "토큰수 × 배율 × 단가 = 금액"으로 그대로 펼쳐 보여준다.
@@ -3083,16 +3315,77 @@ function tkMergeModels(days){
 }
 function renderTokenDaily(){
   reflectTkBtn(); reflectTkMode();
+  if(_tkLoopProg===null){ _tkLoopProg=undefined; tkLoadLoopProgress(); }   // 한 번만 부른다
   // 전체 재렌더마다 툴팁 레지스트리 초기화(행이 전부 새로 만들어지므로 누수 방지).
   _tkTipReg={}; _tkTipN=0; tkTipHide();
   const host=$('tokenDailyHost'); if(!host) return;
   // 캐시된 전체에서 선택 범위(_tkStart~_tkEnd)만 골라 렌더. 날짜 문자열(YYYY-MM-DD)은 사전순=시간순.
-  const days=(_tkDaily||[]).filter(d=> d.day>=_tkStart && d.day<=_tkEnd);
+  let days=(_tkDaily||[]).filter(d=> d.day>=_tkStart && d.day<=_tkEnd);
+  if(_tkAccFilter !== 'all'){
+    // 고른 계정의 provider. 계정이 provider 를 이미 들고 있으므로 id 접두어를 다시 파싱하지 않는다.
+    const accMeta=_tkAccounts.find(a=>a.id===_tkAccFilter);
+    const accPrv=accMeta? accMeta.provider : (_tkAccFilter.split(':')[0]||'');
+    days = days.map(d=>{
+      const accInfo = (d.accounts && d.accounts[_tkAccFilter]) || null;
+      if(!accInfo || !(accInfo.tokens>0)) return null;
+      const copy = Object.assign({}, d);
+      copy.tokens = accInfo.tokens;
+      copy.k = Math.round(accInfo.tokens / 1000);
+      // 비용과 모델 칩은 그날 전체가 아니라 이 provider 의 모델만 봐야 한다. 안 그러면
+      // GLM 으로 걸러 놓고 "비용 $480 (opus-5 93%)" 이 붙어서, 맞는 토큰 수 옆에 틀린
+      // 금액이 나란히 선다. 한 줄 안에서 반은 맞고 반은 틀리면 그 줄을 통째로 못 믿는다.
+      const mine={}; let any=false;
+      for(const m in (d.models||{})){
+        if(tkProviderOfModel(m)===accPrv){ mine[m]=d.models[m]; any=true; }
+      }
+      if(any) copy.models=mine;
+      return copy;
+    }).filter(Boolean);
+  }
+  if(_tkModelFilter !== 'all'){
+    days = days.map(d=>{
+      const models = d.models || {};
+      let matchedTokens = 0, matchedModels = {};
+      if (_tkModelFilter.startsWith('effort:')) {
+        const targetEff = _tkModelFilter.replace('effort:', '').toLowerCase();
+        for (const m in models) {
+          const u = models[m] || {};
+          if ((u.effort || '').toLowerCase().includes(targetEff)) {
+            matchedTokens += (u.in || 0) + (u.out || 0);
+            matchedModels[m] = u;
+          }
+        }
+      } else {
+        const targetM = _tkModelFilter.toLowerCase();
+        for (const m in models) {
+          if (m.toLowerCase().includes(targetM)) {
+            const u = models[m] || {};
+            matchedTokens += (u.in || 0) + (u.out || 0);
+            matchedModels[m] = u;
+          }
+        }
+      }
+      if (!(matchedTokens > 0)) return null;
+      const copy = Object.assign({}, d);
+      copy.tokens = matchedTokens;
+      copy.k = Math.round(matchedTokens / 1000);
+      copy.models = matchedModels;
+      return copy;
+    }).filter(Boolean);
+  }
   const rng=$('tokenDailyRange');
   const val=(_tkMode==='val');
   const totalK=days.reduce((a,d)=>a+(d.k||0),0);
   const totalIdx=tkIndex(totalK);
   const totalHrs=days.reduce((a,d)=>a+(d.activeSec||0),0)/3600;
+  const curAcc = _tkAccounts.find(a=>a.id===_tkAccFilter);
+  const accFilterNotice = curAcc ? (' · <span style="color:'+(curAcc.color||'#8f6fe3')+';font-weight:600">['+esc(curAcc.label)+']</span> 필터') : '';
+  let modelFilterNotice = '';
+  if (_tkModelFilter !== 'all') {
+    const isEff = _tkModelFilter.startsWith('effort:');
+    const label = isEff ? ('⚡ ' + _tkModelFilter.replace('effort:', '').toUpperCase()) : _tkModelFilter;
+    modelFilterNotice = ' · <span style="color:#38bdf8;font-weight:600">[' + esc(label) + ']</span> 필터';
+  }
   // 기간 전체 구성비(컨텍스트 하위 4분할 포함) + 모델별 비용($) + AI 가동 + 프롬프트 리드 평균.
   const sum=k=>days.reduce((a,d)=>a+(d[k]||0),0);
   const anyCtx=days.some(d=>d.reloadTok!=null);   // 구버전 응답(하위 필드 없음) 가드
@@ -3101,7 +3394,13 @@ function renderTokenDaily(){
     imgTok:sum('imgTok'),imgN:sum('imgN'),imgBytes:sum('imgBytes')},false);
   const merged=tkMergeModels(days), totCost=tkCost(merged), chips=tkModelChips(merged);
   const leadN=sum('leadN'), leadSum=sum('leadSum'), aiTot=sum('aiSec');
+  // 기간 전체의 창 점유 분포. 일별 중앙값의 중앙값이다 — 세션별 원값이 여기 없으므로
+  // 정확한 전체 중앙값은 못 내지만, 라벨을 그대로 두고 근사치를 감추지 않는다.
+  const ctxDays=days.filter(d=>d.ctxMedPct!=null&&d.ctxSessN>0).map(d=>d.ctxMedPct).sort((a,b)=>a-b);
+  const ctxDist=ctxDays.length? tkCtxDistStr({ctxMedPct:ctxDays[Math.floor(ctxDays.length/2)],ctxSessN:1,
+    ctxHighN:days.reduce((a,d)=>a+((d.ctxSessN>0)?(d.ctxHighN||0):0),0)}) : '';
   const tail=(perTot?'<br>'+perTot:'')
+    +(ctxDist? ' · '+ctxDist : '')
     +(totCost>0? ' · 비용 <b style="cursor:help"'+tkTipAttrs(merged)+'>'+tkFmtCost(totCost)+'</b>'+(chips?' ('+chips+')':'') : '')
     +(aiTot>0? ' · AI 가동 <b>'+tkFmtAi(aiTot)+'</b>' : '')
     +(leadN>0?' · 프롬프트 리드 평균 <b>'+tkFmtLead(leadSum/leadN)+'</b> ('+leadN+'회)':'');
@@ -3113,12 +3412,12 @@ function renderTokenDaily(){
       const adj=totalIdx*(F||1);
       rng.innerHTML=(days.length? (days.length+'일 · 투입 <b>'+fmtIdx(totalIdx)+'</b>') : '기간 내 기록 없음')
         +(totalHrs>0? (' · 활성 <b>'+totalHrs.toFixed(1)+'</b>h · 시간효율 <b>×'+F.toFixed(2)+'</b> → 시간보정 <b>'+fmtIdx(adj)+'</b>') : ' · 활성시간 기록 없음')
-        +' · 시각 '+tzLabel()+' 기준'+tail;
+        +' · 시각 '+tzLabel()+' 기준'+accFilterNotice+modelFilterNotice+tail;
     }else{
-      rng.innerHTML=(days.length? (days.length+'일 기록 · 합계 <b>'+totalK+'</b> K') : '기간 내 토큰 기록 없음')+' · 시각 '+tzLabel()+' 기준'+tail;
+      rng.innerHTML=(days.length? (days.length+'일 기록 · 합계 <b>'+fmtTokenK(totalK)+'</b>') : '기간 내 토큰 기록 없음')+' · 시각 '+tzLabel()+' 기준'+accFilterNotice+modelFilterNotice+tkLoopProgStr()+tail;
     }
   }
-  if(!days.length){ host.innerHTML='<div class="empty">선택한 기간('+_tkStart+' ~ '+_tkEnd+')에 토큰 기록이 없습니다</div>'; return; }
+  if(!days.length){ host.innerHTML='<div class="empty">선택한 기간('+_tkStart+' ~ '+_tkEnd+') 및 필터에 토큰 기록이 없습니다</div>'; return; }
   const mx=Math.max(1,...days.map(d=>d.k||0));
   const todayStr=histDayStr(new Date());
   host.innerHTML=days.map(d=>{
@@ -3143,7 +3442,11 @@ function renderTokenDaily(){
     const cost=tkCost(d.models);
     const lead=(d.leadN>0)? '리드 <b>'+tkFmtLead(d.leadMed)+'</b>·'+d.leadN+'회' : '';
     const chips=tkModelChips(d.models);
-    const extra=(comp||lead)? '<span class="muted" style="font-size:11px" title="구성비(컨텍스트·생각·응답·도구)와 다음 프롬프트까지 리드 중앙값">'+comp+(comp&&lead?' · ':'')+lead+'</span>' : '';
+    const dist=tkCtxDistStr(d);   // 창 점유 분포 — 옛 응답이면 빈 문자열
+    // 툴팁은 실제로 그려진 조각만 설명한다. 옛 응답에는 dist 가 빈 문자열인데 툴팁이 창 점유
+    // 분포를 약속하고 있으면, 없는 것을 찾느라 사람이 행을 뒤진다.
+    const extraTip='구성비(컨텍스트·생각·응답·도구)와 다음 프롬프트까지 리드 중앙값'+(dist?', 그리고 그날 세션들의 창 점유 분포':'');
+    const extra=(comp||lead||dist)? '<span class="muted" style="font-size:11px" title="'+extraTip+'">'+comp+(comp&&lead?' · ':'')+lead+((comp||lead)&&dist?' · ':'')+dist+'</span>' : '';
     const costCell=cost>0? '<b style="font-variant-numeric:tabular-nums;min-width:64px;text-align:right;color:#7fc98f;cursor:help"'+tkTipAttrs(d.models)+'>'+tkFmtCost(cost)+'</b>' : '';
     const open=_tkSessOpen.has(d.day);
     return '<div class="panel" style="margin:0 0 6px;padding:8px 14px">'
@@ -3175,10 +3478,65 @@ function tkDayToggle(day){
   }
   renderTokenDaily();
 }
+// 루프 배지. 등록된 루프는 파랑, 기계가 반복해서 연 미등록 루프 후보는 노랑, 사람이 연 세션은
+// 배지를 달지 않는다 — 대부분이 사람 세션이라 전부 달면 배지가 배경이 되어 아무것도 안 보인다.
+function tkLoopBadge(s){
+  const kind=s.loopKind||'', label=(s.loop||'').trim();
+  if(!label||kind==='human') return '';
+  const st=(kind==='loop')
+    ? 'background:#1a2336;border:1px solid #263149;color:#9fb6e8'
+    : 'background:#2a2312;border:1px solid #4a3d1a;color:#d29922';
+  // 미등록 루프의 이름은 그 루프가 매번 보내는 첫 프롬프트 그 자체다. 옆 칸의 세션 제목도
+  // 같은 문장이라 그대로 달면 같은 글자가 두 번 나온다. 그럴 때는 배지에서 이름을 빼고
+  // '루프 반복'만 남긴다 — 배지가 답해야 하는 것은 이름이 아니라 "사람이 연 게 아니다"다.
+  const title=((s.title||'').trim());
+  const dup=label.length>8 && title.slice(0,12)===label.slice(0,12);
+  const text=dup? (kind==='loop'?'루프':'루프 반복') : label;
+  return '<span style="'+st+';font-size:10px;padding:1px 7px;border-radius:20px;flex:0 0 auto;max-width:150px;'
+    +'overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc((kind==='loop'?'등록된 루프: ':'미등록 루프 후보: ')+label)+'">'
+    +esc(text)+'</span>';
+}
+// 세션 판정이 어디까지 됐는지. 토큰 뷰 머리줄에 한 줄로만 적는다 — 여기서 전량을 그리면
+// 목록이 무거워지고, 자세한 것은 루프 엔지니어링 화면이 소유한다.
+let _tkLoopProg=null;
+function tkLoadLoopProgress(){
+  fetch('/api/loop-engineering/sessions?summary=1').then(x=>x.json())
+    .then(j=>{ _tkLoopProg=j; renderTokenDaily(); }).catch(()=>{});
+}
+function tkLoopProgStr(){
+  const j=_tkLoopProg; if(!j||!j.progress) return '';
+  const p=j.progress, t=j.totals||{};
+  const done=(p.total||0)-(p.pending||0);
+  const head=p.running? ('세션 판정 '+done+'/'+(p.total||0)+' 분석 중') : ('세션 판정 '+(p.analyzed||0)+'/'+(p.total||0)+' 완료');
+  const lp=t.loop||{}, cd=t.candidate||{};
+  const n=(lp.sessions||0)+(cd.sessions||0);
+  return ' · <span title="루프를 돌리려고 열린 세션과 사람이 연 세션의 구분 — 자세한 것은 루프 엔지니어링 화면">'
+    +head+(n? (' · 루프 세션 '+n+'개') : '')+'</span>';
+}
 function tkSessListHTML(day){
-  const rows=_tkSessCache[day];
-  if(rows==='loading'||!rows) return '<div class="muted" style="font-size:11px;padding:6px 0 0 22px">세션 불러오는 중…</div>';
-  if(!rows.length) return '<div class="muted" style="font-size:11px;padding:6px 0 0 22px">이 날짜의 세션 상세가 없습니다</div>';
+  const rawRows=_tkSessCache[day];
+  if(rawRows==='loading'||!rawRows) return '<div class="muted" style="font-size:11px;padding:6px 0 0 22px">세션 불러오는 중…</div>';
+  const rows = rawRows.filter(s => {
+    if (_tkAccFilter !== 'all' && s.account !== _tkAccFilter && s.provider !== _tkAccFilter) return false;
+    if (_tkModelFilter !== 'all') {
+      if (_tkModelFilter.startsWith('effort:')) {
+        const targetEff = _tkModelFilter.replace('effort:', '').toLowerCase();
+        const sEff = (s.effort || '').toLowerCase();
+        let match = sEff.includes(targetEff);
+        if (!match && s.models) {
+          match = Object.values(s.models).some(u => (u.effort || '').toLowerCase().includes(targetEff));
+        }
+        if (!match) return false;
+      } else {
+        const targetM = _tkModelFilter.toLowerCase();
+        let match = (s.models && Object.keys(s.models).some(m => m.toLowerCase().includes(targetM)));
+        if (!match && s.provider && s.provider.toLowerCase().includes(targetM)) match = true;
+        if (!match) return false;
+      }
+    }
+    return true;
+  });
+  if(!rows.length) return '<div class="muted" style="font-size:11px;padding:6px 0 0 22px">선택한 필터 조건의 세션이 없습니다</div>';
   const mx=Math.max(1,...rows.map(s=>s.tokens||0));
   return '<div style="margin:8px 0 0 22px;border-top:1px solid #222a36;padding-top:6px">'
     +rows.map(s=>{
@@ -3189,15 +3547,26 @@ function tkSessListHTML(day){
         +tkCtxSegs(s,seg)+seg(s.thinkTok,'#e8a13a')+seg(s.textTok,'#8f6fe3')+seg(s.toolTok,'#4f79c9')+'</div></div>';
       const cost=tkCost(s.models), chips=tkModelChips(s.models);
       const title=(s.title||'').trim() || (s.proj+' · '+s.sid);
+      const PRV_FALLBACK={codex:['코덱스','#059669'],antigravity:['안티그라비티','#ea580c'],glm:['GLM','#fb923c']};
+      const prvFb=PRV_FALLBACK[s.provider]||['클로드','#7c3aed'];
+      const accLabel = s.accountLabel || prvFb[0];
+      const accColor = s.accountColor || prvFb[1];
+      const accBadge = '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:'+accColor+'22;color:'+accColor+';border:1px solid '+accColor+'66;font-weight:600;flex:0 0 auto" title="'+esc(s.account||s.provider||'')+'">'+esc(accLabel)+'</span>';
+      const modelBadge = tkSessionModelBadge(s);
+      const lp=tkLoopBadge(s);
       const lead=((s.aiSec>0)? ' · AI '+tkFmtAi(s.aiSec) : '')
         +((s.leadN>0)? ' · 리드 '+tkFmtLead(s.leadMed)+'·'+s.leadN+'회' : '');
+      const cw=tkCtxWinStr(s);   // 창 점유 칩 — 옛 응답이면 빈 문자열이라 아무것도 안 붙는다
       const detKey=day+'|'+s.sid, detOpen=_tkDetOpen.has(detKey);
-      return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:3px 0">'
-        +'<span style="font-size:11px;min-width:220px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(s.proj+' · '+s.sid+' — '+(s.title||''))+'">'+esc(title)+'</span>'
+      return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 0">'
+        +accBadge
+        +modelBadge
+        +lp
+        +'<span style="font-size:11px;min-width:180px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(s.proj+' · '+s.sid+' — '+(s.title||''))+'">'+esc(title)+'</span>'
         +bar
         +'<b style="font-size:11px;font-variant-numeric:tabular-nums;min-width:56px;text-align:right">'+tkAmount(s.k||0)+'</b>'
         +(cost>0? '<b style="font-size:11px;font-variant-numeric:tabular-nums;min-width:52px;text-align:right;color:#7fc98f;cursor:help"'+tkTipAttrs(s.models)+'>'+tkFmtCost(cost)+'</b>' : '')
-        +'<span class="muted" style="font-size:11px;cursor:pointer;text-decoration:underline dotted" onclick="event.stopPropagation();tkSessDetailToggle(\''+day+'\',\''+esc(s.sid)+'\')" title="클릭: 이 구성비의 실제 내용물(무엇이 토큰을 먹었는지)을 항목별로 펼칩니다">'+(detOpen?'▾ ':'')+tkCompStr(s,true)+(chips?' · '+chips:'')+lead+'</span>'
+        +'<span class="muted" style="font-size:11px;cursor:pointer;text-decoration:underline dotted" onclick="event.stopPropagation();tkSessDetailToggle(\''+day+'\',\''+esc(s.sid)+'\')" title="클릭: 이 구성비의 실제 내용물(무엇이 토큰을 먹었는지)을 항목별로 펼칩니다">'+(detOpen?'▾ ':'')+(cw? cw+' · ' : '')+tkCompStr(s,true)+(chips?' · '+chips:'')+lead+'</span>'
         +'</div>'
         +(detOpen? tkDetailHTML(day,s.sid) : '');
     }).join('')
@@ -3619,8 +3988,17 @@ function bumpHTML(shown,allLive){
 // 완료된 루프 (릴리즈 커밋 로그) — 기본 닫힘, 헤더 클릭으로 펼침.
 // 섹션이 접혀 있으면 릴리즈 아이템을, 아이템이 접혀 있으면 그 목표 행을 아예 만들지 않는다(지연 렌더링).
 // display:none 으로 숨기면 노드가 DOM에 그대로 남으므로, 실제 노드 수를 줄이려면 innerHTML 자체를 비워야 한다.
+// 빈 컷(2026-08-30) — 완료한 것이 하나도 없는 채로 루프를 닫으면 서버가 경계만 남긴
+// 릴리즈를 만든다(ReviewStore.completeSprint 1b). 그 기록의 쓸모는 시간축 하나다:
+// 메모장이 '이 줄이 어느 루프냐' 를 컷의 시각으로 자른다. 여기 목록은 "무엇을 완료했나"
+// 를 읽는 자리라 커밋도 노트도 없는 줄은 뺀다 — 넣으면 며칠 만에 빈 줄이 로그를 덮는다.
+// 알아보는 법은 저장된 표식이 아니라 내용이다: 커밋한 목표도 거둔 메모도 없으면 빈 컷.
+// (예전 기록 중에는 이 조건에 걸리는 것이 없다 — 릴리즈는 둘 중 하나가 있어야 생겼다.)
+function isEmptyCut(rel){
+  return !((rel.goalIds||[]).length) && !((rel.titles||[]).length) && !((rel.notes||[]).length);
+}
 function completedLogHTML(r){
-  const rels=(r&&r.releases)||[]; if(!rels.length) return '';
+  const rels=((r&&r.releases)||[]).filter(x=>!isEmptyCut(x)); if(!rels.length) return '';
   const hdr='<h3 class="rellog-hd'+(_relLogOpen?' open':'')
     +'" onclick="toggleRelLog()" style="font-size:13px;color:var(--mut);margin:18px 0 8px;border-top:1px solid var(--line);padding-top:14px">'
     +'<span class="chev'+(_relLogOpen?' open':'')+'">▸</span>완료된 루프 (릴리즈 로그) '
@@ -4223,7 +4601,15 @@ function setSprintDate(n,key,val){ const ep=CMTimeFilter.inputToEpoch(val); cons
 function deleteSprintNow(n){ if(!confirm('이 루프를 삭제합니다. 배정된 목표는 Backlog로 돌아갑니다.')) return; post('/api/sprint/delete',{number:n}); }
 // Complete loop = 커밋하고 닫는다. 미완료 목표가 있을 때만 이월 — 이미 열린 루프가
 // 있으면 그리로, 없으면 새 루프(24시간 auto)가 열린다. 빈 루프는 기록 없이 닫힌다.
-function releaseSprintGroup(n){ if(!confirm('이 루프를 완료합니다. 완료 목표는 커밋되고, 미완료 목표가 있으면 열린 루프로 이월됩니다(없으면 새로 열림). 목표가 없으면 기록 없이 닫힙니다.')) return; post('/api/sprint/complete',{number:n}); }
+function releaseSprintGroup(n){ if(!confirm('이 루프를 완료합니다. 완료 목표는 커밋되고, 미완료 목표가 있으면 열린 루프로 이월됩니다(없으면 새로 열림). 완료한 목표가 없으면 완료 로그에는 남지 않고 닫힙니다(루프 경계는 기록됩니다).')) return; completeSprintPost(n); }
+// 루프 완료의 유일한 창구 — 커밋한 뒤 같은 화면의 메모장에 컷을 곧바로 알린다.
+// 패드는 자기 폴링(30초 틱 + boardFetch 의 60초 스로틀)으로만 보드를 알아서, 이 한 줄이
+// 없으면 방금 자른 루프가 패드에 닿는 데 60~90초가 걸린다(2026-08-30). 새 타이머를 두지
+// 않고, 사람이 컷을 누른 그 순간에만 한 번 깨운다. 패드가 없는 페이지에서는 조용히 넘어간다.
+function completeSprintPost(n){
+  return post('/api/sprint/complete',{number:n})
+    .then(function(){ try{ if(window.CMMemo && CMMemo.boardChanged) CMMemo.boardChanged(); }catch(e){} });
+}
 
 // 완료 로그 펼침/복원
 function toggleRel(id){ if(_relOpen.has(id))_relOpen.delete(id); else _relOpen.add(id); if(_review) renderSprintBoard(_review); }
@@ -4236,8 +4622,8 @@ function releaseCurrentSprint(){
   // 단일 루프 선택 시 = 완료 후 다음 번호로 전진(이월 포함). '모두' 선택 시 = 전진 없이
   // 전 루프의 완료 목표만 커밋(번호 전진은 특정 루프를 완료할 때만 의미가 있으므로).
   if(only){
-    if(!confirm('루프 '+sprintCode(only)+'을(를) 완료합니다. 완료 목표는 커밋되고, 미완료 목표가 있으면 열린 루프로 이월됩니다(없으면 새로 열림). 목표가 없으면 기록 없이 닫힙니다.')) return;
-    post('/api/sprint/complete',{number:only});
+    if(!confirm('루프 '+sprintCode(only)+'을(를) 완료합니다. 완료 목표는 커밋되고, 미완료 목표가 있으면 열린 루프로 이월됩니다(없으면 새로 열림). 완료한 목표가 없으면 완료 로그에는 남지 않고 닫힙니다(루프 경계는 기록됩니다).')) return;
+    completeSprintPost(only);
   }else{
     if(!confirm('모든 루프의 완료 목표를 커밋합니다. 목록에서 사라지고 완료 로그로 이동합니다.')) return;
     post('/api/sprint/release',{sprint:'all'});

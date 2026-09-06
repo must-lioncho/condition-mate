@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "_doc": "대외 발신 게이트의 정본 표. 두 가지를 담는다. (1) channels/namePrefixes — 슬랙 채널을 소속 폴더로 해석하는 대응표. 확신 산정의 필수 입력이며, 여기서 폴더까지 닿지 못하면 확신이 깎이고 DM 이면 0 이 된다. (2) ambiguousTerms — 우리 조직 안에서만 뜻이 정해지는 약어. 용어집이 그 이름을 실제로 해석해 주지 않았는데 나갈 글에 그 약어가 실려 있으면 발신하지 않는다. 2026-09-02 사고에서 코드가 'MPC' 를 Multi-Party Computation 으로 읽고 Fireblocks·GDPR 논문을 근거로 삼은 자리가 이것이다. 이 파일을 덮어쓰지 않고 늘리려면 ~/.condition-mate/slack-translate/outbound-gate.json 에 같은 모양으로 적는다 — 그 파일이 이 파일 위에 병합된다(앱 재빌드 불필요).",
+
+  "confidence": {
+    "_doc": "확신은 모델의 자가 신고값 하나가 아니라 곱이다. effective = analysis.confidence × channel × context. 임계값(ACK_MIN_CONFIDENCE=0.8)은 이 곱한 값에 대고 잰다.",
+    "channel": {
+      "registry": 1.0,
+      "named": 0.9,
+      "unresolved": 0.0,
+      "_doc": "registry = 채널을 소속 폴더까지 해석했다. named = 워크스페이스 채널 이름이긴 한데 담당 폴더가 이 표에 없다 — 모델이 0.89 이상으로 부른 것만 통과한다. unresolved = DM·그룹 DM·이름 없음. 곱이 0 이므로 정의상 통과할 수 없다."
+    },
+    "context": {
+      "thread": 1.0,
+      "mixedTopic": 0.85,
+      "_doc": "mixedTopic = 근거가 스레드가 아니라 '채널 최근 대화' 다. 화제가 섞여 있다는 것을 코드가 이미 알고 있는 상태이므로 근거의 질을 그만큼 낮춰 잡는다."
+    }
+  },
+
+  "channels": {
+    "C0BN2351YG6": { "name": "#tf-mpc-dev", "folder": "organization/globalmpc/src" },
+    "C0BS0SB8AEP": { "name": "#tf-mpc-qa", "folder": "organization/globalmpc/src" },
+    "C0BRRC1BXFG": { "name": "#tf-mpc-legal", "folder": "organization/globalmpc/workspace/globalmpc-legal" },
+    "C0BLYLF7HSP": { "name": "#tf-mpc-marketing-branding", "folder": "organization/globalmpc/workspace/globalmpc-marketing" },
+    "C0BSJE56YP7": { "name": "#tf-mpc-owners", "folder": "organization/globalmpc/docs" },
+    "C0BTC4EFLJC": { "name": "#tf-mpc-strategy", "folder": "organization/globalmpc/docs" },
+    "C0BFGCPAU3H": { "name": "#tf-mpc-gouvernance", "folder": "organization/globalmpc/docs" },
+    "C0B61V8RGJC": { "name": "#tf-mpc-operation", "folder": "organization/globalmpc/docs" },
+
+    "C0BRKAMHEE5": { "name": "#tf-matchhire", "folder": "organization/mustcompany/workspace/mustcompany-prj-matchhire" },
+    "C0BRZU9ASGY": { "name": "#tf-matchhire-help-and-bugs", "folder": "organization/mustcompany/workspace/mustcompany-prj-matchhire" },
+    "C0BSPGBDXQR": { "name": "#tf-matchhire-request", "folder": "organization/mustcompany/workspace/mustcompany-prj-matchhire" },
+
+    "C0BSW0H78Q1": { "name": "#tf-must-aios", "folder": "organization/mustcompany/workspace/mustcompany-aios" },
+    "C0BR2LXB01H": { "name": "#tf-pulse-aios", "folder": "organization/mustcompany/workspace/mustcompany-aios" },
+    "C0BJUAVLYF9": { "name": "#tf-must-evaluator-dev", "folder": "organization/mustcompany/workspace/mustcompany-aios" },
+
+    "C0BSNBG8R0U": { "name": "#survive-failed-everyday", "folder": "organization/mustcompany/workspace/mustcompany-survive-failed-everyday" },
+    "C0BRHSPP9QA": { "name": "#botleneck-subscription", "folder": "organization/mustcompany/workspace/mustcompany-survive-bottleneck" },
+
+    "C04GBHNQEG3": { "name": "#mustcompany-homepage", "folder": "organization/mustcompany/workspace/mustcompany-os-common" },
+    "C091XTEB8FL": { "name": "#mustcompany-general-level5", "folder": "organization/mustcompany/workspace/mustcompany-os-common" },
+
+    "C0BFGCTHZSL": { "name": "#prj-sut-season2", "folder": "organization/supertrust/supertrust-nss" },
+    "C052Z8T929F": { "name": "#chat-msq", "folder": "organization/msq/msq-team-operation" },
+    "C03GWN32SRY": { "name": "#prj-metastar-request", "folder": "organization/msq/msq-prj-metastarglobal" },
+    "C04K1B2GQGJ": { "name": "#msq-metastar-improve", "folder": "organization/msq/msq-prj-metastarglobal" }
+  },
+
+  "namePrefixes": [
+    { "prefix": "#tf-mpc-", "folder": "organization/globalmpc/docs" },
+    { "prefix": "#tf-matchhire", "folder": "organization/mustcompany/workspace/mustcompany-prj-matchhire" },
+    { "prefix": "#prj-msquaremarket", "folder": "organization/msq/msq-team-operation" },
+    { "prefix": "#msq-", "folder": "organization/msq/msq-team-operation" },
+    { "prefix": "#hr-", "folder": "organization/mustcompany/workspace/mustcompany-team-hr" },
+    { "prefix": "#hris-", "folder": "organization/mustcompany/workspace/mustcompany-team-hr" }
+  ],
+
+  "ambiguousTerms": [
+    {
+      "term": "MPC",
+      "means": "Global MPC — 마이닝 RWA 법인. 싱가폴 법인명은 Bolor Geo SG Pte. Ltd. 다.",
+      "why": "공개 웹에서 MPC 는 Multi-Party Computation 이다. 2026-09-02 사고에서 리서치 질의가 'compliance document requirements for multi-party computation technology' 로 나갔고 Fireblocks·Chainlink·GDPR 논문이 근거로 실렸다. 요청자 등급 판정에는 'Global MPC 등급 2' 가 이미 쓰이고 있었는데 용어 해석에는 그 사실이 쓰이지 않았다.",
+      "okWhen": ["Global MPC", "globalMPC", "글로벌 MPC", "MPC SG", "Bolor Geo"]
+    },
+    {
+      "term": "MSQ",
+      "means": "MSQUARE MARKET / msq 조직",
+      "why": "약어가 조직 밖에서는 다른 것을 가리킨다.",
+      "okWhen": ["MSQUARE", "msq-", "엠스퀘어"]
+    },
+    {
+      "term": "NSS",
+      "means": "Super Save (슈퍼세이브) 예치 상품",
+      "why": "약어가 조직 밖에서는 다른 것을 가리킨다.",
+      "okWhen": ["Super Save", "슈퍼세이브"]
+    },
+    {
+      "term": "SUT",
+      "means": "supertrust 토큰",
+      "why": "약어가 조직 밖에서는 다른 것을 가리킨다.",
+      "okWhen": ["supertrust", "슈퍼트러스트"]
+    }
+  ]
+}

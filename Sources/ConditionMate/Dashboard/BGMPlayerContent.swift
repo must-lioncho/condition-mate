@@ -883,6 +883,13 @@ let exhType = "none", exhDrive = "city";
 let mode = "activity";
 let engaged = false;     // has the user pressed play once (Web Audio gesture unlock)?
 let muted = false;       // output muted? challenge keeps running; only the sound is off
+// 받아쓰기(superwhisper) 중 음악을 눌러 두는 깊이. 네이티브 AudioEngine.voiceDuckDepth 와 같은
+// 값이어야 한다 — 창이 열려 있으면 여기가, 닫혀 있으면 네이티브가 소리를 내므로 두 값이 다르면
+// 같은 동작인데 창 상태에 따라 크기가 달라져 버린다.
+const VOICE_DUCK = 0.05;
+let voiceDuck = false;   // 말하는 동안만 잠깐 참. 뮤트와 달리 사용자의 의도가 아니라 일시 상태다
+// 출력 게인 하나로 두 축을 합친다: 뮤트면 0, 받아쓰기 중이면 VOICE_DUCK, 아니면 1.
+function outGainValue(){ return muted ? 0 : (voiceDuck ? VOICE_DUCK : 1); }
 let TRACKS = [];
 let curTrack = null;
 let lastNow = null;
@@ -1412,7 +1419,7 @@ function ensureGraph(){
   merger.connect(masterGain);
   // Final mute node before the speakers: muting silences the sound while the challenge (and the
   // beating play button) keep running. Honors a mute chosen before the graph existed.
-  outMute = ctx.createGain(); outMute.gain.value = muted ? 0 : 1;
+  outMute = ctx.createGain(); outMute.gain.value = outGainValue();
   masterGain.connect(outMute);
   outMute.connect(ctx.destination);
 
@@ -2275,7 +2282,7 @@ playBtn.onclick=togglePlay;
 // ---------- mute: silence the sound while the challenge keeps running ----------
 const muteBtn=$("mute");
 function applyMute(){
-  if(outMute && ctx){ outMute.gain.setTargetAtTime(muted?0:1, ctx.currentTime, 0.03); }
+  if(outMute && ctx){ outMute.gain.setTargetAtTime(outGainValue(), ctx.currentTime, 0.03); }
   muteBtn.textContent = muted ? "🔇" : "🔊";
   muteBtn.classList.toggle("on", muted);
   muteBtn.title = muted ? "음소거 해제 — 다시 소리를 켭니다"
@@ -2287,6 +2294,10 @@ muteBtn.onclick=()=>{ muted=!muted; applyMute(); sessionMute(muted); };
 // App-driven mute (⌘M, dashboard mute dot, menu): set our mute to a SPECIFIC state without looping
 // back to the server — AppWindowController.setWebMute calls this. No-op if already in that state.
 window.__setMute = function(m){ m=!!m; if(muted!==m){ muted=m; applyMute(); } };
+// 받아쓰기 덕킹 (AppWindowController.setWebVoiceDuck). 뮤트 버튼의 표시는 건드리지 않는다 —
+// 사용자가 음소거를 누른 것이 아니라 말하는 동안만 잠깐 눌린 것이고, 곧 스스로 돌아온다.
+// 게인 램프는 applyMute 와 같은 setTargetAtTime 을 타므로 계단 없이 부드럽게 오르내린다.
+window.__setVoiceDuck = function(d){ d=!!d; if(voiceDuck!==d){ voiceDuck=d; applyMute(); } };
 applyMute();
 audioEl.addEventListener("play", ()=>{ nativeMute(true); updatePlayIcon(); applyAmbience(); applyRain(); applyExhaust(); stopAutoStart();
   $("status").textContent="재생 중 · "+(curTrack?curTrack.title:"")+" · "+PRESETS[current].name; });
@@ -2925,7 +2936,9 @@ function renderScSitemap(){
   nodes.forEach(function(n){ (byPage[n.path+n.mode]=byPage[n.path+n.mode]||[]).push(n);
     total++; if(scNodeMatches(n).some(function(e){ return e.file; })) covered++; });
   let h='<div class="muted" style="font-size:11px;margin:0 0 8px">커버리지 <b style="color:var(--txt)">'+covered+'/'+total+'</b> 노드'
-    +(_scMap.generatedAt?(' · 생성 '+esc(String(_scMap.generatedAt).slice(0,16).replace('T',' '))):'')
+    // 사이트맵의 generatedAt 은 오프셋이 붙은 ISO 다. 잘라 쓰면 그 오프셋의 벽시계가
+    // 그대로 나오므로 표시 타임존으로 변환해 찍는다 (CMTimeFilter 는 이 페이지가 직접 인라인한다).
+    +(_scMap.generatedAt?(' · 생성 '+esc(CMTimeFilter.isoDisp(_scMap.generatedAt,16))):'')
     +(_scMap.commit?(' · <span style="font-variant-numeric:tabular-nums">'+esc(String(_scMap.commit).slice(0,8))+'</span>'):'')+'</div>';
   (_scMap.pages||[]).forEach(function(p){
     const pageNode=nodes.find(function(n){ return n.kind==='page'&&n.id===p.id; });
