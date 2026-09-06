@@ -651,13 +651,17 @@ enum WorkQueueSessionStore {
             "runner": h.runner,
             "model": h.model,
             "effort": h.effort,
-            "tokens": h.tokens,
             "tokensFrom": h.tokensFrom,
             "startedAt": h.startedAt,
             "endedAt": h.endedAt,
             "file": h.file,
             "sessionId": h.sessionId,
         ]
+        // 토큰과 초는 **모를 때 키 자체를 뺀다.** 0 을 실어 보내면 화면이 `0 토큰` 이라고
+        // 그리는데, 그것은 "안 썼다" 는 뜻이 되어 거짓말이 된다. 없는 것과 0 은 다르다 —
+        // 화면(`IssuesContent`)이 `typeof rv.tokens === 'number'` 로 그 조각을 켜므로,
+        // 키가 없으면 그 조각이 통째로 빠진다.
+        if h.tokens > 0 { out["tokens"] = h.tokens }
         if let s = secs { out["seconds"] = (s * 10).rounded() / 10 }
         out["why"] = h.runner == "codex"
             ? "이 카드 파일을 만든 실행이다 — codex exec 출력에 카드 경로와 `1초 요약` 이 있다."
