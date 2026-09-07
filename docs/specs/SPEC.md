@@ -432,6 +432,51 @@ Note (KO): SPEC.html의 P1 섹션은 실제 스크린샷이 아니라 라벨이 
   NOTE: this PASS covers autoplay-starts-and-keeps-advancing only. See BGMACT-6 (new, 2026-07-06
   third pass) for a SEPARATE, newly-surfaced defect found while verifying this item: stopping the
   challenge does not actually stop the audible `<audio>` element.
+  **REGRESSED then RE-FIXED, 2026-09-06 (fourth pass) — the 2026-07-06 PASS above is true as of
+  its date and is left in place rather than deleted.** The window's own BGM webview stopped making
+  any sound at all, for days: every app pid from 2026-09-04 21:16 KST through 2026-09-07 00:33 KST
+  reported `paused:true, engaged:false, readyState:0` in `audio-probe`, i.e. the `<audio>` element
+  never loaded a byte and `play()` was never called. CAUSE: `refreshNow()`'s director-follow branch
+  gated the actual start on `engaged` alone (`if(engaged && audioEl.paused){ audioEl.play() }`),
+  and `engaged` only becomes true on a user gesture inside the player. The dedicated BGM webview
+  auto-opens and nobody ever clicks inside it, so the gesture never arrived — while native audio
+  was already force-muted for the duration the window is open (WINLIFE-3), leaving ZERO audio
+  sources. FIX (`BGMPlayerContent.swift:1114-1116`): branch on `!EMBEDDED || engaged` instead of
+  `engaged`, and call `engage()` before `play()`. `EMBEDDED` (`:906`,
+  `window.frameElement !== null`) is false for the dedicated top-level webview — the window's audio
+  owner, whose WKWebView sets `mediaTypesRequiringUserActionForPlayback = []` — and true for the
+  dashboard's in-page BGM tab, which stays gesture-only and never becomes a second source (the
+  `EMBEDDED` guards at `:951` and `:1016` are unchanged). The `engage()`-before-`play()` ORDER is
+  load-bearing, not cosmetic: `engage()` runs `ensureGraph()`, which is where
+  `createMediaElementSource(audioEl)` (`:1364`) routes the element into the Web Audio graph behind
+  `outMute` (`:1423-1425`). Calling `play()` first would let the element sound straight to the
+  destination and bypass the mute gain entirely — audible sound while the user has muted.
+  **Verify (STRENGTHENED — this is the part that let the bug hide for days): the app's own report
+  is NOT evidence of sound.** Throughout the silent period `/api/bgm/now` returned
+  `on:true, playing:true, muted:false` and the UI read "재생 중" while nothing came out of the
+  speakers. Any future check of this item must pair the in-page probe with an EXTERNAL,
+  outside-the-app audio signal. Two that work, both used on 2026-09-06: (a) `pmset -g assertions`
+  must show `coreaudiod` holding `PreventUserIdleSystemSleep` named
+  `com.apple.audio.<Device>.context.preventuseridlesleep` with `Resources: audio-out <Device>` —
+  this assertion exists only while audio is actually being rendered to an output device; (b) the
+  app's `com.apple.WebKit.GPU` helper process (WKWebView plays media out-of-process) must have
+  `CoreAudio.component` / `AudioCodecs.component` / `AudioDSP.component` loaded (`lsof -p <gpu-pid>`).
+  Also confirm WHICH binary is running (`ps` — `/Applications/ConditionMate.app/Contents/MacOS/ConditionMate`
+  vs `.build/debug/ConditionMate`) and that the change is actually inside it; because the JS is
+  embedded as a Swift string literal, `strings -a <binary> | grep <a comment from the change>`
+  settles it without a rebuild.
+  KO: 창의 전용 BGM webview 가 며칠 동안 소리를 전혀 내지 않았다. 원인은 재생 시작을 `engaged`
+  (사용자 클릭)에만 걸어 둔 것이다 — 전용 창은 자동으로 뜨고 그 안을 클릭할 사람이 없으므로 그
+  제스처는 오지 않고, 창이 열려 있는 동안 네이티브는 이미 강제 음소거라 소리의 출처가 0 개가
+  된다. `!EMBEDDED || engaged` 로 바꿔 창의 오디오 주인만 제스처 없이 시작하게 했고, 끼워진
+  BGM 탭은 그대로 제스처 전용으로 남는다. `engage()` 를 `play()` 앞에 두는 순서가 중요하다 —
+  그래프가 먼저 서야 음소거 게인을 우회하지 않는다. **검증에서 배울 것: 앱의 자기 보고를 소리의
+  증거로 쓰지 마라.** 침묵하는 내내 앱은 `playing:true` 라고 말하고 화면은 "재생 중" 이었다.
+  앱 밖의 신호(`pmset` 의 audio-out assertion, WebKit GPU 프로세스의 CoreAudio 로드)를 반드시
+  같이 봐야 한다.
+  **위험 (2026-09-06 시점): 이 수정은 커밋되어 있지 않다.** `git show HEAD:` 판은 아직 옛
+  `if(engaged && audioEl.paused)` 를 들고 있어, `git checkout`/`git stash` 한 번이나 깨끗한
+  트리에서의 빌드 한 번으로 이 침묵이 그대로 돌아온다.
 - **BGMACT-2 — state machine has no stuck limbo.**
   EN: `GET /api/bgm/now` distinguishes `on` (system engaged) from `playing` (a resolvable track is
   actually streaming) from `id` (which library track). The status dot follows `on`; whether a
@@ -440,13 +485,28 @@ Note (KO): SPEC.html의 P1 섹션은 실제 스크린샷이 아니라 라벨이 
   라이브러리 리로드 중에도 "완전히 죽은" 상태로 안 보이게 한다.
   Verify: `AppDelegate.swift:bgmNowJSON` — `on = director.isPlaying`; `playing = on && !isPaused &&
   id >= 0`.
-- **BGMACT-3 — the play button follows the browser transport.**
+- **BGMACT-3 — the play button follows the browser transport. SCOPED to the EMBEDDED / external
+  copy (amended 2026-09-06).**
   EN: Once the user "engages" (first play gesture / auto-cue), further track switches (from the
   director) auto-play in this same webview; before engaging, native stays audible and this view
-  just cues silently.
+  just cues silently. **This cue-only-until-gesture half applies ONLY where `EMBEDDED` is true —
+  the dashboard's in-page BGM tab — or to an external browser tab on `/bgm-player`. It does NOT
+  apply to the dedicated top-level BGM webview**, which is the window's audio owner and must
+  self-start (BGMACT-1 fourth pass).
   KO: 사용자가 한 번 재생을 "잡으면" 이후 곡 전환도 이 화면에서 자동재생되고, 잡기 전까지는
-  네이티브가 계속 들리며 이 화면은 조용히 큐만 잡는다.
-  Verify: `BGMPlayerContent.swift:refreshNow()` — `engaged` flag gates auto-play vs. cue-only.
+  네이티브가 계속 들리며 이 화면은 조용히 큐만 잡는다. **단, "잡기 전까지 큐만" 은 `EMBEDDED`
+  가 참인 사본(대시보드 안의 BGM 탭)과 외부 브라우저 탭에만 해당한다. 창의 오디오 주인인 전용
+  BGM webview 에는 해당하지 않는다.**
+  Verify: `BGMPlayerContent.swift:refreshNow()` — the gate is `!EMBEDDED || engaged`, so `engaged`
+  gates auto-play vs. cue-only for the embedded/external copy only.
+  Why the scope had to be written down / 왜 범위를 적어야 했는가: the unqualified wording above was
+  the premise that produced the 2026-09-06 silence. Its "before engaging, native stays audible" is
+  simply FALSE for the window's own webview — WINLIFE-3 force-mutes native for exactly as long as
+  the window is open, so "cue silently and let native cover it" leaves nothing making sound. The
+  clause is true only for the copies that run while native is still audible.
+  이 절의 조건 없는 옛 표현("잡기 전까지는 네이티브가 계속 들린다")이 2026-09-06 침묵을 만든
+  전제다. 창의 전용 webview 에는 그 전제가 거짓이다 — 창이 열려 있는 동안 네이티브는 음소거이므로
+  "조용히 큐만" 이 곧 무음이다.
 - **BGMACT-4 (was Q3) — disconnect auto-stop.**
   EN: If the app/server becomes unreachable, this page stops itself on the FIRST failed
   `/api/bgm/now` poll (~1.5s poll interval) rather than waiting — a browser tab must not keep

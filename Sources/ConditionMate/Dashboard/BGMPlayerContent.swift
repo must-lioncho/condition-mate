@@ -1100,19 +1100,20 @@ async function refreshNow(){
   else { $("nowTitle").textContent = "대기 중 — 활동이 시작되면 곡이 잡힙니다"; }
 
   // Director-follow runs on every tab EXCEPT 디버그 (manual audition). 컨디션맵 is the default
-  // landing tab; without this the challenge would auto-start but the browser would never play,
-  // leaving the window's audio owner silent (native is muted while the window is open).
+  // landing tab. The dedicated top-level BGM webview is the window's audio owner, and its
+  // WKWebView configuration allows autoplay, so it must begin when the live session gets a track.
+  // The embedded copy remains gesture-only and never becomes an independent audio source.
   if(mode==='debug'){ updatePlayIcon(); return; }
   // Branch on `now.on` (director actually playing), NOT just on id: when the challenge stops the
   // app reports on:false but may still carry a stale track id (director.pauseSession keeps
   // audio.currentURL so a resume can continue the same track). Gating the follow branch on `on` is
   // what makes "챌린지 중단 -> 음원 중단" actually stop the sound (BGMACT-6).
   if(now.on && now.id>=0){
-    // system engaged AND a real track available: follow the director's pick. Auto-switch once
-    // engaged; before the first play gesture just cue it (native stays audible until user takes over).
-    if(!curTrack || curTrack.id!==now.id){ loadTrack({id:now.id,title:now.title,bpm:now.bpm}, engaged); }
-    if(engaged && audioEl.paused){ audioEl.play().catch(()=>{}); }
-    $("status").textContent = engaged ? ("재생 중 · "+now.title) : ("앱 BGM 재생 중 · 눌러서 여기서 공간감으로 듣기");
+    // Start the dedicated owner immediately. Previously this only cued the track until a gesture,
+    // while native was already force-muted for ownership, resulting in total silence.
+    if(!curTrack || curTrack.id!==now.id){ loadTrack({id:now.id,title:now.title,bpm:now.bpm}, !EMBEDDED || engaged); }
+    if((!EMBEDDED || engaged) && audioEl.paused){ engage(); audioEl.play().catch(()=>{}); }
+    $("status").textContent = (!EMBEDDED || engaged) ? ("재생 중 · "+now.title) : ("앱 BGM 재생 중 · 눌러서 여기서 공간감으로 듣기");
   } else if(now.on){
     // system on but no resolvable track yet (warm-up / library reload) — DON'T reset `engaged`,
     // or a play we just started would be lost. Wait; the next poll loads the track.
