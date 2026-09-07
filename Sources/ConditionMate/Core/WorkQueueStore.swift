@@ -29,34 +29,122 @@ enum WorkQueueStore {
     // 서로 다른 물건이다. (IssuePaths 는 또 다른 것 — 그쪽은 goal-NN 폴더 155 개의 목표 저장소이고
     // 이 기능과 아무 상관이 없다. 건드리지 않는다.)
     static let defaultRootPath =
-        "/Users/lioncho/Work/lion_work/organization/lion/lion-work-queue"
+        "/Users/lioncho/Work/lion_work/queue"
 
-    // 환경변수로 덮어쓸 수 있게 한다. 격리 인스턴스에서 시험할 때 실제 큐를 건드리지 않기 위한 것이다.
+    // 사용자가 UI에서 지정한 큐 폴더 (Settings.shared.queueFolder)를 우선 사용.
+    // 없으면 환경변수, 그 다음이 defaultRootPath.
     static var root: URL {
+        if let explicit = Settings.shared.queueFolder, !explicit.isEmpty {
+            return URL(fileURLWithPath: explicit, isDirectory: true)
+        }
         let env = (ProcessInfo.processInfo.environment["CM_WORK_QUEUE_DIR"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let p = env.isEmpty ? defaultRootPath : (env as NSString).expandingTildeInPath
         return URL(fileURLWithPath: p, isDirectory: true)
     }
 
+    // 설정된 큐 폴더를 문자열로 가져온다.
+    static var currentRootPath: String {
+        root.path
+    }
+
+    // 워크스페이스 루트의 기본 상수.
+    //
+    // `defaultRootPath`(큐 폴더) 와 나란히 두되 **그 문자열을 잘라서 만들지 않는다.** 자르는
+    // 순간 "큐가 루트를 정한다" 는 의존이 되살아나고, 그 의존이야말로 이 자리에서 끊는 것이다.
+    // 큐 기본값이 다시 옮겨져도 이 값은 안 움직여야 한다.
+    static let defaultLionWorkRootPath =
+        "/Users/lioncho/Work/lion_work"
+
     // `organization/...` 로 시작하는 산출물 값이 기준으로 삼는 워크스페이스 루트.
     //
-    // ASSUMPTION (L1, 갈래를 스스로 골랐다): 상수로 못박지 않고 큐 폴더 경로에서 되짚는다.
-    // 큐는 `<lion_work>/organization/lion/lion-work-queue` 에 살므로 `/organization/` 앞이 곧
-    // 루트다. 상수로 두면 CM_WORK_QUEUE_DIR 로 격리해 시험할 때 산출물만 실제 디스크를 가리켜
-    // 두 원천이 갈린다. `/organization/` 이 없는 경로(임의 격리 폴더)면 그 폴더 자신을 루트로
-    // 본다 — 그래야 픽스처 안에서 상대경로가 픽스처 안으로 풀린다.
+    // ── 2026-09-07: 앞선 판의 ASSUMPTION 을 의식적으로 되돌린다 ──────────────────────
+    //
+    // 물러난 가정은 이것이었다 — "상수로 못박지 않고 큐 폴더 경로에서 되짚는다. `/organization/`
+    // 앞이 곧 루트이고, `/organization/` 이 없는 경로(임의 격리 폴더)면 **그 폴더 자신을 루트로
+    // 본다**." 즉 큐 경로가 루트의 **출처**였다. 이제 큐 경로는 루트를 **찾는 힌트**일 뿐이고
+    // 루트가 되지는 않는다.
+    //
+    // 되돌리는 근거 둘.
+    //
+    // 1. 되짚기의 전제가 죽었다. 큐가 `<lion_work>/organization/lion/lion-work-queue` 에서
+    //    `<lion_work>/queue` 로 옮겨졌고 옛 경로는 디스크에 없다. 새 경로에는 `/organization/`
+    //    조각이 없으므로 되짚기가 실패해 마지막 갈래로 떨어졌고, 그러면 루트가 **큐 폴더 자신**이
+    //    됐다. 그 값이 `organization/...` 산출물 경로와 Orca 세션 작업 폴더의 기준이라 카드
+    //    166 장 중 67 장(40%)의 링크가 `.../lion_work/queue/organization/...` — 없는 경로 — 로
+    //    풀렸다. 옛 가정이 지키려던 것(픽스처 안에서 상대경로가 픽스처 안으로 풀리는 것)은
+    //    `organization/` 을 가진 픽스처라면 아래 2 단계가 그대로 잡는다. 잃는 것은
+    //    `organization/` 이 **없는** 픽스처뿐이고 그 경우는 `CM_LION_WORK_DIR` 하나로 해결된다.
+    //
+    // 2. 실측 — `CM_WORK_QUEUE_DIR` 를 설정하는 **자동 러너가 하나도 없다**(`.e2e/package.json`
+    //    과 `scripts/` 전수 확인). 옛 폴백이 지키던 상황은 오늘 아무도 밟지 않는다. 반대로
+    //    2026-09-07 에 큐 폴더 선택기가 실려서 `Settings.shared.queueFolder` 가 `root` 의
+    //    최우선 출처가 됐다 — 사용자가 아무 폴더나 고르면 워크스페이스 루트가 **그 폴더를
+    //    따라간다.** 안 터진 것이 아니라 클릭 한 번 거리였다.
+    //
+    // ── 지금의 출처 순서 ────────────────────────────────────────────────────────────
+    //
+    // 1. `CM_LION_WORK_DIR` 환경변수. 예전과 똑같고 여전히 전부를 이긴다.
+    // 2. 큐 경로에서 **위로 올라가며**(큐 폴더 자신부터) `organization/` 하위 디렉터리를
+    //    **디스크에 실제로 가진** 첫 조상. 이 한 규칙이 옛 배치(`<root>/organization/lion/
+    //    lion-work-queue` → `<root>`)와 새 배치(`<root>/queue` → `<root>`)를 둘 다 맞춘다.
+    //    깊이를 몰라도 되고, `/` 에 닿으면 멈춘다.
+    // 3. 못 찾으면 `defaultLionWorkRootPath`. **큐 폴더 자신으로 떨어지지 않는다** — 힌트가
+    //    아무것도 못 찾았을 때 루트가 움직이지 않는다는 것이 "루트가 자기를 소유한다" 의
+    //    코드 표현이고, 이 3 단계가 곧 소유 판정 그 자체다.
+    //
+    // ASSUMPTION (L1, 갈래를 스스로 골랐다): "`organization/` 하위 디렉터리가 워크스페이스
+    // 루트의 표식이다" 는 이 맥의 배치 규약에서 온 **설계 가설**이지 영구 사실이 아니다. 규약이
+    // 바뀌면 표식도 바뀌고, 그때 고칠 자리는 2 단계 하나다.
     static var lionWorkRoot: URL {
         let env = (ProcessInfo.processInfo.environment["CM_LION_WORK_DIR"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if !env.isEmpty {
             return URL(fileURLWithPath: (env as NSString).expandingTildeInPath, isDirectory: true)
         }
-        let p = root.path
-        if let r = p.range(of: "/organization/") {
-            return URL(fileURLWithPath: String(p[..<r.lowerBound]), isDirectory: true)
+        return URL(fileURLWithPath: memoizedLionWorkRootPath(forQueuePath: root.path),
+                   isDirectory: true)
+    }
+
+    // 2 단계가 파일시스템을 만지므로 캐시한다. `resolve()` 는 카드마다 포인터마다 불리고
+    // (2026-09-07 실측 166 장), 매번 조상들을 stat 하면 그만큼이 낭비다.
+    //
+    // **`static let` 한 번 계산은 안 된다.** 사용자가 도는 중에 선택기로 큐 폴더를 바꿀 수 있고
+    // (`Settings.shared.queueFolder`), 그러면 한 번 굳은 값이 남은 세션 내내 틀린 채로 산다.
+    // 그래서 **큐 경로를 키로** 들고 있다가 키가 같을 때만 재사용한다.
+    private static let lionWorkRootLock = NSLock()
+    private static var lionWorkRootCacheKey: String?
+    private static var lionWorkRootCacheValue: String?
+
+    private static func memoizedLionWorkRootPath(forQueuePath queuePath: String) -> String {
+        lionWorkRootLock.lock()
+        defer { lionWorkRootLock.unlock() }
+        if lionWorkRootCacheKey == queuePath, let hit = lionWorkRootCacheValue { return hit }
+        let value = resolveLionWorkRootPath(forQueuePath: queuePath)
+        lionWorkRootCacheKey = queuePath
+        lionWorkRootCacheValue = value
+        return value
+    }
+
+    // 위의 2·3 단계. 순수 함수라 단위 시험이 디스크만 있으면 그대로 부를 수 있다 —
+    // `Settings` 를 건드리지 않고 이 판정 자체를 실행해 볼 수 있어야 한다.
+    static func resolveLionWorkRootPath(forQueuePath queuePath: String) -> String {
+        let fm = FileManager.default
+        var dir = queuePath
+        while dir.count > 1 && dir.hasSuffix("/") { dir.removeLast() }
+        if dir.isEmpty { return defaultLionWorkRootPath }
+        while true {
+            var isDir: ObjCBool = false
+            let marker = (dir as NSString).appendingPathComponent("organization")
+            if fm.fileExists(atPath: marker, isDirectory: &isDir), isDir.boolValue {
+                return dir
+            }
+            let parent = (dir as NSString).deletingLastPathComponent
+            // `/` 의 부모는 `/` 다. 여기서 안 끊으면 무한 루프다.
+            if parent.isEmpty || parent == dir { break }
+            dir = parent
         }
-        return root
+        return defaultLionWorkRootPath
     }
 
     // MARK: - 버킷

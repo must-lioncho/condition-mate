@@ -40,6 +40,7 @@ final class Settings {
         static let conditionMate  = "cm.conditionMate"
         static let skillsRoot     = "cm.skillsRoot"
         static let issueFolder    = "cm.issueFolder"
+        static let queueFolder    = "cm.queueFolder"
         static let bgmWindow      = "cm.bgmWindowEnabled"
         static let timeZone       = "cm.timeZone"
         static let timeZoneKSTMigrated = "cm.timeZoneKSTMigrated"
@@ -174,6 +175,12 @@ final class Settings {
     var issueFolder: String? {
         get { string(K.issueFolder) }
         set { set(newValue, K.issueFolder) }
+    }
+    
+    // Explicit queue folder choice, or nil if none.
+    var queueFolder: String? {
+        get { string(K.queueFolder) }
+        set { set(newValue, K.queueFolder) }
     }
 
     var trackedApps: [String] {

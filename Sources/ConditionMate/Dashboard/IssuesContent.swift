@@ -482,7 +482,12 @@ enum IssuesContent {
             if(!D.rootExists){
               notes += '<div class="note bad"><div class="t">큐 폴더를 못 찾았다</div>'
                 + '찾아본 경로 <code>'+esc(D.root)+'</code> 가 없다. 목록이 비어 있는 것이 아니라 <b>읽지 못한 것</b>이다.'
-                + (D.envOverride?' (환경변수 <code>CM_WORK_QUEUE_DIR</code> 로 덮어쓴 경로다.)':'')+'</div>';
+                + (D.envOverride?' (환경변수 <code>CM_WORK_QUEUE_DIR</code> 로 덮어쓴 경로다.)':'')
+                // 실패를 보는 자리에서 바로 고칠 수 있게 한다. 같은 버튼이 조건 레일 설정
+                // 패널에도 있지만, 라이언이 못 찾았다는 것을 보는 자리는 여기다 — 여기서
+                // 저기까지 가는 길을 아는 것이 고치는 것보다 어렵다.
+                + '<div style="margin-top:8px"><button class="open" onclick="isPickQueueFolder(this)">'
+                + '폴더 변경</button></div></div>';
             }
             if((bb['미분류']||0)>0){
               notes += '<div class="note"><div class="t">모르는 상태값이 있다</div>'
@@ -745,6 +750,22 @@ enum IssuesContent {
           window.isRevealEl=function(btn){
             var p=(btn&&btn.getAttribute)?btn.getAttribute('data-p'):'';
             if(p) isReveal(btn,p);
+          };
+
+          // 큐 폴더 변경 — 네이티브 폴더 선택기를 연다 (조건 레일의 cmCondPickQueueFolder 와
+          // 같은 엔드포인트다). 취소해도 같은 payload 가 돌아오므로 응답 내용을 보지 않고
+          // 목록을 다시 읽는 것으로 충분하다: 골랐으면 새 폴더가 그려지고, 취소했으면 못
+          // 찾았다는 상자가 그대로 다시 그려진다.
+          //
+          // ASSUMPTION (L1, 갈래를 스스로 골랐다): 고른 뒤에 페이지를 통째로 새로고침하지
+          // 않고 isLoad() 하나만 부른다. 이 화면이 큐 폴더에서 읽는 것은 /api/issues 뿐이라
+          // 그 한 번으로 상자·숫자·목록이 다 새 폴더 것이 된다.
+          window.isPickQueueFolder=function(btn){
+            btn.textContent='고르는 중…'; btn.disabled=true;
+            fetch('/api/settings/queue-folder/pick',{method:'POST',
+              headers:{'Content-Type':'application/json'},body:'{}'})
+              .then(function(){ isLoad(); })
+              .catch(function(){ btn.textContent='바꾸지 못했다'; btn.disabled=false; });
           };
 
           // Orca 로 열기. 서버로 나가는 것은 카드 키 하나뿐이다 — 작업 폴더도 창 제목도

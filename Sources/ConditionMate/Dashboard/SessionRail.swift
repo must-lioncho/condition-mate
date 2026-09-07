@@ -1269,6 +1269,24 @@ enum SessionRail {
                   h += '<div class="tip" style="margin:2px 0 0">지금 기준 → '+esc(p.issueDefault)+'</div>';
                 return h;
               }
+              // 큐 폴더 — CM_WORK_QUEUE_DIR 환경변수나 defaultRootPath를 대체하는 UI 지정 폴더.
+              function queueRow(){
+                var isDef = !!p.queueIsDefault, pth = p.queue || '';
+                var h = '<div class="cmcond-path"'
+                  + (isDef ? ' style="cursor:default" onclick="event.stopPropagation()"'
+                           : ' onclick="cmCondCopyPath(event,this)" data-p="'+esc(pth)+'" title="'+('클릭하여 복사: '+esc(pth))+'"')
+                  + '>'
+                  + '<span class="k">큐 폴더</span>'
+                  + (isDef ? '<span class="v unset">기본값 (환경변수 또는 소스코드 내 하드코딩)</span>'
+                           : '<span class="v">&lrm;'+esc(pth)+'</span>')
+                  + (isDef ? '' : '<button class="go" onclick="cmCondReveal(event,\'queue\')" title="Finder에서 열기">↗</button>')
+                  + '<button class="go" onclick="cmCondPickQueueFolder(event)" title="큐 폴더를 선택합니다">변경</button>'
+                  + (isDef ? '' : '<button class="go" onclick="cmCondResetQueueFolder(event)" title="기본값으로 되돌립니다">기본값</button>')
+                  + '</div>';
+                if(isDef && p.queueDefault)
+                  h += '<div class="tip" style="margin:2px 0 0">지금 기준 → '+esc(p.queueDefault)+'</div>';
+                return h;
+              }
               // 표시 타임존 선택 — 저장·기준은 항상 UTC(epoch), 화면 표기만 이 tz를 따른다.
               // 선택 즉시 서버에 저장하고 새로고침해 페이지 전체(레일·본문)가 새 tz로 그려진다.
               function tzRow(){
@@ -1360,6 +1378,7 @@ enum SessionRail {
                 + row('bgm','BGM 음원',p.bgm)
                 + row('claude','Claude 세션',p.claude)
                 + issueRow()
+                + queueRow()
                 + tzRow()
                 + dbgRow()
                 + gwRows()
@@ -1368,6 +1387,16 @@ enum SessionRail {
               // (이후에는 서버가 기억한 결과를 그대로 보여주고, '다시 확인'이 갱신한다.)
               if(gw && !gw.state && !window.cmCondGwBusy) cmCondGwTest(null);
             }).catch(function(){ box.innerHTML='<div class="tip">경로를 불러오지 못했습니다</div>'; });
+          };
+          // 큐 폴더 변경
+          window.cmCondPickQueueFolder=function(ev){ if(ev) ev.stopPropagation();
+            fetch('/api/settings/queue-folder/pick',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+              .then(function(){ cmCondSettings(); cmCondSettings(); }).catch(function(){});
+          };
+          window.cmCondResetQueueFolder=function(ev){ if(ev) ev.stopPropagation();
+            fetch('/api/settings/queue-folder',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({folder:''})}).then(function(){ cmCondSettings(); cmCondSettings(); })
+              .catch(function(){});
           };
           // 이슈 폴더 변경 — 네이티브 폴더 선택기를 연다. 취소해도 같은 payload 가 돌아오므로
           // 패널을 다시 그리는 것만으로 충분하다 (설정 토글과 같은 닫고-열기 방식).

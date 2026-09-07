@@ -3830,12 +3830,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 설정 row can show a concrete example of the default instead of only describing it.
         let issueOverride = IssueFolder.override?.path ?? ""
         let issueDefault = IssueFolder.defaultRoot(cwd: latestAgentCwd()).path
+        let queueOverride = Settings.shared.queueFolder ?? ""
+        let queueDefault = WorkQueueStore.defaultRootPath
+        let queueIsDefault = Settings.shared.queueFolder == nil
         return "{\"data\":\(jsonString(dataDir)),\"bgm\":\(jsonString(bgm)),"
             + "\"claude\":\(jsonString(claude)),\"shared\":\(!AppPaths.isCustom),"
             + "\"issue\":\(jsonString(issueOverride)),"
             + "\"issueDefault\":\(jsonString(issueDefault)),"
             + "\"issueIsDefault\":\(IssueFolder.isDefault),"
             + "\"issueLabel\":\(jsonString(IssueFolder.displayLabel)),"
+            + "\"queue\":\(jsonString(queueOverride)),"
+            + "\"queueDefault\":\(jsonString(queueDefault)),"
+            + "\"queueIsDefault\":\(queueIsDefault),"
             + "\"dev\":\(AppPaths.isDev)}"
     }
 
@@ -3859,10 +3865,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         IssueFolder.setOverride(folder)
         return settingsPathsJSON()
     }
+    
+    // Set (or reset) the explicit Queue folder. Blank resets to default (env or hardcoded).
+    func setQueueFolder(folder: String) -> String {
+        Settings.shared.queueFolder = folder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : folder
+        return settingsPathsJSON()
+    }
 
-    // Native folder picker for the issue folder. Runs modally on main — a direct user
-    // action, so the brief block is fine (same shape as pickSkillsFolder). Cancelling
-    // changes nothing; the payload comes back either way so the panel can just re-render.
     func pickIssueFolder() -> String {
         var chosen: String?
         DispatchQueue.main.sync {
@@ -3878,6 +3887,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if panel.runModal() == .OK, let url = panel.url { chosen = url.path }
         }
         if let c = chosen { IssueFolder.setOverride(c) }
+        return settingsPathsJSON()
+    }
+
+    // Opens a native folder picker for the Queue folder.
+    func pickQueueFolder() -> String {
+        var chosen: String?
+        DispatchQueue.main.sync {
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.canCreateDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.prompt = "선택"
+            panel.message = "큐 폴더를 선택하세요"
+            panel.directoryURL = WorkQueueStore.root
+            if panel.runModal() == .OK, let url = panel.url { chosen = url.path }
+        }
+        if let c = chosen { Settings.shared.queueFolder = c }
         return settingsPathsJSON()
     }
 
@@ -7333,6 +7360,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // default the issue folder has no single location — it is whatever the
                 // next session's cwd is — so there is nothing honest to open.
                 url = IssueFolder.override
+            case "queue":
+                // 이슈 폴더와 같은 규칙이다 — UI 에서 고른 폴더(override)만 연다. 기본값일 때는
+                // 레일이 ↗ 를 아예 그리지 않으므로(SessionRail.queueRow) 여기서 볼 것은
+                // Settings 의 override 하나뿐이고, 환경변수/하드코딩 기본값은 보지 않는다.
+                url = Settings.shared.queueFolder.flatMap {
+                    $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true)
+                }
             default:
                 url = nil
             }
@@ -7629,6 +7663,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if path == "/api/settings/issue-folder/pick" {
             return pickIssueFolder()
+        }
+        if path == "/api/settings/queue-folder" {
+            return setQueueFolder(folder: (obj["folder"] as? String) ?? "")
+        }
+        if path == "/api/settings/queue-folder/pick" {
+            return pickQueueFolder()
         }
         // Native folder picker for the 목표 추가 composer's 작업 폴더 (찾기 button). Modal on
         // main like pickSkillsFolder — a direct user action, so the brief block is fine.

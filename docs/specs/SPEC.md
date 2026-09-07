@@ -2199,3 +2199,82 @@ KO: 이번 회차에서 테스트 가능한 행동 관점에서 모호한 새 �
   이 절은 `transcriptJSON` **앞**에 둔다. 처음에 뒤에 뒀더니 이 절의 `subagents/*.jsonl` 이
   그 조각에 들어가 그 판정이 1 FAIL 로 거짓이 됐다 — 하네스를 고치지 않고 자리를 옮겨서 풀었다.
   카드 파일과 `lion-work-queue/` 아래에는 한 바이트도 안 썼다.
+
+- **DASH-15 — 워크스페이스 루트는 큐 폴더를 따라가지 않는다.**
+  EN: The workspace root that `organization/...` artifact values and the Orca launcher resolve
+  against is found by walking UP from the queue folder to the first ancestor that actually has an
+  `organization/` directory on disk, and when no such ancestor exists it falls back to its OWN
+  constant — never to the queue folder itself. `CM_LION_WORK_DIR` still beats everything. The
+  queue path is a HINT for finding the root, not the root's source: picking an arbitrary folder in
+  큐 폴더 변경 changes where cards are read from and nothing else.
+  KO: 산출물 `organization/...` 값과 Orca 작업 폴더가 기준으로 삼는 워크스페이스 루트는, 큐
+  폴더에서 **위로 올라가며** `organization/` 하위 디렉터리를 디스크에 실제로 가진 첫 조상이다.
+  그런 조상이 없으면 **자기 상수**로 떨어지고 큐 폴더 자신이 되지 않는다. `CM_LION_WORK_DIR` 는
+  여전히 전부를 이긴다. 큐 경로는 루트를 **찾는 힌트**이지 루트의 출처가 아니다 — 큐 폴더
+  변경으로 아무 폴더나 골라도 바뀌는 것은 카드를 어디서 읽는가뿐이다.
+  이 항목이 보장하는 넷과 각각의 `Verify:` —
+  1. 큐 폴더가 어디든 루트는 `organization/` 트리를 가진 자리를 가리킨다.
+     Verify: `Core/WorkQueueStore.swift:131-148` (`resolveLionWorkRootPath(forQueuePath:)` 의
+     위로-걷기 · `:138` 의 `appendingPathComponent("organization")` + `fileExists(isDirectory:)`).
+     실행 근거는 `tests/RelatedGoalSearchTests/LionWorkRootTests.swift:51`
+     (`<root>/queue`) 과 `:61` (옛 `<root>/organization/lion/lion-work-queue`) 둘 다
+     `/Users/lioncho/Work/lion_work` 를 돌려주는 것.
+  2. 큐 폴더로 임의의 폴더를 골라도 워크스페이스 루트는 따라가지 않는다.
+     Verify: `Core/WorkQueueStore.swift:56-57` (`defaultLionWorkRootPath` 상수) 와 `:147`
+     (걸음이 끝나면 그 상수로 떨어지는 3 단계). 실행 근거는
+     `tests/RelatedGoalSearchTests/LionWorkRootTests.swift:74` — `/tmp/<uuid>` 를 큐로 골라도
+     루트가 `/Users/lioncho/Work/lion_work` 이고 큐 폴더 자신이 아니다.
+  3. `CM_LION_WORK_DIR` 가 전부를 이긴다.
+     Verify: `Core/WorkQueueStore.swift:99-104` (getter 의 **첫** 갈래). 실행 근거는
+     `tests/RelatedGoalSearchTests/LionWorkRootTests.swift:89` — 임의 큐 폴더일 때도, 오늘의
+     `<root>/queue` 일 때도 환경변수 값이 이긴다.
+  4. 라이브 큐 e2e 블록이 **실제로 도는** 경로를 본다.
+     Verify: `.e2e/issues.test.js:646-651` (`QDIR` 이 소스의 `defaultRootPath` 를 그대로 읽고,
+     둘이 다르면 실패한다) 와 `:862` (블록이 건너뛰어지면 그 자체를 실패로 세운다).
+  Mechanism: `Core/WorkQueueStore.swift` (`defaultLionWorkRootPath` · `lionWorkRoot` ·
+  `memoizedLionWorkRootPath(forQueuePath:)` · `resolveLionWorkRootPath(forQueuePath:)`),
+  `.e2e/issues.test.js` (`LWR` 블록의 DASH-15 단언 11 개 + 라이브 큐 블록),
+  `tests/RelatedGoalSearchTests/LionWorkRootTests.swift` (8 개).
+  성능: 2 단계가 파일시스템을 만지므로 **큐 경로를 키로 메모**한다(`:116-127`). `resolve()` 는
+  카드마다 포인터마다 불린다(2026-09-07 실측 167 장). `static let` 한 번 계산은 안 된다 —
+  사용자가 도는 중에 선택기로 큐 폴더를 바꾸면 굳은 값이 남은 세션 내내 틀린 채로 산다.
+  Why: 2026-09-07. 큐가 `<lion_work>/organization/lion/lion-work-queue` 에서 `<lion_work>/queue`
+  로 옮겨졌고 옛 경로는 디스크에 없다. 그런데 앞선 판은 루트를 큐 **경로 문자열**에서 되짚어
+  만들었다 — `/organization/` 앞을 자르고, 그 조각이 없으면 큐 폴더 자신을 루트로 봤다. 새
+  경로에는 그 조각이 없으므로 되짚기가 실패해 루트가 큐 폴더가 됐고, `organization/...` 상대
+  산출물 값이 `.../lion_work/queue/organization/...` — 없는 경로 — 로 풀렸다. PO 실측(지시서)은
+  카드 **166 장 중 67 장(40%)** 이 그런 상대값을 들고 있다고 셌고, 2026-09-07 e2e 실측은 카드
+  167 장 중 **47 장**이 산출물 포인터를 여섯 키 중 하나로 들고 있다고 센다 — 두 숫자는 다른
+  것을 센 것이고, 여기서 중요한 것은 그 링크들이 전부 죽어 있었다는 사실이다. 같은 날 실린 큐 폴더 선택기가 `Settings.shared.queueFolder` 를
+  `root` 의 최우선 출처로 만들어서, 사용자가 아무 폴더나 고르면 Orca 세션 작업 폴더까지 그
+  폴더를 따라가는 상태였다. 안 터진 것이 아니라 클릭 한 번 거리였다.
+  ASSUMPTION (L1, 갈래를 스스로 골랐다 · **미검증 전제**): "`organization/` 하위 디렉터리가
+  워크스페이스 루트의 표식이다" 는 **이 맥의 배치 규약에서 온 설계 가설이지 영구 사실이 아니다.**
+  규약이 바뀌면 표식도 바뀐다. 오늘 그 규약은 `lion_work/organization/<조직>/...` 이고 표식이
+  루트 바로 밑에 있다. 규약이 바뀌면 고칠 자리는 `resolveLionWorkRootPath` 의 걷기 한 곳이다.
+  되돌린 가정: 앞선 판의 `ASSUMPTION` 은 "상수로 못박지 않고 큐 경로에서 되짚는다 …
+  `/organization/` 이 없으면 그 폴더 자신을 루트로 본다" 였다. 되돌리는 근거 둘 — (1)
+  `organization/` 을 가진 픽스처는 2 단계가 그대로 잡으므로 잃는 것은 `organization/` 이 **없는**
+  픽스처뿐이고 그것은 `CM_LION_WORK_DIR` 하나로 해결된다. (2) 실측 — `CM_WORK_QUEUE_DIR` 를
+  설정하는 **자동 러너가 하나도 없다**(`.e2e/package.json` 과 `scripts/` 전수 확인). 옛 폴백이
+  지키던 상황은 오늘 아무도 밟지 않는다.
+  Verified: 2026-09-07 실측. `swift build` 통과(0 error). 단위 시험
+  `scripts/run-unit-tests.sh` **39 tests in 5 suites passed** (LionWorkRootTests 8 개 포함).
+  `.e2e/issues.test.js` **219 PASS 0 FAIL** 이고 라이브 큐 블록이 **실제로 돌았다** —
+  `live: total=167` · `47 reading all six keys` 가 출력에 있다. 고치기 전에는 이 블록이
+  통째로 건너뛰어지고 있었다: `QDIR` 폴백이 죽은 경로
+  `/Users/lioncho/Work/lion_work/organization/lion/lion-work-queue` 였고 바로 아래
+  `fs.existsSync` 가 거짓이 되어, **이 결함을 잡았어야 할 게이트가 스스로 꺼져 있었다.**
+  게이트가 진짜로 도는지는 **일부러 깨뜨려서** 확인했다 — (a) `lionWorkRoot` 에 큐 폴더로
+  떨어지는 갈래를 도로 넣으니 1 FAIL, (b) `defaultRootPath` 를 옛 경로로 되돌리니 3 FAIL 이고
+  그중 하나가 "라이브 블록이 안 돌았다" 자신이며, (c) 루트 상수를 큐 기본값에서 잘라 만드니
+  3 FAIL. (d) 단위 시험 쪽도 3 단계를 큐 폴더로 되돌려 5 issues 로 지는 것을 봤다. 넷 다
+  되돌린 뒤 다시 219 PASS 0 FAIL · 39 tests passed 다.
+  단위 시험은 `CM_DATA_DIR` 로 격리한 임시 store 에서만 돈다(`scripts/run-unit-tests.sh`).
+  `Settings` 는 UserDefaults 가 아니라 `<data>/settings.json` 에 진짜로 쓰므로, 도는 앱과 시험이
+  같은 파일에 붙으면 서로의 키를 덮어쓴다 — 이날 `cm.queueFolder` 가 한 번 그렇게 날아갔고
+  앱의 `/api/settings/queue-folder` 로 되돌려 놓았다. `.claude/settings.local.json` 이
+  `CM_DATA_DIR=~/.condition-mate` 를 넣어 두므로 "설정돼 있다" 가 곧 "격리돼 있다" 가 아니고,
+  러너가 `AppPaths.isCustom` 과 같은 규칙으로 경로를 비교해 판정한다.
+  앱을 다시 빌드해 `/Applications` 에 넣지 않았고, 커밋하지 않았고, `AppDelegate.swift` ·
+  `IssuesContent.swift` · `SessionRail.swift` 는 한 줄도 안 건드렸다 — 병렬 `FAST` 자식 소유다.

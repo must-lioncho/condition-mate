@@ -122,9 +122,14 @@ const posts = [...IC.matchAll(/fetch\('([^']+)'\s*,\s*\{method:'POST'/g)].map((m
 // .md that passed workQueueMarkdownPath — allowlist + .md + real file — so it still cannot
 // reach the queue folder's own cards except the card file the allowlist already names.
 // The transcript popup added no entry here on purpose: it is a GET and has no write path.
+// Updated 2026-09-07: /api/settings/queue-folder/pick joined the list with the 큐 폴더 변경
+// button. It opens a native NSOpenPanel and writes Settings.shared.queueFolder — the app's own
+// settings.json under AppPaths.base — so it still writes nothing into the queue folder, which
+// is the one invariant this closed list exists to protect.
 check('the page POSTs only to the endpoints on this list', posts.slice().sort(),
       ['/api/issues/archive-bulk', '/api/issues/mdsave', '/api/issues/orca',
-       '/api/issues/reveal', '/api/issues/search'].sort());
+       '/api/issues/reveal', '/api/issues/search',
+       '/api/settings/queue-folder/pick'].sort());
 check('the transcript popup added no POST target',
       /fetch\('\/api\/issues\/transcript[^']*'\s*,\s*\{method:'POST'/.test(IC), false);
 // archive/unarchive go through one helper, so their URLs are arguments rather than literals.
@@ -589,10 +594,89 @@ check('the allowlist guard still precedes BOTH Finder calls',
 // Nothing below hardcodes a card count. The queue grew 83 → 85 while this feature was
 // built; the assertions are relations between numbers computed in this same run.
 
+// ── the workspace root owns itself — DASH-15 ─────────────────────────────────
+// Read out of the Swift source the same way the bucket table is: these are the three
+// properties that stop `lionWorkRoot` from following the queue folder around, and the
+// 2026-09-07 defect is precisely that nothing was watching them.
+const LWR = WQ.slice(WQ.indexOf('static let defaultLionWorkRootPath'),
+                     WQ.indexOf('// MARK: - 버킷'));
+check('DASH-15: the lionWorkRoot block was found in the source', LWR.length > 0, true);
+// 1. CM_LION_WORK_DIR is still read FIRST, before anything derived from the queue path.
+check('DASH-15: CM_LION_WORK_DIR is still lionWorkRoot\'s first source',
+      /static var lionWorkRoot: URL \{\s*\n\s*let env = \(ProcessInfo\.processInfo\.environment\["CM_LION_WORK_DIR"\]/
+        .test(LWR), true);
+// 2. THE BODY OF THE P3 DEFENSE: no branch falls back to the queue folder itself. That
+//    single `return root` is what made an arbitrary picked folder become the workspace
+//    root, and what made 67 of 166 cards resolve their outputs into a path that is not
+//    on disk. Comments in this block deliberately avoid the literal so this stays exact.
+check('DASH-15: lionWorkRoot never falls back to the queue folder itself',
+      /\breturn root\b/.test(LWR), false);
+// 3. The workspace-root default is its own constant, not a slice of the queue default.
+check('DASH-15: the workspace root has its own constant',
+      /static let defaultLionWorkRootPath\s*=\s*\n?\s*"\/Users\/lioncho\/Work\/lion_work"/
+        .test(LWR), true);
+check('DASH-15: that constant is not carved out of the queue default',
+      /defaultLionWorkRootPath\s*=[^\n]*defaultRootPath/.test(LWR), false);
+// 4. Step 2 walks up asking the DISK, not the string. A string test is what broke.
+check('DASH-15: step 2 asks the filesystem for an `organization` directory',
+      /appendingPathComponent\("organization"\)/.test(LWR)
+        && /fileExists\(atPath: marker, isDirectory: &isDir\)/.test(LWR), true);
+check('DASH-15: the walk stops at `/` instead of looping forever',
+      /if parent\.isEmpty \|\| parent == dir \{ break \}/.test(LWR), true);
+// 5. Memoized on the queue path — NOT a one-shot `static let`, because the user can pick a
+//    different queue folder while the app is running and a frozen value would outlive it.
+check('DASH-15: the memo key IS the queue path',
+      /if lionWorkRootCacheKey == queuePath, let hit = lionWorkRootCacheValue \{ return hit \}/
+        .test(LWR), true);
+check('DASH-15: the memoized value is a var that can be recomputed',
+      /private static var lionWorkRootCacheValue: String\?/.test(LWR), true);
+check('DASH-15: the memoized value is NOT a one-shot `static let`',
+      /static let lionWorkRootCache/.test(LWR), false);
+
 // ── live queue, when it is on this machine ───────────────────────────────────
 // Invariants only. The totals move: this queue is written by other sessions.
-const QDIR = process.env.CM_WORK_QUEUE_DIR
-  || '/Users/lioncho/Work/lion_work/organization/lion/lion-work-queue';
+//
+// 2026-09-07 — THIS GATE WAS DARK. The fallback below used to be
+// `/Users/lioncho/Work/lion_work/organization/lion/lion-work-queue`, which has not existed
+// since the queue moved. The `fs.existsSync` guard right underneath then went false and the
+// ENTIRE live block was skipped in silence — the one gate that would have caught the
+// lionWorkRoot defect had switched itself off. So the fallback is now pinned to the Swift
+// source's own default and asserted to match: if the default moves again, the check below
+// fails loudly instead of the block going quiet.
+const WQ_DEFAULT_ROOT = (WQ.match(/static let defaultRootPath\s*=\s*\n?\s*"([^"]+)"/) || [, ''])[1];
+const QDIR = process.env.CM_WORK_QUEUE_DIR || WQ_DEFAULT_ROOT;
+check('DASH-15: the e2e queue fallback IS WorkQueueStore.defaultRootPath',
+      WQ_DEFAULT_ROOT, '/Users/lioncho/Work/lion_work/queue');
+check('DASH-15: the live-queue guard is pointed at a folder that exists',
+      fs.existsSync(path.join(QDIR, 'inbox')) && fs.existsSync(path.join(QDIR, 'done')), true);
+
+// The JS mirror of `WorkQueueStore.lionWorkRoot` steps 2 and 3. The old one-liner
+// (`QDIR.slice(0, QDIR.indexOf('/organization/'))`, else QDIR) was the same broken rule the
+// product had — with the queue at `<root>/queue` it returned the QUEUE FOLDER as the
+// workspace root, so every `organization/...` output resolved one level too deep.
+const LW_DEFAULT = (WQ.match(/static let defaultLionWorkRootPath\s*=\s*\n?\s*"([^"]+)"/) || [, ''])[1];
+check('DASH-15: the JS mirror reads its default from the Swift constant',
+      LW_DEFAULT, '/Users/lioncho/Work/lion_work');
+function lionWorkRootFor(qdir) {
+  if (process.env.CM_LION_WORK_DIR) return process.env.CM_LION_WORK_DIR;   // step 1
+  let dir = qdir.replace(/\/+$/, '') || '/';
+  while (true) {                                                           // step 2
+    let st = null;
+    try { st = fs.statSync(path.join(dir, 'organization')); } catch (e) { st = null; }
+    if (st && st.isDirectory()) return dir;
+    const parent = path.dirname(dir);
+    if (!parent || parent === dir) break;
+    dir = parent;
+  }
+  return LW_DEFAULT;                                                       // step 3
+}
+// The three outcomes DASH-15 promises, run here on real paths.
+check('DASH-15: queue at <root>/queue resolves to the workspace root',
+      lionWorkRootFor('/Users/lioncho/Work/lion_work/queue'), LW_DEFAULT);
+check('DASH-15: the legacy queue path resolves to the same root',
+      lionWorkRootFor('/Users/lioncho/Work/lion_work/organization/lion/lion-work-queue'), LW_DEFAULT);
+check('DASH-15: an arbitrary queue folder does NOT become the root',
+      lionWorkRootFor('/tmp'), LW_DEFAULT);
 const BUCKET_NAME = { bucketDone: '완료', bucketRunning: '도는 중', bucketWaiting: '대기',
                       bucketBlocked: '막힘' };
 if (fs.existsSync(path.join(QDIR, 'inbox')) && fs.existsSync(path.join(QDIR, 'done'))) {
@@ -709,7 +793,7 @@ if (fs.existsSync(path.join(QDIR, 'inbox')) && fs.existsSync(path.join(QDIR, 'do
       const v = l.trim().replace(/^-\s*/, '');
       if (v) items.push(v);
     }
-    const LW = QDIR.includes('/organization/') ? QDIR.slice(0, QDIR.indexOf('/organization/')) : QDIR;
+    const LW = lionWorkRootFor(QDIR);
     const resolved = items.map((v) => path.join(LW, target, v));
     console.log('       live: ' + MPC.slice(5) + ' records ' + items.length
       + ' output(s); on disk: ' + JSON.stringify(resolved.map((p) => fs.existsSync(p))));
@@ -750,7 +834,7 @@ if (fs.existsSync(path.join(QDIR, 'inbox')) && fs.existsSync(path.join(QDIR, 'do
   for (const [rel, { fm }] of Object.entries(cardsByName)) {
     allow.add(path.join(QDIR, rel));
     const target = (fm.match(/^target:\s*(.*)$/m) || [, ''])[1].trim().replace(/^["']|["']$/g, '');
-    const LW = QDIR.includes('/organization/') ? QDIR.slice(0, QDIR.indexOf('/organization/')) : QDIR;
+    const LW = lionWorkRootFor(QDIR);
     for (const line of fm.split('\n')) {
       const v = line.replace(/^\s*-\s*/, '').trim().replace(/^["']|["']$/g, '');
       if (!v || /\s/.test(v.replace(/\s*\([^()]*\)$/, '')) || /^https?:/.test(v)) continue;
@@ -773,7 +857,9 @@ if (fs.existsSync(path.join(QDIR, 'inbox')) && fs.existsSync(path.join(QDIR, 'do
         || fs.existsSync(path.join(QDIR, 'inbox', 'versions.json'))
         || fs.existsSync(path.join(QDIR, 'done', 'versions.json')), false);
 } else {
-  console.log('       live queue not on this machine (' + QDIR + ') — invariant checks skipped');
+  // Not a shrug. A skip here means the gate is dark again — the exact 2026-09-07 failure.
+  console.log('       live queue NOT at ' + QDIR + ' — the live block did not run');
+  check('DASH-15: the live-queue block actually ran (a silent skip is the defect)', false, true);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
