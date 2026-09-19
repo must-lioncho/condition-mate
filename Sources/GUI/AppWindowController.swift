@@ -522,6 +522,13 @@ public final class AppWindowController: NSObject, NSWindowDelegate, WKNavigation
         bgmWebView?.evaluateJavaScript("try{window.__setMute(\(muted))}catch(e){}", completionHandler: nil)
     }
 
+    // 받아쓰기 덕킹을 BGM 웹뷰에 밀어 넣는다. 창이 열려 있으면 소리를 내는 쪽은 네이티브가 아니라
+    // 이 웹뷰이므로 여기까지 와야 실제로 음악이 눌린다. /api/bgm/now 폴(1.5초)로도 전달할 수는
+    // 있지만 그 지연이면 첫 단어를 이미 놓치므로, 뮤트와 같이 곧바로 밀어 넣는다.
+    public func setWebVoiceDuck(_ ducked: Bool) {
+        bgmWebView?.evaluateJavaScript("try{window.__setVoiceDuck(\(ducked))}catch(e){}", completionHandler: nil)
+    }
+
     // Keyboard route to the rail's sidebar button (⌃⌘N): run the page's OWN 3-stage cycle
     // (cmRailToggle) rather than reimplementing it here, so the shortcut and the click can never
     // drift apart. Dashboard webview only — the rail lives there; cycling it while the BGM view is

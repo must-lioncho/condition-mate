@@ -33,7 +33,25 @@ global.$ = id => el(id);
 global.document = { getElementById: id => el(id) };
 global.esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 global.actPad = n => (n < 10 ? '0' + n : '' + n);
-global.CMTimeFilter = { parts: t => { const d = new Date(t); return { y: d.getFullYear(), mo: d.getMonth() + 1, d: d.getDate(), h: d.getHours(), mi: d.getMinutes(), s: d.getSeconds() }; } };
+// CMTimeFilter 스텁. 2026-09-06 에 isoDisp 가 늘었다 — 사이트맵의 `생성 …` 이 저장된 ISO
+// 를 잘라 찍는 대신 표시 타임존으로 변환하게 바뀌었기 때문이다. 스텁이 안 따라가면 제품이
+// 아니라 하네스가 진다. 여기 스텁은 tz 미설정(브라우저 로컬) 갈래만 흉내낸다 — 변환 자체의
+// 판정은 timezone.test.js 가 진짜 모듈을 돌려서 한다.
+global.CMTimeFilter = {
+  parts: t => { const d = new Date(t); return { y: d.getFullYear(), mo: d.getMonth() + 1, d: d.getDate(), h: d.getHours(), mi: d.getMinutes(), s: d.getSeconds() }; },
+  isoDisp: (v, len, sep) => {
+    const s = String(v == null ? '' : v).trim(); if (!s) return '';
+    len = len || 16; sep = (sep === undefined) ? ' ' : sep;
+    if (!/([Zz]|[+-]\d{2}:?\d{2})$/.test(s)) return s.replace('T', sep).slice(0, len);
+    const t = Date.parse(s.replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
+    if (isNaN(t)) return s.replace('T', sep).slice(0, len);
+    const p = global.CMTimeFilter.parts(t), q = n => (n < 10 ? '0' + n : '' + n);
+    const d = p.y + '-' + q(p.mo) + '-' + q(p.d);
+    if (len <= 10) return d;
+    const out = d + sep + q(p.h) + ':' + q(p.mi);
+    return (len >= 19) ? (out + ':' + q(p.s)) : out;
+  }
+};
 global.vtPage = pg => { const p = (pg || '').split('?')[0]; return ({ '/': '대시보드', '/goal': '목표 상세' })[p] || p; };
 
 // Synchronous thenable fetch: GETs resolve to __data (so loadScreens injects the fixture

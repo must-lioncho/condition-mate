@@ -18,6 +18,11 @@ public enum AuthKind: String {
     case cliSession   // 로컬 CLI 로그인 세션 — 키 불필요 (claude 구독)
     case webSession   // 브라우저 로그인 세션 — 키 불필요 (ChatGPT 웹)
     case endpoint     // 로컬 엔드포인트 URL (Ollama 등)
+    // 미리 등록해 둔 OAuth 2.0 (3LO) 앱으로 붙는 것. 앱이 받아 저장하는 키가 아니라
+    // 브라우저 동의를 거쳐 만들어진 자격증명 한 벌(client_id·client_secret·refresh_token)이
+    // 키체인에 이미 앉아 있고, 그것을 쓰는 주체는 앱 밖의 스킬이다. 그래서 화면에
+    // 붙여넣기 칸을 그리지 않고 '연결 확인'만 둔다 — 여기서 받을 값이 없다.
+    case oauthApp
 }
 
 // 비밀이 아닌 부가 입력 칸. 지라는 토큰만으로 아무것도 못 한다 — 어느 사이트의
@@ -28,12 +33,18 @@ public struct CredField {
     public let label: String       // 화면 이름
     public let placeholder: String
     public let required: Bool
+    // 토큰(PAT) 경로에서만 뜻이 있는 칸. 브라우저 승인(OAuth) 인스턴스는 앱이
+    // 자격증명을 들고 있지 않아 이 값으로 할 수 있는 일이 없다 — 그런 모드에선
+    // 칸을 그리지 않는다(빈 칸이 남으면 '뭔가 넣어야 하나'에서 멈춘다).
+    public let tokenOnly: Bool
 
-    public init(key: String, label: String, placeholder: String, required: Bool = true) {
+    public init(key: String, label: String, placeholder: String, required: Bool = true,
+                tokenOnly: Bool = false) {
         self.key = key
         self.label = label
         self.placeholder = placeholder
         self.required = required
+        self.tokenOnly = tokenOnly
     }
 }
 
@@ -43,11 +54,16 @@ public struct MCPSpec {
     public let kind: String        // 런처 스크립트가 아는 종류 ("notion"/"github"/"jira")
     public let namePrefix: String  // MCP 서버 이름 접두어 (cm-github-must)
     public let summary: String     // 카드가 보여줄 한 줄 — 무엇이 등록되는가
+    // 이 서버가 붙는 곳(호스트). 사람이 앱 밖에서 직접 등록한 서버라도 같은 곳에
+    // 붙어 있으면 같은 물건으로 본다 — 이미 도구가 붙어 있는데 화면만 '연동 안 됨'
+    // 이라고 말하면, 사용자는 같은 서버를 하나 더 등록하게 된다. 비우면 안 본다.
+    public let externalHost: String
 
-    public init(kind: String, namePrefix: String, summary: String) {
+    public init(kind: String, namePrefix: String, summary: String, externalHost: String = "") {
         self.kind = kind
         self.namePrefix = namePrefix
         self.summary = summary
+        self.externalHost = externalHost
     }
 }
 
@@ -66,9 +82,18 @@ public struct AuthOption {
     public let mcpKind: String     // 런처 스크립트가 아는 종류
     public let mcpSummary: String  // 무엇이 등록되는가
     public let hint: String        // 방식별 안내 (발급 경로 또는 승인 시점)
+    // 이 방식을 골랐을 때 나중에 물게 되는 값. 발급 경로(hint)와 다른 물건이다 —
+    // hint는 "어떻게 붙이나"이고 이건 "붙이고 나면 무엇이 남나"다.
+    //
+    // 왜 필요한가: 브라우저 승인은 승인한 사람의 권한을 그대로 빌린다. 그래서 이
+    // 방식으로 붙인 연동이 남기는 흔적(코멘트·편집)은 앱 이름이 아니라 그 사람
+    // 이름으로 남는다. 계정을 여럿이 나눠 쓰면 그 사실이 사고가 된다 — 누가 한
+    // 일인지 구분되지 않고, 한 사람이 붙이면 나머지 전원에게 그대로 보인다.
+    // 붙이기 전에 읽어야 뜻이 있으므로 방식 옆에 둔다.
+    public let caution: String
 
     public init(id: String, name: String, desc: String, needsToken: Bool,
-                mcpKind: String, mcpSummary: String, hint: String) {
+                mcpKind: String, mcpSummary: String, hint: String, caution: String = "") {
         self.id = id
         self.name = name
         self.desc = desc
@@ -76,6 +101,7 @@ public struct AuthOption {
         self.mcpKind = mcpKind
         self.mcpSummary = mcpSummary
         self.hint = hint
+        self.caution = caution
     }
 }
 
@@ -94,6 +120,11 @@ public struct Credential {
     // 여러 개를 이름 붙여 등록할 수 있는가 — 깃허브 개인/조직별 토큰, 노션 워크스페이스,
     // 지라 사이트. false면 예전과 똑같이 항목 하나뿐이고 키체인 service도 그대로다.
     public let multi: Bool
+    // multi 인스턴스 배관(등록·MCP 스위치·프로브)은 그대로 쓰되, 화면에서는 이름을
+    // 묻지 않고 슬롯을 하나로 고정한다 — "여러 개를 이름 붙여 등록"이 아니라
+    // 그냥 토큰 하나. IntegrationInstances에는 고정 키("token")로 인스턴스 하나만
+    // 만들어진다. multi가 false면 뜻이 없다.
+    public let singleInstance: Bool
     public let fields: [CredField] // 비밀이 아닌 추가 입력 칸
     public let mcp: MCPSpec?       // 이 자격증명으로 등록할 MCP 서버 (없으면 nil)
     // 인증 경로가 둘 이상이면 여기 적는다. 비우면 예전과 똑같다 — 토큰 한 갈래.
@@ -102,8 +133,8 @@ public struct Credential {
     public init(id: String, name: String, provider: String, kind: AuthKind,
                 service: String, account: String, role: String, placeholder: String,
                 valuePrefixes: [String] = [], issueURL: String, issueHint: String,
-                multi: Bool = false, fields: [CredField] = [], mcp: MCPSpec? = nil,
-                authOptions: [AuthOption] = []) {
+                multi: Bool = false, singleInstance: Bool = false, fields: [CredField] = [],
+                mcp: MCPSpec? = nil, authOptions: [AuthOption] = []) {
         self.id = id
         self.name = name
         self.provider = provider
@@ -116,6 +147,7 @@ public struct Credential {
         self.issueURL = issueURL
         self.issueHint = issueHint
         self.multi = multi
+        self.singleInstance = singleInstance
         self.fields = fields
         self.mcp = mcp
         self.authOptions = authOptions
@@ -135,22 +167,32 @@ public struct Credential {
     }
 }
 
-// 제공자 = 화면의 한 카드. 어느 섹션에 그릴지는 section이 정한다:
-//   "llm"    — LLM 연동 (모델 키)
-//   "mcp"    — MCP 연동 (Claude 세션이 도구로 쓰는 외부 서비스)
-//   "plugin" — 플러그인 카드 안에서만 그린다 (슬랙 토큰)
+// 제공자 = 연동 목록의 카드 하나. 목록은 하나뿐이다 — 플러그인·MCP·모델 키를
+// 나누지 않는다(사용자에게 셋은 같은 물건이다: 붙여서 쓰는 것). 그래서 section은
+// "어느 섹션에 앉는가"가 아니라 "본문을 어떤 모양으로 그리는가"만 정한다:
+//   "llm"    — 키 한 줄로 끝나는 연동 (모델 키)
+//   "mcp"    — 이름 붙인 인스턴스 여럿 + MCP 등록 스위치 (노션·지라·깃허브)
+//   "plugin" — 자기 카드가 없다. 플러그인 카드 안에서 그려진다 (슬랙 토큰)
 public struct Provider {
     public let id: String
     public let name: String
     public let desc: String
     public let section: String
+    // 자격증명 하나만 살아 있어도 '연결됨'인가, 전부 살아 있어야 하는가.
+    // 기본은 전자다 — 깃허브는 PAT만 있고 gh 로그인이 없어도 MCP는 멀쩡히 돈다.
+    // 지라는 다르다: 이슈(MCP)와 골(OAuth 앱)은 서로를 대신하지 못해서, 하나만
+    // 붙은 상태를 '연결됨'이라고 부르면 나머지 절반이 안 되는 이유를 화면 어디서도
+    // 알 수 없다. 그런 제공자만 true로 두고, 부분 연결을 그 자리에서 말하게 한다.
+    public let requireAll: Bool
     public var isLLM: Bool { section == "llm" }
 
-    public init(id: String, name: String, desc: String, section: String) {
+    public init(id: String, name: String, desc: String, section: String,
+                requireAll: Bool = false) {
         self.id = id
         self.name = name
         self.desc = desc
         self.section = section
+        self.requireAll = requireAll
     }
 }
 
@@ -159,7 +201,7 @@ public struct Provider {
 // 이게 카탈로그에 있는 이유: 슬랙 번역은 Gemini가 기본이고 Claude가 백업인데,
 // 그 사실이 데몬 코드 안에만 있으면 화면은 "번역이 안 늘어난다"까지만 보여주고
 // 사용자는 무엇을 연동해야 하는지 모른다. 여기 적어두면 플러그인 카드가
-// "기본도 백업도 없습니다 — LLM 연동을 해주세요"까지 스스로 말할 수 있다.
+// "기본도 백업도 없습니다 — Gemini 연동이나 Claude 연동을 붙이세요"까지 스스로 말할 수 있다.
 public struct Capability {
     public let id: String
     public let name: String
@@ -174,31 +216,37 @@ public enum IntegrationCatalog {
     // MARK: 제공자
 
     public static let providers: [Provider] = [
-        Provider(id: "anthropic", name: "Claude (Anthropic)",
+        Provider(id: "anthropic", name: "Claude 연동",
                  desc: "번역·요약·에이전트 실행. API 키 직통과 CLI 구독 세션 두 가지로 연동합니다.",
                  section: "llm"),
-        Provider(id: "gemini", name: "Gemini (Google)",
+        Provider(id: "gemini", name: "Gemini 연동",
                  desc: "Flash-Lite·Flash — 슬랙 번역 기본 모델.",
                  section: "llm"),
-        Provider(id: "openai", name: "OpenAI · ChatGPT",
+        Provider(id: "openai", name: "OpenAI 연동",
                  desc: "API 키 직통, 그리고 스피킹이 쓰는 브라우저 로그인 세션.",
                  section: "llm"),
-        Provider(id: "ollama", name: "Ollama (로컬)",
+        Provider(id: "ollama", name: "Ollama 연동",
                  desc: "로컬에서 도는 모델 — 키 없이 엔드포인트만 있으면 됩니다.",
                  section: "llm"),
-        Provider(id: "slack", name: "Slack",
+        Provider(id: "genspark", name: "Genspark 연동",
+                 desc: "웹 검색·크롤링·소셜(X/인스타/레딧)·유튜브·논문·지도 조회 — gsk CLI 터미널 로그인 세션.",
+                 section: "llm"),
+        Provider(id: "slack", name: "슬랙 연동",
                  desc: "메시지 수집·답장·리액션 동기화에 쓰는 워크스페이스 토큰.",
                  section: "plugin"),
-        // MCP 연동 — 아래 셋은 앱이 직접 부르는 API가 아니라 Claude 세션이 도구로
-        // 쓰는 서버다. 토큰은 여기서 받고, 등록은 각 인스턴스의 'MCP 등록' 스위치가 한다.
-        Provider(id: "notion", name: "Notion",
+        // 아래 셋은 앱이 직접 부르는 API가 아니라 Claude 세션이 도구로 쓰는 서버다.
+        // 토큰은 여기서 받고, 등록은 각 인스턴스의 'MCP 등록' 스위치가 한다.
+        Provider(id: "notion", name: "Notion 연동",
                  desc: "페이지·데이터베이스 읽기/쓰기. 워크스페이스마다 통합 토큰을 따로 등록합니다.",
                  section: "mcp"),
-        Provider(id: "atlassian", name: "Jira (Atlassian)",
-                 desc: "이슈 조회·생성·코멘트. 사이트 주소·계정 이메일과 함께 API 토큰을 등록합니다.",
-                 section: "mcp"),
-        Provider(id: "github", name: "GitHub",
-                 desc: "레포·이슈·PR. 개인 계정과 조직마다 토큰이 다르므로 이름을 붙여 여러 개 등록합니다.",
+        // 지라는 붙는 곳이 둘이고 둘은 다른 물건이다. 이슈는 API 토큰으로 MCP 서버에
+        // 붙고, 골(Atlassian Goals)은 REST에 없어서 GraphQL을 부르는 OAuth 앱으로만
+        // 닿는다. 그래서 둘 다 서야 지라가 다 붙은 것이다 (requireAll).
+        Provider(id: "atlassian", name: "Jira 연동",
+                 desc: "이슈(MCP)와 골(Goals) 둘로 붙습니다 — 이슈는 사이트·이메일과 API 토큰으로, 골은 브라우저 동의로 만든 OAuth 앱 자격증명으로. 둘 다 서야 연결이 다 된 것입니다.",
+                 section: "mcp", requireAll: true),
+        Provider(id: "github", name: "GitHub 연동",
+                 desc: "레포·이슈·PR — 개인 액세스 토큰(PAT) 하나를 등록합니다. 조직 리소스가 필요하면 그 조직을 resource owner로 고른 토큰으로 교체하세요.",
                  section: "mcp"),
     ]
 
@@ -258,6 +306,15 @@ public enum IntegrationCatalog {
                    placeholder: "http://127.0.0.1:11434", valuePrefixes: ["http"],
                    issueURL: "https://ollama.com",
                    issueHint: "ollama serve 가 도는 주소 (기본 포트 11434)"),
+        // claude-cli와 같은 모양이다: 앱이 들고 있는 키가 없고, 터미널 로그인
+        // 세션을 그 자리에서 빌려 볼 뿐이다. 다만 확인은 한 단계 더 확실하다 —
+        // 바이너리 존재만 보는 게 아니라 login-info로 실제 로그인 계정을 본다.
+        Credential(id: "genspark-cli", name: "Genspark CLI 로그인", provider: "genspark", kind: .cliSession,
+                   service: "", account: "",
+                   role: "gsk 웹 검색·크롤링·소셜/유튜브/논문/지도 조회 — 키 없이 터미널 로그인 세션으로 동작",
+                   placeholder: "",
+                   issueURL: "https://www.genspark.ai",
+                   issueHint: "터미널에서 npm i -g @genspark/cli 후 gsk login (gsk 명령이 PATH에 있으면 연동됨)"),
 
         // ----- MCP 연동 -----
         // 셋 다 multi: 하나로 끝나지 않는다. 깃허브는 개인 계정과 조직마다 토큰이
@@ -282,14 +339,28 @@ public enum IntegrationCatalog {
                                   needsToken: true,
                                   mcpKind: "notion",
                                   mcpSummary: "@notionhq/notion-mcp-server (npx · stdio)",
-                                  hint: "notion.so > 설정 > 통합(Integrations) > 새 내부 통합 > Internal Integration Secret · 그리고 대상 페이지에서 '연결 추가'로 통합을 붙여야 합니다"),
+                                  hint: "notion.so > 설정 > 통합(Integrations) > 새 내부 통합 > Internal Integration Secret · 그리고 대상 페이지에서 '연결 추가'로 통합을 붙여야 합니다",
+                                  caution: "이 토큰이 남기는 흔적은 통합(봇) 이름으로 남습니다 — 사람 계정과 구분됩니다. 대신 통합을 붙인 페이지 밖은 보이지 않습니다."),
                        AuthOption(id: "oauth", name: "브라우저 로그인 (OAuth)",
                                   desc: "노션 호스티드 서버에 계정으로 승인 — 키를 붙여넣지 않고, 내 노션 권한을 그대로 씁니다.",
                                   needsToken: false,
                                   mcpKind: "notion-oauth",
                                   mcpSummary: "mcp.notion.com/mcp (OAuth · mcp-remote 경유)",
-                                  hint: "붙여넣을 키가 없습니다 — MCP 등록을 켜면 앱이 그 자리에서 서버에 붙어 보고, 승인이 필요하면 브라우저에 노션 로그인 창이 뜹니다"),
+                                  hint: "붙여넣을 키가 없습니다 — MCP 등록을 켜면 앱이 그 자리에서 서버에 붙어 보고, 승인이 필요하면 브라우저에 노션 로그인 창이 뜹니다",
+                                  caution: "승인한 노션 계정의 권한으로 붙습니다 — 코멘트·편집에 남는 이름도 그 계정입니다. 승인 창에서 어느 계정으로 로그인돼 있는지 먼저 확인하세요. 계정을 여럿이 나눠 쓰면 한 사람이 승인한 것이 전원에게 그대로 보이고, 누가 한 일인지 구분되지 않습니다."),
                    ]),
+        // 지라 골 — 이슈와 같은 사이트지만 닿는 길이 다르다. Goals는 REST API에
+        // 아예 없어서 api.atlassian.com/graphql 을 OAuth 2.0 (3LO) 앱으로 부른다.
+        // 그 자격증명 세 개(client_id·client_secret·refresh_token)는 브라우저 동의를
+        // 거쳐 만들어져 키체인(condition-mate-jira-goals)에 이미 앉아 있고, 실제로
+        // 부르는 주체는 앱이 아니라 jira-goals 스킬이다. 그래서 여기는 붙여넣는
+        // 자리가 아니라 "지금 이게 서 있는가"를 확인하는 자리다.
+        Credential(id: "jira-goals", name: "Jira 골 (Goals)", provider: "atlassian", kind: .oauthApp,
+                   service: "", account: "",
+                   role: "골 조회·업데이트 작성·골 생성 — jira-goals 스킬이 쓰는 OAuth 앱 자격증명(키체인 condition-mate-jira-goals의 client_id·client_secret·refresh_token). 이슈용 API 토큰으로는 골에 닿지 못합니다",
+                   placeholder: "",
+                   issueURL: "https://developer.atlassian.com/console/myapps/",
+                   issueHint: "앱에 붙여넣을 키가 없습니다 — ~/.claude/skills/jira-goals/reference/setup.md 의 절차(OAuth 2.0 (3LO) 앱 등록 + 브라우저 동의)로 키체인에 등록합니다"),
         Credential(id: "jira-token", name: "Jira API 토큰", provider: "atlassian", kind: .apiKey,
                    service: "cm-jira-token", account: "atlassian",
                    role: "이슈 조회·생성·코멘트 — 사이트 주소와 계정 이메일이 함께 필요합니다",
@@ -302,17 +373,51 @@ public enum IntegrationCatalog {
                        CredField(key: "email", label: "계정 이메일", placeholder: "you@company.com"),
                    ],
                    mcp: MCPSpec(kind: "jira", namePrefix: "cm-jira",
-                                summary: "mcp.atlassian.com/v1/mcp (Basic 인증 · mcp-remote 경유)")),
+                                summary: "mcp.atlassian.com/v1/mcp (Basic 인증 · mcp-remote 경유)",
+                                externalHost: "mcp.atlassian.com")),
+        // 터미널의 acli — 사람이 셸에서 지라를 다루는 길이고, Claude·코덱스 세션이
+        // 스킬로 부르는 길이기도 하다. 앞의 둘과 겹치지 않는다: MCP 서버는 세션이
+        // 도구로 쓰고, 골은 GraphQL 전용이며, 이쪽은 이슈·보드·스프린트·필터를
+        // 셸에서 친다. 앱은 키를 보관하지 않는다 — acli가 자기 로그인 세션을 들고 있다.
+        Credential(id: "jira-cli", name: "Atlassian CLI (acli)", provider: "atlassian", kind: .cliSession,
+                   service: "", account: "",
+                   role: "이슈·보드·스프린트·필터를 터미널에서 — jira-cli 스킬이 쓰는 로그인 세션. 브라우저 승인(--web) 또는 사이트·이메일·API 토큰으로 붙습니다",
+                   placeholder: "",
+                   issueURL: "https://developer.atlassian.com/cloud/acli/guides/install-macos/",
+                   issueHint: "설치: acli.atlassian.com 의 서명된 바이너리를 ~/.local/bin 에 둡니다 (2026-08-30 기준 brew 포뮬러는 재배포된 아카이브와 체크섬이 어긋나 설치되지 않습니다) · 로그인: 터미널에서 acli jira auth login --web"),
+        // GitHub는 브라우저 승인(OAuth) 경로를 두지 않는다 — GitHub의 OAuth 서버는
+        // dynamic client registration을 허용하지 않아서, mcp-remote가 붙으려면 미리
+        // 만들어 둔 OAuth App의 client_id/secret이 따로 있어야 했다. 그 사전 등록
+        // 카드 하나 때문에 화면이 통째로 복잡해졌던 것에 비해 실제로 얻는 것(레포
+        // 목록 확인조차 못 하는 OAuth 인스턴스)이 적어 걷어냈다 — PAT 한 갈래만 남는다.
         Credential(id: "github-token", name: "GitHub 토큰", provider: "github", kind: .apiKey,
                    service: "cm-github-token", account: "github",
-                   role: "레포·이슈·PR 접근 — 개인 계정과 조직별로 토큰을 따로 등록합니다",
+                   role: "레포·이슈·PR 접근 — 개인 액세스 토큰(PAT) 하나를 등록합니다",
                    placeholder: "github_pat_… 또는 ghp_…",
                    valuePrefixes: ["github_pat_", "ghp_", "gho_", "ghu_", "ghs_"],
                    issueURL: "https://github.com/settings/personal-access-tokens",
                    issueHint: "github.com > Settings > Developer settings > Personal access tokens · 조직 토큰은 그 조직을 resource owner로 골라야 하고 조직 승인이 필요할 수 있습니다",
-                   multi: true,
+                   multi: true, singleInstance: true,
+                   // 조직 로그인은 비밀이 아니고, 있으면 검사가 훨씬 많은 말을 할 수 있다:
+                   // 이 토큰이 그 조직에 실제로 닿는지, SAML SSO 승인이 빠졌는지까지
+                   // 확인해 준다. 비워 두면 토큰이 닿는 곳을 그대로 훑는다.
+                   fields: [
+                       CredField(key: "org", label: "조직 (선택)",
+                                 placeholder: "must-company · 비우면 토큰이 닿는 전체",
+                                 required: false),
+                   ],
                    mcp: MCPSpec(kind: "github", namePrefix: "cm-github",
                                 summary: "api.githubcopilot.com/mcp (Bearer 인증 · mcp-remote 경유)")),
+        // 터미널의 gh 로그인 — Claude 세션이 PR·이슈 작업에 실제로 쓰는 계정이다.
+        // 위 인스턴스(MCP 서버용 토큰)와는 다른 자격증명이지만, "지금 이 맥에서
+        // 깃허브에 누구로 닿는가"를 묻는 사람에겐 이쪽이 먼저 답이다. 앱은 키를
+        // 보관하지 않고 gh가 들고 있는 토큰으로 계정·조직·레포를 훑어 보여준다.
+        Credential(id: "github-cli", name: "GitHub CLI (gh) 로그인", provider: "github", kind: .cliSession,
+                   service: "", account: "",
+                   role: "터미널 gh 로그인 세션 — Claude 세션의 PR·이슈 작업이 쓰는 계정. 연결 확인을 누르면 이 계정이 닿는 조직·레포를 훑어 보여줍니다",
+                   placeholder: "",
+                   issueURL: "https://cli.github.com/",
+                   issueHint: "터미널에서 gh auth login · MCP 서버는 이걸 쓰지 않습니다 — MCP는 위 인스턴스의 토큰으로 붙습니다"),
     ]
 
     public static func credential(_ id: String) -> Credential? { credentials.first { $0.id == id } }
@@ -341,7 +446,7 @@ public enum IntegrationCatalog {
                    owner: "slack-translate",
                    primary: ["gemini-api", "anthropic-api"],
                    backup: ["claude-cli"],
-                   emptyHint: "번역할 LLM이 하나도 연동돼 있지 않습니다 — 아래 LLM 연동에서 Gemini 또는 Claude를 연결하세요."),
+                   emptyHint: "번역할 모델이 하나도 연동돼 있지 않습니다 — 연동 목록에서 Gemini 연동 또는 Claude 연동을 붙이세요."),
         // 지라 번역은 슬랙과 달리 폴백이 없다 — 크롬 익스텐션의 번역 버튼은 사용자가
         // 결과를 기다리는 자리라서, CLI 폴백(5~15초)이면 안 쓰느니만 못하다.
         Capability(id: "jira-translate", name: "지라 번역",

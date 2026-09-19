@@ -13,10 +13,19 @@
 //   - 제목 칸이 없으므로 빈 덩어리에 쓰기 시작하면 날짜·시각 머리글이 자동으로 붙고,
 //     이어 쓰는 동안에는 다시 붙지 않는다
 //   - 한글 조합 중에는 절대 끼어들지 않는다(조합이 끝난 뒤에 붙고 글자가 안 깨진다)
-//   - ↑↓ 는 글 안에서는 평소대로, 첫 줄/마지막 줄에서만 앞뒤 덩어리로 넘어간다.
-//     마지막 덩어리에서 ↓ 는 새 덩어리를 만든다
+//   - ↑↓ 는 이 덩어리 안에서만 움직인다 — 키보드만으로는 덩어리를 절대 벗어나지 않는다
+//   - 덩어리를 바꾸는 길은 머리의 ＋ 버튼뿐 (초집중에서는 '＋ 새 덩어리' 로 이름이 바뀐다)
 //   - 초집중을 나가면 행 편집기가 그대로 돌아오고, 쓴 글은 제목/상세로 행에 남아 있다
 //   - 기본 모드는 하나도 바뀌지 않는다(빈 자리 클릭·버튼 규칙 그대로)
+//
+// ── 3·4절이 다시 쓰인 이유 (뿌리 B, 2026-08-16) ────────────────────────────
+// 2026-08-13 판의 3·4절은 "첫 줄에서 ↑ 하면 앞 덩어리, 마지막 줄에서 ↓ 하면 새 덩어리"
+// 를 지켰다. 그 기구는 사흘 뒤 폐기됐다(MemoPad.swift 의 ua keydown 주석): 초집중은 화면에
+// 한 덩어리뿐이라 그 건너뜀이 "쓰던 글이 통째로 사라진 것" 과 구분되지 않았고, 캐럿을
+// 끝으로 내리려던 손짓 한 번에 다른 글이 떴다. 지금 키보드는 이 덩어리를 벗어나지 않고,
+// 덩어리를 바꾸는 길은 뜻을 담아 누르는 ＋ 버튼(uaNew) 하나뿐이다.
+// 시험이 그 교체를 따라오지 않아 6건이 20일 붉은 채였다. 옛 계약으로 되살리면 2026-08-16
+// 의 '적었는데 사라졌다' 수정을 무효로 만든다 — 그래서 뒤집어서 다시 쓴다.
 const { chromium } = require('playwright');
 const { PAD_HTML } = require('./memosrc');
 
@@ -116,24 +125,50 @@ const MEMO = ['- [ ] 첫 줄', '- [ ] 둘째 줄', '- [ ] 셋째 줄'].join('\n'
     ['- [ ] 셋째 줄 이어서', '    내용 한 줄']);
   eq('보이는 글자가 곧 저장 글자', await ua(), '셋째 줄 이어서\n내용 한 줄');
 
-  // ── 3. ↑↓ = 앞뒤 덩어리 (글 안에서는 평소대로) ────────────────────────
+  // ── 3. ↑↓ 는 이 덩어리를 벗어나지 않는다 (뿌리 B, 2026-08-16) ─────────
+  // 캐럿은 글 안에서 평소대로 움직이되, 첫 줄에서 ↑ 든 마지막 줄에서 ↓ 든 이웃 덩어리로
+  // 건너뛰지 않는다. '아무 일도 안 일어난다' 를 확인하는 절이라, 키가 통째로 삼켜진 것과
+  // 구분되게 캐럿이 실제로 움직였는지(selectionStart)까지 같이 본다.
+  const CHUNK = '셋째 줄 이어서\n내용 한 줄';
+  const sel = () => page.evaluate(() => document.querySelector('[data-cmmemo-ua]').selectionStart);
+  await focusUa();                                  // 캐럿을 글 끝(둘째 줄 끝)으로
+  const endSel = await sel();
   await page.keyboard.press('ArrowUp');
-  eq('글 안에서의 ↑ 는 덩어리를 넘기지 않는다', await ua(), '셋째 줄 이어서\n내용 한 줄');
+  eq('↑ 는 글을 바꾸지 않는다', await ua(), CHUNK);
+  const upSel = await sel();
+  check('↑ 는 이 덩어리 안에서 캐럿만 위로 옮긴다 (키를 삼켜 버리는 것이 아니다)',
+    upSel < endSel, `caret=${upSel} (끝=${endSel})`);
   await page.keyboard.press('ArrowUp');
-  eq('첫 줄에서 한 번 더 ↑ 하면 앞 덩어리', await ua(), '둘째 줄');
+  eq('첫 줄에서 한 번 더 ↑ 해도 앞 덩어리로 넘어가지 않는다', await ua(), CHUNK);
+  eq('묶여 있는 행도 그대로다', await cur(), '셋째 줄 이어서');
   await page.keyboard.press('ArrowDown');
-  eq('마지막 줄에서 ↓ 하면 뒤 덩어리', await ua(), '셋째 줄 이어서\n내용 한 줄');
+  await page.keyboard.press('ArrowDown');
+  eq('마지막 줄에서 ↓ 를 더 눌러도 뒤 덩어리가 뜨지 않는다', await ua(), CHUNK);
+  eq('↓ 가 새 덩어리를 만들지도 않는다', await rows(), 3);
 
-  // ── 4. 마지막에서 ↓ = 새 덩어리 + 날짜·시각 머리글 ────────────────────
-  await focusUa();
-  await page.keyboard.press('ArrowDown');
-  eq('마지막 덩어리에서 ↓ 는 새 덩어리를 만든다', await rows(), 4);
+  // ── 4. 새 덩어리는 ＋ 버튼으로만 + 날짜·시각 머리글 ───────────────────
+  // 키보드 길이 없어졌으니 머리의 ＋ 가 화면의 글을 바꾸는 유일한 '뜻을 담은 누름' 이다.
+  // 그래서 초집중에서는 버튼 이름도 바뀐다 — 체크리스트가 아니라 새 덩어리.
+  eq('초집중에서 ＋ 버튼은 새 덩어리 버튼이 된다', await page.evaluate(() =>
+    document.querySelector('[data-cmmemo-add]').textContent), '＋ 새 덩어리');
+  const addNew = () => page.evaluate(() => document.querySelector('[data-cmmemo-add]').click());
+  await addNew();
+  eq('＋ 를 누르면 덩어리가 하나 는다', await rows(), 4);
   eq('새 덩어리는 비어 있다', await ua(), '');
+  // 자리를 옮기다 앞 글이 사라지지 않는지 — uaNew 는 만들기 전에 지금 글을 행에 반영한다.
+  eq('앞 덩어리 글은 제목+상세로 그대로 남아 있다', await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-cmmemo-doc] .cmm-row'))
+      .map((r) => [r.querySelector('.cmm-tx').textContent,
+                   r.querySelector('.cmm-dt') ? r.querySelector('.cmm-dt').textContent : ''])
+      .filter((x) => x[0] === '셋째 줄 이어서')), [['셋째 줄 이어서', '내용 한 줄']]);
   await page.keyboard.type('새로 적는 글', { delay: 10 });
   const ls = (await ua()).split('\n');
   check('빈 덩어리에 쓰기 시작하면 날짜·시각이 머리에 붙는다', STAMP.test(ls[0]), `머리=${JSON.stringify(ls[0])}`);
   eq('내가 친 글은 그 아래 그대로', ls[1], '새로 적는 글');
-  eq('머리글이 그 행의 제목이 된다', await cur(), ls[0]);
+  // 제목 칸이 없는 자리를 머리글이 대신한다 — 두 값이 같기만 한 게 아니라 실제로 스탬프여야 한다.
+  const curTitle = await cur();
+  check('그 머리글이 곧 이 행의 제목이 된다 (제목 없는 줄이 목록에서 빈 줄로 보이지 않게)',
+    STAMP.test(curTitle) && curTitle === ls[0], `제목=${JSON.stringify(curTitle)}`);
   await page.keyboard.type(' 계속', { delay: 10 });
   eq('이어 쓰는 동안에는 머리글이 다시 붙지 않는다',
     (await ua()).split('\n').filter((l) => STAMP.test(l)).length, 1);
@@ -141,8 +176,7 @@ const MEMO = ['- [ ] 첫 줄', '- [ ] 둘째 줄', '- [ ] 셋째 줄'].join('\n'
   // ── 5. 한글(IME) 조합 — 조합 중에는 끼어들지 않는다 ───────────────────
   // macOS 2벌식이 내는 순서를 그대로 흉내 낸다: keydown(229) → compositionstart →
   // 조합 중 input(isComposing) → compositionend. 조합 중에 value 를 건드리면 글자가 깨진다.
-  await focusUa();
-  await page.keyboard.press('ArrowDown');                 // 새 빈 덩어리
+  await addNew();                                         // 새 빈 덩어리 (키보드 길은 없다)
   const mid = await page.evaluate(() => {
     const t = document.querySelector('[data-cmmemo-ua]');
     t.focus(); t.value = ''; t.setSelectionRange(0, 0);

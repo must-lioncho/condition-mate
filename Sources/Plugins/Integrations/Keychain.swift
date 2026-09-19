@@ -1,4 +1,15 @@
 import Foundation
+import Security
+
+public struct CMKeychainCandidate: Equatable {
+    public let service: String
+    public let account: String
+}
+
+public enum CMKeychainCandidateResult {
+    case found([CMKeychainCandidate])
+    case unavailable(String)
+}
 
 // macOS 키체인 접근 — 이 앱의 모든 외부 연동 비밀값(슬랙 토큰, LLM API 키)이
 // 드나드는 유일한 문이다.
@@ -27,7 +38,69 @@ public enum CMKeychain {
         return v.isEmpty ? nil : v
     }
 
+    public static func value(service: String, account: String) -> String? {
+        guard isSafeName(service), isSafeName(account) else { return nil }
+        let (code, out) = run(["find-generic-password", "-w", "-s", service, "-a", account])
+        guard code == 0 else { return nil }
+        let v = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        return v.isEmpty ? nil : v
+    }
+
+    // 값은 요청하지 않는다. 현재 프로세스가 볼 수 있는 generic-password 속성 중
+    // service/account에 notion이 들어간 항목만 결정적으로 추천한다. macOS는 이
+    // 질의의 완전성을 보장하지 않으므로 실패와 빈 결과를 호출자가 서로 구분한다.
+    public static func notionCandidates() -> CMKeychainCandidateResult {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecMatchLimit: kSecMatchLimitAll,
+            kSecReturnAttributes: true,
+            kSecReturnData: false
+        ]
+        var raw: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &raw)
+        if status == errSecItemNotFound { return .found([]) }
+        guard status == errSecSuccess else {
+            return .unavailable("Keychain 항목 이름을 읽을 수 없습니다 (\(status))")
+        }
+        let rows: [[CFString: Any]]
+        if let many = raw as? [[CFString: Any]] { rows = many }
+        else if let one = raw as? [CFString: Any] { rows = [one] }
+        else { return .found([]) }
+        let candidates = rows.compactMap { row -> CMKeychainCandidate? in
+            guard let service = row[kSecAttrService] as? String,
+                  let account = row[kSecAttrAccount] as? String else { return nil }
+            return CMKeychainCandidate(service: service, account: account)
+        }
+        return .found(filterNotionCandidates(candidates))
+    }
+
+    public static func filterNotionCandidates(_ rows: [CMKeychainCandidate]) -> [CMKeychainCandidate] {
+        var seen = Set<String>()
+        return rows.filter {
+            $0.service.range(of: "notion", options: .caseInsensitive) != nil ||
+            $0.account.range(of: "notion", options: .caseInsensitive) != nil
+        }.filter {
+            isSafeName($0.service) && isSafeName($0.account) &&
+            seen.insert($0.service + "\u{0}" + $0.account).inserted
+        }.sorted {
+            let lhs = $0.service.localizedStandardCompare($1.service)
+            return lhs == .orderedSame
+                ? $0.account.localizedStandardCompare($1.account) == .orderedAscending
+                : lhs == .orderedAscending
+        }
+    }
+
     public static func exists(service: String) -> Bool { value(service: service) != nil }
+
+    // 같은 service 아래 항목이 여럿일 때(지라 골의 client_id·client_secret·refresh_token)
+    // "그 중 어느 것이 있는가"를 묻는 자리. 값을 읽지 않고 항목의 존재만 본다 —
+    // -w 없이 부르면 속성만 나오므로 잠긴 키체인의 승인 창을 부르지 않는다.
+    public static func exists(service: String, account: String) -> Bool {
+        guard !service.isEmpty, !account.isEmpty else { return false }
+        guard isSafeName(service), isSafeName(account) else { return false }
+        let (code, _) = run(["find-generic-password", "-s", service, "-a", account])
+        return code == 0
+    }
 
     // 항목의 실제 account 이름. 갱신(add -U)이 기존 항목을 덮어쓰려면 service와
     // account가 둘 다 같아야 한다 — 다르면 같은 service에 항목이 둘 생기고
@@ -95,7 +168,7 @@ public enum CMKeychain {
         return c != "\"" && c != "\\" && c != "'" && c != "`" && c != "$"
     }
 
-    private static func isSafeName(_ s: String) -> Bool {
+    public static func isSafeName(_ s: String) -> Bool {
         !s.isEmpty && s.count <= 128 && s.allSatisfy { c in
             c.isLetter && c.isASCII || c.isNumber || c == "-" || c == "_" || c == "." || c == "@"
         }

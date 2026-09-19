@@ -24,7 +24,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/lioncho/Work/departtment_service/projects/condition-mate/Scripts/uxui-sitemap.sh</string>
+        <string>/Users/lioncho/Work/lion_work/organization/lion/lion-condition-mate/Scripts/uxui-sitemap.sh</string>
     </array>
 
     <!-- BASE tick: wake every 5 minutes. The actual regeneration only happens when

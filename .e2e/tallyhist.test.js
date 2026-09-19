@@ -105,6 +105,13 @@ function boot() {
   global.gaGoalBorn = () => {};
   global._gaFindIds = [];            // AI검색(findOnly) 카드 상태 — gaQueueResolved 가 먼저 본다
   global.gaFindRender = () => {};
+  // 펼침 행 저장/복원(GoalAddContent.swift:841·845). 이 파일의 관심사가 아니라 스텁으로 둔다.
+  // 스텁이 없으면 조용히 삼켜져 엉뚱한 실패로 보인다:
+  //  - gaOpenPersist 는 gaTallyPersist 첫 줄에서 불린다 → 빠지면 렌더가 통째로 죽는다.
+  //  - gaOpenRestoreSet 은 복원 블록의 try{}catch(e){} 안이라 ReferenceError 가 삼켜지고,
+  //    복원이 조용히 중단돼 히스토리 단정들이 "got=[]" 로 떨어진다(제품 결함처럼 보인다).
+  global.gaOpenPersist = () => {};
+  global.gaOpenRestoreSet = () => ({});   // 저장된 펼침 없음 = 전부 접힌 채 복원
   for (const n of ['gaIsQ', 'gaTallyAdd', 'gaTallyStrip', 'gaTallyPersist', 'gaTallyClear', 'gaTallyWhen',
                    'gaTallyChip', 'gaTallyActiveRow', 'gaTallyHistInfo', 'gaTallyRowHTML',
                    'gaTallyDetHTML', 'gaTallyToggle', 'gaHistToggle', 'gaJobsRender', 'gaTallyRender'])

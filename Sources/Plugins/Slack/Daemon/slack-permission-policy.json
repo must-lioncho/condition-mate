@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "_doc": "선응답(ack)이 어떤 근거를 조회해도 되는지를 사람별 등급으로 정한다. 일반 등급은 1~3이고, 특정 도메인의 운영을 맡은 사람은 그 도메인에 한해 더 높은 등급을 갖는다. 등급은 추가 컨텍스트 레이어에만 적용된다 — 자격증명·급여·내부 보안 정보 요청은 등급과 무관하게 securityGate가 먼저 차단한다. 운영 중 수정은 ~/.condition-mate/slack-translate/permission-policy.json 으로 덮어쓴다.",
+  "defaultLevel": 2,
+  "sourceMinLevel": {
+    "notion-shared": 1,
+    "research": 1,
+    "jira": 3,
+    "people-directory": 1,
+    "people-hr": 5,
+    "related": 5
+  },
+  "_sourceMinLevelNote": "people-directory 는 그 사람이 슬랙에서 프로필을 눌러 원래 볼 수 있는 것이라 새 노출이 아니다 — notion-shared 와 같은 1. people-hr(노션 HR DB·HR 채널의 오퍼·승인 이력)은 그 사람이 속하지 않은 자리의 기록이라 related 와 같은 5. 어느 쪽이든 프로필의 Phone·Gmail·KakaoID·Emergency Contact·이메일은 등급과 무관하게 나가지 않는다(people-context.mjs 의 허용목록).",
+  "domains": [
+    {
+      "key": "globalmpc",
+      "label": "Global MPC",
+      "match": "global\\s*mpc|globalmpc|\\bmpc\\b|bolor\\s*geo|mpc[_ -]?mining"
+    }
+  ],
+  "people": {
+    "U041F5CDH7T": {
+      "name": "Sharoon Raza",
+      "default": 2,
+      "levels": { "globalmpc": 9 },
+      "reason": "Global MPC 운영 담당 — 해당 도메인 정보는 전부 열람 가능"
+    }
+  }
+}

@@ -33,7 +33,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/lioncho/Work/departtment_service/projects/condition-mate/Scripts/nss-report-daily.sh</string>
+        <string>/Users/lioncho/Work/lion_work/organization/lion/lion-condition-mate/Scripts/nss-report-daily.sh</string>
     </array>
 
     <!-- Fire once a day at 09:10 (local time). Not StartInterval — this is a

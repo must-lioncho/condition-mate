@@ -1,7 +1,7 @@
 # SPEC — Goal Link Model + Generic Async Queue Tab
 
 Status: Ready to dispatch
-Owner: manager-pm (proposal) / SPEC.md owned by manager-qa
+Owner: lion-condition-mate-pm (proposal) / SPEC.md owned by lion-condition-mate-worker-qa
 Target app: `projects/condition-mate` (macOS menu-bar app, Swift + in-window WKWebView dashboard)
 Related memory: goals-safe-write, agents-page (GET whitelist), session-goal-suppress, data-layout
 
@@ -14,7 +14,7 @@ Related memory: goals-safe-write, agents-page (GET whitelist), session-goal-supp
 - 링크 동작 = 링크 거는 목표를 **최상위로 승격**(`parent=""`)하면서 링크를 기록합니다. "233을 01에 링크" → 233이 최상위가 되고 233→01 링크가 남습니다. 승격 전/후를 그림으로 보여주는 확인 다이얼로그를 띄웁니다.
 - 기존 "AI 큐" 인프라를 **범용 비동기 작업 큐 탭**으로 일반화합니다. 오래 걸리는 AI 작업(중복분석·링크맵/내보내기 합성·리포트 생성)을 큐에 던져두고 백그라운드에서 돌리고, 결과(HTML 카드)를 큐 탭에서 봅니다 — "머리 비우고 던져두기". AI 큐 리뷰 UI는 목록 뷰의 인라인 박스에서 **완전히 큐 탭으로 이전**합니다(입력 "AI 추가"는 목록에 남고 리뷰/결과만 이동).
 - "내보내기"는 인라인이 아니라 **큐 잡("linkmap")** 으로 실행됩니다. 백그라운드에서 링크 체인을 걸어 노드-링크 지도(실선=부모자식, 보라 점선=링크) HTML과 압축 컨텍스트를 만들어 큐 탭 카드로 올립니다.
-- 진행 순서: Phase 0 240/260 중복정리 → Phase 1 링크 모델(백엔드+최소 UI) → Phase 2 범용 큐 탭 → Phase 3 링크맵/내보내기 잡 → Phase 4 manager-qa 검증. goals.json 직접 쓰기 금지, 모든 변경은 앱 API 경유.
+- 진행 순서: Phase 0 240/260 중복정리 → Phase 1 링크 모델(백엔드+최소 UI) → Phase 2 범용 큐 탭 → Phase 3 링크맵/내보내기 잡 → Phase 4 lion-condition-mate-worker-qa 검증. goals.json 직접 쓰기 금지, 모든 변경은 앱 API 경유.
 
 ---
 
@@ -304,13 +304,13 @@ Status vocabulary stays exactly `pending / analyzing / ready` (`AIQueueItem` doc
 
 ---
 
-## Phase 4 — QA (manager-qa)
+## Phase 4 — QA (lion-condition-mate-worker-qa)
 
-**Goal:** Regression + intent verification against SPEC.md for all new behavior, using the manager-qa playbook (isolated bundle, unique bundle id, `CM_QUIT_AFTER`, `app.log`).
+**Goal:** Regression + intent verification against SPEC.md for all new behavior, using the lion-condition-mate-worker-qa playbook (isolated bundle, unique bundle id, `CM_QUIT_AFTER`, `app.log`).
 
 **Files:** `~/.condition-mate/SPEC.md` (add the new items in §"SPEC.md edits" below), regenerate `SPEC.html`, append to `~/.condition-mate/ledger/agent-update-log.jsonl`.
 
-**Build order:** run after Phases 1–3 land. Gate shipping on a manager-qa PASS.
+**Build order:** run after Phases 1–3 land. Gate shipping on a lion-condition-mate-worker-qa PASS.
 
 **Acceptance criteria:** every AC in Phases 1–3 is verified against the corresponding new SPEC item, with evidence (log lines / `/data.json` / `/api/debug/snapshot`). Any miss triggers the QA fix-loop protocol (max 3 rounds, retro each round; memory: qa-fix-loop-protocol).
 
@@ -320,7 +320,7 @@ Status vocabulary stays exactly `pending / analyzing / ready` (`AIQueueItem` doc
 
 ## SPEC.md edits (item id + old→new)
 
-Owner manager-qa applies these to `~/.condition-mate/SPEC.md` (bilingual EN/KO format, per the DASH/EP page style) and regenerates `SPEC.html` in the same change.
+Owner lion-condition-mate-worker-qa applies these to `~/.condition-mate/SPEC.md` (bilingual EN/KO format, per the DASH/EP page style) and regenerates `SPEC.html` in the same change.
 
 - **NEW DASH-6 — goal-to-goal LINK model (flat display, link-following export).**
   EN: A goal may LINK to another goal (`Goal.links: [String]`, source-side). Creating a link PROMOTES the source to top-level (`parent=""`) and records the link; a confirm dialog shows the before/after promotion. Display hierarchy stays flat 1-level (the `setParent` flat guards at `ReviewStore.swift:630-642/648-667` are unchanged). Rows with links show a link dot. Only export/compression follows links.
@@ -434,13 +434,13 @@ Backend (expert-backend):
 Deliver: Phase 3 AC1-AC6, including a deliberate-cycle test that terminates.
 ```
 
-### Phase 4 → manager-qa
+### Phase 4 → lion-condition-mate-worker-qa
 ```
 Regression + intent QA for the goal LINK model + generic queue tab + queued linkmap export in
 projects/condition-mate, against SPEC.md. User: Korean. Apply the SPEC.md edits from
 docs/specs/goal-link-and-generic-queue.md (new DASH-6, DASH-7, DASH-8; EP endpoint additions) to
 ~/.condition-mate/SPEC.md, regenerate SPEC.html in the same change, and append one line to
-~/.condition-mate/ledger/agent-update-log.jsonl. Verify every AC in Phases 1-3 using the manager-qa playbook
+~/.condition-mate/ledger/agent-update-log.jsonl. Verify every AC in Phases 1-3 using the lion-condition-mate-worker-qa playbook
 (isolated bundle, unique bundle id, CM_QUIT_AFTER, app.log; /data.json and /api/debug/snapshot as
 evidence). Specifically confirm: (a) linking goal-233→goal-01 promotes 233 to top-level and records the
 link; (b) the flat setParent guards are unchanged; (c) legacy goals.json/queue.json still load; (d) the
@@ -461,7 +461,7 @@ miss, run the QA fix-loop protocol (max 3 rounds, retro each).
 - Phase 1: independent backend+UI. Ships and is testable alone.
 - Phase 2: needs §1.2 (generalized `AIQueueItem`) only; not Phase 1. Tab is usable with just dedup items.
 - Phase 3: needs Phase 1 (links) AND Phase 2 (queue tab + worker branch). The JS export-following sub-step is verifiable standalone in 프리뷰.
-- Phase 4: last; gates shipping on manager-qa PASS against DASH-6/7/8.
+- Phase 4: last; gates shipping on lion-condition-mate-worker-qa PASS against DASH-6/7/8.
 
 Each phase has its own acceptance criteria and can be verified before the next begins.
 

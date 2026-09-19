@@ -33,6 +33,17 @@ import Integrations
 //     이 기능의 모든 액션(완료 토글, 리액션 동기화, 답장 전송/수정/삭제, 개별
 //     Slack API 호출)을 소요시간(ms)·성공여부·에러와 함께 기록한다. 디버그
 //     모드의 액션 로그 패널이 GET /api/slack/actions 로 읽는다 (SlackActionLog).
+//   <data>/slack-translate/actions-daemon.jsonl — daemon-owned, 같은 스키마의
+//     액션 로그. 수집·번역·자동 처리완료처럼 앱 밖에서 일어나는 일이 로그에
+//     아예 안 남아 "메시지는 들어왔는데 액션 로그는 멈춰 있다"로 보였다
+//     (2026-08-16). 파일을 나눈 이유는 한 파일에 두 프로세스가 append하면
+//     (Swift는 seek+write라 O_APPEND 원자성이 없다) 줄이 겹쳐 깨지기 때문 —
+//     읽을 때 at 기준으로 병합한다 (SlackActionLog.recentJSON).
+//   <data>/slack-translate/reactions.json — app-owned. {"<id>": ["name", …]}
+//     내가 앱에서 남긴 리액션 대장. 슬랙 쪽 실제 리액션 목록(item.reactions,
+//     데몬 소유)에는 "누가 달았는지"가 없어서, 버튼을 켜짐으로 보일지 판단할
+//     내 것만 따로 기억한다. add가 already_reacted/remove가 no_reaction으로
+//     돌아오면 실제 상태에 맞춰 스스로 교정된다.
 //   <data>/slack-translate/sync-status.json — app-owned. 리액션 동기화가 실패한
 //     항목만 남는 맵 {"<id>": {error, action, at}} — 성공하면 항목이 지워진다.
 //     처리완료를 눌렀는데 슬랙 👀가 안 지워지는 문제(예: 토큰에 reactions:write
@@ -41,6 +52,9 @@ import Integrations
 // Feed: GET /api/slack/items → {"items":[…], "done":{…}, "syncErr":{…}} (items
 // are the raw JSONL lines joined — already JSON objects, ActionLog pattern).
 public enum SlackTranslateStore {
+
+    public static let defaultModel = "gemini-flash-lite"
+    private static let validModels = Set(["auto", defaultModel, "gemini-flash", "haiku-api", "haiku"])
 
     // ----- app wiring (injected at startup) -----
 
@@ -69,6 +83,17 @@ public enum SlackTranslateStore {
     static var guiFile: URL { dir.appendingPathComponent("gui-sessions.json") }
     // 리액션 동기화 실패 맵 — 실패만 남고 성공하면 지워진다 (헤더 주석 참고).
     static var syncStatusFile: URL { dir.appendingPathComponent("sync-status.json") }
+    // 내가 앱에서 남긴 리액션 대장 {"<id>": ["white_check_mark", …]} (헤더 참고).
+    static var myReactionsFile: URL { dir.appendingPathComponent("reactions.json") }
+
+    // 처리완료를 누르면 슬랙 원문에도 남는 이모지. 앱에서 초록 체크를 눌렀는데
+    // 슬랙에는 아무 흔적이 없어서 "내가 처리했다"가 팀에 보이지 않았다
+    // (user request 2026-08-16) — 이제 트리거(👀) 제거와 함께 이 ✅를 단다.
+    public static let doneEmoji = "white_check_mark"
+    // 항목 툴바의 빠른 리액션 기본값 — ✅ 처리완료(초록 체크) · 👀 볼게요 ·
+    // 👌 승인. config.json {"quick": [...]}로 사용자가 바꾼다 (이모지 고르기
+    // 팝업의 '기본에 추가/빼기').
+    public static let defaultQuick = ["white_check_mark", "eyes", "ok_hand"]
 
     // 액션 소요시간(ms) — 벽시계가 아니라 단조 시계 기준.
     public static func ms(since t0: DispatchTime) -> Int {
@@ -83,7 +108,7 @@ public enum SlackTranslateStore {
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             cfg = obj
         }
-        cfg["model"] = model
+        cfg["model"] = normalizedModel(model)
         if let data = try? JSONSerialization.data(withJSONObject: cfg) {
             try? data.write(to: configFile, options: .atomic)
         }
@@ -126,6 +151,29 @@ public enum SlackTranslateStore {
         }
     }
 
+    // 빠른 리액션 버튼 목록 — config.json {"quick": ["white_check_mark", …]}.
+    // 항목 툴바에 그대로 늘어서는 순서다. 빈 배열이면 기본값으로 되돌린다.
+    public static func setQuick(_ names: [String]) {
+        var cfg: [String: Any] = [:]
+        if let data = try? Data(contentsOf: configFile),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            cfg = obj
+        }
+        let clean = names.filter(validEmojiName).prefix(8)
+        cfg["quick"] = clean.isEmpty ? defaultQuick : Array(clean)
+        if let data = try? JSONSerialization.data(withJSONObject: cfg) {
+            try? data.write(to: configFile, options: .atomic)
+        }
+    }
+
+    // 슬랙 이모지 이름 규칙 — 소문자·숫자·_ + - 만. 스킨톤 별칭("+1::skin-tone-3")은
+    // 첫 "::" 앞만 쓴다 (데몬의 baseEmoji와 같은 규칙).
+    public static func validEmojiName(_ name: String) -> Bool {
+        guard !name.isEmpty, name.count <= 60 else { return false }
+        let ok = Set("abcdefghijklmnopqrstuvwxyz0123456789_+-")
+        return name.allSatisfy { ok.contains($0) }
+    }
+
     // Model-key presence for the model picker's warning hints. 키체인 접근은
     // 레지스트리(IntegrationStore)가 캐시와 함께 소유한다 — 여기서 또 security를
     // 띄우면 같은 사실을 두 곳이 따로 캐시하게 된다.
@@ -149,8 +197,35 @@ public enum SlackTranslateStore {
     public static func currentModel() -> String {
         guard let data = try? Data(contentsOf: configFile),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let m = obj["model"] as? String else { return "gemini-flash-lite" }
-        return m
+              let m = obj["model"] as? String else { return defaultModel }
+        return normalizedModel(m)
+    }
+
+    private static func normalizedModel(_ model: String) -> String {
+        let aliases = [
+            "gemini-2.5-flash-lite": defaultModel,
+            "gemini-flash-lite-latest": defaultModel,
+            "gemini-2.5-flash": "gemini-flash",
+            "gemini-flash-latest": "gemini-flash",
+        ]
+        let value = aliases[model] ?? model
+        return validModels.contains(value) ? value : defaultModel
+    }
+
+    // 설치 직후에는 config 자체가 없고, 구버전에는 API 모델명이 직접 저장돼 있다.
+    // 유효한 명시 선택은 그대로 두되 누락/레거시/손상 값만 현재 기본값으로 원자 마이그레이션한다.
+    public static func migrateConfigurationDefaults() {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var cfg: [String: Any] = [:]
+        if let data = try? Data(contentsOf: configFile),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { cfg = obj }
+        let before = cfg["model"] as? String
+        let after = before.map(normalizedModel) ?? defaultModel
+        guard before != after || !FileManager.default.fileExists(atPath: configFile.path) else { return }
+        cfg["model"] = after
+        if let data = try? JSONSerialization.data(withJSONObject: cfg) {
+            try? data.write(to: configFile, options: .atomic)
+        }
     }
 
     // Raw JSONL lines are already JSON objects — join them, no re-encode.
@@ -164,29 +239,39 @@ public enum SlackTranslateStore {
         let replies = (try? String(contentsOf: repliesFile, encoding: .utf8)) ?? "{}"
         let syncErr = (try? String(contentsOf: syncStatusFile, encoding: .utf8)) ?? "{}"
         let gui = (try? String(contentsOf: guiFile, encoding: .utf8)) ?? "{}"
+        let myRx = (try? String(contentsOf: myReactionsFile, encoding: .utf8)) ?? "{}"
         // 해결된 실패는 저절로 사라지도록 — 60초에 한 번 백그라운드 재검증.
         revalidateSyncErrors()
-        var model = "gemini-flash-lite" // default = 1초 번역 (user request 2026-07-23)
+        var model = defaultModel // default = 1초 번역 (user request 2026-07-23)
         var lang = "ko" // 번역 목표 언어 (기본 한국어)
         var sources = "{}" // 기본 전부 on — 페이지가 (!== false)로 해석
+        var quick = defaultQuick // 빠른 리액션 버튼 (툴바 순서 그대로)
         if let data = try? Data(contentsOf: configFile),
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let m = obj["model"] as? String { model = m }
+            if let m = obj["model"] as? String { model = normalizedModel(m) }
             if let l = obj["lang"] as? String { lang = l }
             if let s = obj["sources"],
                let d = try? JSONSerialization.data(withJSONObject: s) {
                 sources = String(decoding: d, as: UTF8.self)
             }
+            if let q = obj["quick"] as? [String] {
+                let clean = q.filter(validEmojiName)
+                if !clean.isEmpty { quick = clean }
+            }
         }
+        let quickJSON = "[\(quick.map { "\"\($0)\"" }.joined(separator: ","))]"
         // 한 식으로 이어붙이면 타입체커가 터진다 — 조각으로 분해해 합친다.
         var out = "{\"items\":\(items)"
         out += ",\"done\":\(done.hasPrefix("{") ? done : "{}")"
         out += ",\"replies\":\(replies.hasPrefix("{") ? replies : "{}")"
         out += ",\"syncErr\":\(syncErr.hasPrefix("{") ? syncErr : "{}")"
         out += ",\"gui\":\(gui.hasPrefix("{") ? gui : "{}")"
+        out += ",\"myRx\":\(myRx.hasPrefix("{") ? myRx : "{}")"
         out += ",\"model\":\"\(model)\""
         out += ",\"lang\":\"\(lang)\""
         out += ",\"sources\":\(sources)"
+        out += ",\"quick\":\(quickJSON)"
+        out += ",\"doneEmoji\":\"\(doneEmoji)\""
         out += ",\"geminiKey\":\(hasKey("gemini-api"))"
         out += ",\"anthropicKey\":\(hasKey("anthropic-api"))"
         // 데몬 건강 상태 — 페이지가 5초마다 이 피드를 폴링하므로 별도 엔드포인트
@@ -216,7 +301,8 @@ public enum SlackTranslateStore {
 
     // User token (xoxp). 키체인 서비스 이름도 레지스트리가 원본이다 — 여기에 문자열을
     // 또 적어두면 이름을 바꿀 때 이 한 줄만 남아 조용히 토큰을 못 찾는다.
-    private static func userToken() -> String? {
+    // internal — SlackContextDoc.swift(컨텍스트 공유하기)도 같은 토큰으로 원 대화를 긁는다.
+    static func userToken() -> String? {
         guard let svc = IntegrationCatalog.credential("slack-user")?.service,
               let token = CMKeychain.value(service: svc),
               token.hasPrefix("xox") else { return nil }
@@ -226,7 +312,8 @@ public enum SlackTranslateStore {
     // Synchronous Slack Web API call (semaphore — handlePost is synchronous and
     // Slack answers in <1s). Returns the parsed response, nil on network failure.
     // Every call lands in the 액션 로그: api.<method>, 소요 ms, ok/error.
-    private static func slackRaw(_ method: String, _ args: [String: String], token: String) -> [String: Any]? {
+    // internal — 위와 같은 이유로 SlackContextDoc.swift 가 history/replies 를 부른다.
+    static func slackRaw(_ method: String, _ args: [String: String], token: String) -> [String: Any]? {
         let t0 = DispatchTime.now()
         var req = URLRequest(url: URL(string: "https://slack.com/api/\(method)")!)
         req.httpMethod = "POST"
@@ -416,11 +503,119 @@ public enum SlackTranslateStore {
         return result
     }
 
-    // 처리완료 ↔ Slack 👀 sync (needs the reactions:write user scope): checking done
-    // removes the :eyes: reaction from the original message, unchecking re-adds it.
+    // ----- 리액션 (슬랙 원문에 이모지 남기기) -----
+
+    // 리액션 하나를 슬랙에 반영하고 내 대장(reactions.json)을 맞춘다. 이미 원하는
+    // 상태면(already_reacted/no_reaction) 성공으로 본다 — 멱등. 성공 시 빈 문자열,
+    // 실패 시 슬랙 에러 코드를 돌려준다.
+    private static func applyReaction(id: String, channel: String, ts: String,
+                                      name: String, on: Bool, token: String) -> String {
+        let res = slackRaw(on ? "reactions.add" : "reactions.remove",
+                           ["channel": channel, "timestamp": ts, "name": name], token: token)
+        let rawErr = res == nil ? "network"
+            : ((res?["ok"] as? Bool) == true ? "" : (res?["error"] as? String ?? "unknown"))
+        // 이미 그 상태였다는 응답은 대장이 실제와 어긋나 있었다는 뜻이다 —
+        // 성공으로 접고 대장을 실제에 맞춘다 (자가 교정).
+        let ok = rawErr.isEmpty || rawErr == (on ? "already_reacted" : "no_reaction")
+        if ok { setMyReaction(id: id, name: name, on: on) }
+        return ok ? "" : rawErr
+    }
+
+    // POST /api/slack/reaction {id, name, on} — 항목 툴바의 빠른 리액션·이모지
+    // 고르기가 부르는 단발 액션. 슬랙에 그대로 이모지를 달거나 뗀다.
+    // 트리거가 아닌 이모지를 달면 데몬이 그걸 "누군가 처리했다"로 읽어 자동
+    // 처리완료까지 간다 (기존 autoResolve 흐름 — 슬랙에서 직접 달 때와 동일).
+    public static func setReaction(id: String, name: String, on: Bool) -> String {
+        let t0 = DispatchTime.now()
+        let result = setReactionInner(id: id, name: name, on: on)
+        logOutcome(on ? "reaction.add" : "reaction.remove", id: id, result: result, t0: t0,
+                   detail: ":\(name): \(on ? "추가" : "제거")")
+        return result
+    }
+
+    private static func setReactionInner(id: String, name: String, on: Bool) -> String {
+        guard validEmojiName(name) else { return "{\"ok\":false,\"error\":\"bad emoji\"}" }
+        guard let item = lookup(id: id) else { return "{\"ok\":false,\"error\":\"item not found\"}" }
+        guard let token = userToken() else { return "{\"ok\":false,\"error\":\"keychain token missing\"}" }
+        let err = applyReaction(id: id, channel: item.channel, ts: item.ts,
+                                name: name, on: on, token: token)
+        guard err.isEmpty else {
+            return "{\"ok\":false,\"error\":\"\(err.replacingOccurrences(of: "\"", with: ""))\"}"
+        }
+        return "{\"ok\":true,\"name\":\"\(name)\",\"on\":\(on)}"
+    }
+
+    // GET /api/slack/emoji — 워크스페이스 커스텀 이모지 {"name": "https://…png"}.
+    // 이모지 고르기 팝업이 기본 세트 뒤에 붙여 보여준다. emoji:read 스코프는 필수
+    // 목록에 없다(없어도 이 기능만 조용히 빠진다) — 실패해도 사용자에게 배너를
+    // 띄우지 않고 빈 목록을 준다. 성공/실패 모두 1시간 캐시라 앱이 떠 있는 동안
+    // 슬랙을 반복해서 부르지 않는다.
+    private static let emojiLock = NSLock()
+    private static var emojiCache = "{}"
+    private static var emojiCachedAt = Date.distantPast
+
+    public static func customEmojiJSON() -> String {
+        emojiLock.lock()
+        defer { emojiLock.unlock() }
+        if Date().timeIntervalSince(emojiCachedAt) < 3600 {
+            return "{\"emoji\":\(emojiCache)}"
+        }
+        emojiCachedAt = Date()
+        emojiCache = "{}"
+        guard let token = userToken(),
+              let res = slackRaw("emoji.list", [:], token: token),
+              res["ok"] as? Bool == true,
+              let map = res["emoji"] as? [String: String] else {
+            return "{\"emoji\":{}}"
+        }
+        // alias:foo 항목과 이상한 URL은 버린다 — 페이지가 그대로 <img src>에 넣는다.
+        let rows = map.compactMap { (name, url) -> String? in
+            guard validEmojiName(name), url.hasPrefix("https://"),
+                  !url.contains("\""), !url.contains("<"), url.count < 400 else { return nil }
+            return "\"\(name)\":\"\(url)\""
+        }.sorted()
+        emojiCache = "{\(rows.joined(separator: ","))}"
+        return "{\"emoji\":\(emojiCache)}"
+    }
+
+    // 내가 앱에서 남긴 리액션 대장 — 버튼 켜짐 상태의 근거. 서버 스레드와
+    // 백그라운드(동기화 재검증)에서 함께 쓰므로 잠금이 필요하다.
+    private static let myRxLock = NSLock()
+
+    public static func loadMyReactions() -> [String: [String]] {
+        guard let data = try? Data(contentsOf: myReactionsFile),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: [String]]
+        else { return [:] }
+        return obj
+    }
+
+    private static func setMyReaction(id: String, name: String, on: Bool) {
+        myRxLock.lock()
+        defer { myRxLock.unlock() }
+        var map = loadMyReactions()
+        var names = map[id] ?? []
+        if on {
+            guard !names.contains(name) else { return }
+            names.append(name)
+        } else {
+            guard names.contains(name) else { return }
+            names.removeAll { $0 == name }
+        }
+        if names.isEmpty { map.removeValue(forKey: id) } else { map[id] = names }
+        if let data = try? JSONSerialization.data(withJSONObject: map) {
+            try? data.write(to: myReactionsFile, options: .atomic)
+        }
+    }
+
+    // 처리완료 ↔ Slack 리액션 sync (needs the reactions:write user scope). 두 가지를
+    // 한 번에 반영한다:
+    //   1) 트리거 이모지(👀·🔖·📌) — 완료하면 떼고, 해제하면 다시 단다.
+    //   2) ✅ white_check_mark — 완료하면 달고, 해제하면 뗀다. 앱에서 초록 체크를
+    //      눌렀으면 슬랙 원문에도 같은 ✅가 보여야 한다 (user request 2026-08-16).
     // Best-effort — "no_reaction"/"already_reacted" mean the state already matches.
-    // The daemon ignores reaction_removed, and re-adding fires reaction_added on an
-    // id it has already seen, so neither direction loops back into the pipeline.
+    // 되먹임 없음: 데몬은 reaction_removed를 트리거로 보지 않고, 다시 단 트리거는
+    // 이미 아는 id라 재수집되지 않는다. 앱이 단 ✅는 데몬의 autoResolve로 가지만
+    // 이미 done.json에 완료로 들어가 있어 곧바로 반환된다.
     // 결과는 삼키지 않는다: 액션 로그(ms 포함) + 실패 시 sync-status.json에 기록해
     // 피드가 항목에 경고를 띄운다 (2026-07-23: missing_scope 실패가 조용히 묻혀
     // "처리완료 눌렀는데 👀가 안 지워짐"의 원인을 알 수 없었던 문제).
@@ -432,30 +627,60 @@ public enum SlackTranslateStore {
             setSyncStatus(id: id, ok: false, error: error, action: action)
         }
         guard let item = lookup(id: id) else { return fail("item not found") }
-        // 동기화할 이모지 결정: emoji 필드가 있으면 그것(멘션으로 수집된 뒤 👀를
-        // 직접 단 항목 포함), 없고 source도 없으면 emoji 필드가 생기기 전의 옛 👀
-        // 항목이므로 eyes.
-        let emoji = item.emoji.isEmpty ? (item.source.isEmpty ? "eyes" : "") : item.emoji
-        // 이모지 트리거가 없는 멘션류 항목엔 동기화할 것도 없고, add를 돌리면 원
-        // 메시지에 👀가 새로 달려 버리므로 통째로 건너뛴다.
-        if emoji.isEmpty {
-            SlackActionLog.log(action, id: id, ok: true, ms: ms(since: t0),
-                               detail: "@멘션 항목 — 리액션 동기화 생략")
+        guard let token = userToken() else { return fail("keychain token missing") }
+        // 동기화할 트리거 이모지 결정: emoji 필드가 있으면 그것(멘션으로 수집된 뒤
+        // 👀를 직접 단 항목 포함), 없고 source도 없으면 emoji 필드가 생기기 전의 옛
+        // 👀 항목이므로 eyes. 멘션류(트리거 없음)는 떼거나 되돌릴 것이 없다 —
+        // add를 돌리면 원 메시지에 👀가 새로 달려 버리므로 이 단계만 건너뛴다.
+        let trigger = item.emoji.isEmpty ? (item.source.isEmpty ? "eyes" : "") : item.emoji
+        var details: [String] = []
+        var errs: [String] = []
+        if trigger.isEmpty {
+            details.append("트리거 없음 — 제거 생략")
+        } else {
+            let err = applyReaction(id: id, channel: item.channel, ts: item.ts,
+                                    name: trigger, on: !done, token: token)
+            if err.isEmpty { details.append(":\(trigger): \(done ? "제거" : "복원")") }
+            else { errs.append("\(trigger)=\(err)") }
+        }
+        // ✅ 미러 — 트리거가 ✅ 자신이면(사용자가 트리거 이모지를 바꾼 경우) 위에서
+        // 이미 처리했으므로 건너뛴다.
+        if trigger != doneEmoji {
+            let err = applyReaction(id: id, channel: item.channel, ts: item.ts,
+                                    name: doneEmoji, on: done, token: token)
+            if err.isEmpty { details.append(":\(doneEmoji): \(done ? "추가" : "제거")") }
+            else { errs.append("\(doneEmoji)=\(err)") }
+        }
+        // 대상 메시지가 슬랙에서 이미 사라진 경우(삭제됨) — reactions.add/remove가
+        // message_not_found로 영구히 실패한다. 재검증(revalidateSyncErrors)이 매분
+        // 다시 두들겨도 절대 성공하지 않으므로, 이런 항목은 실패로 한 번 남긴 뒤
+        // 큐에서 빼서 조용히 포기한다 (2026-08-21: 삭제된 메시지 1건이 영원히
+        // 재시도되며 "슬랙 리액션 동기화 실패" 배너를 계속 띄우던 문제 — 실측:
+        // conversations.history/replies 둘 다 해당 ts를 찾지 못함, 메시지가 실제로
+        // 삭제됐음을 확인).
+        if isTerminalReactionError(errs) {
+            SlackActionLog.log(action, id: id, ok: false, ms: ms(since: t0),
+                               error: errs.joined(separator: " ") + " (메시지가 삭제된 것으로 보임 — 재시도 중단)",
+                               detail: details.joined(separator: " · "))
             setSyncStatus(id: id, ok: true, error: "", action: action)
             return
         }
-        guard let token = userToken() else { return fail("keychain token missing") }
-        let res = slackRaw(done ? "reactions.remove" : "reactions.add",
-                           ["channel": item.channel, "timestamp": item.ts, "name": emoji],
-                           token: token)
-        let rawErr = res == nil ? "network"
-            : ((res?["ok"] as? Bool) == true ? "" : (res?["error"] as? String ?? "unknown"))
-        // 상태가 이미 원하는 쪽이면(no_reaction/already_reacted) 성공으로 취급.
-        let ok = rawErr.isEmpty || rawErr == "no_reaction" || rawErr == "already_reacted"
+        let ok = errs.isEmpty
         SlackActionLog.log(action, id: id, ok: ok, ms: ms(since: t0),
-                           error: ok ? "" : rawErr,
-                           detail: ":\(emoji): \(done ? "제거" : "복원")")
-        setSyncStatus(id: id, ok: ok, error: rawErr, action: action)
+                           error: errs.joined(separator: " "),
+                           detail: details.joined(separator: " · "))
+        setSyncStatus(id: id, ok: ok, error: errs.joined(separator: " "), action: action)
+    }
+
+    // 재시도해도 절대 성공하지 않는 슬랙 에러 — 대상 메시지/채널이 이미 사라진
+    // 경우. missing_scope·network 같은 일시적/구성 문제는 재시도로 나을 수 있으므로
+    // 여기 넣지 않는다.
+    private static let terminalSlackErrors: Set<String> = ["message_not_found", "channel_not_found"]
+
+    private static func isTerminalReactionError(_ errs: [String]) -> Bool {
+        !errs.isEmpty && errs.allSatisfy { entry in
+            terminalSlackErrors.contains { entry.hasSuffix("=\($0)") }
+        }
     }
 
     // 실패만 남는 맵 — 성공(또는 이후 재시도 성공)하면 해당 항목을 지운다.
@@ -623,6 +848,9 @@ public enum SlackActionLog {
 
     private static let queue = DispatchQueue(label: "cm.slack.actionlog")
     static var file: URL { SlackTranslateStore.dir.appendingPathComponent("actions.jsonl") }
+    // 데몬이 쓰는 짝 파일 — 읽을 때만 합친다 (헤더의 소유권 표 참고). 데몬 줄에는
+    // by:"daemon"이 붙어 있어 패널이 어느 쪽 액션인지 구분해 보여준다.
+    static var daemonFile: URL { SlackTranslateStore.dir.appendingPathComponent("actions-daemon.jsonl") }
 
     public static func log(_ action: String, id: String = "", ok: Bool, ms: Int,
                            error: String = "", detail: String = "") {
@@ -644,26 +872,43 @@ public enum SlackActionLog {
     }
 
     // GET /api/slack/actions — last `limit` entries, oldest first (클라이언트가
-    // 뒤집어 최신부터 표시). Tail-window read so a long-lived log stays fast.
+    // 뒤집어 최신부터 표시). 앱 로그와 데몬 로그를 at(초) 기준으로 병합한다 —
+    // 사용자 눈에는 한 줄기 타임라인이어야 한다. Tail-window read so a long-lived
+    // log stays fast.
     public static func recentJSON(limit: Int) -> String {
         let capped = max(1, min(limit, 1000))
         return queue.sync {
-            guard let handle = try? FileHandle(forReadingFrom: file) else {
-                return "{\"actions\":[]}"
+            // 같은 초에 겹치는 줄이 있어도 순서가 뒤집히지 않도록 안정 정렬한다.
+            let rows = (tail(file) + tail(daemonFile)).enumerated()
+                .sorted { ($0.element.at, $0.offset) < ($1.element.at, $1.offset) }
+                .map(\.element.line)
+            return "{\"actions\":[\(rows.suffix(capped).joined(separator: ","))]}"
+        }
+    }
+
+    // 파일 끝 512KB만 읽어 JSON 줄 + 정렬 키(at)를 뽑는다. 첫 줄은 잘렸을 수
+    // 있으므로 버린다. at이 없는 줄은 0으로 두어 맨 앞(가장 오래된 쪽)에 남는다.
+    private static func tail(_ url: URL) -> [(at: Int, line: String)] {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+        defer { try? handle.close() }
+        let size = handle.seekToEndOfFile()
+        let window: UInt64 = 524_288
+        let start = size > window ? size - window : 0
+        handle.seek(toFileOffset: start)
+        guard var text = String(data: handle.readDataToEndOfFile(), encoding: .utf8) else {
+            return []
+        }
+        if start > 0, let nl = text.firstIndex(of: "\n") {
+            text = String(text[text.index(after: nl)...])
+        }
+        return text.split(separator: "\n").filter { $0.hasPrefix("{") }.map { line in
+            let s = String(line)
+            var at = 0
+            if let obj = try? JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any],
+               let n = obj["at"] as? Int {
+                at = n
             }
-            defer { try? handle.close() }
-            let size = handle.seekToEndOfFile()
-            let window: UInt64 = 524_288
-            let start = size > window ? size - window : 0
-            handle.seek(toFileOffset: start)
-            guard var text = String(data: handle.readDataToEndOfFile(), encoding: .utf8) else {
-                return "{\"actions\":[]}"
-            }
-            if start > 0, let nl = text.firstIndex(of: "\n") {
-                text = String(text[text.index(after: nl)...])
-            }
-            let lines = text.split(separator: "\n").filter { $0.hasPrefix("{") }
-            return "{\"actions\":[\(lines.suffix(capped).joined(separator: ","))]}"
+            return (at, s)
         }
     }
 

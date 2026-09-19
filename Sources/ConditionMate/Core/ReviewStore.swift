@@ -1400,15 +1400,42 @@ final class ReviewStore {
     // done → no log entry at all), (2) closes the old sprint, and (3) ONLY IF unfinished
     // goals remain, carries them into a successor: the earliest already-open sprint when
     // one exists, else a fresh auto sprint (start=now, target=now+24h, 1d default).
-    // Completing an empty sprint therefore just closes it — no successor, no release —
-    // which stops the "complete → new empty sprint → complete …" same-day proliferation.
+    // Completing an empty sprint therefore just closes it — no successor — which stops the
+    // "complete → new empty sprint → complete …" same-day proliferation. It DOES still
+    // record the cut itself (2026-08-30, step 1b): the boundary is what the memo pad slices
+    // loops by, and leaving it out let the number advance while the pad stood still. The
+    // empty cut carries nothing, so the 완료 로그 filters it out and proliferation of log
+    // rows stays fixed — what comes back is only the timeline.
     // The carry is stamped on the release (carriedTo/carriedIds) so 복원 can undo it fully.
     @discardableResult
     func completeSprint(_ number: Int) -> Sprint? {
         guard sprints.contains(where: { $0.number == number }) else { return nil }
         // 1. Commit finished work (done + not-yet-released). Safe when nothing is done —
         //    releaseSprint just returns [] and the 완료 로그 stays untouched.
-        let committed = releaseSprint(number)
+        var committed = releaseSprint(number)
+        // 1b. 컷은 사건이다 — 완료한 것이 하나도 없어도 경계는 남긴다 (2026-08-30).
+        //     그전에는 커밋할 완료 목표도, 거둘 메모 완료 줄도 없으면 릴리즈를 아예 안
+        //     만들었다. 스프린트 번호만 26-55 → 26-56 으로 넘어가고 '언제 잘렸나' 는
+        //     어디에도 안 남았다. 실제로 이 맥에서 26-49 부터 26-55 까지 일곱 루프가
+        //     그렇게 닫혔고, 마지막 컷 기록은 2026-08-29 08:01 의 26-48 이었다.
+        //     이것이 메모장을 망가뜨린다: 패드는 '이 줄이 어느 루프냐' 를 컷의 시각으로
+        //     자른다(MemoPad.loopOf). 경계가 없으면 그 뒤에 적은 줄은 전부 '현재 루프'
+        //     로 판정되어, 루프를 완료해도 번호만 바뀌고 메모는 그대로 남는다.
+        //     번호는 열린 스프린트에서 오고 경계는 릴리즈에서 오는데, 한쪽만 기록되고
+        //     있었던 것이다. 이제 둘이 같이 움직인다.
+        //     빈 컷은 goalIds·titles·notes 가 모두 비어 있다 — 완료 로그는 그것으로
+        //     알아보고 목록에서 뺀다(완료한 것이 없으니 '완료된 루프' 가 아니다).
+        //     되돌리기는 그대로다: 잘못 눌렀으면 이 기록의 복원이 스프린트를 다시 연다
+        //     (restoreRelease) — 기록이 아예 없던 예전에는 그 길조차 없었다.
+        if !committed.contains(where: { $0.sprint == number }) {
+            let sp = sprints.first(where: { $0.number == number })
+            let rel = Release(id: UUID().uuidString, sprint: number,
+                              code: nextReleaseCode(forSprint: number),
+                              releasedAt: Date(), startedAt: sp?.startAt,
+                              value: 0, goalIds: [], titles: [])
+            releases.insert(rel, at: 0)   // newest first (commit log order)
+            committed.append(rel)
+        }
         // 2. Unfinished goals decide whether a successor is needed at all.
         let leftover = goals.indices.filter { goals[$0].sprint == number && !goals[$0].released }
         var successor: Sprint? = nil

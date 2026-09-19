@@ -34,11 +34,23 @@ public struct CredInstance {
     // 검사가 남긴 흔적의 주소 — 노션이면 그때 만든 테스트 페이지. 도구 개수는 앱만
     // 아는 숫자라 사용자가 확인할 방법이 없었다. 이 링크가 그 확인이다.
     public var testUrl: String
+    // 마지막 연결 검사가 알아낸 사실들(JSON 한 덩어리). 깃허브는 "붙는다"만으로는
+    // 부족하다 — 어느 계정의 어떤 종류 토큰이 어느 조직·레포까지 닿는지가 서로 다른
+    // 인스턴스를 구분하는 유일한 근거다. 검사 결과 캐시는 5분이면 사라지므로(메모리),
+    // 화면이 다시 열려도 남아 있어야 하는 이 사실만 여기에 적는다.
+    // 비밀값은 절대 들어가지 않는다 — 계정 로그인·레포 이름·스코프 이름은 비밀이 아니다.
+    public var scan: String
+    public var scannedAt: Double
+    // 외부 Keychain 항목을 고른 경우의 비밀 없는 참조. 빈 값은 예전 규칙
+    // (cm-<credential>-<key> + 카탈로그 account)을 그대로 뜻한다.
+    public var keychainService: String
+    public var keychainAccount: String
 
     public init(credId: String, key: String, label: String,
                 fields: [String: String] = [:], mcp: Bool = false, mode: String = "token",
                 testedAt: Double = 0, testOk: Bool = false, testNote: String = "",
-                testUrl: String = "") {
+                testUrl: String = "", scan: String = "", scannedAt: Double = 0,
+                keychainService: String = "", keychainAccount: String = "") {
         self.credId = credId
         self.key = key
         self.label = label
@@ -49,6 +61,10 @@ public struct CredInstance {
         self.testOk = testOk
         self.testNote = testNote
         self.testUrl = testUrl
+        self.scan = scan
+        self.scannedAt = scannedAt
+        self.keychainService = keychainService
+        self.keychainAccount = keychainAccount
     }
 
     // 이 인스턴스의 키체인 service. 단일 인스턴스 자격증명(슬랙·LLM)은 예전 그대로
@@ -118,7 +134,11 @@ public enum IntegrationInstances {
                                 testedAt: (row["testedAt"] as? Double) ?? 0,
                                 testOk: (row["testOk"] as? Bool) ?? false,
                                 testNote: (row["testNote"] as? String) ?? "",
-                                testUrl: (row["testUrl"] as? String) ?? "")
+                                testUrl: (row["testUrl"] as? String) ?? "",
+                                scan: (row["scan"] as? String) ?? "",
+                                scannedAt: (row["scannedAt"] as? Double) ?? 0,
+                                keychainService: (row["keychainService"] as? String) ?? "",
+                                keychainAccount: (row["keychainAccount"] as? String) ?? "")
         }
     }
 
@@ -142,6 +162,16 @@ public enum IntegrationInstances {
             merged.testOk = rows[i].testOk
             merged.testNote = rows[i].testNote
             merged.testUrl = rows[i].testUrl
+            // 스캔 결과도 저장 요청이 지우지 않는다 — 이름을 고쳤다고 해서 방금 확인한
+            // 레포·서명 상세가 사라지면, 사용자는 그걸 다시 확인하러 검사를 또 돌린다.
+            merged.scan = rows[i].scan
+            merged.scannedAt = rows[i].scannedAt
+            // 빈 참조는 기존 참조를 지우라는 뜻이 아니다. 일반 라벨 수정이 선택한
+            // Keychain 항목을 파생 service로 되돌리지 않게 한다.
+            if merged.keychainService.isEmpty {
+                merged.keychainService = rows[i].keychainService
+                merged.keychainAccount = rows[i].keychainAccount
+            }
             rows[i] = merged
         } else {
             rows.append(inst)
@@ -173,6 +203,18 @@ public enum IntegrationInstances {
         return save(rows)
     }
 
+    // 연결 검사가 알아낸 상세(레포·조직·서명·토큰 종류). 검사할 때마다 통째로
+    // 갈아 끼운다 — 지난번에 보이던 레포가 이번에 안 보이면 그건 접근이 끊겼다는
+    // 뜻이고, 두 결과를 합치면 그 사실이 가려진다.
+    @discardableResult
+    public static func setScan(credId: String, key: String, json: String) -> Bool {
+        var rows = all()
+        guard let i = rows.firstIndex(where: { $0.credId == credId && $0.key == key }) else { return false }
+        rows[i].scan = json
+        rows[i].scannedAt = json.isEmpty ? 0 : Date().timeIntervalSince1970
+        return save(rows)
+    }
+
     @discardableResult
     public static func remove(credId: String, key: String) -> Bool {
         let rows = all().filter { !($0.credId == credId && $0.key == key) }
@@ -184,7 +226,11 @@ public enum IntegrationInstances {
             ["credId": $0.credId, "key": $0.key, "label": $0.label,
              "fields": $0.fields, "mcp": $0.mcp, "mode": $0.mode,
              "testedAt": $0.testedAt, "testOk": $0.testOk, "testNote": $0.testNote,
-             "testUrl": $0.testUrl]
+             "testUrl": $0.testUrl, "scan": $0.scan, "scannedAt": $0.scannedAt]
+            .merging($0.keychainService.isEmpty ? [:] : [
+                "keychainService": $0.keychainService,
+                "keychainAccount": $0.keychainAccount
+            ]) { _, new in new }
         }
         let payload: [String: Any] = ["version": 1, "instances": items]
         guard let data = try? JSONSerialization.data(withJSONObject: payload,

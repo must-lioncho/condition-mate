@@ -79,22 +79,26 @@ final class PluginStore {
                kind: .toggle, folderPath: "", status: .disconnected, detail: "미설치", verifiedAt: nil),
         // 카메라 지킴이 (Sources/ConditionMate/Plugins/CameraGuard): 개더타운이 자리비움을
         // 감지해 카메라를 멋대로 끄는 것을 막는다 — 개더 실행 중엔 주기적 keep-alive로 유휴
-        // 판정을 무력화하고, 그래도 카메라가 꺼진 채 유지되면 소리+배너로 알린다. 토글 모델 —
-        // 카드의 on/off 스위치(기본 켜짐)로 제거 없이 일시정지.
+        // 판정을 무력화하고, 그래도 카메라가 꺼진 채 유지되면 개더를 앞으로 올려 ⌘⇧V를
+        // 보내 자동으로 다시 켠다. 두 번 시도해도 안 켜지면 그때 소리+배너로 알린다.
+        // 토글 모델 — 카드의 on/off 스위치(기본 켜짐)로 제거 없이 일시정지.
         Plugin(id: "camera-guard",
                name: "카메라 지킴이",
-               desc: "개더타운이 자리비움 감지로 카메라를 끄는 것을 방지합니다. 개더 실행 중 keep-alive · 꺼짐 지속 시 알림.",
+               desc: "개더타운이 자리비움 감지로 카메라를 끄는 것을 방지합니다. 개더 실행 중 keep-alive · 꺼지면 자동으로 다시 켬.",
                hint: "설치형 — 켜면 개더 실행 중 카메라 상시-ON을 지킵니다. 카드의 on/off로 즉시 일시정지 (기본 켜짐).",
                kind: .toggle, folderPath: "", status: .disconnected, detail: "미설치", verifiedAt: nil),
-        // 슬랙 번역 (Sources/Plugins/Slack): 👀 리액션을 단 슬랙 메시지를 실시간으로
-        // 받아 번역해 번역함에 쌓는다. 설치형이지만 혼자 못 산다 — 슬랙 토큰 2개로
-        // 메시지를 받고, LLM 하나로 번역한다. 그래서 카드가 그 연동 상태를 함께
-        // 그리고, 없으면 무엇을 연결해야 하는지까지 말한다(capabilities).
+        // 슬랙 연동 (Sources/Plugins/Slack): 카드 이름은 붙는 대상(슬랙)이지 기능이
+        // 아니다 — 번역·스피킹은 이 연동 위에 올라탄 기능이고, 앞으로 더 늘어난다.
+        // 예전 이름('슬랙 번역')은 기능 하나를 카드 이름으로 써서, 스피킹이 생겼을 때
+        // 그게 어디 사는 기능인지 화면이 설명하지 못했다.
+        // 설치형이지만 혼자 못 산다 — 슬랙 토큰 2개로 메시지를 받고, 모델 하나로
+        // 번역한다. 그래서 카드가 그 연동 상태를 함께 그리고, 없으면 무엇을 연결해야
+        // 하는지까지 말한다(capabilities).
         // 제거하면 데몬이 대기 상태로 들어가고 번역함 수집이 멈춘다.
         Plugin(id: "slack-translate",
-               name: "슬랙 번역",
-               desc: "슬랙에서 👀를 단 메시지를 실시간으로 번역해 번역함에 모읍니다. 스레드 답장·처리완료까지 여기서.",
-               hint: "설치형 — 슬랙 토큰 2개와 번역용 LLM 연동이 필요합니다.",
+               name: "슬랙 연동",
+               desc: "슬랙 워크스페이스 연결. 👀를 단 메시지를 실시간 번역해 번역함에 모으고, 스레드 답장·처리완료·스피킹까지 여기서.",
+               hint: "설치형 — 슬랙 토큰 2개와 번역용 모델 연동(Gemini 연동 또는 Claude 연동)이 필요합니다.",
                kind: .toggle,
                credentials: ["slack-user", "slack-app"],
                capabilities: ["slack-translate", "slack-speak"],
@@ -104,7 +108,7 @@ final class PluginStore {
     // Toggle plugins that should be installed out of the box (so the feature works on a
     // fresh launch). 컨디션 메이트 owns BGM, which the app has always played by default;
     // 드로우 ships armed so the ⌥-draw gesture works right after the update.
-    // 슬랙 번역은 예전부터 켜져 있던 기능이라 기본 설치로 둔다 — 플러그인으로
+    // 슬랙 연동은 예전부터 켜져 있던 기능이라 기본 설치로 둔다 — 플러그인으로
     // 승격됐다는 이유만으로 어느 날 갑자기 수집이 멈추면 안 된다. 이미 시스템
     // 페이지에서 꺼둔 사람은 AppDelegate가 첫 실행 때 그 상태를 그대로 옮겨 온다.
     private static let defaultInstalled: Set<String> = ["condition-mate", "draw", "camera-guard",

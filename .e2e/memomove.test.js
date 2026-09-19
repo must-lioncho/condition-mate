@@ -70,8 +70,8 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
   await set(MIX);
   await rclick(1);                                     // b (미완료)
   let m = await menu();
-  eq('우클릭 메뉴에 이동 항목이 뜬다', m.slice(0, 2).map(x => x.t), ['위로 이동', '아래로 이동']);
-  eq('위 이웃(a)이 같은 상태 — 위로 이동 가능', m[0].d, false);
+  eq('우클릭 메뉴에 이동 항목이 뜬다', m.slice(0, 3).map(x => x.t), ['맨 위로 이동', '위로 이동', '아래로 이동']);
+  eq('위 이웃(a)이 같은 상태 — 위로 이동 가능', m[1].d, false);
   await pick('위로 이동');
   eq('미완료끼리 자리가 바뀐다', await text(), '- [ ] b\n- [ ] a\n- [x] c\n- [x] d\n- [!] e');
 
@@ -83,19 +83,50 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
   await set(MIX);
   await rclick(2);                                     // c (완료) — 위에는 완료가 없다
   m = await menu();
-  eq('그 방향에 같은 상태가 없으면 막힌다 (항목은 흐려진 채 남는다)', m[0].d, true);
-  eq('아래 이웃(d)은 같은 완료 — 열려 있다', m[1].d, false);
+  eq('그 방향에 같은 상태가 없으면 막힌다 (항목은 흐려진 채 남는다)', m[1].d, true);
+  eq('아래 이웃(d)은 같은 완료 — 열려 있다', m[2].d, false);
   await pick('위로 이동');                              // 눌러도 아무 일 없어야 한다
   eq('막힌 방향은 눌러도 순서가 그대로다', await text(), MIX);
 
   await rclick(4);                                     // e (바틀넥) — 유일한 바틀넥
   m = await menu();
-  eq('같은 상태 이웃이 없으면 양쪽 다 막힌다', [m[0].d, m[1].d], [true, true]);
+  eq('같은 상태 이웃이 없으면 양쪽 다 막힌다', [m[1].d, m[2].d], [true, true]);
 
   // 맨 위·맨 아래 끝에서도 막힌다.
   await rclick(0);                                     // a — 맨 위
   m = await menu();
-  eq('맨 위 행은 위로 이동이 막힌다', m[0].d, true);
+  eq('맨 위 행은 위로 이동이 막힌다', m[1].d, true);
+
+  // ── 맨 위로 이동 — 같은 상태 그룹의 첫 자리로 한 번에 ─────────────────────
+  await set(MIX);
+  await rclick(1);                                     // b (미완료)
+  m = await menu();
+  eq('맨 위로가 이동 항목 앞에 선다', m.slice(0, 3).map(x => x.t),
+    ['맨 위로 이동', '위로 이동', '아래로 이동']);
+  await pick('맨 위로 이동');
+  eq('미완료 그룹의 맨 위로 올라간다', await text(), '- [ ] b\n- [ ] a\n- [x] c\n- [x] d\n- [!] e');
+
+  await set('- [ ] a\n- [x] c\n- [ ] b\n- [x] d\n- [x] e');
+  await rclick(4);                                     // e (완료) — 위 완료는 c, d
+  await pick('맨 위로 이동');
+  eq('끼어 있는 미완료를 건너 완료 그룹 맨 앞에 선다',
+    await text(), '- [ ] a\n- [x] e\n- [x] c\n- [ ] b\n- [x] d');
+
+  await set(MIX);
+  await rclick(0);                                     // a — 이미 미완료 그룹의 맨 위
+  m = await menu();
+  eq('올릴 곳이 없으면 맨 위로도 막힌다', m[0].d, true);
+  await pick('맨 위로 이동');
+  eq('막힌 채 눌러도 순서가 그대로다', await text(), MIX);
+
+  // 되돌리기도 한 단계다 — 여러 칸을 건너뛰어도 이동 하나로 친다.
+  await set(MIX);
+  await rclick(3);                                     // d (완료)
+  await pick('맨 위로 이동');
+  eq('맨 위로가 반영됐다', await text(), '- [ ] a\n- [ ] b\n- [x] d\n- [x] c\n- [!] e');
+  await page.click('[data-cmmemo-doc]');
+  await page.keyboard.press('Meta+z');
+  eq('⌘Z 한 번으로 맨 위로가 원상 복귀된다', await text(), MIX);
 
   // ── 사이에 다른 상태가 끼면 건너뛴다 ─────────────────────────────────────
   // 정렬(미완료↑ 완료↓)을 켠 화면에서는 같은 상태끼리 붙어 보인다 — 그 화면의
@@ -103,7 +134,7 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
   await set('- [x] c\n- [ ] a\n- [x] d');
   await rclick(0);                                     // c (완료) — 아래 완료는 a 건너 d
   m = await menu();
-  eq('끼어 있는 미완료를 건너 같은 상태를 찾는다', m[1].d, false);
+  eq('끼어 있는 미완료를 건너 같은 상태를 찾는다', m[2].d, false);
   await pick('아래로 이동');
   eq('완료는 미완료를 건너뛰어 다음 완료 뒤로 간다', await text(), '- [ ] a\n- [x] d\n- [x] c');
 
@@ -116,7 +147,7 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
   await set('평문 하나\n평문 둘\n- [ ] a');
   await rclick(1);                                     // 평문 둘
   m = await menu();
-  eq('평문 줄은 평문 이웃과만 움직인다', [m[0].d, m[1].d], [false, true]);
+  eq('평문 줄은 평문 이웃과만 움직인다', [m[1].d, m[2].d], [false, true]);
   await pick('위로 이동');
   eq('평문끼리 자리가 바뀐다', await text(), '평문 둘\n평문 하나\n- [ ] a');
 

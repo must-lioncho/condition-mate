@@ -22,11 +22,11 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/lioncho/Work/departtment_service/projects/condition-mate/Scripts/autobuild-watch.sh</string>
+        <string>/Users/lioncho/Work/lion_work/organization/lion/lion-condition-mate/Scripts/autobuild-watch.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/lioncho/Work/departtment_service/projects/condition-mate</string>
+    <string>/Users/lioncho/Work/lion_work/organization/lion/lion-condition-mate</string>
 
     <key>RunAtLoad</key>
     <true/>

@@ -82,6 +82,7 @@ fs.writeFileSync(ITEMS_FILE, rows.map(r => JSON.stringify(r)).join('\n') + '\n')
 
 const posted = [];
 const logs = [];
+const acts = [];
 const ctx = {
   ITEMS_FILE,
   readFileSync: fs.readFileSync,
@@ -89,6 +90,10 @@ const ctx = {
   renameSync: fs.renameSync,
   log: (...m) => logs.push(m.join(' ')),
   ping: () => {},
+  // 데몬은 재트리거 1건마다 액션 로그를 한 줄 남긴다. 이 스텁이 없으면 retrigger가
+  // ReferenceError로 죽고 npm run test:slack 전체가(&& 체인이라) 실행되지 않는다 —
+  // 실제로 그렇게 깨져 있었다. 스텁을 채워 두고 아래에서 호출 자체를 검증한다.
+  act: (action, o) => acts.push(Object.assign({ action }, o)),
   setDoneRemote: async (id, done) => { posted.push({ id, done }); return true; },
 };
 const load = () => fs.readFileSync(ITEMS_FILE, 'utf8').trim().split('\n').map(JSON.parse);
@@ -109,6 +114,8 @@ const { retrigger } = new Function(...Object.keys(ctx), body)(...Object.values(c
   ok(items.find(i => i.id === 'C1:1').triggeredAt === undefined, '다른 줄은 건드리지 않는다');
   ok(posted.length === 1 && posted[0].id === 'C1:2' && posted[0].done === false,
     '처리완료 해제를 앱에 알린다 (done:false)');
+  ok(acts.length === 1 && acts[0].action === 'retrigger' && acts[0].id === 'C1:2' && acts[0].ok === true,
+    '재트리거가 액션 로그를 한 줄 남긴다 (대시보드 디버그 타임라인)');
 
   // 정렬 재확인 — 방금 재트리거된 항목이 실제로 맨 위.
   const top = load().slice().sort((x, y) => trigAt(y) - trigAt(x))[0];

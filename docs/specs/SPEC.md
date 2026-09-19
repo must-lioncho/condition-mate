@@ -1,7 +1,7 @@
 # Condition Mate — SPEC (per-page, bilingual)
 
-EN: Source of truth for **manager-qa** regression testing, owned by manager-qa. Organized **per page/screen** (not per category) so a broken page is obvious at a glance. Base format = this Markdown file. `SPEC.html` is a generated, human-friendly render of the same content — regenerate it in the same change whenever this file changes.
-KO: **manager-qa** 회귀 테스트의 기준 문서이며 manager-qa가 소유·관리한다. 카테고리가 아니라 **페이지/화면별**로 정리해 깨진 페이지가 한눈에 보이게 한다. 기준 포맷은 이 Markdown 파일이고, `SPEC.html`은 같은 내용을 사람이 보기 좋게 만든 생성물이다 — 이 파일이 바뀌면 같은 작업에서 다시 생성한다.
+EN: Source of truth for **lion-condition-mate-worker-qa** regression testing, owned by lion-condition-mate-worker-qa. Organized **per page/screen** (not per category) so a broken page is obvious at a glance. Base format = this Markdown file. `SPEC.html` is a generated, human-friendly render of the same content — regenerate it in the same change whenever this file changes.
+KO: **lion-condition-mate-worker-qa** 회귀 테스트의 기준 문서이며 lion-condition-mate-worker-qa가 소유·관리한다. 카테고리가 아니라 **페이지/화면별**로 정리해 깨진 페이지가 한눈에 보이게 한다. 기준 포맷은 이 Markdown 파일이고, `SPEC.html`은 같은 내용을 사람이 보기 좋게 만든 생성물이다 — 이 파일이 바뀌면 같은 작업에서 다시 생성한다.
 
 > **Docs hub / 문서 허브.** `SPEC.html` is now a small GitBook-style hub with top tabs. The **Spec** tab renders this file; the **Product Soul** tab renders `SOUL.md` (why the product exists, what problem it solves). When regenerating `SPEC.html`, preserve the tab shell and both panels — do not drop the Soul tab. / `SPEC.html`은 이제 상단 탭이 있는 깃북식 허브다. **Spec** 탭 = 이 파일, **제품 소울** 탭 = `SOUL.md`(존재 이유·푸는 문제). 재생성 시 탭 셸과 두 패널을 보존하고 Soul 탭을 떨어뜨리지 않는다.
 
@@ -17,8 +17,8 @@ KO: **manager-qa** 회귀 테스트의 기준 문서이며 manager-qa가 소유�
   EN: If a behavior's expected result is not pinned here and could reasonably go two ways, do not invent an expectation and test against it — surface it under OPEN QUESTIONS and ask the user.
   KO: 기대 결과가 여기에 고정돼 있지 않고 두 갈래로 갈릴 수 있으면, 기대를 지어내 검증하지 말고 OPEN QUESTIONS에 올려 사용자에게 물어라.
 - **Verification / 검증 방법.**
-  EN: Verification uses `<CM_DATA_DIR>/app.log` (KST timestamps, `Core/AppLog.swift`) and isolated bundle instances with a **unique** bundle id + `CM_QUIT_AFTER`. See the manager-qa agent playbook.
-  KO: 검증은 `<CM_DATA_DIR>/app.log`(KST 타임스탬프, `Core/AppLog.swift`)와, **유니크한** 번들 id + `CM_QUIT_AFTER`를 사용하는 격리 번들 인스턴스로 수행한다. manager-qa 플레이북을 참고하라.
+  EN: Verification uses `<CM_DATA_DIR>/app.log` (KST timestamps, `Core/AppLog.swift`) and isolated bundle instances with a **unique** bundle id + `CM_QUIT_AFTER`. See the lion-condition-mate-worker-qa agent playbook.
+  KO: 검증은 `<CM_DATA_DIR>/app.log`(KST 타임스탬프, `Core/AppLog.swift`)와, **유니크한** 번들 id + `CM_QUIT_AFTER`를 사용하는 격리 번들 인스턴스로 수행한다. lion-condition-mate-worker-qa 플레이북을 참고하라.
 
 ## Page index
 
@@ -31,6 +31,8 @@ KO: **manager-qa** 회귀 테스트의 기준 문서이며 manager-qa가 소유�
 | P5. App window — 대시보드 mode | `DASH-` | `Dashboard/DashboardContent.swift` |
 | P6. Server / endpoints | `EP-` | `AppDelegate.swift` (handlePost/apiGet/file), `Dashboard/DashboardServer.swift` |
 | P7. Cross-cutting: logging | `LOG-` | `Core/AppLog.swift` |
+| P8. App window — 루프 엔지니어링 페이지 | `LOOP-` | `Dashboard/LoopEngineeringContent.swift`, `Core/LoopScan.swift`, `Core/LoopHistory.swift`, `AppDelegate.loopEngineeringJSON()` |
+| P9. App window — Slack 번역 페이지 / 상태축 | `SLKST-` | `Plugins/Slack/SlackTranslateContent.swift`, `Plugins/Slack/Daemon/slack-eyes-daemon.mjs`, `Scripts/slack-backlog-close.mjs` |
 
 ## Old id -> new id remap
 
@@ -430,6 +432,51 @@ Note (KO): SPEC.html의 P1 섹션은 실제 스크린샷이 아니라 라벨이 
   NOTE: this PASS covers autoplay-starts-and-keeps-advancing only. See BGMACT-6 (new, 2026-07-06
   third pass) for a SEPARATE, newly-surfaced defect found while verifying this item: stopping the
   challenge does not actually stop the audible `<audio>` element.
+  **REGRESSED then RE-FIXED, 2026-09-06 (fourth pass) — the 2026-07-06 PASS above is true as of
+  its date and is left in place rather than deleted.** The window's own BGM webview stopped making
+  any sound at all, for days: every app pid from 2026-09-04 21:16 KST through 2026-09-07 00:33 KST
+  reported `paused:true, engaged:false, readyState:0` in `audio-probe`, i.e. the `<audio>` element
+  never loaded a byte and `play()` was never called. CAUSE: `refreshNow()`'s director-follow branch
+  gated the actual start on `engaged` alone (`if(engaged && audioEl.paused){ audioEl.play() }`),
+  and `engaged` only becomes true on a user gesture inside the player. The dedicated BGM webview
+  auto-opens and nobody ever clicks inside it, so the gesture never arrived — while native audio
+  was already force-muted for the duration the window is open (WINLIFE-3), leaving ZERO audio
+  sources. FIX (`BGMPlayerContent.swift:1114-1116`): branch on `!EMBEDDED || engaged` instead of
+  `engaged`, and call `engage()` before `play()`. `EMBEDDED` (`:906`,
+  `window.frameElement !== null`) is false for the dedicated top-level webview — the window's audio
+  owner, whose WKWebView sets `mediaTypesRequiringUserActionForPlayback = []` — and true for the
+  dashboard's in-page BGM tab, which stays gesture-only and never becomes a second source (the
+  `EMBEDDED` guards at `:951` and `:1016` are unchanged). The `engage()`-before-`play()` ORDER is
+  load-bearing, not cosmetic: `engage()` runs `ensureGraph()`, which is where
+  `createMediaElementSource(audioEl)` (`:1364`) routes the element into the Web Audio graph behind
+  `outMute` (`:1423-1425`). Calling `play()` first would let the element sound straight to the
+  destination and bypass the mute gain entirely — audible sound while the user has muted.
+  **Verify (STRENGTHENED — this is the part that let the bug hide for days): the app's own report
+  is NOT evidence of sound.** Throughout the silent period `/api/bgm/now` returned
+  `on:true, playing:true, muted:false` and the UI read "재생 중" while nothing came out of the
+  speakers. Any future check of this item must pair the in-page probe with an EXTERNAL,
+  outside-the-app audio signal. Two that work, both used on 2026-09-06: (a) `pmset -g assertions`
+  must show `coreaudiod` holding `PreventUserIdleSystemSleep` named
+  `com.apple.audio.<Device>.context.preventuseridlesleep` with `Resources: audio-out <Device>` —
+  this assertion exists only while audio is actually being rendered to an output device; (b) the
+  app's `com.apple.WebKit.GPU` helper process (WKWebView plays media out-of-process) must have
+  `CoreAudio.component` / `AudioCodecs.component` / `AudioDSP.component` loaded (`lsof -p <gpu-pid>`).
+  Also confirm WHICH binary is running (`ps` — `/Applications/ConditionMate.app/Contents/MacOS/ConditionMate`
+  vs `.build/debug/ConditionMate`) and that the change is actually inside it; because the JS is
+  embedded as a Swift string literal, `strings -a <binary> | grep <a comment from the change>`
+  settles it without a rebuild.
+  KO: 창의 전용 BGM webview 가 며칠 동안 소리를 전혀 내지 않았다. 원인은 재생 시작을 `engaged`
+  (사용자 클릭)에만 걸어 둔 것이다 — 전용 창은 자동으로 뜨고 그 안을 클릭할 사람이 없으므로 그
+  제스처는 오지 않고, 창이 열려 있는 동안 네이티브는 이미 강제 음소거라 소리의 출처가 0 개가
+  된다. `!EMBEDDED || engaged` 로 바꿔 창의 오디오 주인만 제스처 없이 시작하게 했고, 끼워진
+  BGM 탭은 그대로 제스처 전용으로 남는다. `engage()` 를 `play()` 앞에 두는 순서가 중요하다 —
+  그래프가 먼저 서야 음소거 게인을 우회하지 않는다. **검증에서 배울 것: 앱의 자기 보고를 소리의
+  증거로 쓰지 마라.** 침묵하는 내내 앱은 `playing:true` 라고 말하고 화면은 "재생 중" 이었다.
+  앱 밖의 신호(`pmset` 의 audio-out assertion, WebKit GPU 프로세스의 CoreAudio 로드)를 반드시
+  같이 봐야 한다.
+  **위험 (2026-09-06 시점): 이 수정은 커밋되어 있지 않다.** `git show HEAD:` 판은 아직 옛
+  `if(engaged && audioEl.paused)` 를 들고 있어, `git checkout`/`git stash` 한 번이나 깨끗한
+  트리에서의 빌드 한 번으로 이 침묵이 그대로 돌아온다.
 - **BGMACT-2 — state machine has no stuck limbo.**
   EN: `GET /api/bgm/now` distinguishes `on` (system engaged) from `playing` (a resolvable track is
   actually streaming) from `id` (which library track). The status dot follows `on`; whether a
@@ -438,13 +485,28 @@ Note (KO): SPEC.html의 P1 섹션은 실제 스크린샷이 아니라 라벨이 
   라이브러리 리로드 중에도 "완전히 죽은" 상태로 안 보이게 한다.
   Verify: `AppDelegate.swift:bgmNowJSON` — `on = director.isPlaying`; `playing = on && !isPaused &&
   id >= 0`.
-- **BGMACT-3 — the play button follows the browser transport.**
+- **BGMACT-3 — the play button follows the browser transport. SCOPED to the EMBEDDED / external
+  copy (amended 2026-09-06).**
   EN: Once the user "engages" (first play gesture / auto-cue), further track switches (from the
   director) auto-play in this same webview; before engaging, native stays audible and this view
-  just cues silently.
+  just cues silently. **This cue-only-until-gesture half applies ONLY where `EMBEDDED` is true —
+  the dashboard's in-page BGM tab — or to an external browser tab on `/bgm-player`. It does NOT
+  apply to the dedicated top-level BGM webview**, which is the window's audio owner and must
+  self-start (BGMACT-1 fourth pass).
   KO: 사용자가 한 번 재생을 "잡으면" 이후 곡 전환도 이 화면에서 자동재생되고, 잡기 전까지는
-  네이티브가 계속 들리며 이 화면은 조용히 큐만 잡는다.
-  Verify: `BGMPlayerContent.swift:refreshNow()` — `engaged` flag gates auto-play vs. cue-only.
+  네이티브가 계속 들리며 이 화면은 조용히 큐만 잡는다. **단, "잡기 전까지 큐만" 은 `EMBEDDED`
+  가 참인 사본(대시보드 안의 BGM 탭)과 외부 브라우저 탭에만 해당한다. 창의 오디오 주인인 전용
+  BGM webview 에는 해당하지 않는다.**
+  Verify: `BGMPlayerContent.swift:refreshNow()` — the gate is `!EMBEDDED || engaged`, so `engaged`
+  gates auto-play vs. cue-only for the embedded/external copy only.
+  Why the scope had to be written down / 왜 범위를 적어야 했는가: the unqualified wording above was
+  the premise that produced the 2026-09-06 silence. Its "before engaging, native stays audible" is
+  simply FALSE for the window's own webview — WINLIFE-3 force-mutes native for exactly as long as
+  the window is open, so "cue silently and let native cover it" leaves nothing making sound. The
+  clause is true only for the copies that run while native is still audible.
+  이 절의 조건 없는 옛 표현("잡기 전까지는 네이티브가 계속 들린다")이 2026-09-06 침묵을 만든
+  전제다. 창의 전용 webview 에는 그 전제가 거짓이다 — 창이 열려 있는 동안 네이티브는 음소거이므로
+  "조용히 큐만" 이 곧 무음이다.
 - **BGMACT-4 (was Q3) — disconnect auto-stop.**
   EN: If the app/server becomes unreachable, this page stops itself on the FIRST failed
   `/api/bgm/now` poll (~1.5s poll interval) rather than waiting — a browser tab must not keep
@@ -587,7 +649,7 @@ Note (KO): SPEC.html의 P1 섹션은 실제 스크린샷이 아니라 라벨이 
   themes[] carries the arc distribution; `.e2e/tagaudit.test.js` (node stub over the real
   extracted `arcMini`/`loadTagAudit`/`renderTagAudit` blocks) — theme expand → per-track rows +
   arc badges, collapse, quiet failure, and a hex-hue scan proving no traffic-light colors.
-  **STATUS: PASS (2026-07-24, manager-qa — full pass incl. per-track arc/tier/purpose extension).**
+  **STATUS: PASS (2026-07-24, lion-condition-mate-worker-qa — full pass incl. per-track arc/tier/purpose extension).**
   Theme-level pass (same date, see history) reconfirmed unchanged. Per-track extension verified
   end-to-end: `bgm/bgm-tags.json` (260 entries) integrity-checked against an on-disk walk of
   `bgm/` — 260/260 paths join with 0 missing/0 duplicate/0 extra (NFC/NFD-safe comparison), every
@@ -793,8 +855,8 @@ BGMDBG-2는 이번 실행에서 라이브로 검증하지 않음 — 이전 회�
   보임(이전엔 없었음). 구 프리뷰 탭 클라이언트 JS 내보내기(`buildMarkdown`/`renderReport`,
   `:4139`/`:4163`)도 같은 payload를 읽으므로 이제 실제 `links` 데이터를 받는다(이번 라운드에서
   독립적으로 재검증하진 않았으나, 지금 채워짐이 확인된 동일 `/data.json` 필드를 읽는다).
-  History: found 2026-07-06 by manager-qa during the goal-link-and-generic-queue Phase 4 QA pass;
-  fixed same day and re-verified PASS by manager-qa in fix-loop round 2.
+  History: found 2026-07-06 by lion-condition-mate-worker-qa during the goal-link-and-generic-queue Phase 4 QA pass;
+  fixed same day and re-verified PASS by lion-condition-mate-worker-qa in fix-loop round 2.
 - **DASH-7 — generic async queue tab (generalized AI 큐); dedup review lives ONLY here.**
   EN: `VIEW_DEFS` includes `{k:'queue',t:'큐'}` (`DashboardContent.swift:2606`). The 큐 tab
   (`#queueView` / `#queueHost`) is the SOLE home of the AI 큐 review UI — confirmed the inline
@@ -840,8 +902,8 @@ BGMDBG-2는 이번 실행에서 라이브로 검증하지 않음 — 이전 회�
   "queue"}` -> `{"ok":true}`한 뒤 `GET /`를 다시 받으면 이제 `let _view='queue'`가 주입됨(이전엔
   조용히 `'input'`으로 되돌아갔음) — 큐 탭을 보던 중 앱을 재시작하거나 창이 `/`를 다시 로드해도 이제
   올바르게 큐 탭으로 복원된다.
-  History: found 2026-07-06 by manager-qa during the goal-link-and-generic-queue Phase 4 QA pass;
-  fixed same day and re-verified PASS by manager-qa in fix-loop round 2.
+  History: found 2026-07-06 by lion-condition-mate-worker-qa during the goal-link-and-generic-queue Phase 4 QA pass;
+  fixed same day and re-verified PASS by lion-condition-mate-worker-qa in fix-loop round 2.
 - **DASH-8 — "내보내기" runs as a queued linkmap job (link-aware, cycle-safe).**
   EN: `POST /api/queue/enqueue-linkmap {root}` enqueues a `jobKind:"linkmap"` job and returns
   immediately (`{"ok":true,"id":...}`); it does NOT call `claude -p` — the runner
@@ -898,12 +960,12 @@ BGMDBG-2는 이번 실행에서 라이브로 검증하지 않음 — 이전 회�
   데이터 자체를 못 받는다) — 링크 인식 수준이 다른 두 개의 독립된 내보내기 경로가 생겼다. 그 자체가
   수용 기준 실패는 아니지만(Q4가 내보내기 범위를 "단일 루트 목표의 링크 체인"으로 한정했고 linkmap
   잡이 이를 충족함), 설계가 갈라졌다는 점은 사용자가 알아야 한다.
-  History: DASH-6/7/8 added 2026-07-06 by manager-qa, Phase 4 QA pass for
+  History: DASH-6/7/8 added 2026-07-06 by lion-condition-mate-worker-qa, Phase 4 QA pass for
   `docs/specs/goal-link-and-generic-queue.md`. Backend contract (link/unlink/idempotency/self/
   not-found, setParent guard, backward-compat, single-serial worker, retry/remove, linkmap cycle
   safety, non-blocking enqueue) all PASS. Two gaps found and reported (DASH-6 `/data.json` missing
   `links`; DASH-7 `lastView` clamp missing `"queue"`) — both fixed same day and RE-VERIFIED PASS by
-  manager-qa in fix-loop round 2 (see RESOLVED notes above).
+  lion-condition-mate-worker-qa in fix-loop round 2 (see RESOLVED notes above).
 
 - **DASH-9 — AI 큐 연관성 검색은 콘텐츠 실체(transcript/issue 폴더 근거)를 제목 유사도보다 우선한다.**
   KO: AI 큐 연관성 검색은 콘텐츠 실체(transcript/issue 폴더 근거)를 제목 유사도보다 우선한다. 제목만
@@ -951,6 +1013,66 @@ BGMDBG-2는 이번 실행에서 라이브로 검증하지 않음 — 이전 회�
   under #240 as a sub-goal with the next-step surfaced (anchor B); ordinary no-signal cases unchanged.
   History: DASH-9 added 2026-07-13 (content-substance cascade + relationship-aware next action).
 
+- **DASH-10 — 토큰 뷰 세션 행은 그 세션이 쓴 모델의 창 크기와 최종 창 점유율을 보인다
+  (added 2026-09-04).**
+  EN: Each session row in the 토큰 뷰 drill-down carries a leading chip `창 <window> · <pct>%`,
+  placed immediately before the existing composition string (`컨 77(재 …`). The two are DIFFERENT
+  axes and must not be read as one: `컨 %` is the token COMPOSITION (prompt share of that session's
+  total spend), while the chip is WINDOW OCCUPANCY. Numerator = the prompt actually loaded into the
+  window on ONE assistant request, `input_tokens + cache_read_input_tokens +
+  cache_creation_input_tokens`, taken at that session·day's LAST non-sidechain assistant request.
+  Denominator = that request's model's context window. Subagent (`isSidechain: true`) lines are
+  EXCLUDED from this axis only — they carry their own context, so counting them would charge the
+  parent a window it never filled; token totals and $-cost keep including sidechain, because that is
+  money actually spent. The peak occupancy of the same day is tracked alongside and appended as
+  `(최대 <peakPct>%)` only when it differs from the final. Color is the whole point — routing must be
+  skimmable: `pct >= 80` → `#e5534b`, `50 <= pct < 80` → `#d29922`, below 50 stays `.muted`. A model
+  whose published window is unknown (`glm-*`) renders `창 — · <absolute tokens>`; no number is
+  invented. A cached/old `/tokens-sessions.json` response has no `ctxFinal`, and the client then
+  draws NO chip at all (`s.ctxFinal == null` → `''`) — coercing the missing value to 0 would render
+  `0%`, which asserts "the window was empty" and is a lie. The day row and the period summary carry
+  the distribution instead of one session: `창 점유 중앙 <ctxMedPct>% · 80%↑ <ctxHighN>개`, omitted
+  whole when no session on that day has a known window.
+  KO: 토큰 뷰의 세션 행 맨 앞에 `창 <크기> · <퍼센트>` 칩이 붙는다. 옆의 `컨 77%`는 **구성비**이고
+  이 칩은 **창 점유**라서 축이 다르다 — 섞어 읽으면 안 된다. 분자는 그 세션·그날의 마지막
+  (비-sidechain) 어시스턴트 요청 하나에 실린 프롬프트 총량
+  (`input + cache_read + cache_creation`)이고, 분모는 그 요청 모델의 컨텍스트 윈도우다. 누적
+  `spent`를 분자로 쓰지 않는다 — 그것은 "창을 몇 번 채웠나"이지 "얼마나 채웠나"가 아니다.
+  서브에이전트 줄은 자기 컨텍스트를 따로 가지므로 이 축에서만 제외한다(토큰 합계·비용은 실제로
+  나간 돈이므로 지금대로 포함). 같은 날 피크가 최종과 다르면 `(최대 …%)`를 덧붙인다. 색은 3단
+  (80%↑ `#e5534b`, 50–80% `#d29922`, 미만 `.muted`) — 라우팅 결론이 색 하나로 끝나야 한다.
+  창 크기를 모르는 모델은 `창 — · <절대 토큰>`으로 두고 숫자를 지어내지 않는다. 옛 응답
+  (`ctxFinal` 없음)에는 칩을 아예 그리지 않는다. 일 행·기간 요약에는 세션 하나가 아니라 분포
+  (`창 점유 중앙 …% · 80%↑ …개`)를 적고, 창을 아는 세션이 하나도 없으면 조각을 통째로 뺀다.
+  Mechanism: server-side (see EP-19) — `AppDelegate.contextWindow(forModel:)` /
+  `resolvedWindow(model:peak:)` own the table and the escalation, `DayTok.ctxFinal/ctxPeak/ctxModel`
+  own the per-day values, and the client only draws. `DashboardContent.tkCtxWinStr(s)` renders the
+  chip (null-guarded exactly like the existing `d.reloadTok == null` guard), `tkCtxDistStr(d)`
+  renders the day/period distribution, and the legend paragraph under `일별 토큰 사용량` states that
+  `창` is the model's context window, that `%` divides the final request's prompt total by it (NOT
+  the composition next to it), and that the window escalates to 1M when an observed session exceeds
+  the published default.
+  Verify: directive `issue/2026-09-04-context-window-usage-directive.md`; `swift build` clean
+  (2026-09-04, 143 tasks, 64.7s). Regression anchor for the 1M escalation — session `53c8820a`
+  (`claude-opus-5`, ctxFinal = ctxPeak = 823,490): the published 200K default would render 411.7%,
+  and `resolvedWindow` lifts the window to 1,000,000 so the chip reads `창 1M · 82.3%` (red band).
+  Offline replay of the exact table + escalation rule over all 1,884 transcripts under
+  `~/.claude/projects` (2026-09-04): 1,735 sessions carry context, 1,723 resolve a window, **0**
+  exceed 100%, median 32.4%, 221 sessions at ≥80%. The 12 unresolved rows are all `glm-5.3-flash`
+  and render `창 —`. Final≠peak is real and the `(최대 …%)` branch is exercised — live-rendered
+  2026-09-04 by executing the served dashboard script against the running server's
+  `/tokens-sessions.json?day=2026-09-04`: `6e696696` (`claude-opus-5`, ctxFinal 313,393 / ctxPeak
+  343,949 / ctxWin 1,000,000) renders `창 1M · 31%(최대 34%)` in the `.muted` band. **Percents carry
+  one decimal ONLY below 10%** (`pct<10? toFixed(1) : round`) — a routing decision never turns on
+  0.3 percentage points, but a 3% session must not read `0%` — so `cb865437` (117,301 after peaking
+  at 409,470) renders `창 1M · 12%(최대 41%)`, NOT `11.7%`. Same live render, 88 session rows on that
+  day: 70 chips drawn, 12 red (`#e5534b`) + 8 amber (`#d29922`) — the red count equals that day's
+  `ctxHighN` — the chip sits before `컨 …` inside the same session line, the 8 `glm-5.3-flash` rows
+  read `창 — · 116K` (no invented number), and the 18 antigravity rows draw no chip. Re-rendering the
+  identical payload with every `ctx*` key deleted (pre-change response shape) draws 0 chips, no `창`,
+  no `0%`, and the day/period distribution fragment disappears whole.
+  History: DASH-10 added 2026-09-04 (모델 라우팅 판단을 위해 창 점유 축 신설).
+
 ### Intent audit — P5
 EN: **REGRESSION-CLASS FINDING (spec drift, confirmed):** the old A1 item's documented "third audio
 source" — the dashboard's own in-page "BGM 관리" tab as a lazy-loaded `<iframe id="bgmFrame">` of
@@ -987,7 +1109,7 @@ INTENT (show a dot) did not match its BEHAVIOR (no dot, ever, because the client
 data); (2) the intended "return to the 큐 tab you left open" persistence silently failed because the
 server-side view-name allowlist was not updated when the tab was added. Both were narrow, mechanical
 fixes (add one field to one serializer; add one string to one array) — applied and re-verified PASS
-by manager-qa in fix-loop round 2 (see the RESOLVED notes under DASH-6/DASH-7 above for the live
+by lion-condition-mate-worker-qa in fix-loop round 2 (see the RESOLVED notes under DASH-6/DASH-7 above for the live
 evidence).
 KO: **공백(2026-07-06, DASH-6/DASH-7) — 같은 날 2라운드에서 해결됨:** 목표-링크 + 범용-큐 기능에서
 의도-동작 불일치 두 건이 발견됐다(전체 근거는 위 DASH-6/DASH-7 참고): (1) 백엔드는 `Goal.links`를
@@ -995,7 +1117,7 @@ KO: **공백(2026-07-06, DASH-6/DASH-7) — 같은 날 2라운드에서 해결�
 행에 점 표시"라는 의도된 UI가 실제로는 절대 렌더되지 않았다 — 코드의 의도(점 표시)와 동작(데이터가
 클라이언트에 안 옴 → 점 없음)이 달랐다; (2) "보던 큐 탭으로 돌아오기"라는 의도된 지속성이, 탭 추가
 시 서버측 뷰-이름 허용목록을 갱신하지 않아 조용히 실패했다. 둘 다 좁고 기계적인 수정(직렬화기에
-필드 하나 추가; 배열에 문자열 하나 추가)이었으며 — 적용 후 manager-qa가 fix-loop 2라운드에서
+필드 하나 추가; 배열에 문자열 하나 추가)이었으며 — 적용 후 lion-condition-mate-worker-qa가 fix-loop 2라운드에서
 PASS로 재검증함(라이브 근거는 위 DASH-6/DASH-7의 RESOLVED 메모 참고).
 
 ---
@@ -1143,7 +1265,7 @@ PASS로 재검증함(라이브 근거는 위 DASH-6/DASH-7의 RESOLVED 메모 �
   24시간 타임라인 띠로 렌더링한다 — 슬롯마다 색 블록(자정 넘김은 두 조각), 오늘 밴드에 "지금
   HH:MM" 커서, 현재 지배 슬롯 하이라이트, 슬롯별 상세 카드(실제 곡 수가 붙은 테마 칩·고정 첫 곡·
   기획 노트). BGM 플레이어의 "계획" 칩에서 열린다(`window.open` -> 기본 브라우저).
-  Verify: isolated instance 2026-07-08 (manager-qa) — library `loaded 187 tracks (164 no-BPM
+  Verify: isolated instance 2026-07-08 (lion-condition-mate-worker-qa) — library `loaded 187 tracks (164 no-BPM
   defaulted) range 82-172`; GET at 04:30 KST Wed -> `currentSlot:"저녁 · 라운지 바람"` + 16 real
   themes; playing track confirmed inside the slot's theme folder (`bgm/challenge/The Memory
   Era.mp3` under a QA slot); POST rejections (`days:"someday"`, empty slots/themes, bad JSON, empty
@@ -1175,7 +1297,7 @@ PASS로 재검증함(라이브 근거는 위 DASH-6/DASH-7의 RESOLVED 메모 �
   복귀. `gearLabel`→"폭우", `now.plan`→"🌧 폭우 리셋 N분". 로그는 `app.log`가 아니라
   `worker-logs/director.jsonl`. `POST /api/bgm/rain {"action":"start"|"stop"}`는 디버그/프리뷰 훅으로
   강제 시작/조기 종료하며, action이 없거나 잘못되면 `{"ok":false}` no-op(잘못된 바디가 폭우를 부를 수 없음).
-  Verify: isolated instance 2026-07-08 (manager-qa) — heavy_rain 9곡 로드(id 70-78, bpm 110); 강제
+  Verify: isolated instance 2026-07-08 (lion-condition-mate-worker-qa) — heavy_rain 9곡 로드(id 70-78, bpm 110); 강제
   start → 다음 tick에 `now.plan:"🌧 폭우 리셋 59분"` + id 70(heavy_rain), `director.jsonl`에 "폭우
   리셋 발동" 라인; `rain-reset.txt`=오늘 날짜; stop → 즉시 플랜 슬롯("수 아침 · 대항해")·비-heavy_rain
   트랙 복귀 + "복귀" 라인; 심야 슬롯=snow/peace, heavy_rain 스케줄 슬롯 0개; 신규 세션 60초 관찰 시
@@ -1438,6 +1560,238 @@ PASS로 재검증함(라이브 근거는 위 DASH-6/DASH-7의 RESOLVED 메모 �
   `GET /api/debug/screens/sitemap` returned the 14-page doc on the live dev instance;
   `.e2e/screens.test.js` 16/16 locks tree/coverage/match/grid/save contracts.
 
+- **EP-19 — `/tokens-sessions.json` and `/tokens.json` carry the context-occupancy contract; a
+  provider with no per-turn data emits `null`, never `0` (added 2026-09-04).**
+  EN: `GET /tokens-sessions.json?day=YYYY-MM-DD` — every session object gains four fields plus the
+  model they were resolved against: `ctxFinal` (int | null) = the prompt total
+  `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` of that session·day's LAST
+  non-sidechain assistant request; `ctxPeak` (int | null) = the maximum of the same quantity over
+  that session·day, sidechain excluded; `ctxWin` (int | null) = the resolved context window; `ctxPct`
+  (float, 1 decimal | null) = `ctxFinal / ctxWin * 100`; `ctxModel` (string) = the model of that last
+  request, i.e. the model the window was looked up for. `ctxFinal`/`ctxPeak` are `null` (never `0`)
+  when nothing was measured; `ctxWin`/`ctxPct` are `null` when the model's window is unknown.
+  The window is `AppDelegate.contextWindow(forModel:)` (prefix match, first hit wins:
+  `claude-opus`/`claude-fable`/`claude-mythos`/`claude-sonnet`/`claude-*haiku` = 200_000,
+  `gemini-` = 1_048_576, `gpt-4o` = 128_000, `o1`/`o3` = 200_000; everything else including `glm-*`
+  is `nil` — an unverified window is left empty rather than invented), corrected UPWARD ONLY by
+  `resolvedWindow(model:peak:)`: when the observed peak exceeds the published default, the window is
+  lifted to the smallest published tier that contains it (tiers 200K, 1M), because a session opened
+  on the 1M-context beta otherwise reports >400% occupancy. If no tier explains the peak, `ctxWin`
+  is `null`. **Codex and Antigravity session rows emit all four as literal `null`** — those
+  collectors return only a session token TOTAL, so there is no per-turn context to measure and
+  emitting `0` would assert an empty window. `GET /tokens.json?days=N` — every day row gains
+  `ctxMedPct` (float, 1 decimal | null) = median of that day's per-session final-occupancy percents,
+  `ctxHighN` (int) = how many of those are ≥ 80%, and `ctxSessN` (int) = how many sessions that day
+  have a known window. Occupancy is NOT additive, so it is never folded into the day's `DayTok`
+  accumulator (`t.ctxFinal`/`ctxPeak`/`ctxModel` stay 0/"" there); the distribution is collected
+  separately per file while the day is assembled.
+  KO: `/tokens-sessions.json` 세션 객체에 `ctxFinal`·`ctxPeak`·`ctxWin`·`ctxPct`(+`ctxModel`)가,
+  `/tokens.json` 일 행에 `ctxMedPct`·`ctxHighN`·`ctxSessN`이 추가된다. 측정된 것이 없으면 `0`이
+  아니라 `null`이다 — `0`은 "창을 안 썼다"는 다른 주장이 된다. 창 표는 접두어 매칭이고 모르는
+  모델(`glm-*` 포함)은 비워 둔다. 관측 피크가 표를 넘으면 그것을 담는 가장 작은 단계
+  (200K → 1M)로 **위로만** 올린다. 턴별 컨텍스트가 없는 코덱스·안티그라비티 행은 네 값 모두
+  `null`이다. 창 점유는 더할 수 없는 값이라 일 단위 `DayTok` 합산에 접지 않고 분포로만 낸다.
+  Verify: `swift build` clean 2026-09-04. Backward-compat baseline captured from the still-running
+  pre-change instance: `curl -s 'http://127.0.0.1:57797/tokens-sessions.json?day=2026-09-04'` →
+  session `6e696696` returns `…"aiSec":3648,"models":{…},"leadN":…` with NO `ctx*` key at all, which
+  is exactly the shape the client's `s.ctxFinal == null` guard must survive (chip not drawn).
+  Live from the running server, isolated instance (`CM_DEV=1`, bundle
+  `com.lioncho.conditionmate.qatest`, port 50921, 2026-09-04):
+  `curl -s 'http://127.0.0.1:50921/tokens.json?days=2'` →
+  `…"sessions":95,"leadN":32,"leadMed":160,"ctxMedPct":31.0,"ctxHighN":13,"ctxSessN":69,…`, and
+  recomputing the median and the ≥80% count from that day's own `/tokens-sessions.json` rows
+  reproduces `31.0 / 13` exactly. **The day boundary is `Settings.displayTimeZone`** — that rule is
+  unchanged and is the same boundary every other number in the token view already uses; occupancy
+  does not introduce a second one. **What the setting RESOLVES to changed on 2026-09-05: the default
+  is now `Asia/Seoul`, not `"system"` — see EP-20.** The IST evidence in the next sentence was
+  captured on 2026-09-04, while `cm.timeZone` still read `"system"` and this machine's system zone
+  was `Asia/Kolkata`; it is kept because it demonstrates that the boundary really is the setting and
+  not a hardcode, but it is NO LONGER the shape a fresh instance produces. As measured then: on a
+  machine running IST a KST replay picks a different session set (`6e817b71` reads ctxFinal 69,270
+  on 2026-08-30 under KST, while the server files that value under 2026-08-31 and returns 87,228 for
+  2026-08-30). Re-running that replay today, with the default now KST, the server and a KST replay
+  agree — which is the point of EP-20.
+  Under the app's own timezone an independent replay of the exact rule matches the server on the
+  frozen day 2026-08-30: 107/107 sessions, 0 mismatches on `ctxFinal/ctxPeak/ctxWin/ctxPct/ctxModel`,
+  anchor `53c8820a` = `"ctxFinal":823490,"ctxPeak":823490,"ctxWin":1000000,"ctxPct":82.3`.
+  `glm-5.3-flash` rows keep a real numerator and no denominator — `056888da` →
+  `"ctxFinal":116415,"ctxPeak":138264,"ctxWin":null,"ctxPct":null` — and the 18 antigravity rows emit
+  all four as literal null (`"ctxFinal":null,"ctxPeak":null,"ctxWin":null,"ctxPct":null`); the whole
+  response contains zero `"ctx…":0`. Codex rows could not be observed live (this machine's
+  `~/.codex/state_5.sqlite` has 0 rows in `threads`), so the codex branch (`AppDelegate.swift:4394`)
+  rests on being the byte-identical literal to the live-verified antigravity branch (`:4414`).
+  No regression: a build of this same tree with ONLY the ctx code removed, run side by side (port
+  50923), returns day rows identical in every non-`ctx` field for all 7 settled days
+  (2026-08-28…2026-09-03) and identical values on all 346 session rows of 2026-09-03 — the only
+  differences are `loop`/`loopKind`, which each sandbox derives into its own
+  `<CM_DATA_DIR>/loop-sessions/sessions.json`.
+  History: EP-19 added 2026-09-04 alongside DASH-10.
+
+- **EP-20 — the display timezone defaults to KST, and every day-bucketed number in the token view
+  must land on the SAME day (added 2026-09-05).**
+  EN: `Settings.timeZoneID` defaults to `"Asia/Seoul"`, and `displayTimeZone`'s invalid-identifier
+  fallback is `Asia/Seoul` too. The explicit `"system"` value still resolves to `.current` — it is a
+  choice, not a fallback. A stored `"system"` is moved to `"Asia/Seoul"` **exactly once**, guarded by
+  `cm.timeZoneKSTMigrated`; after that flag is set, a user who re-picks `시스템 (맥 설정)` in the
+  header selector KEEPS it across restarts. **Implementing this as a read-time coercion of
+  `"system"` → KST is a regression** — it silently turns that selector option into a dead button, and
+  a test that only checks "a stored `system` came back as `Asia/Seoul`" passes in both worlds, so the
+  restart-persistence check is the only thing that tells them apart and must not be dropped.
+  `ActivityLog`'s `activity-YYYY-MM-DD.jsonl` filenames are **storage shards, not date boundaries** —
+  they are still cut on system-local and are deliberately NOT migrated. Both readers
+  (`activeSecondsByDay`, `historyJSON`) must re-bucket every sample from its own `t` under
+  `displayTimeZone`, reading one extra shard of padding on the older end (KST day D begins at IST
+  20:30 of D-1, so those 3.5h physically live in the previous shard). **Deriving the day from the
+  filename is a regression**: `AppDelegate.dashboardTokens` joins `activeSecondsByDay` against
+  `totals` on the same `day` key, and `totals` is keyed by `displayTimeZone`. If the two axes are cut
+  on different zones nothing visibly breaks — the 가치-mode time-efficiency multiplier just divides one
+  day's tokens by another day's hours, every day, forever. The 히스토리 tab consumes the server's
+  `"day"` field directly (`BGMPlayerContent.swift:3070,3081`) and does not re-bucket, so its 기간
+  filter depends on this too.
+  KO: `Settings.timeZoneID` 의 기본값은 `"Asia/Seoul"` 이고, `displayTimeZone` 의 잘못된 식별자
+  폴백도 `Asia/Seoul` 이다. 명시적인 `"system"` 값은 여전히 `.current` 로 풀린다 — 그것은 폴백이
+  아니라 선택이다. 저장된 `"system"` 은 `cm.timeZoneKSTMigrated` 플래그로 **딱 한 번만**
+  `"Asia/Seoul"` 로 옮겨지고, 플래그가 선 뒤에 사람이 헤더 셀렉터에서 `시스템 (맥 설정)` 을 다시
+  고르면 재시작을 넘어 **유지된다**. **이것을 읽을 때마다 `"system"` 을 KST 로 강제하는 방식으로
+  구현하면 회귀다** — 그 셀렉터 항목이 아무도 모르게 죽은 버튼이 되고, "저장된 system 이
+  Asia/Seoul 로 돌아왔다" 만 보는 시험은 양쪽 세계에서 똑같이 통과하므로, 둘을 가르는 것은
+  재시작 유지 확인 하나뿐이고 그것을 빼면 안 된다. `ActivityLog` 의 `activity-YYYY-MM-DD.jsonl`
+  파일 이름은 **저장 샤드일 뿐 날짜 경계가 아니다** — 여전히 시스템 로컬로 잘리며 일부러
+  마이그레이션하지 않는다. 읽는 쪽 둘(`activeSecondsByDay`·`historyJSON`)은 각 샘플의 `t` 를
+  `displayTimeZone` 기준으로 다시 버킷해야 하고, 과거 쪽으로 샤드 하나를 여유로 더 읽어야 한다
+  (KST 하루 D 는 IST 로 D-1 의 20:30 에 시작하므로 그 3시간 30분이 이전 샤드 안에 있다).
+  **파일 이름에서 날짜를 뽑으면 회귀다**: `AppDelegate.dashboardTokens` 가 `activeSecondsByDay` 를
+  `totals` 와 같은 `day` 키로 조인하는데 `totals` 는 `displayTimeZone` 으로 잘린 것이다. 두 축이
+  다른 존으로 잘리면 화면은 하나도 안 깨진다 — 가치 모드의 시간효율 배수가 어느 날의 토큰을 다른
+  날의 시간으로 나눌 뿐이고, 그것이 매일, 계속된다. 히스토리 탭은 서버의 `"day"` 를 그대로 쓰고
+  (`BGMPlayerContent.swift:3070,3081`) 스스로 재버킷하지 않으므로 그 탭의 기간 필터도 여기에 걸려
+  있다.
+  Verify: 2026-09-05 — `Scripts/e2e-timezone-boundary.sh` **PASS=8 FAIL=0**, re-run by
+  lion-condition-mate-pm against the tree as it stands on disk (not merely as reported), after
+  confirming `.build` is still a symlink to `~/.cache/cm-swiftpm-build` and `swift build` exits 0.
+  Fixture instant `epoch=1788364800` = `2026-09-02T16:00:00Z` = IST `2026-09-02 21:30` = KST
+  `2026-09-03 01:00`, i.e. inside the IST 20:30–23:59 window where the two zones name different days.
+  Empty `CM_DATA_DIR` → `GET /api/settings/timezone` = `{"tz":"Asia/Seoul","effective":"Asia/Seoul",
+  "label":"KST (UTC+9)"}`. Seeded `{"cm.timeZone":"system"}` → endpoint returns Asia/Seoul and
+  `settings.json` gains `"cm.timeZoneKSTMigrated": true`; then `POST {"tz":"system"}` + restart →
+  `{"tz":"system","effective":"Asia/Kolkata","label":"Asia/Kolkata (UTC+5.5)"}`, i.e. the selector is
+  alive. Both axes move together: tokens `2026-09-02 = 123000 / 2026-09-03 = 0` under `tz=system`
+  becomes `2026-09-02 = 0 / 2026-09-03 = 123000` under `tz=Asia/Seoul`, and `activeSec` moves
+  `150 → 0` and `0 → 150` on the very same two rows. `/history.json` emits the samples under
+  `2026-09-03` with the `{day,samples[{t,active,mult,meeting,tier,app}]}` contract intact.
+  Regression: `Scripts/e2e-energy.sh` 16 passed / 0 failed, `.e2e/tallyhist.test.js` 63 passed /
+  0 failed, `.e2e/ontrack.test.js` 14 passed / 0 failed — none needed modification, so none of them
+  had been assuming system-local time. New warnings 0, proven by a revert-build baseline rather than
+  asserted (the same two pre-existing AppDelegate warnings, shifted by exactly the inserted line
+  count).
+  NOTE: the fixture transcript cannot be isolated — `AppDelegate.claudeProjectsBase` uses
+  `FileManager.homeDirectoryForCurrentUser`, which reads `getpwuid` and does NOT honor `$HOME`. The
+  harness therefore writes a pid-unique folder under the real `~/.claude/projects` and removes it in
+  `trap cleanup EXIT`. Fixture identifiers must stay pid-unique: a concurrent run of the same script
+  once doubled the observed token count to 246000.
+  Why / 근거: 2026-09-05. 원문 요구는 "토큰 뷰의 날짜 경계가 KST 가 아니라 시스템 타임존에 묶여
+  있다" 였으나 실측은 반대였다 — 배관은 이미 `displayTimeZone` 하나로 다 몰려 있었고 새는 데가
+  없었다. 어긋난 것은 설정값 하나(`cm.timeZone:"system"`)와 이 맥의 `/etc/localtime` 이
+  `Asia/Kolkata` 라는 사실뿐이었다. KST 로 정한 근거 넷: 앱이 이미 `Core/AppLog.swift:14` ·
+  `AppDelegate.swift:11956 isoWeek` · `:11999 aiTaskNameParts` · `docs/specs/script/render-spec.py:13`
+  네 자리에서 `Asia/Seoul` 을 못박고 있어 앱 안에 "오늘" 이 둘 있었다; `docs/time-policy.md` 가
+  재는 것은 사람의 근무 스팬이고 그 경계는 노트북 설정이 아니라 사는 곳이 정한다; `system` 기본값은
+  기계 설정이 어긋나는 순간 경고 없이 데이터를 어긋나게 하는데 화면에 라벨이 찍혀 있었는데도 며칠을
+  못 잡았다; 셀렉터가 이미 있어 되돌리는 값이 클릭 하나다. 판정 전문은
+  `issue/2026-09-05-token-view-timezone-directive.md` 에 있다. 날짜 경계 정책은
+  `docs/time-policy.md` 의 `## 날짜 경계` 절이 정본이며, 그 절은 이 항목과 같은 작업에서 신설됐다.
+  History: EP-20 added 2026-09-05. Supersedes the `NOT KST` claim in EP-19's Verify, which was true
+  on 2026-09-04 and is now dated in place rather than deleted.
+
+- **EP-21 — new timestamps are stored in UTC and the screen converts them to the display
+  timezone; slicing an ISO string is not conversion (added 2026-09-06).**
+  EN: Every wall-clock time the dashboard prints from a STORED ISO string goes through
+  `CMTimeFilter.isoDisp(value, len, sep)`, which resolves the instant and re-renders it under
+  `window.CM_TZ` (the server injects `Settings.timeZoneID` per page request; the rail's selector
+  saves then `location.reload()`s, so a setting change is picked up by re-serving). `isoDisp`
+  converts ONLY values carrying an offset (`Z`, `±HH:MM`, `±HHMM`); a zone-less wall clock is
+  printed verbatim, because we cannot know where it was written and inventing UTC would silently
+  move old records. Newly written timestamps are UTC: `WorkQueueVersionLedger.stamp()`,
+  `IssueArchiveStore.stamp()` and `WorkQueueLiveStore.fmt` pin `f.timeZone = TimeZone(identifier:
+  "UTC")`. **Existing data is NOT migrated** and does not need to be — the format keeps its `Z`
+  specifier, so `DateFormatter` honors whatever offset is written and old `+0530` / `+0900` values
+  still parse to the correct instant. **Cutting the string is a regression**:
+  `String(v).replace('T',' ').slice(0,16)` prints whatever zone the bytes were written in, and the
+  only symptom is a number that is 3h (KST) or 3h30m (IST) off — a wrong number does not announce
+  itself. The 설정 selector (rail menu and dashboard header, same list) must offer
+  `Asia/Kolkata` alongside `system` / `Asia/Seoul` / `UTC`; without it India is reachable only by
+  changing the Mac's own timezone.
+  Verify: 2026-09-06 — `.e2e/timezone.test.js` **32 passed / 0 failed** (gated in `.e2e/run.js`).
+  It evals the REAL `CMTimeFilter.js` and the REAL `sesHead`/`tdisp`/`esc` pulled out of
+  `IssuesContent.swift`, so it fails when the product changes without it. The reported instant
+  `2026-09-06T07:31:12.345Z` renders `2026-09-06 16:31` under `Asia/Seoul`, `2026-09-06 13:01`
+  under `Asia/Kolkata` (the 30-minute offset), `2026-09-06 07:31` under `UTC`; the full session
+  line reads `세션 <b>97cc3cc2</b> · 2026-09-06 16:31 · 사람 말 2 번 · 쓴 파일 3 개` in Korea and
+  `… 13:01 …` in India. Flipping `CM_TZ` five times (Seoul→Kolkata→Seoul→UTC→Kolkata) yields five
+  correspondingly different strings, i.e. nothing is cached and frozen. Day-boundary instant
+  `2026-09-06T19:00:00Z` → `2026-09-07 04:00` (KR) vs `2026-09-07 00:30` (IN).
+  `Scripts/e2e-timezone-display.sh` **PASS=10 FAIL=0** against a live isolated instance: POSTing
+  `Asia/Seoul` / `Asia/Kolkata` / `Asia/Seoul` / `Asia/Kolkata` makes `/issues` serve
+  `window.CM_TZ='<that id>'` each time, and the served 353,872-byte page carries `isoDisp`,
+  `esc(tdisp(S.startedAt,16))`, the India option, and none of the three old slicing expressions.
+  Swift side, run directly: the stamp formatter emitted `2026-09-06T13:01:12+0530` before (this
+  Mac's `/etc/localtime` is `Asia/Kolkata`) and emits `2026-09-06T07:31:12+0000` after, while
+  `+0530`, `+0900` and `+0000` inputs all parse back to epoch `1788679872`.
+  Regression: `.e2e/run.js` **55 files, 1708 assertions passed / 0 failed**;
+  `Scripts/e2e-timezone-boundary.sh` **PASS=8 FAIL=0** (EP-20 intact). Two harnesses needed
+  editing and both were stale-by-design, not product failures: `issues.test.js` asserted the old
+  expression text while still checking the same thing (the timestamp passes through `esc`), and
+  `screens.test.js` stubbed `CMTimeFilter` with `parts` only. `swift build` exits 0 with the same
+  two pre-existing `AppDelegate.swift` warnings and no new ones.
+  KO: 대시보드가 **저장된 ISO 문자열**에서 벽시계를 찍는 자리는 전부 `CMTimeFilter.isoDisp` 를
+  거친다. 오프셋이 붙은 값만 변환하고, 오프셋 없는 값은 어느 지역인지 알 수 없으므로 적힌 대로
+  둔다 — 없는 정보를 UTC 라고 지어내면 옛 기록이 조용히 다른 시각으로 바뀐다. 앞으로 생성되는
+  시각은 UTC 로 저장하고(원장 셋), **기존 데이터는 마이그레이션하지 않는다** — 포맷의 `Z` 가
+  적힌 오프셋을 존중하므로 옛 값도 계속 정확히 읽힌다. **자르기는 변환이 아니다** — 자르면
+  3시간(KST)이나 3시간 30분(IST) 어긋난 숫자가 나오고, 어긋난 숫자는 틀렸다고 소리치지 않는다.
+  설정 셀렉터 두 곳(레일 메뉴·헤더)에 `Asia/Kolkata` 가 있어야 한다.
+  Why / 근거: 2026-09-06. 라이언이 이슈 화면 스크린샷의 `2026-09-06 07:31` 에 밑줄을 그었다.
+  그 세션은 KST 16:31 에 시작했다. 배관(`Settings.displayTimeZone` · `window.CM_TZ` ·
+  `CMTimeFilter`)은 EP-20 에서 이미 다 놓여 있었고, 이 화면들만 그것을 안 쓰고 문자열을 잘라
+  쓰고 있었다. 고친 것은 배관이 아니라 그 자리 12 개다 (IssuesContent 5 · LoopEngineeringContent 6 ·
+  BGMPlayerContent 1).
+  **Live re-verify on the RUNNING app, 2026-09-06 22:30–22:45 IST (second pass — the first pass
+  only ever proved the SOURCE was right).** The binary actually running is
+  `/Applications/ConditionMate.app/Contents/MacOS/ConditionMate` (pid 5544, installed 21:11,
+  serving 127.0.0.1:57797), and it carries the fix: `strings -a` finds
+  `function isoDisp(v, len, sep)` and `esc(tdisp(S.startedAt,16))` in it, finds `Asia/Kolkata`
+  4×, and finds ZERO occurrences of `esc(String(S.startedAt||'').replace`. Posting
+  `Asia/Seoul → Asia/Kolkata → UTC → Asia/Seoul → Asia/Kolkata → system` to
+  `/api/settings/timezone` on that live instance made `/issues` serve
+  `window.CM_TZ='<that id>'` (and `null` for `system`) on every single request; the user's
+  original setting (`system`, effective `Asia/Kolkata`) was restored afterwards. The strongest
+  evidence is that the running app's OWN data now proves the storage half: card
+  `2026-09-06-2225-script-first-routing-loop`, written by this app today, carries
+  `versionFirstSeen: 2026-09-06T17:01:18+0000` — a new timestamp, stored in UTC, on a Mac whose
+  `/etc/localtime` is `Asia/Kolkata`. Feeding that live value plus the live `captured:
+  2026-09-06T22:25:55+0530` through the REAL `CMTimeFilter` / `tdisp` / `sesHead` extracted from
+  the 360,592-byte page THAT INSTANCE SERVED gives **16 passed / 0 failed**: the UTC-stored
+  instant renders `2026-09-07 02:01` (KR, crosses the date line), `2026-09-06 22:31` (IN, the
+  30-minute offset), `2026-09-06 17:01` (UTC); the old `+0530` value still resolves to the same
+  instant in all three (`2026-09-07 01:55` / `2026-09-06 22:25` / `2026-09-06 16:55`), i.e. old
+  records are read correctly WITHOUT migration; and five consecutive `CM_TZ` flips produce five
+  correspondingly different strings, so nothing is cached and frozen.
+  Swift side, run directly on this Mac (`TimeZone.current = Asia/Kolkata`): `ISO8601DateFormatter()`
+  already emits `2026-09-06T07:31:12Z` by default, so only the three `DateFormatter` ledgers needed
+  pinning — unpinned they emitted `…T13:01:12+0530`, pinned they emit `…T07:31:12+0000`, and
+  `+0530` / `+0900` / `+0000` inputs all parse back to epoch `1788679872`.
+  Regression this pass: `.e2e/run.js` **55 files, 1714 assertions passed / 0 failed**,
+  `.e2e/timezone.test.js` **32/0**, `Scripts/e2e-timezone-display.sh` **PASS=10 FAIL=0**,
+  `Scripts/e2e-timezone-boundary.sh` **PASS=8 FAIL=0**, `swift build` exit 0. (The 1708 above is
+  the first pass's count; other work has added assertions since. Both numbers are 0 failed.)
+  KO: 소스가 맞다는 것과 **지금 도는 앱이 맞다는 것은 다른 판정이다.** 두 번째 패스는 뒤엣것을
+  본다 — 설치된 바이너리 안에 변환 코드가 있고 옛 자르기가 없으며, 살아 있는 인스턴스가 설정
+  전환마다 새 `CM_TZ` 를 내보내고(사용자 원래 설정 `system` 은 되돌려 놓았다), 그 앱이 오늘
+  스스로 쓴 레코드가 `+0000` 이고, 그 앱이 서빙한 페이지의 진짜 JS 로 그 진짜 값을 찍으면
+  한국·인도·UTC 가 갈린다. 옛 `+0530` 값도 같은 순간으로 읽히므로 마이그레이션이 필요 없다.
+  History: EP-21 added 2026-09-06. Builds on EP-20's plumbing (`displayTimeZone`, `CM_TZ`),
+  which is unchanged.
+
 ### Intent audit — P6
 EN: Code matches intent — PASS on EP-1..EP-6 and EP-7..EP-9 (added 2026-07-06), live-verified this
 run (see per-item Verify). EP-9's design fork (server-side deterministic `linkmap` runner instead of
@@ -1475,6 +1829,127 @@ strings so future literal-match testing does not false-FAIL on the old pre-refac
 KO: 코드가 의도와 일치함 — PASS. `windowWillClose` 라인에 `mode=…`가 추가됐다(예전 L1 스펙 시절의
 단순한 "bgm-window windowWillClose (user)"에는 없었음); 이후 리터럴 매칭 테스트가 예전 리팩터링
 이전 이름 때문에 잘못 FAIL하지 않도록 LOG-2 문구를 현재 문자열에 맞게 갱신했다.
+
+---
+
+## P8. App window — 루프 엔지니어링 페이지
+**Purpose / 목적:** **EN:** `/loop-engineering` — the page that answers "where is the bottleneck and what do I press". Renamed from `/orchestration` on 2026-08-23. This page had ZERO spec entries before that date, so this is a NEW page registration, not an edit. Measurement definitions live in `docs/loop-engineering.md`; the loop itself (L1..L9) is defined in `docs/loop-definition.md`. **KO:** `/loop-engineering` — "병목이 어디이고 무엇을 누르면 되는가"에 답하는 페이지. 2026-08-23 에 `/orchestration` 에서 이름을 바꿨다. 그전까지 이 페이지에는 SPEC 항목이 하나도 없었으므로 이것은 기존 항목 수정이 아니라 **신규 페이지 등재**다. 측정 정의는 `docs/loop-engineering.md`, 루프 자체(L1..L9)의 정의는 `docs/loop-definition.md` 에 있다.
+
+- **LOOP-1 — the rail's ninth slot goes to `/loop-engineering`.**
+  EN: The rail's ninth nav item is labeled `루프 엔지니어링`, carries `data-nav="loop"`, and navigates to `/loop-engineering`. The page sets `window.CM_PAGE='loop'` so `cmNavReflect()` highlights that slot. The label wraps to two lines as `루프` / `엔지니어링` because `.cmr-lbl.wrap2` uses `word-break:keep-all` — it must NOT break mid-word. No slot in the 3x3 grid wears the inert `off` class any more.
+  KO: 레일 아홉 번째 항목의 라벨은 `루프 엔지니어링` 이고 `data-nav="loop"` 이며 `/loop-engineering` 으로 이동한다. 페이지는 `window.CM_PAGE='loop'` 를 세워 `cmNavReflect()` 가 그 슬롯을 켜게 한다. 라벨은 `루프` / `엔지니어링` 두 줄로 끊긴다 — `.cmr-lbl.wrap2` 가 `word-break:keep-all` 이기 때문이며, 단어 중간에서 끊기면 회귀다. 3x3 격자에 비활성(`off`) 슬롯은 더 이상 없다.
+  Verify: `.e2e/plan.test.js` — nine items, nav keys, labels, `keep-all`, and the `/loop-engineering` jump. 2026-08-23: 24 passed, 0 failed. The label regex MUST be `class="(cmr-lbl[^"]*)"`; pinning it to the bare `cmr-lbl` silently dropped the ninth item (the test read 8 of 9).
+
+- **LOOP-2 — the old path `/orchestration` redirects; the old API is gone.**
+  EN: `GET /orchestration` returns 200 with a redirect document pointing at `/loop-engineering`, and is matched BEFORE the `/loop-engineering` prefix in `AppDelegate.page`. `GET /api/orchestration` returns **404** — no alias. Note the 404 needs its own explicit branch in `DashboardServer`: the server's final `else` serves the dashboard HTML with 200 for any unmatched path, so without that branch a retired API answers 200 + HTML instead of 404.
+  KO: `GET /orchestration` 은 404가 아니라 200으로 `/loop-engineering` 리다이렉트 문서를 돌려주며, `AppDelegate.page` 에서 `/loop-engineering` 보다 먼저 매칭된다. `GET /api/orchestration` 은 **404** 이고 별칭을 두지 않는다. 이 404 에는 `DashboardServer` 안의 전용 분기가 필요하다 — 서버의 마지막 `else` 가 매칭 안 된 경로 전부에 대시보드 HTML 을 200 으로 돌려주므로, 분기가 없으면 은퇴한 API 가 404 대신 200 + HTML 로 답한다.
+  Verify: 2026-08-23 live — `/orchestration` 200 (meta refresh 문서), `/loop-engineering` 200, `/api/orchestration` 404, `/api/loop-engineering` 200 + JSON.
+
+- **LOOP-3 — `GET /api/loop-engineering` payload contract.**
+  EN: Returns `totals`, `bottleneck`, `openWaits[]`, `projects[]`, `harness[]`, `history[]`, `scannedAt`. Each project carries exactly one `verdict {cat, num, text}` chosen by the fixed ladder in `docs/loop-engineering.md`: dead hop → entry point → termination condition → part → unmeasurable → none. A project with no parts, no hops, no teams and no workers is NOT emitted. Delegations are extracted by the tool name `"name":"Agent"` (NOT `"subagent_type"`, and NOT `Task` — `"name":"Task"` is 0 across the corpus); a delegation with no `subagent_type` counts as `general-purpose`. `LoopScan` descends into `<slug>/<sessionId>/subagents/` and joins `agent-<id>.meta.json`'s `toolUseId` to the hop uid, which is what supplies `totals.innerTurns/innerTools/innerHours/nested/joined` and recovers the duration of background (async) hops.
+  KO: `totals`, `bottleneck`, `openWaits[]`, `projects[]`, `harness[]`, `history[]`, `scannedAt` 을 돌려준다. 프로젝트마다 `verdict {cat, num, text}` 가 정확히 하나이며 `docs/loop-engineering.md` 의 고정 사다리(끊긴 홉 → 진입점 → 종료 조건 → 파트 → 측정 불가 → 없음)로 고른다. 파트·홉·팀·워커가 모두 없는 프로젝트는 싣지 않는다. 위임은 도구 이름 `"name":"Agent"` 로 뽑는다(`"subagent_type"` 이 아니고 `Task` 도 아니다 — 코퍼스 전량에서 `"name":"Task"` 는 0건). `subagent_type` 이 없는 위임은 `general-purpose` 로 센다. `LoopScan` 은 `<slug>/<sessionId>/subagents/` 로 내려가 `agent-<id>.meta.json` 의 `toolUseId` 를 홉 uid 에 잇고, 그 조인이 `totals.innerTurns/innerTools/innerHours/nested/joined` 를 채우며 백그라운드(async) 홉의 소요시간을 복구한다.
+  Verify: 2026-08-23 live — `runs` 117 (top-level 102 + nested 15), `hours` 16.9, `innerFiles` 112, `joined` 112, `nested` 15. Before the scan-range expansion the same feed said `runs` 92, `hours` 4.0, and every inner field 0. All 112 internal transcripts attribute to a delegation; conversely 112 of 117 hops have one (the 5 without predate the `subagents/` folder).
+
+- **LOOP-4 — the bottleneck band and the open-waits table.**
+  EN: The first screen shows one human-bottleneck percentage with its numerator, denominator, sample size, cap policy and stated limits **as visible text, not tooltips**, then an "지금 열려 있는 대기" table sorted by dwell descending. Every row carries a kind, an owner, a dwell, a threshold, a STALLED/정상 verdict, and at least one action. A resolved wait must disappear from the table on the next load. The 28+ project cards render collapsed below it. Hard constraints: (a) the cap is a **policy choice**, labeled as such, and the sensitivity at other caps is printed; (b) the index is a **session-corpus proxy**, not a per-stage (L1..L9) measurement, and must NOT be broken down per stage; (c) the file selector is **session start time**, never file modification time; (d) `stopped` and `cancelled` goals are user-placed holds and must NOT appear in the table nor count toward the index; (e) `trackedSeconds` is never used as busy time anywhere; (f) an owner with no recorded activity prints `기록 없음`, never `0`.
+  KO: 첫 화면은 사람 병목 지수 하나를 분자·분모·표본 크기·상한 정책·한계와 함께 **툴팁이 아니라 본문 텍스트로** 보이고, 그 아래 체류 내림차순의 "지금 열려 있는 대기" 표를 보인다. 모든 행에 종류·담당·체류·임계·STALLED/정상 판정·동작 하나 이상이 붙는다. 해소된 대기는 다음 조회에서 표에서 사라져야 한다. 프로젝트 카드는 그 아래에 접힌 채로 그린다. 하드 제약: (a) 상한은 **정책 선택**이며 그렇게 표기하고 다른 상한에서의 값도 함께 적는다. (b) 이 지수는 **세션 코퍼스 대용치**이지 칸별(L1..L9) 측정이 아니며 칸별로 쪼개 그리면 안 된다. (c) 파일 선택자는 **세션 시작 시각**이고 파일 수정 시각을 쓰지 않는다. (d) `stopped` 와 `cancelled` 는 사용자가 쥔 보류라 표에도 지수에도 넣지 않는다. (e) `trackedSeconds` 는 어떤 가동 시간에도 쓰지 않는다. (f) 기록이 없는 담당에는 `0` 이 아니라 `기록 없음` 을 적는다.
+  Verify: 2026-08-23 live — band printed 95.5% with 사람 대기 327.9h / 전체 343.5h, 잰 사람 공백 984회, 세션 577개, cap 4h, sensitivity 98.5% (no cap) / 92.0% (1h). Disappearance proven end to end on a throwaway goal: waiting → row present (rows 11→12, dwell 2s, buttons 세션 열기 / 진행으로 / 보류) → `POST /api/goal/status {status:"in_progress"}` → row gone (12→11) → `stopped` → still absent.
+  CAVEAT: for a goal with a `sessionId`, the session hook re-parks it as `waiting` within seconds if that session is genuinely still waiting, and `waitingSince` restarts. That is the wait not being over, not the page failing to write. Proven on seq 964 (flipped to `in_progress`, back to `waiting` with dwell reset to 1s).
+
+- **LOOP-5 — `loop-history.jsonl` is append-only and time-gated.**
+  EN: `~/.condition-mate/ledger/loop-history.jsonl` gains one line at most every 6 hours, appended via a seek-to-end write. It is NEVER rewritten or truncated. Each line carries the index AND the cap policy AND the raw numerator/denominator, so a later reader can tell which policy produced it. Writing on every page view is a regression: the ledger would become a record of how often the page was opened.
+  KO: `~/.condition-mate/ledger/loop-history.jsonl` 은 최소 6시간 간격으로 한 줄씩만 늘어나며, 파일 끝으로 seek 해서 덧붙인다. 절대 다시 쓰거나 자르지 않는다. 각 줄은 지수뿐 아니라 상한 정책과 분자·분모의 원값을 함께 담는다 — 나중에 읽는 사람이 어떤 정책으로 나온 값인지 알 수 있어야 하기 때문이다. 조회마다 적으면 회귀다: 원장이 "페이지를 몇 번 열었나"의 기록이 된다.
+  Verify: 2026-08-23 — first line written on the first feed call; repeated calls within the window added none. `Core/LoopHistory.swift` has no write path other than `append()`.
+
+### Intent audit — P8
+EN: New page registration, so there is no prior intent to compare against. Two facts previously asserted in `docs/loop-engineering.md`, in `LoopEngineeringContent`'s on-screen note and in the loop-engineering agent definition were found FALSE against disk and corrected in the same change: (1) "subagent internal turns leave no line in the transcript — 0 of 892 files" (they leave 112 transcripts; the scanner simply never descended into `subagents/`), and (2) delegations are traced by a `Task` tool call (the tool is named `Agent`; `"name":"Task"` is 0 across the corpus). A third: the human-bottleneck index published as 97.0% was derived with a file-modification-time selector and is retired in favour of 95.5% under a session-start selector.
+KO: 신규 등재라 비교할 이전 의도가 없다. 다만 `docs/loop-engineering.md` 와 화면 안내문과 루프 엔지니어링 에이전트 정의가 함께 주장하던 사실 둘이 디스크와 대조해 **거짓**으로 확인되어 같은 변경에서 정정했다. (1) "서브에이전트의 내부 턴은 트랜스크립트에 한 줄도 남지 않는다 — 892개 파일에서 0건" (실제로는 트랜스크립트 112개가 남으며, 스캐너가 `subagents/` 로 내려가지 않았을 뿐이다). (2) 위임은 `Task` 도구 호출로 추적한다 (도구 이름은 `Agent` 이고 코퍼스 전량에서 `"name":"Task"` 는 0건이다). 셋째로, 97.0퍼센트로 발표됐던 사람 병목 지수는 파일 수정 시각 선택자로 계산된 값이라 폐기하고 세션 시작 시각 기준의 95.5퍼센트로 대체했다.
+
+---
+
+## P9. App window — Slack 번역 페이지 / 상태축
+**Purpose / 목적:** **EN:** `/slack-translate` — the state axis that decides what lands in front of the user each day. This page had ZERO spec entries before 2026-09-01, so this is a NEW page registration covering the state axis only, not the whole 2284-line page. Measurement and rationale live in `issue/2026-09-01-slack-미처리-상태축.md` and `best.md`. **KO:** `/slack-translate` — 매일 사용자 앞에 무엇이 놓이는지를 정하는 상태축. 2026-09-01 이전 이 페이지에는 SPEC 항목이 하나도 없었으므로 이것은 **신규 페이지 등재**이며, 2284줄 페이지 전체가 아니라 상태축만 다룬다. 실측과 근거는 `issue/2026-09-01-slack-미처리-상태축.md` 와 `best.md` 에 있다.
+
+- **SLKST-1 — the segment toggle has FOUR states and defaults to `결정 대기`.**
+  EN: The toolbar segment is `결정 대기` / `AI 처리` / `백로그` / `전체`, in that order, and the default on a fresh load is `결정 대기`. The chosen value persists in `localStorage` under `cm.slackFilter`. A stored value that is the retired `'open'`, or any value not in the set, MUST fall back to `결정 대기` — a stale localStorage entry that renders an empty screen is a regression. Reverting to the old two-state `미처리 / 전체` toggle is a regression.
+  KO: 툴바 세그는 `결정 대기` / `AI 처리` / `백로그` / `전체` 순이고, 새로 열면 기본값은 `결정 대기` 다. 고른 값은 `localStorage` 의 `cm.slackFilter` 에 남는다. 저장된 값이 은퇴한 `'open'` 이거나 집합에 없는 값이면 반드시 `결정 대기` 로 떨어져야 한다 — 낡은 localStorage 때문에 화면이 비면 회귀다. 옛 2상태 `미처리 / 전체` 로 되돌아가는 것도 회귀다.
+  Verify: 2026-09-01 Chromium — stored `'open'` and `'zzz'` both fall back to `결정 대기` with a non-empty list; `'backlog'` survives a reload. NOTE: changing the default broke `.e2e/slacktabs.test.js`, whose fixtures all carry `ackAt` and so no longer appear in the default segment. That is the intended behavior change, not a bug; the test now seeds `cm.slackFilter='all'` in its `addInitScript` (`:88`) because that file tests tabs and extraction, not the segment axis. After the seed: 23 passed, 0 failed.
+
+- **SLKST-2 — the bucket ladder is fixed and evaluated top-down, once.**
+  EN: Every item resolves to exactly one bucket by this ladder, first match wins: `done` if `done.json[id]` or `autoDone` → `backlog` if `backlogClosedAt` → `ai` if `ackAt` → otherwise `wait`. Consequences that are NOT bugs: an item graded post-08-29 (`ackGrade`/`requestLevel` present) but with no `ackAt` lands in `wait`, because the AI looked at it and chose not to act, so a human must. An item both `backlogClosedAt` and `ackAt` lands in `backlog`, because the ladder is ordered. Reordering the ladder changes the counts and is a behavior change, not a refactor.
+  KO: 모든 항목은 이 사다리로 정확히 하나의 칸에 떨어지며 먼저 걸리는 것이 이긴다: `done.json[id]` 또는 `autoDone` 이면 `done` → `backlogClosedAt` 이면 `backlog` → `ackAt` 이면 `ai` → 아니면 `wait`. 버그가 **아닌** 귀결: 08-29 이후 등급(`ackGrade`/`requestLevel`)은 있는데 `ackAt` 이 없는 항목은 `wait` 로 간다 — AI가 보고서 행동하지 않기로 했으므로 사람이 판단해야 한다. `backlogClosedAt` 과 `ackAt` 이 둘 다 있으면 `backlog` 로 간다 — 사다리에 순서가 있기 때문이다. 사다리 순서를 바꾸면 건수가 바뀌므로 리팩터가 아니라 동작 변경이다.
+
+- **SLKST-3 — every new field is optional and absence is the default.**
+  EN: `backlogClosedAt`, `backlogReason`, `ackAt`, `autoByMe` do NOT exist on old records and their absence is the normal case. Absent `backlogClosedAt` → not backlog. Absent `ackAt` → not AI-handled. For `autoByMe` the three-way distinction is load-bearing: `true` = the user themself reacted in Slack, `false` = somebody else did, `undefined` = **unknown, an old record**. Collapsing `undefined` into `false` is a regression — "somebody else did it" and "we do not know who did it" are different facts and the UI must not claim the former when it only knows the latter.
+  KO: `backlogClosedAt`, `backlogReason`, `ackAt`, `autoByMe` 는 옛 레코드에 **없으며** 없는 것이 정상이다. `backlogClosedAt` 없음 → 백로그 아님. `ackAt` 없음 → AI 처리 아님. `autoByMe` 는 세 값의 구분이 의미를 진다: `true` = 사용자 본인이 슬랙에서 리액션함, `false` = 다른 사람이 함, `undefined` = **모름, 옛 레코드**. `undefined` 를 `false` 로 뭉개면 회귀다 — "다른 사람이 했다" 와 "누가 했는지 모른다" 는 다른 사실이고, 후자만 아는 상태에서 전자를 주장하면 안 된다.
+
+- **SLKST-4 — the done chip names WHO closed it.**
+  EN: The `autoDone` chip is not one label any more. `autoByMe === true` → `✅ 내가 슬랙에서 처리`; `autoByMe === false` → `✅ 다른 사람이 처리`; `autoByMe === undefined` → the legacy `✅ 이모지로 해결됨`. Independently, an item with `ackAt` also wears `🤖 AI 응답함`, and an item with `backlogClosedAt` wears `🗄 백로그`. This exists because 606 of the 938 `autoDone` records carry `autoBy: U03GRE909MJ`, which is the user themself — the old single label presented the user's own manual Slack work as automation output. Merging these chips back into one is a regression.
+  KO: `autoDone` 칩은 더 이상 하나의 라벨이 아니다. `autoByMe === true` → `✅ 내가 슬랙에서 처리`, `autoByMe === false` → `✅ 다른 사람이 처리`, `autoByMe === undefined` → 기존 `✅ 이모지로 해결됨`. 이와 별개로 `ackAt` 이 있는 항목은 `🤖 AI 응답함` 을, `backlogClosedAt` 이 있는 항목은 `🗄 백로그` 를 함께 단다. 이 구분이 있는 이유는 `autoDone` 938건 중 606건의 `autoBy` 가 `U03GRE909MJ` = 사용자 본인이기 때문이다 — 옛 단일 라벨은 사용자가 손으로 한 일을 자동화 성과처럼 보이게 했다. 칩을 다시 하나로 합치면 회귀다.
+
+- **SLKST-5 — backlog closing is reversible, local, and never touches Slack.**
+  EN: `Scripts/slack-backlog-close.mjs` defaults to `--dry-run`; only `--apply` writes, and `--undo` reverses. Before any write it copies `items.jsonl` to `items.jsonl.bak.<timestamp>`. It MUST NOT send anything to Slack — no reaction, no message, no API call — and MUST NOT modify `done.json`, because a `done.json` change makes the app attempt a Slack reaction sync. It adds only `backlogClosedAt` and `backlogReason:"pre-grading-pipeline"`. The line count of `items.jsonl` must be unchanged after a run, and unparseable lines are rewritten verbatim rather than dropped. Closing is not deleting: closed items stay in the corpus, remain visible under the `백로그` segment, and come back on `--undo`.
+  KO: `Scripts/slack-backlog-close.mjs` 의 기본은 `--dry-run` 이고 `--apply` 를 줘야 쓰며 `--undo` 로 되돌린다. 쓰기 전에 `items.jsonl` 을 `items.jsonl.bak.<타임스탬프>` 로 복사한다. 슬랙에 **아무것도 보내지 않는다** — 리액션도 메시지도 API 호출도 없다. `done.json` 도 고치지 않는다 — done.json 이 바뀌면 앱이 슬랙 리액션 동기화를 시도하기 때문이다. 붙이는 것은 `backlogClosedAt` 과 `backlogReason:"pre-grading-pipeline"` 뿐이다. 실행 후 `items.jsonl` 의 줄 수가 변하면 안 되고, 파싱 실패한 줄은 버리지 말고 원문 그대로 다시 쓴다. 마감은 삭제가 아니다 — 항목은 코퍼스에 남고 `백로그` 세그에서 보이며 `--undo` 로 돌아온다.
+
+- **SLKST-6 — the count line prints all four numbers.**
+  EN: The header count reads `결정 대기 N · AI 처리 N · 백로그 N · 전체 M`, with the `📌 Later` sub-count appended after `결정 대기` when non-zero. The `📌 Later` collapsible sub-section stays INSIDE the `결정 대기` view; it does not become a fifth segment. When `결정 대기` is empty the empty state says so as a good outcome, and if a backlog remains it also states the backlog count so the user does not forget it exists.
+  KO: 헤더 카운트는 `결정 대기 N · AI 처리 N · 백로그 N · 전체 M` 이며, `📌 Later` 가 0이 아니면 `결정 대기` 뒤에 지금처럼 붙인다. `📌 Later` 접이식 하위 섹션은 `결정 대기` 뷰 **안에** 그대로 남는다 — 다섯 번째 세그가 되지 않는다. `결정 대기` 가 비면 빈 상태는 그것을 좋은 결과로 적고, 백로그가 남아 있으면 그 건수도 함께 적어 사용자가 잊지 않게 한다.
+  Verify: 2026-09-01 corpus (`items.jsonl` 1670 lines, 1670 unique ids) — after applying the backlog close the four numbers are 결정 대기 **10** · AI 처리 **24** · 백로그 **193** · 전체 **1670**. Before the change the single number was 미처리 **227**. Cross-tab that produced these: post-08-29 with `ackAt` 24, post-08-29 graded-only 9, post-08-29 untouched 1, pre-08-29 untouched 193; zero pre-08-29 items carry `ackAt`.
+
+- **SLKST-7 — ✅ requires positive evidence; "unknown" gets the pending emoji, never ✅.**
+  EN: The auto-reaction layer resolves a `decision` axis with exactly three values before it picks an emoji. `not-needed` — a level0/heavy vocabulary row actually matched a closing word (understood / noted / 알겠습니다 / 진행하겠습니다) — is the ONLY state that may post `white_check_mark`. `needed` — `vetoReason()` hit (묻는다 · 요청한다 · 막혀 있다 · 장애 · over `maxChars`) — and `unknown` — the bare-floor R1 and group-address paths where no signal matched at all — both post the row named by `pendingEmoji` in `slack-emoji-layer.json`. Making ✅ the fallback again is a regression, and so is collapsing `unknown` into `not-needed`: "we could not classify it" and "nothing is being decided" are different facts. The response grades R0/R1/R2 are NOT changed by this axis — only which emoji rides along. The emoji name is read from JSON; hardcoding it in `emoji-layer.mjs` is a regression.
+  KO: 자동 리액션 레이어는 이모지를 고르기 전에 `decision` 축을 세 값 중 하나로 판정한다. `not-needed` — level0/무거운 어휘집이 실제로 닫는 말(understood / noted / 알겠습니다 / 진행하겠습니다)을 물었을 때 — 만이 `white_check_mark` 를 달 수 있는 유일한 상태다. `needed` — `vetoReason()` 이 걸렸을 때(묻는다 · 요청한다 · 막혀 있다 · 장애 · `maxChars` 초과) — 와 `unknown` — 아무 신호도 안 잡힌 바닥값 R1 과 단체 수신 경로 — 는 둘 다 `slack-emoji-layer.json` 의 `pendingEmoji` 가 지목한 행을 단다. ✅ 를 다시 바닥값으로 되돌리면 회귀이고, `unknown` 을 `not-needed` 로 뭉개는 것도 회귀다 — "분류하지 못했다" 와 "의사결정이 필요 없다" 는 다른 사실이다. 응답 등급 R0/R1/R2 는 이 축으로 바뀌지 않는다 — 함께 실리는 이모지만 바뀐다. 이모지 이름은 JSON 에서 읽는다. `emoji-layer.mjs` 에 이름을 박으면 회귀다.
+  Why / 근거: 2026-09-02, `C0BU7LC0QSH:1788337575.269469`. 원장 한 줄이 경로를 그대로 보여준다 — `ack-emoji … 선응답을 :white_check_mark: 로 대체 · 길다(1785자 > 240) → R2 이상 후보`. 즉 ✅ 는 "확인했다"의 결과가 아니라 "글을 못 썼다"의 결과로 나갔다. 리액션은 `USER_TOKEN`(xoxp)으로 나가므로 동료에게는 라이언 본인이 단 것으로 보였고(`slack-eyes-daemon.mjs:500`, `:1995`), Elma 가 채널에 "green check from Lion is from his AI agent. That is not automatic approval." 를 써야 했다(`1788345311.440649`). 원장 `ack-emoji` 158건 전수: 어휘집 일치 21 · veto 강등 60 · 바닥값 60 · 단체 10 · 무거운 어휘 5 · 모델 2 — **근거가 있었던 것은 26건(16%)뿐이다** (어휘집 일치 21 + 무거운 어휘 5).
+  Verify: 2026-09-02 — `Sources/Plugins/Slack/Daemon/emoji-layer.decision.test.mjs` 18 pass / 0 fail (`node --test`). 기존 단위 시험 다섯(`send-layer`, `send-layer.gate`, `people-context`, `reply-language`, `security-gate`)과 `.e2e/slackemoji.test.js`·`slackalignment.test.js` 전부 exit 0. NOTE: 어휘집에 행이 하나 늘면서 `.e2e/slackemoji.test.js` 의 세 단언이 깨졌고 — 자동 이모지 개수 6, L0 목록이 🫡·✅ 둘, "모든 auto 항목은 판정 정규식을 갖는다" — 셋 다 **의도한 동작 변경**이라 시험을 고쳤다(개수 7, L0 셋, 정규식 검사는 `match` 가 있는 행만). 대신 보는 중 행이 `match` 를 갖지 않고 `pendingEmoji` 이며 `resolves:false` 라는 단언 넷을 새로 넣었다 — 정규식을 주면 어휘 일치로도 뽑히게 되어 이 항목의 규칙이 반대편으로 열린다. `.e2e` 의 `slackdefects`·`slackdegrade`·`slackpipe`·`slackanswer` 넷은 실패하지만 **변경 전 코드(앱 번들 사본)로 되돌려도 똑같이 넷 다 실패**하므로 이 변경과 인과가 없다(`untranslatedSegments`·`peopleContextModule` 미정의, 임시 폴더에 `security-gate.mjs` 미복사).
+
+- **SLKST-8 — only a reaction the user placed themself closes an item, and never one this system posted.**
+  EN: No reaction may move an item out of the user's 미처리 queue EXCEPT one the user placed themself that is not an emoji this system posted on that same item — `e.user === MY_USER && baseEmoji(e.reaction) ∉ ourAckEmojis(item)`. A reaction placed by anyone else still does NOT close the item; "someone else handled it" and "the user handled it" are different facts. **Gating on `MY_USER` alone is a regression** — the daemon posts its reactions with the user's own `USER_TOKEN` (xoxp), so its own ack emoji comes back over the socket as `e.user === MY_USER`; that is the 2026-09-02 incident itself. The rule lives in the catalog JSON as the workspace-level key `resolvesPolicy`, whose values are `"none"` (nothing resolves), `"self"` (the rule above), and `"catalog"` (the pre-2026-09-02 behaviour: per-row `resolves` decides and names absent from the catalog resolve). The two fallbacks are UNCHANGED: a catalog with no `resolvesPolicy` key at all still reads as `"catalog"` so pre-existing catalogs are byte-for-byte unchanged, and an unreadable catalog or a value that is not one of the three still fails CLOSED to `"none"` and logs once. `isResolvingEmoji(name, ctx)` / `resolvingReaction(reactions, ctx)` / `firstNonTrigger(names)` in `slack-eyes-daemon.mjs` remain the ONLY gate, and all three auto-close paths (collection, `reconcile`, the `reaction_added` socket handler) pass through them; `self` needs to know who reacted and on which item, so the gate's INPUT widened (`ctx = { by, item }`) instead of the condition being scattered into the call sites — scattering it is a regression, because one of the three paths always ends up bypassing the gate. Under `"self"` the gate is fail-closed: missing `ctx`, missing `ctx.by`, missing `ctx.item`, or a `MY_USER` that `auth.test` has not filled in yet all return `false`. That one rule also decides the collection path: at collection time the item does not exist yet, so `processMessage` passes `{ item: null }` and NOTHING closes on collection under `"self"` — re-triggering an already-✅'d message with 👀 means "I want to look again", and closing it in the same instant would make that 👀 meaningless. A special-case branch for collection is a regression. Behaviour change: the app card-toolbar quick reaction (`/api/slack/reaction` → `SlackTranslateStore.setReaction`) now DOES close the item, because it also goes out on `USER_TOKEN` and pressing it is just as deliberate as reacting in Slack; the one accepted limitation is that a toolbar emoji identical to the item's own ack emoji will not close it, since the self-emoji exclusion wins. **`postEmojiReaction()` MUST write `ackEmoji`/`ackEmojis` to disk BEFORE calling `reactions.add`, and roll them back if the call fails. Reversing that order is a regression** — the `reaction_added` for the emoji we just posted arrives over the socket before the `await` resolves, and at that instant the item on disk carries no ack emoji, so the exclusion set is empty and the daemon closes the item with its own reaction. A disk write is sufficient and an in-memory `Set` is not: `rewriteItem()` is synchronous (`readFileSync` → `writeFileSync` → `renameSync`), `loadItems()` re-reads the file on every call with no cache, node is single-threaded so no event can interleave, and the value survives the 23–27 daemon restarts a day that an in-memory set would not. `ackEmojis: string[]` accumulates every emoji this system posted on the item and `ackEmoji` keeps its old meaning as the latest one — the dashboard reads that scalar as a string, so widening it would break the reader. Comparison is against the UNION `ackEmojis ∪ ackEmoji`, which is why records written before this field exists still work: they yield a one-element set. Both fields are optional and their absence yields the empty set. Under `"self"` the `reaction_removed` handler MUST NOT decide with `firstNonTrigger(left)` — `item.reactions` stores names only and never users, so that function can never build `ctx.by` there and is always null, `!null` is always true, and every reaction removal would mass-reopen every past `autoDone` item. It decides instead on what actually closed the item: reopen only when `it.autoDone && it.autoBy && e.user === it.autoBy && baseEmoji(e.reaction) === baseEmoji(it.autoEmoji)`. A record without `autoBy` is fail-closed, which HERE means "leave it as it is"; mass reopening is the harm at this site. The `"none"` and `"catalog"` branches are unchanged to the letter. This item is forward-looking only: historical `auto.done` rows are NOT reopened, and the 128 open items that already carry a reaction are NOT retroactively closed — deciding `e.user === MY_USER` for them needs `reactions.get` (currently failing on every call, tracked separately) and approximating it by name alone would close 98 of them, including the other-people reactions this rule deliberately leaves open. `emojiSafeToPost()` must keep refusing trigger emojis (`eyes` / `bookmark` / `pushpin`) regardless of the policy — posting 👀 re-collects the item through `reaction_added(MY_USER)` and loops. Hardcoding an emoji name, or the workspace's policy VALUE, in the daemon is a regression (same reason as SLKST-7); branching on the policy the JSON selected is not the same thing as choosing that policy in code.
+  KO: 어떤 리액션도 항목을 라이언의 미처리에서 빼지 못한다 — **단, 라이언 본인이 직접 달았고 그것이 이 시스템이 그 항목에 단 이모지가 아닌 경우는 예외다** (`e.user === MY_USER && baseEmoji(e.reaction) ∉ ourAckEmojis(item)`). 남이 단 리액션은 여전히 항목을 닫지 못한다 — 남이 처리했다는 것과 라이언이 처리했다는 것은 다른 사실이다. **`MY_USER` 조건만 거는 것은 회귀다** — 데몬이 라이언의 `USER_TOKEN`(xoxp)으로 리액션을 달기 때문에 자기 ack 이모지가 소켓에 `e.user === MY_USER` 로 되돌아온다. 그것이 2026-09-02 사고 그 자체다. 규칙이 사는 자리는 어휘집 JSON 의 워크스페이스 단위 키 `resolvesPolicy` 이고, 값은 `"none"`(아무것도 닫지 않는다) · `"self"`(위 규칙) · `"catalog"`(2026-09-02 이전 동작 — 행 단위 `resolves` 가 정하고 어휘집에 없는 이름은 닫는다) 셋이다. **바닥값 두 갈래는 그대로 둔다**: `resolvesPolicy` 키가 아예 없는 어휘집은 여전히 `"catalog"` 로 읽어 예전과 바이트 단위로 같게 돌고, 어휘집을 못 읽거나 셋 중 어느 것도 아닌 값이 적혀 있으면 여전히 `"none"` 으로 **닫히는 쪽으로 실패**하고 한 번 로그를 남긴다. `slack-eyes-daemon.mjs` 의 `isResolvingEmoji(name, ctx)`·`resolvingReaction(reactions, ctx)`·`firstNonTrigger(names)` 셋이 계속 **유일한 문**이고 자동 처리완료 경로 셋(수집 · `reconcile` · `reaction_added` 소켓 처리)이 전부 여기를 지난다. `self` 는 누가 어느 항목에 달았는지를 알아야 하므로 문의 **입력**을 넓혔다(`ctx = { by, item }`) — 조건을 호출부로 흩뿌리면 회귀다. 흩뿌리면 셋 중 하나가 반드시 문을 우회한다. `"self"` 아래의 문은 fail-closed 다 — `ctx` 가 없거나 `ctx.by` 가 없거나 `ctx.item` 이 없거나 `auth.test` 가 아직 `MY_USER` 를 안 채웠으면 전부 `false` 다. 그 규칙 하나가 수집 경로도 정한다: 수집 시점에는 항목이 아직 없으므로 `processMessage` 는 `{ item: null }` 을 넘기고, 따라서 `"self"` 아래에서 수집 시점에는 아무것도 닫히지 않는다 — 이미 ✅ 가 달린 메시지에 👀 를 다시 다는 것은 "다시 보겠다" 이고 그 순간 닫으면 그 👀 가 무의미해진다. 수집만을 위한 특례 분기를 두면 회귀다. **동작 변경**: 앱 카드 툴바의 빠른 리액션(`/api/slack/reaction` → `SlackTranslateStore.setReaction`)이 이제 항목을 닫는다. 그쪽도 `USER_TOKEN` 으로 나가고 툴바에서 누르는 것은 슬랙에서 다는 것과 똑같이 의도된 행위이기 때문이다. 받아들인 한계가 하나 있다 — 툴바에서 누른 이모지가 그 항목의 ack 이모지와 같으면 닫히지 않는다(자기 이모지 배제가 이긴다). **`postEmojiReaction()` 은 `reactions.add` 보다 먼저 `ackEmoji`/`ackEmojis` 를 디스크에 적어야 하고, 그 호출이 실패하면 되돌려야 한다. 순서를 뒤집으면 회귀다** — 우리가 방금 단 이모지의 `reaction_added` 가 그 `await` 이 풀리기 전에 소켓으로 돌아오고, 그 시점의 항목에는 ack 이모지가 없어 제외 집합이 비므로 데몬이 자기 리액션으로 자기 항목을 닫는다. 디스크 쓰기 하나로 충분하고 인메모리 `Set` 은 답이 아니다: `rewriteItem()` 은 `readFileSync` → `writeFileSync` → `renameSync` 로 동기이고, `loadItems()` 는 호출마다 파일을 다시 읽으며 캐시가 없고, node 는 단일 스레드라 그 사이에 이벤트가 끼지 못하고, 하루 23~27회인 데몬 재시작을 디스크 값은 넘어 살아남지만 `Set` 은 그 창에서 뚫린다. `ackEmojis: string[]` 는 이 시스템이 그 항목에 단 이모지를 누적하고 `ackEmoji` 는 지금 뜻 그대로 **최신 하나**를 들고 간다 — 대시보드가 그 스칼라를 문자열로 읽으므로 배열로 바꾸면 읽는 쪽이 깨진다. 비교는 **합집합** `ackEmojis ∪ ackEmoji` 로 한다. 그래서 이 필드가 생기기 전에 쓰인 레코드도 그대로 돈다 — 원소 하나짜리 집합이 된다. 두 필드는 모두 선택 항목이고 없으면 빈 집합이다. `"self"` 아래에서 `reaction_removed` 처리는 `firstNonTrigger(left)` 로 판정하면 안 된다 — `item.reactions` 는 이름만 저장하고 누가 달았는지를 저장하지 않아 그 함수는 거기서 `ctx.by` 를 만들 수 없고 언제나 null 이며, `!null` 이 항상 참이 되어 리액션 하나 뗄 때마다 예전에 자동 처리완료된 항목이 전부 되살아난다. 대신 **항목을 실제로 닫은 그것**으로 판정한다: `it.autoDone && it.autoBy && e.user === it.autoBy && baseEmoji(e.reaction) === baseEmoji(it.autoEmoji)` 일 때만 되돌린다. `autoBy` 가 없는 옛 레코드는 fail-closed 이고, **여기서 fail-closed 의 뜻은 "지금 상태를 유지" 다** — 무더기 재개방이 이 자리의 해악이다. `"none"` 과 `"catalog"` 갈래의 조건은 글자 단위로 그대로 둔다. 이 항목은 **앞을 향할 뿐이다**: 원장에 남은 `auto.done` 을 소급해 다시 열지 않고, 이미 리액션이 달린 채 열려 있는 128건도 소급해 닫지 않는다 — 그 128건에 대해 `e.user === MY_USER` 를 판정하려면 `reactions.get`(오늘 전수 실패, 별건)이 필요하고, 이름만으로 근사하면 98건이 닫히는데 그 안에 이 규칙이 일부러 열어 두기로 한 "남이 단 리액션" 이 섞인다. `emojiSafeToPost()` 는 정책이 무엇이든 트리거 이모지(`eyes` / `bookmark` / `pushpin`)를 계속 거부해야 한다 — 👀 를 달면 `reaction_added(MY_USER)` 로 재수집되어 루프가 돈다. 이모지 이름이나 워크스페이스의 정책 **값**을 데몬에 박으면 회귀다(SLKST-7 과 같은 이유). JSON 이 고른 정책에 따라 갈라지는 것과 그 정책을 코드가 고르는 것은 다른 일이다.
+  Why / 근거: 2026-09-02 라이언 결정이 `"none"` 이었다 — "어떤 리액션도 항목을 닫지 않는다. 미처리는 손으로 닫는다. 리액션은 '봤다'는 표시일 뿐이고 미처리 목록에서 항목을 빼는 권한은 사람 손에만 있다." 그 결정이 도는 데몬에 실제로 걸린 것은 2026-09-04 04:22 KST 다. **2026-09-06 에 라이언이 그것을 `"self"` 로 좁혔다** — "우리가 단 이모지만 빼고 다시 연다". 근거는 그날 실측이다(`~/.condition-mate/slack-translate/items.jsonl` **2,004줄, 파싱 실패 0**). 자동 처리완료 **1,083건**의 내역: 데몬이 자기가 단 이모지에 걸려 닫은 것 **155건(14.3%)** · 라이언이 슬랙에서 손으로 단 것 **557건(51.4%)** · 남이 단 것 **371건(34.3%)**. 닫힌 1,607건 중 1,083건(67.4%)이 이 경로였으므로 `"none"` 이 없앤 것은 처리량의 3분의 2였고 대체 경로는 만들지 않았다. **사고는 155건짜리 부분집합인데 정책이 1,083건 전부를 껐다.** `"self"` 는 155건을 계속 막고 557건을 되살리고 371건은 계속 열어 둔다. 소급을 안 하는 근거도 같은 실측이다 — 열린 항목 **397건** 중 트리거가 아닌 리액션이 달린 것 **128건**, 그중 `ackEmoji` 를 가진 것 **70건**, 비트리거 리액션이 우리 `ackEmoji` **뿐**인 것 **30건**, 앱 대장 `reactions.json` 에 있는 것 **0건**. `item.reactions` 는 이름 다중집합만 저장하고 누가 달았는지를 저장하지 않으므로 로컬 데이터만으로는 `MY_USER` 판정이 불가능하다. `ackEmojis` 를 더한 근거: `ackEmoji` 는 스칼라라 갈아치워지고 실제로 `ackSupersededAt` 을 가진 항목이 **2건** 있다. 대안 셋을 버렸다 — (i) `ackEmoji` 를 배열로 바꾸면 대시보드·원장·시험이 스칼라를 읽고 있어 하위 호환이 깨지고, (ii) `ackSupersededAt` 에는 갈아치운 **시각**만 있고 무엇에서 무엇으로인지가 없고, (iii) 오늘 실제로 다는 `ackEmoji` 가 세 종류뿐(`white_check_mark` 172 · `mag` 107 · `saluting_face` 16)이라는 것을 코드에 박는 것은 이 항목이 금지한 이모지 이름 하드코딩이다. 이 배치는 사람에게 아무것도 발신하지 않는다 — `autoResolve()` → `markDone()` → `setDoneRemote()` 는 `{ sync: false }` 로 루프백 `POST /api/slack/done` 을 부르고, `AppDelegate.swift` 의 그 핸들러는 `sync == true` 일 때만 `syncReaction` 을 부른다. 자동 처리완료는 슬랙에 이모지도 스레드 답장도 남기지 않는다.
+  Verify: 2026-09-06 — `Sources/Plugins/Slack/Daemon/emoji-layer.decision.test.mjs` **50 pass / 0 fail** (`node --test`). 변경 전 기준선은 같은 파일 **39 pass / 0 fail** 이었다. 기존 39개 중 **다섯**이 깨졌고 전부 계약이 아니라 **오늘의 점유**를 재고 있던 단언이라 새 점유로 고쳤다: (1) `T4 사전 확인` 의 `RESOLVES_POLICIES` 가 `['none','catalog']` 라는 단언 → `['none','self','catalog']`; (2) `T4 ✅ 도 👍 도 항목을 닫지 않는다` 의 번들 값 단언 `'none'` → `'self'` 이고 "닫지 않는다" 를 `self` 계약(남이 단 것 · 우리가 단 것 · 행 단위 `resolves:false`)으로 다시 씀; (3) `T4 emojiSafeToPost` 가 번들 기본값을 `'none'` 으로 가정하던 것 → 세 정책을 전부 명시적으로 만들어 돌리게 고쳐 번들 값이 무엇이 되든 다시 안 깨지게 함; (4) `autoUnresolve` 가드 원문 단언 → 새 가드를 재는 단언 셋으로 다시 씀(`none` 갈래 원문 · `self` 갈래의 세 조건 · `self` 갈래에 `firstNonTrigger` 가 없다는 것). 정규식을 느슨하게 지우지 않았다; (5) 번들 어휘집 단언 `resolvesPolicy === 'none'` → `'self'` 이고 SLKST-9 산문 단언(값이 셋 · 현재 값 · `_axis_doc` 에 `none` 없음)을 더함. 나머지 34개는 그대로 통과한다 — `"catalog"` 와 fail-closed 두 갈래가 바이트 단위로 안 바뀌었다는 근거가 그것이다(하네스만 고친 원본 시험 파일을 새 데몬에 대고 돌려 34 pass / 5 fail 로 확인). 새로 넣은 시험 열하나: 데몬이 단 ack 이모지가 `MY_USER` 로 되돌아와도 안 닫힌다(스칼라·배열·갈아치운 뒤·스킨톤 넷) · `MY_USER` 가 손으로 단 다른 이름은 닫는다 · 남이 단 것은 안 닫고 `r.users` 중간의 `MY_USER` 는 잡는다 · `ctx`/`ctx.item`/`MY_USER` 가 없으면 fail-closed 이고 수집 경로가 그 규칙 하나로 덮인다 · **쓰기 순서 경합** — `postEmojiReaction` 원문을 잘라 실제로 돌리고 `reactions.add` 가 불리는 그 순간에 소켓 핸들러가 하는 일(디스크를 다시 읽어 `isResolvingEmoji` 에 묻기)을 그대로 시켜, 그 시점의 판정이 `false` 임을 단언한다 · `reactions.add` 가 실패하면 선기록을 되돌리고 `already_reacted` 면 되돌리지 않는다 · `reaction_removed` 가 옛 `autoDone` 을 무더기로 되살리지 않는다(가드 원문을 잘라 실행, 다섯 갈래) · 닫은 그 이모지를 그 사람이 뗐을 때만 되살아난다 · `none`·`catalog` 가드는 예전 그대로다 · `ourAckEmojis` 하위 호환 · `withAckEmoji` 누적. **경합 시험이 실제로 경합을 잰다는 것을 확인했다** — `postEmojiReaction` 의 쓰기 순서를 `reactions.add` 먼저로 되돌리면 T8-5 두 개가 정확히 실패하고(소켓 판정이 `false` → `true` 로 뒤집힌다) 나머지 48개는 통과한다. 되돌린 것은 곧바로 원상복구했다. 이웃 시험 전부 통과 — `ack-sources` 15 pass / 0 fail · `send-layer` 15 passed / 0 failed · `send-layer.gate` exit 0 · `people-context` 16 pass / 0 fail · `reply-language` 24 passed / 0 failed · `security-gate` 18 passed / 0 failed · `.e2e/slackemoji.test.js` exit 0 · `.e2e/slackalignment.test.js` exit 0. `.e2e` 의 `slackdegrade`·`slackpipe`·`slackdefects` 셋은 여전히 실패하지만 **변경 전 트리(데몬·어휘집을 변경 전 사본으로 되돌린 것)에서 같은 오류 문자열로 실패하는 것을 실제로 확인**했다 — 앞의 둘은 `ERR_MODULE_NOT_FOUND: security-gate.mjs`(하네스가 데몬만 tmpdir 로 복사한다), 셋째는 `ReferenceError: untranslatedSegments is not defined` 다. 코퍼스: `items.jsonl` **2,004줄 전수 파싱 실패 0**. `ackEmoji` 를 가진 것 295건이고 `ackEmojis` 배열을 가진 것은 아직 0건인데, `ourAckEmojis` 가 그 295건 전부를 원소 하나짜리 집합으로 읽는다(옛 줄 하위 호환 실행 확인). `autoDone` 1,083건 전부가 `autoBy` 를 갖고 있어 `reaction_removed` 의 fail-closed 에 걸리는 옛 레코드는 0건이다. 키는 어느 파일·로그·오류 문자열에도 실리지 않았다 — 이 배치는 키체인을 열지 않는다.
+
+- **SLKST-9 — the emoji rule lives in two places and they must not diverge.**
+  EN: The same rule is written twice on purpose — as prose the model reads (`Sources/Plugins/Slack/Daemon/reply-policy/router.md`) and as deterministic values the code reads (`slack-emoji-layer.json` + `emoji-layer.mjs`). Both must state the same three rules: decision-needed → pending emoji; decision-not-needed → ✅; never ✅ on decision-needed. If the JSON's `pendingEmoji` changes, `router.md` and the level files must say the same name. A policy file that names an emoji the catalog does not carry is a regression — the prose would be describing behavior that cannot happen. The level policy set is split on the L0~L5 컨텍스트 축 and must not be renumbered onto R0~R4, F0~F3, E2~E4, C0~C2, or permission 1~9.
+  KO: 같은 규칙이 일부러 두 곳에 적혀 있다 — 모델이 읽는 산문(`Sources/Plugins/Slack/Daemon/reply-policy/router.md`)과 코드가 읽는 결정값(`slack-emoji-layer.json` + `emoji-layer.mjs`)이다. 둘은 같은 세 줄을 말해야 한다: 의사결정 필요 → 보는 중 이모지, 필요 없음 → ✅, 의사결정이 필요한 글에 ✅ 금지. JSON 의 `pendingEmoji` 가 바뀌면 `router.md` 와 레벨 파일도 같은 이름을 적어야 한다. 어휘집에 없는 이모지를 정책 파일이 지목하면 회귀다 — 일어날 수 없는 동작을 산문이 설명하는 상태가 된다. 레벨 정책 묶음은 L0~L5 컨텍스트 축으로 쪼갠 것이며, R0~R4 · F0~F3 · E2~E4 · C0~C2 · permission 1~9 로 번호를 갈아끼우면 안 된다.
+
+- **SLKST-10 — the auto-reaction runs only on sources the policy names, and the floor is `mention` alone.**
+  EN: `acknowledgementOn()` in `slack-eyes-daemon.mjs` must read its allowed-source list from `ackSources` in `slack-ack-cost-policy.json` (bundled, overridable by `~/.condition-mate/slack-translate/ack-cost-policy.json`). Hardcoding the list back into the daemon is a regression. When the key is absent, not an array, or the policy cannot be read, the list falls back to `["mention"]` — the NARROW side. "We could not read the policy" must never widen who gets reacted to. A source not on the list gets no 🔍 and no evidence layer: `postAcknowledgement()` is the single entry for both the reaction (`postEmojiReaction`) and context acquisition (`ackEvidence` — Jira/Notion/web research/related threads/attachments — plus people-context 축 0, problem-frame 축 2, novelty gate), so splitting the two behind separate gates is a regression that would burn model calls invisibly. This axis does NOT change collection: `sourceOn()` and `mentionKind()` are untouched, so `dm`/`broadcast` items are still collected, translated, and listed on the dashboard. Reacting is a Slack-visible act; collecting is not.
+  KO: `slack-eyes-daemon.mjs` 의 `acknowledgementOn()` 은 허용 소스 목록을 `slack-ack-cost-policy.json` 의 `ackSources` 에서 읽어야 한다(번들 정본, `~/.condition-mate/slack-translate/ack-cost-policy.json` 으로 덮어쓰기 가능). 목록을 데몬에 다시 박으면 회귀다. 키가 없거나 배열이 아니거나 정책을 못 읽으면 `["mention"]` 로 떨어진다 — **좁은 쪽**이다. "정책을 못 읽었다" 가 리액션 대상을 넓히는 사유가 되어서는 안 된다. 목록에 없는 소스에는 🔍 도 근거 레이어도 돌지 않는다: `postAcknowledgement()` 하나가 리액션(`postEmojiReaction`)과 컨텍스트 확보(`ackEvidence` — Jira·Notion·웹 리서치·다른 스레드·첨부 — 그리고 people-context 축 0, problem-frame 축 2, 신규성 게이트)의 공통 입구라서, 둘을 다른 게이트 뒤로 갈라 두면 이모지는 안 붙는데 모델 호출만 도는 상태가 생긴다. 이 축은 수집을 바꾸지 않는다: `sourceOn()`·`mentionKind()` 는 그대로라 `dm`·`broadcast` 항목은 계속 수집·번역되고 대시보드에 뜬다. 리액션은 슬랙에 보이는 행위이고 수집은 아니다.
+  Why / 근거: 2026-09-02 라이언 구술 — "나 멘션한 거 말고도 모든 메시지에 다 돋보기를 달고 있거든. 그렇게 지금 커뮤니케이션 코스트를 엄청나게 만들고 있어." 그때까지 목록은 `['mention','team','dm','broadcast']` 로 코드에 박혀 있었고, `dm` 은 DM·**그룹DM 채널의 모든 새 메시지**를 뜻한다. 실측: `items.jsonl` 1792건 중 mention 803 · dm 588(1:1 358 · 그룹DM 230 · 38개 방) · broadcast 83 · team **0**. 원장 `actions-daemon.jsonl` 의 `ack-emoji` 195건 중 **78건(40%)** 이 라이언이 불리지도 않은 자리였고, 🔍 도입 첫날 나간 30건만 보면 **20건(67%)** 이 그 자리였다. 리액션은 `USER_TOKEN`(xoxp)으로 나가 라이언 본인이 단 것으로 보이므로(SLKST-7 의 근거와 같은 구조), 그가 있을 뿐인 38개 그룹 DM 의 남의 대화마다 "라이언이 이걸 들여다보고 있다" 가 찍혔다. 대시보드 체크박스로는 못 고친다 — `config.json` 의 `sources` 에 `dm`·`broadcast` 키가 아예 없고 `sourceOn()` 이 명시적 `false` 가 아니면 켠 것으로 읽으며, 끄면 번역과 대시보드 목록까지 같이 사라진다. `team` 을 뺀 것은 수집 실적이 0건이라 동작이 갈리지 않기 때문이고, 1:1 DM 을 뺀 것은 "나한테 멘션한 것만" 을 글자 그대로 읽었기 때문이다 — 되돌리는 값이 JSON 낱말 하나다.
+  Verify: 2026-09-02 — `Sources/Plugins/Slack/Daemon/ack-sources.test.mjs` 15 pass / 0 fail. 변경 전 데몬 사본으로 같은 시험을 돌리면 15개 중 **9개가 깨진다**(dm·broadcast·team 이 통과해 버리는 셋 포함) — 초록의 원인이 시험이 아니라 코드임을 확인한 것이다. 기존 시험 6개(`emoji-layer.decision` 18 pass, `send-layer` 15 pass, `send-layer.gate`, `people-context` 16 pass, `reply-language` 24 pass, `security-gate` 18 pass) 전부 exit 0, 회귀 0. `items.jsonl` 1792줄 전수 파싱 실패 0. 라이브 확인: 번들 `slack-eyes-daemon.mjs`·`slack-ack-cost-policy.json` 이 저장소와 `cmp` 동일, 데몬 재기동 후 `health.json` 이 `socket:connected · codeStale:false · failures:0`, 그리고 배포된 번들 파일에서 `acknowledgementOn` 을 직접 뽑아 실행하니 `mention` 만 true 이고 `team`·`dm`·`broadcast`·`later`·undefined 는 전부 false.
+  NOTE: `swift build` 는 이 항목과 무관하게 `.build/build.db: disk I/O error` 로 exit 1 이다. `Package.swift:55` 가 `exclude: ["Daemon", "loops"]` 라 이 변경은 Swift 타깃의 입력이 아니며, Swift 소스는 한 줄도 안 바뀌었다(설치된 바이너리보다 새로운 소스는 이 배치의 3개 파일뿐). 그래서 배포는 `Scripts/build-app.sh` 의 설치 꼬리(quit → Resources 교체 → 애드혹 재서명 → relaunch → 데몬 kickstart)만 손으로 밟았다. 빌드 DB 결함은 별도 건이다.
+
+- **SLKST-11 — only emojis that carry an approval meaning get folded into ✅.**
+  EN: When a heavy catalog row (`level0 !== true`) matches in `responseGrade()`, the layer emits the matched row itself ONLY IF that row declares `approval: false`; in every other case it folds to `white_check_mark`. The test is `heavy.approval !== false`. **Flipping it to `=== true` is a regression** — a catalog that predates the `approval` key, and any newly added row that forgets to declare it, would then all go out as themselves, and the failure in that direction is an approval posted from the user's own xoxp account. When we do not know, folding is the safe side. 👌 `ok_hand` (approval) and 👍 `+1` (agreement) MUST be `approval: true`: auto-posting those is worse than the 2026-09-02 incident, because the reaction goes out under the user's token and the reader takes it as the user's own approval. 🙏 `pray` (well-wishing), 🙇 `man-bowing` (deference) and 🙌 `raised_hands` (celebration) carry no approval meaning and MUST therefore be declared `approval: false` — that declaration stays true whether or not the row is allowed to fire, and rewriting it to `true` in order to suppress a row is a regression (it records a false meaning to achieve an eligibility outcome; lower `auto` instead). Whether such a row actually goes out is the separate `auto` gate below, and **as of 2026-09-02 none of the three clears it**, so the unfold path ships live but unoccupied. Deciding this by emoji NAME inside `emoji-layer.mjs` is a regression — `approval` is read from JSON, for the same reason SLKST-7 requires the emoji name to be read from JSON. Admission to the catalog as `auto: true` is a separate and stricter gate: a rule qualifies only at measured precision ≥ 0.70 over the user's own three-month reaction corpus with a sample of ≥ 8 matches. `approval` says which way a row folds; it does not say the row earned the right to fire.
+  KO: `responseGrade()` 에서 무거운 어휘집 행(`level0 !== true`)이 일치하면, 그 행이 **`approval: false` 라고 명시했을 때만** 일치한 행 자신을 내보내고 그 밖에는 전부 `white_check_mark` 로 접어 내보낸다. 판정은 `heavy.approval !== false` 다. **`=== true` 로 뒤집으면 회귀다** — `approval` 키가 없는 옛 어휘집과 키를 안 적고 새로 추가된 행이 전부 자기 자신으로 나가게 되고, 그 방향의 실패는 라이언 계정(xoxp)에서 나가는 승인이다. 모르면 접는 쪽이 안전한 쪽이다. 👌 `ok_hand`(승인)와 👍 `+1`(동의)는 반드시 `approval: true` 다 — 이 둘을 자동으로 다는 것은 2026-09-02 사고보다 나쁘다. 리액션이 라이언의 토큰으로 나가므로 상대는 그것을 라이언의 승인·동의로 읽는다. 반대로 🙏 `pray`(기원) · 🙇 `man-bowing`(겸손) · 🙌 `raised_hands`(환호)는 승인 뜻이 없으므로 반드시 `approval: false` 다 — 이 선언은 그 행이 나갈 자격이 있든 없든 참이고, 어떤 행을 막으려고 이 값을 `true` 로 고쳐 쓰면 회귀다(자격 문제를 뜻을 거짓으로 적어서 푸는 것이다. 막으려면 `auto` 를 내려라). 그 행이 실제로 나가는지는 아래의 별도 문(`auto`)이 정하며, **2026-09-02 기준 이 셋 중 그 문을 통과한 것은 하나도 없다** — 접힘 해제 경로는 살아 있는 채로 주인이 없이 배포된다. 판정을 `emoji-layer.mjs` 에 이모지 **이름**으로 박으면 회귀다. `approval` 은 JSON 에서 읽는다(SLKST-7 이 이모지 이름을 JSON 에서 읽으라고 한 것과 같은 이유). 어휘집에 `auto: true` 로 들어갈 자격은 이것과 **다른, 더 엄격한** 문이다 — 라이언 본인의 3개월 리액션 코퍼스에 대고 잰 정밀도가 **0.70 이상이고 표본이 8건 이상**일 때만 자격이 선다. `approval` 은 어느 쪽으로 접히는지를 말할 뿐이고 그 행이 나갈 자격을 얻었다고 말하지 않는다.
+  Why / 근거: 2026-09-02. `emoji-layer.mjs:362` 가 `matchHeavy` 로 🙇·🙏·👌·👍 를 정확히 골라낸 다음 매치된 행이 아니라 `back`(= ✅)을 돌려주고 있었다. 즉 어휘집에 뜻을 적어 둔 이모지 넷이 **구조적으로 한 번도 슬랙에 나갈 수 없었다.** 라이언이 이름을 댄 세 이모지(🫡·✅·🙏) 중 🙏 가 여기 걸려 있었다. 가드 자체는 의도였고 시험이 지키고 있었으므로(`emoji-layer.decision.test.mjs:104-109`) 없애지 않고 축을 다시 그었다 — 위험한 것은 무거움이 아니라 승인 뜻이다. 반대 부호를 먼저 짜 봤을 때 옛 어휘집에서 👌·👍 가 자기 자신으로 나갔다: 하위 호환이 안전한 쪽이 아니라 위험한 쪽으로 떨어졌다. 실측 두 개가 함께 붙는다. (1) 3개월 코퍼스 3,456건 중 clean 3,174건에서 `bow` 는 **0건**이고 실제 이름은 `man-bowing` **43건**이라 그 행의 `name` 을 교정했다 — 이름이 틀리면 `reactions.add` 가 `invalid_name` 으로 실패한다. (2) 🙌 `raised_hands` 는 어휘집이 "잘 안 쓴다" 라고 적어 두었는데 clean **123건**으로 👍 `+1`(121건)보다 많다. 뜻은 교정했으나 이 이모지를 겨냥한 규칙 후보의 실측 정밀도가 0.06 이라 위 채택선에 못 미쳐 `auto: false` 로 남긴다 — 뜻을 아는 것과 자리를 찾을 수 있는 것은 다른 문제이고, 후자가 안 되면 어휘집에 넣지 않고 "못 잡는다" 로 적는다(G4). 아직 손대지 않은 단서 하나를 숫자와 함께 남긴다(다음 사람이 다시 재지 않도록): `responseGrade` 는 `matchHeavy` 를 `matchLevelZero` 보다 **먼저** 돌린다. 그래서 '죄송합니다 … 하겠습니다' 처럼 무거운 어휘와 L0 어휘가 한 문장에 같이 있으면 무거운 쪽이 이긴다. 접힘을 열었던 판 2 상태에서 이 16건을 재 보면 무거운 쪽이 이겨서 맞은 것은 **1/16**이고, 둘의 순서를 바꿔 L0 를 먼저 보게 하면 **5/16(0.31)** 이 된다. 그래도 채택선 0.70 에는 못 미치고, 순서를 바꾸는 것은 특정 행이 아니라 **모든 메시지**의 판정을 바꾸는 규칙 변경이라 이 배치에 넣지 않았다. 손대려면 전수 재판정을 먼저 하고 별건으로 연다.
+  Verify: 2026-09-02 (판 3, 최종) — `Sources/Plugins/Slack/Daemon/emoji-layer.decision.test.mjs` **31 pass / 0 fail** (`node --test`). **축은 배포되되 그 자리에 주인이 없다.** `pray` 와 `man-bowing` 을 채택선 미달로 `auto: false` 로 내렸으므로, 어휘집에 `approval: false` 이면서 `auto: true` 인 행은 하나도 없다 — 접힘 해제 경로는 살아 있고 오늘 그것을 쓰는 행이 없을 뿐이다(시험 28이 이 사실 자체를 고정한다). 두 행의 실측: `pray` 정밀도 **0.00**(표본 2) · `man-bowing` **0.07**(표본 14), 채택선은 **0.70 · 표본 8**. 둘 다 못 미치므로 나중에 누가 이 중 하나를 `auto: true` 로 되돌리려면 **채택선을 먼저 넘겨야 한다**. `approval: false` 는 지우지 않고 남겼다 — 접히는 방향과 나갈 자격은 다른 축이다. 세 변형 실측(`.localdata/emoji-corpus/23-variant-abc.mjs`, clean 3,174건, 채점은 '레이어가 고른 이모지가 라이언이 그 자리에 실제로 단 것 안에 있는가'): **A 지금 상태(두 행 auto:true) 163(5.1%) · B 옛 동작(전부 ✅ 로 접음) 166(5.2%) · C 두 행 auto:false 166(5.2%)**. 🔍 건수는 A 2669 · B 2669 · C 2676. 세 변형이 갈리는 것은 **16건**이고 그중 맞은 것은 **A 1 · B 4 · C 4** 다. 즉 C 는 정확도에서 옛 동작과 같고 지금 상태보다 낫다. 16건의 착지를 쪼개면 C 는 7건을 🔍 로(B 는 그 7건에서 3건 맞음, C 는 0건), 4건을 🫡 로(B 0 · C 3), 5건을 ✅ 로(B 1 · C 1) 보낸다 — 합이 4 대 4 다. **정확도가 같은 채로 B 가 내던 틀린 ✅ 12건 중 4건이 정직한 🔍 로 바뀌고, 🫡 로 옳게 가는 3건을 새로 얻는다.** (PO 요약의 '틀린 ✅ 7건을 🔍 7건으로 바꾼다' 는 결론은 같으나 숫자가 다르다. 🔍 로 가는 7건 중 B 가 실제로 틀렸던 것은 4건이고 나머지 3건은 B 가 맞혔던 ✅ 를 포기한 것이며, 그 3건은 🫡 에서 되찾는다. 위 숫자가 실행 출력이다.) 2026-09-02 사고가 잘못된 ✅ 를 라이언의 승인으로 읽은 사건이므로 이 교환은 옳은 방향이다. 시험 구조도 바꿨다 — **축**(접힘/접힘 해제, `!== false` 부호, 하위 호환)은 시험 파일 안에서 만든 **합성 어휘집**에 대고 재고, **점유**(오늘 어느 행이 어느 칸에 있는가)만 번들 어휘집에 대고 잰다. 판 2 는 축을 번들에 대고 쟀기 때문에 어휘집의 점유가 바뀌자 축 시험 셋이 한꺼번에 깨졌다 — 축이 한 글자도 안 바뀌었는데 깨졌다면 그것은 축이 아니라 점유를 잰 것이다. 돌연변이 확인 둘: 부호를 `=== true` 로 뒤집으면 **2개 실패**(키 없는 칸과 하위 호환), 접힘 해제를 통째로 없애면(`fold = true`, 판 1 로 되돌림) **1개 실패**. 즉 번들에 주인이 없는데도 접힘 해제 경로가 실제로 시험되고 있다. 이웃 시험 전부 exit 0 — `ack-sources` 15 pass · `send-layer` 15 pass · `send-layer.gate` · `people-context` 16 pass · `reply-language` 24 pass · `security-gate` 18 pass · `.e2e/slackemoji.test.js` 모두 통과 · `.e2e/slackalignment.test.js` 통과. `.e2e/slackemoji.test.js` 는 어휘집 점유가 바뀌어 세 단언을 고쳤다 — 자동 이모지 개수 7 → **5**, auto:false 목록에 `pray`·`man-bowing` 추가, 그리고 접힘 해제 칸이 비어 있다는 단언을 새로 넣었다. 같은 파일의 `quickVerdict` 단언 하나가 기대값이 바뀌었다(`'잘 부탁드립니다. 감사합니다.'` → null 에서 `white_check_mark` 로): 그 함수의 '좁은 뜻 먼저' 가드가 `autoEmojis()` 를 돌아서 자격과 뜻을 하나로 읽기 때문이다. **`quickVerdict` 는 어디서도 안 불린다** — 데몬은 `responseGrade`·`modelVerdict` 만 부르고(`slack-eyes-daemon.mjs:2482`·`:2672`) 유일한 호출부가 그 시험 파일이라, 슬랙에 나가는 동작은 한 글자도 안 바뀐다. 옛 동작(B)에서도 그 문장은 ✅ 였으므로(🙇 가 heavy 로 잡혀 접혔다) 나가는 것 기준으로 회귀가 아니다. 가드를 `match` 있는 비-level0 행 전부로 넓힐지는 별건이며 PO 판단 대기다. `items.jsonl` 1793줄 전수 파싱 실패 0. 키는 어느 파일·로그·오류 문자열에도 실리지 않았다(이 배치는 키체인을 열지 않는다). `.e2e` 의 `slackdefects`·`slackdegrade`·`slackpipe`·`slackanswer` 넷은 여전히 exit 1 이지만 원인이 이 변경과 무관하다 — 각각 `untranslatedSegments is not defined` · `security-gate.mjs` 미복사 ×2 · `peopleContextModule is not defined` 로 모듈 로드 단계에서 죽어 어휘집에 닿지도 못한다(SLKST-7 Verify 에 기록된 그대로).
+
+- **SLKST-12 — 🫡 is an outbound authorship marker, not an inbound reaction. It must never be auto-posted.**
+  EN: `saluting_face` 🫡 means "this message was written by the user's agent, not by the user." It is a marker placed on OUTGOING text, not a reaction to incoming text, and the rule for it lives in the shared layer `~/.must-aios/sources/docs/slack-layers/layer-2-attribution.md`, which states: "이 값을 본문에서 추론하지 않는다 — 발신하는 쪽은 자기가 그 글을 썼는지 아닌지를 이미 안다." The catalog and `router.md` are the places that infer from message body, so neither may own this emoji. Concretely: the `saluting_face` row must stay `auto: false` and `level0: false`, and it must carry NO `match` regex — leaving the regex in place means flipping `auto` back on silently resurrects the retired meaning. `levelZeroEmojis()` therefore yields ✅ and 🔍 only, and `parsePick()` must reject `saluting_face` even when the model picks it. **Re-enabling this row on precision grounds is a regression.** Its reason for leaving differs from 🙏 `pray` and 🙇 `man-bowing`, which left because they missed the adoption bar (SLKST-11); 🫡 left because the axis changed, so no precision measurement can ever qualify it. Putting two meanings on one emoji recreates the 2026-09-02 failure in which a colleague had to explain in-channel that the green check was the user's AI agent and not the user's approval.
+  KO: `saluting_face` 🫡 의 뜻은 "이 글은 라이언이 아니라 라이언의 에이전트가 대신 썼다" 이다. 들어온 글에 다는 리액션이 아니라 **나간 글**에 다는 발신자 표시이고, 규칙 본문은 공용 레이어 `~/.must-aios/sources/docs/slack-layers/layer-2-attribution.md` 에 있으며 그 문서가 "이 값을 본문에서 추론하지 않는다 — 발신하는 쪽은 자기가 그 글을 썼는지 아닌지를 이미 안다" 를 못박았다. 어휘집과 `router.md` 는 본문에서 추론하는 자리이므로 이 이모지를 소유할 수 없다. 구체적으로 `saluting_face` 행은 `auto: false` · `level0: false` 이고 **`match` 정규식을 갖지 않아야 한다** — 남겨 두면 `auto` 를 다시 켜는 순간 폐기된 뜻으로 조용히 발화한다. 그래서 `levelZeroEmojis()` 는 ✅ 와 🔍 둘만 내고, `parsePick()` 은 모델이 🫡 를 골라도 받지 않는다. **정밀도를 근거로 이 행을 되살리면 회귀다.** 이 행이 축을 떠난 사유는 🙏·🙇 와 다르다 — 저 둘은 채택선 미달이라 내려갔고(SLKST-11) 🫡 는 축 자체가 달라져서 떠났으므로, 어떤 정밀도 측정으로도 자격이 서지 않는다.
+  Why / 근거: 2026-09-02 라이언 확정. 이 배치의 3개월 실측(clean 3,174건)에서 ✅ 와 🫡 는 16개 축 어디에서도 갈리지 않았고 최대 격차가 15pp 였으며, 글자까지 같은 원문(`"Thank you"` · `"넵"` · `"FYI"` · `"To @Lion noted."`)에 둘 다 나갔다. 그 이유가 여기서 설명된다 — **🫡 는 본문의 함수가 아니라 "누가 썼는가" 의 함수였다.** 본문 축으로 아무리 갈라도 안 갈리는 것이 당연했다. 근거 문서는 `docs/2026-09-02-lion-emoji-corpus-brief.md` §3 · §4-1 · §4-2.
+  Verify: 2026-09-02 — `emoji-layer.decision.test.mjs` **39 pass / 0 fail**, `.e2e/slackemoji.test.js` **모두 통과**(exit 0). 실측된 이동(`.localdata/emoji-corpus/40-salute-off-effect.mjs`, clean 3,174건): 🫡 를 끄면 **122건이 옮겨간다 — 🔍 97 · ✅ 25**. 라이언의 과거 사용과 대조한 적중은 그 122건에서 **67 → 8** 로 내려간다. **이것을 손실로 읽지 않는다** — 그 67건은 *폐기된 뜻 기준으로* 맞았던 것이고, 뜻이 바뀐 뒤에는 들어온 글에 🫡 를 다는 것 자체가 틀린 동작이다. 지표가 낡은 것이지 동작이 나빠진 것이 아니며, 이 항목을 정밀도로 판정하면 안 되는 이유가 바로 이 숫자다. `.e2e/slackemoji.test.js` 에서 옛 뜻을 굳히고 있던 단언 여덟을 고쳤다 — 자동 이모지 개수 5 → **4**, L0 목록 `saluting_face,white_check_mark,mag` → `white_check_mark,mag`, `catalogText` 에서 🫡 제외, 사고 문장 `"Understood… I'll proceed…"` 의 착지 🫡 → ✅(이 회귀 시험이 지키는 것은 어느 이모지냐가 아니라 "답변 불가 3줄이 안 나간다" 이고 그것은 그대로다), `'진행하겠습니다.'`·`'Will do.'` → null, `"Thanks! I'll handle it."` → ✅, `parsePick(':saluting_face:')` → null. 그리고 🫡 가 `autoEmojis()` 에 없다는 것과 `match` 를 갖지 않는다는 것을 단언 둘로 새로 고정했다. `.e2e` 의 `slackdefects`·`slackdegrade`·`slackpipe` 셋은 여전히 exit 1 이지만 원인이 이 변경과 무관하다(SLKST-7 Verify 에 기록된 모듈 로드 실패 그대로). 빌드·설치·재시작하지 않았고 커밋하지 않았다 — 앱 번들은 아직 옛 어휘집으로 돈다.
+
+### Intent audit — P9
+EN: New page registration, so there is no prior spec intent to compare against. One stated expectation was found FALSE against the corpus and is recorded here so it is not re-asserted: the three-state split (`AI 처리` / `결정 대기` / `전체`) was expected to cut the queue by 60%+; measured, it cuts it by **10.6%** (227 → 203), because classification only relocates work that was already done and only 24 of the 227 had been touched by the AI. The 60% target is reachable only by also closing the 193-item pre-pipeline backlog (227 → 10, 95.6%). The lever was the backlog, not the classification.
+KO: 신규 등재라 비교할 이전 SPEC 의도가 없다. 다만 코퍼스와 대조해 **거짓**으로 확인된 기대치 하나를 여기 남겨 다시 주장되지 않게 한다. 3상태 분할(`AI 처리` / `결정 대기` / `전체`)이 대기열을 60% 이상 줄일 것으로 기대됐으나, 실측하면 **10.6%** 만 줄인다(227 → 203). 분류는 이미 처리된 것을 옮길 뿐이고 227건 중 AI 손을 탄 것은 24건뿐이기 때문이다. 60%는 파이프라인 도입 전 백로그 193건을 함께 마감해야 도달한다(227 → 10, 95.6%). 지렛대는 분류가 아니라 백로그였다.
+
+---
+
+### Notion Keychain registration
+
+- **INTG-13 — Notion secrets never enter the dashboard.**
+  EN: The Notion token flow has no password input. The dashboard requests metadata-only Keychain candidates whose service or account contains `notion` case-insensitively, displays only service/account, and stores only that reference. Selecting a candidate reads the exact service+account locally and immediately verifies it against Notion. The token must never enter DOM, HTTP, logs, argv, environment, `integrations.json`, or registration result files.
+  KO: Notion 토큰 흐름에는 password input이 없다. 대시보드는 service 또는 account에 `notion`이 대소문자 무시로 들어간 Keychain 메타데이터 후보만 요청하고 service/account만 표시하며, 선택한 참조만 저장한다. 후보 선택 시 로컬에서 정확한 service+account 항목을 읽어 Notion에 즉시 실제 검증한다. 토큰은 DOM·HTTP·로그·argv·환경변수·`integrations.json`·등록 결과 파일에 들어가면 안 된다.
+
+- **INTG-14 — Terminal registration is the no-candidate fallback.**
+  EN: Only when metadata discovery returns no candidates (or cannot enumerate them), the UI offers Terminal registration. The helper requires a TTY, disables echo with guaranteed restoration, accepts the token only from stdin, rejects command-parser characters, writes to Keychain through `security -i`, and emits a secret-free result. Cancellation, access denial, invalid token, network failure, and authentication failure remain distinguishable without exposing Notion response secrets.
+  KO: 메타데이터 탐색에 후보가 없거나 열거할 수 없을 때만 UI가 Terminal 등록을 제공한다. helper는 TTY를 요구하고 echo를 반드시 복원하며, 토큰은 stdin으로만 받고 명령 파서 문자를 거부한 뒤 `security -i`로 Keychain에 저장하며 비밀 없는 결과만 남긴다. 취소·접근 거절·잘못된 토큰·네트워크 실패·인증 실패는 Notion 응답의 비밀을 노출하지 않은 채 구분한다.
+
+- **INTG-15 — external references are exact and backward-compatible.**
+  EN: A Notion instance may carry `keychainService` and `keychainAccount`; API checks, MCP launch, and the Slack daemon must all use that exact pair. Rows without those fields keep the derived `cm-notion-token-<key>` behavior, and the legacy `cm-notion-token` item is surfaced as a non-destructive reference. Disconnecting an external reference removes only the reference, never the original Keychain item. A failed validation remains visible as validation failure; it must not be shown as connected.
+  KO: Notion 인스턴스는 `keychainService`와 `keychainAccount`를 가질 수 있고 API 검사·MCP 실행·Slack 데몬이 모두 그 정확한 쌍을 사용해야 한다. 필드가 없는 기존 행은 `cm-notion-token-<key>` 파생 규칙을 유지하고 legacy `cm-notion-token` 항목은 파괴 없이 참조로 표시한다. 외부 참조 연결 해제는 참조만 없애며 원본 Keychain 항목을 삭제하지 않는다. 검증 실패는 검증 실패로 남고 연결됨으로 표시하면 안 된다.
 
 ---
 
@@ -1537,3 +2012,269 @@ KO: 이번 회차에서 테스트 가능한 행동 관점에서 모호한 새 �
   동작 — 한 번에 하나의 뷰만 채워짐 — 은 이번에 DOM을 직접 검사해 확인했고 PASS함); 향후 스펙
   패스가 `runQaAudit` 출력을 id-충돌-없음의 근거로 삼지 않도록 표시해 둔다(그 종류의 버그는 애초에
   감지할 수 없는 함수이므로). 사용자에게 판단을 요청하는 것이 아니라 사실 정정이다.
+
+- **DASH-11 — 이슈 검색은 시각 조건을 직접 재고, 카드가 던져진 뒤의 발화까지 읽는다.**
+  KO: 이슈 대시보드(`/issues`)의 검색은 두 가지를 보장한다.
+  (a) **시각 조건은 모델에게 맡기지 않는다.** 질의에 `N시간 전`·`N분 전`·`N일 전`·`어제`·`오늘`·
+  `아까` 같은 표현이 있으면 앱이 직접 창을 계산해 그 창에 드는 카드를 결과 **앞으로** 올린다.
+  창 안 순서는 최신순이 아니라 (질의 낱말 겹침, 창 중심과의 거리) 순이고, 이미 결과에 있던
+  카드도 앞으로 올린다. 이 보장은 **AI 가 죽어 있을 때도** 성립한다 — 글자 맞추기 갈래에도
+  같은 창이 씌워진다. 모델에게는 카드의 시각을 `YYYY-MM-DD HH:MM` 으로 주고 프롬프트에
+  `지금 시각` 을 같이 싣는다.
+  (b) **카드가 던져진 뒤 목적지 창에서 라이언이 더 말한 것이 검색 코퍼스에 들어간다.**
+  트랙 카드는 최상위 창의 첫 발화 한 번의 스냅샷이라 그 뒤에 자란 요구가 카드 파일에 없다.
+  앱은 카드의 `target` 으로 그 세션 트랜스크립트를 찾아(첫 사람 턴에 카드 `id` 가 있는 파일)
+  이후의 사람 턴만 읽어 발췌에 잇는다. 카드 본문과 **따로** 줄인다 — 이어 붙인 뒤 한 번 줄이면
+  본문이 긴 카드에서 나중 발화가 통째로 잘려 나간다. 큐 폴더에는 한 바이트도 쓰지 않는다.
+  EN: `/issues` search resolves relative-time expressions itself instead of delegating them to the
+  model. Cards falling inside the computed window are promoted to the FRONT of the result list —
+  ranked by query-token overlap then by distance from the window centre, not by recency — and
+  already-present hits are promoted rather than skipped. The same window is applied on the
+  literal-match fallback, so the guarantee survives an AI outage. The prompt now carries the current
+  time and per-card timestamps at minute resolution. Separately, the corpus includes what Ryan said
+  in the DESTINATION window AFTER the card was thrown: the app locates that session transcript via
+  the card's `target` (the file whose first human turn contains the card `id`) and appends the later
+  human turns to the excerpt, truncated on its OWN budget so a long card body cannot crowd it out.
+  The queue folder is never written to.
+  Mechanism: `Core/IssueSearch.swift` (`timeWindow`, `withTimeWindow`, `readableStamp`,
+  `thinOriginLimit`, `laterLimit`) and `Core/CardLaterRequests.swift` (transcript lookup + cache).
+  Why: 2026-09-06. 라이언이 `링크드인 컨텐츠를 4시간 전에 작성한 게 있거든 찾아줄래요?` 로 찾았는데
+  9 건 중에 그 카드가 없었다. 원인은 둘이었다 — 모델에게 간 날짜가 `20260905` 라 시:분이 없었고
+  프롬프트에 `지금` 이 없어 `4시간 전` 이 원리적으로 계산 불가였다. 그리고 그가 "내가 원했던 내용과
+  다르다" 고 한 것은 구술이 잘려서가 아니라, 그 상세 요구를 카드가 만들어진 2 시간 34 분 뒤에
+  목적지 창에서 말했고 그것이 카드로 돌아오는 경로가 없었기 때문이다.
+  Verified: 격리 인스턴스에서 두 갈래 다 확인 — 시각 창은 `local`·`ai` 양쪽에서 대상 카드를 1 위로
+  올렸고, 나중 발화는 카드 파일에 없는 낱말(`시트`·`600`·`200`)로 `2026-09-06-0006-blockchain-team-
+  cost-final-report` 를 잡아 냈다(그 카드 파일에 그 낱말은 0 회).
+
+- **DASH-12 — 카드에 안 적혀도 그 일을 한 세션에서 지시서와 결과물을 끌어와 보인다.**
+  KO: 이슈 상세(`/issues` 우측 패널)의 `작업지시서` 칸과 `결과물` 칸은, 카드에 `issue:` 나
+  산출물 키가 없더라도 그 카드를 받은 세션에서 나온 것을 그 자리에 세운다. 세우는 것은 넷이다 —
+  (1) 그 세션의 **첫 지시문 전문**(최초 원문·문제 정의·어떻게 일할 건지가 그 안에 있다),
+  (2) 그 세션이 `issue/` 아래에 쓴 파일, (3) 그 세션이 쓴 나머지 파일 전부(디스크 존재 확인),
+  (4) 그 세션의 **마지막 보고**. 세션에서 온 것은 왼쪽 파란 줄(`.ses`)로 카드에 적힌 것과 눈에서
+  갈리고, 헤더에 `세션에서 옴` 배지가 선다. 못 찾으면 빈칸이 아니라 **왜 못 찾았는지**를 쓴다.
+  단계 배지(`요청만`/`작업지시서까지`/`결과물까지`)는 **카드 기준 그대로 두고 올리지 않는다** —
+  목록 109 장을 그 값으로 세므로 카드마다 트랜스크립트를 훑을 수 없다. 배지가 `요청만` 인데 아래에
+  지시서가 서 있는 상태는 화면의 버그가 아니라 진짜 상태이고, 그것을 카드에 적는 것은 큐 PM 의 일이다.
+  **카드 파일과 큐 폴더에는 한 바이트도 쓰지 않는다.** 내용을 담을 별도 파일도 만들지 않는다.
+  EN: The `작업지시서` and `결과물` panes of the issue detail fall back to the session that actually
+  did the work when the card records no pointer: its first launch prompt, the files it wrote under
+  `issue/`, every other file it wrote (existence-checked), and its last report. Session-derived rows
+  are visually separated and the header carries a `세션에서 옴` badge. A miss states its reason
+  instead of rendering blank. The stage badge stays card-derived. The queue folder stays read-only.
+  Mechanism: `Core/WorkQueueSessionStore.swift` (세션 판정 · 지시문 색인 · 캐시 · reveal 허용 목록),
+  `Core/WorkQueueStore.swift` (`detailJSON` 의 `session` 블록, `knownRevealPaths` 합집합,
+  `json()` 의 색인 예열), `Dashboard/IssuesContent.swift` (`sesHead` · `longBox` · 4·5 번 절).
+  세션 줄에서 기록·폴더로 가는 길은 DASH-13 이다.
+  세션 판정 규칙은 DASH-11 의 `Core/CardLaterRequests.swift` 와 같다 — **첫 사람 턴에 카드 id 가
+  들어 있는 트랜스크립트**. 두 파일이 같은 규칙을 따로 들고 있으므로 한쪽을 고치면 다른 쪽도 본다.
+  Why: 2026-09-06. 라이언이 카드 `2026-09-05-2024-linkedin-version-scope` 상세를 보고
+  "따로 파일을 만들 필요는 없고 그걸 갖고 와서 여기에 보여주는 걸로 하자" 고 했다. 그 카드는
+  `issue:` 도 산출물 키도 비어 화면이 `작업지시서 없음` / `결과물 없음` 이라고 쓰고 있었는데,
+  그 카드를 받은 세션(`7b59cb18-…`)이 `issue/2026-09-05-linkedin-version-scope-directive.md` 와
+  `channels/linkedin/20260905-directive-is-deliverable.md` 를 실제로 썼고 둘 다 디스크에 있었다.
+  화면이 거짓말을 한 것이 아니라 카드와 세션 사이에 끈이 없었다.
+  Verified: 격리 인스턴스(`CM_DATA_DIR`)에서 카드 106 장을 전수로 열어 확인 — 세션이 붙은 것 59 장
+  (그전 19 장), 그중 파일까지 붙은 것 28 장, 실패 0. 그 카드의 두 칸이 `없음` 대신 지시서 1 개와
+  산출물 1 개와 지시문 전문과 마지막 보고를 보였다. `.e2e/issues.test.js` 131 PASS 0 FAIL.
+  `/api/issues/reveal` 은 세션에서 파낸 경로만 열고 `/etc/hosts` 는 `unknown-path` 로 거절했다.
+  성능: 지시문 색인 최초 1 회 10 초(목록이 뜰 때 뒤에서 미리 만든다) · 그 뒤 카드당 0.35 초 ·
+  두 번째부터 0.03 초. 앞선 판은 카드마다 `grep -rl` 로 2.0GB 를 훑어 카드당 16 초였다.
+
+- **DASH-13 — 세션 줄에서 그 세션의 기록과 작업 폴더로 한 번에 간다.**
+  KO: 이슈 상세의 세션 줄(`sesHead`)에서 세션 ID 를 누르면 그 세션의 기록
+  (`~/.claude/projects/<폴더>/<sessionId>.jsonl`)을 **읽기 전용 팝업**으로 열어 사람 말과 모델
+  답을 시간 순으로 보인다. 같은 줄 오른쪽에 `[파일 열기]`(그 기록 파일을 Finder 에서 선택)와
+  `[폴더 열기]`(그 세션이 **일한 작업 폴더**를 Finder 에서 연다)가 선다. 작업 폴더는 기록
+  폴더 이름에서 되돌리지 않고 **기록 안의 `cwd` 필드를 읽는다** — `projectDirName` 이 `/`·`_`·`.`
+  을 전부 `-` 로 바꾸므로 역변환이 한 값으로 안 정해진다. 팝업은 고칠 수 없다. 기록은 하네스가
+  쓰는 append-only 파일이라 저장 경로를 애초에 두지 않는다(md 팝업과 갈라 둔 이유가 이것이다).
+  턴은 뒤에서부터 400 개·턴당 4,000 자·전체 2MB 로 자르고, 자른 것이 있으면 화면이 그렇게 말한다.
+  `GET /api/issues/transcript` 는 절대경로 · `..` 없음 · `.jsonl` · `~/.claude/projects/` 아래 ·
+  **`WorkQueueSessionStore.revealAllowlist()` 안** 다섯을 다 통과할 때만 연다. 상세를 연 카드의
+  세션만 목록에 들어가므로, 상세를 열기 전에는 아무것도 못 연다.
+  `revealWorkQueuePath` 는 대상이 폴더면 `NSWorkspace.open`(안이 보인다), 파일이면
+  `activateFileViewerSelecting`(부모에서 선택)으로 갈린다 — 앞선 판은 폴더에도 후자를 불러
+  `폴더 열기` 가 폴더를 열지 않았다.
+  EN: The session line in the issue detail becomes actionable: the id opens a read-only
+  transcript popup, and two buttons reveal the transcript file and open the session's working
+  directory. The working directory is read from the transcript's `cwd` field, never decoded from
+  the project-dir name. Transcript reads require the path to be in the reveal allowlist.
+  Mechanism: `Core/WorkQueueSessionStore.swift` (`cwd` 수집 · `pathsIn` 에 `file`/`cwd` 추가),
+  `AppDelegate.swift` (`workQueueTranscriptPath` · `GET /api/issues/transcript` ·
+  `revealWorkQueuePath` 의 폴더 갈래), `Dashboard/IssuesContent.swift`
+  (`sesHead` 의 링크·버튼 · `isTr*` 팝업).
+  Why: 2026-09-06. 라이언이 상세 스크린샷의 `세션 97cc3cc2` 에 동그라미를 치고 그 줄 오른쪽에
+  네모를 그렸다 — "누르면은 그 파일이 열리게끔 그래서 내용을 볼 수 있게끔 … 파일 열기 폴더 열기".
+  DASH-12 가 세션에서 지시서와 결과물을 끌어왔지만, 그 **세션 자체**로 가는 길은 없어서 라이언이
+  기록을 보려면 창을 따로 열어야 했다. 그 창을 없애는 것이 이 화면의 유일한 목적이다.
+  ASSUMPTION (L1): 원문 마지막 문장이 "그 해당 세션이 곧 폴터를 열어서" 에서 끊겼다. `폴더 열기`
+  를 **작업 폴더**로 정했다 — 기록 파일을 reveal 하면 기록 폴더는 이미 열리므로, 기록 폴더로
+  잡으면 버튼 둘이 같은 일을 한다. 라이언에게 되묻지 않고 이렇게 정했다.
+  Verified: 격리 인스턴스(`CM_DATA_DIR=/tmp/cm-dash13`, 포트 50982)에서 실측.
+  카드 `inbox/2026-09-06-1255-panama-ceo-nda-m-mata` 상세가 `session.file`
+  (`…/-Users-…-globalmpc-legal/97cc3cc2-…jsonl`)과 `session.cwd`
+  (`/Users/lioncho/Work/lion_work/organization/globalmpc/workspace/globalmpc-legal`)를 같이 실어 왔다.
+  `GET /api/issues/transcript` 로 그 기록(796KB · 124 줄)에서 턴 3 개(사람 1 · 모델 2)가
+  10,733 바이트로 왔다 — 원본의 1.3% 다. 카드 60 장을 훑어 세션이 붙은 것 전부에 같은 호출을
+  돌렸고, 가장 큰 기록(1.1MB · 380 줄)이 턴 14 개(사람 3 · 모델 11)로 왔으며 턴 하나의 최대
+  길이는 3,289 자였다. `inbox/2026-09-05-2201-blockchain-talent-csv-html` 의 턴 두 개가
+  `Write` 로 쓴 파일 경로를 실어 왔다(`blockchain-cost.html`, `open-report.sh`).
+  **실측 범위에서 400 턴·4,000 자·2MB 상한에 걸린 세션은 없었다** — `truncated` 는 전부 `false`
+  였고, 상한이 실제로 자르는 것은 아직 못 봤다. 거절 실측 — `/etc/hosts` ·
+  `~/.ssh/id_rsa` · `/Users/lioncho/.claude/projects/../../.zsh_history` 셋 다
+  `{"ok":false,"error":"unknown-path"}` 이고, `/api/issues/reveal` 도 셋 다 같은 값으로 거절했다.
+  경계가 허용 목록까지라는 것도 실측했다 — 같은 기록 폴더 안에 실재하는 다른 세션
+  (`79aef52a-…jsonl`, 상세를 연 적 없는 카드의 것)이 `unknown-path` 로 거절됐다. `~/.claude/projects/`
+  아래로만 자르면 그것이 열렸을 것이다. 허용된 둘(`97cc3cc2-…jsonl` 파일과 `globalmpc-legal` 폴더)은
+  `{"ok":true}` 였다. `swift build` 통과, `.e2e/issues.test.js` 197 PASS 0 FAIL.
+  그 파일의 닫힌 POST 목록에 `mdsave` 가 빠져 있어 이번에 같이 채웠다 — DASH-12 때 더해진
+  엔드포인트인데 목록이 안 따라가서 이 항목과 무관하게 1 FAIL 이 서 있었다.
+
+- **DASH-14 — 수정된 최초의 리퀘스트는 기본 접힘이고, 그것을 만든 실행 정보를 같이 보인다.**
+  KO: 이슈 상세의 `수정된 최초의 리퀘스트` 절은 섹션 1 과 같은 3 단이다 — 0 단(접힘, `펼치기
+  (요구 N자)`) · 1 단(5 줄) · 2 단(전문). 0 단의 `펼치기` 는 길이와 무관하게 언제나 그리고,
+  2 단의 `전문 보기` 는 그린 뒤에 재서 실제로 5 줄을 넘칠 때만 그린다(죽은 손잡이 금지).
+  절 제목 밑에는 **접힌 상태에서도 보이는** 실행 정보 한 줄이 선다 — 그 `요구` 줄을 만든
+  실행의 모델 · effort · 토큰 · 걸린 초. 값의 출처는 **이미 있는 세션 기록**이고 새 로그
+  파일을 만들지 않는다. codex 실행은 tool_result 안의 Codex 배너(`model:` ·
+  `reasoning effort:` · `tokens used`)에서, Claude 실행은 `message.model` 과 `message.usage`
+  에서 읽는다. 찾는 대상은 **카드를 쓴 실행**이지 카드를 받은 세션(DASH-12)이 아니다 —
+  둘은 다른 기록이다. 후보는 카드 `captured`(로컬 시각) 이후에 수정된 기록으로 좁히고
+  하위 대화(`subagents/*.jsonl`)를 포함한다. 못 찾으면 빈칸이 아니라 왜 못 찾았는지를 쓴다.
+  카드 파일과 큐 폴더에는 한 바이트도 쓰지 않는다.
+  EN: The `수정된 최초의 리퀘스트` pane collapses by default with the same three-stage control as
+  the origin pane, and carries a one-line run-provenance row that stays visible while collapsed:
+  the model, reasoning effort, token count and elapsed seconds of the run that produced that line.
+  All four are read from existing transcripts — no new log file. Codex runs are read from the
+  banner inside the Bash tool_result; Claude runs from `message.model` / `message.usage`. The
+  target is the run that WROTE the card, not the session that RECEIVED it (DASH-12) — different
+  records. A miss states its reason.
+  Mechanism: `Core/WorkQueueSessionStore.swift` (`revision(cardID:cardPath:captured:)`),
+  `Core/WorkQueueStore.swift` (`detailJSON` 의 `revision` 블록),
+  `Dashboard/IssuesContent.swift` (섹션 2 의 3 단 · 실행 정보 줄).
+  Why: 2026-09-06. 라이언 — "그 수정한 내용이 기본적으로 접혀있고 그걸 전문으로 볼 수 있게
+  해줘요 그리고 그거를 어떤 AI 모델이 그리고 얼마나 앱폭트를 써서 몇 초 걸려서 했는지도
+  알려줘요 / 그게 세션에 이게 나와 있지 않나 따로 파일을 만들 필요 없을 것 같은데."
+  `앱폭트` 는 `effort` 로 확정했다 — 기록에 `reasoning effort:` 필드가 그 이름 그대로 있고,
+  이 카드를 쓴 Codex 실행 자신이 그 낱말을 `에포트` 로 옮겨 적었다.
+  ASSUMPTION (L1, 백엔드가 갈래를 스스로 골랐다): 라이언의 문장이 "얼마나 … **써서**" 로 쓴
+  **양**을 묻는데 `reasoning effort` 는 양이 아니라 설정값이라, 양에 해당하는 `tokens` 를 같이
+  돌려주고 어느 필드에서 왔는지를 `tokensFrom` 에 적는다. **모르는 값은 0 이 아니라 키를 뺀다** —
+  codex 실행에 `tokens used` 줄이 없으면 `tokens` 키 자체가 안 실리고, 화면이
+  `typeof rv.tokens === 'number'` 로 그 조각을 켜므로 조각이 통째로 빠진다. 0 을 실으면 화면이
+  `0 토큰` 이라고 그리는데 그것은 "안 썼다" 는 뜻이 되어 거짓말이다. `seconds` 도 같다. Claude 갈래의 시작 시각은 **바로 앞 사람 턴**이므로, 하위
+  대화에서는 그 워커가 뜬 순간부터 카드를 쓴 순간까지가 된다(실측 700.9 초 · 2,776.9 초).
+  Bash heredoc 이나 `mv` 로 만든 카드는 못 잡는다 — Write/Edit 툴 호출도 Codex 배너도 안
+  남기기 때문이고, 셸 문자열을 파싱해 추측하는 것보다 못 잡은 것을 못 잡았다고 두는 쪽이
+  이 화면의 규칙("없으면 왜 없는지를 쓴다")에 맞는다.
+  Verified: 2026-09-06 백엔드 실측. `Core/WorkQueueSessionStore.swift` 를 그대로 컴파일해
+  (`swiftc -O`) 카드 `d7a0211b-3ee8-4a5e-a172-400cb674b595`
+  (`inbox/2026-09-06-0445-condition-mate-revision-details.md`, `captured: 2026-09-06-0445`)로
+  호출한 결과가 —
+  `runner: "codex"` · `model: "gpt-6-astra"` · `effort: "none"` · `tokens: 31521` ·
+  `tokensFrom: "codex \`tokens used\`"` · `seconds: 58.9` ·
+  `startedAt: "2026-09-05T23:14:54.708Z"` · `endedAt: "2026-09-05T23:15:53.646Z"` ·
+  `sessionId: "01a073da-80fa-7ab2-b8d8-5e5529240495"` ·
+  `file: "/Users/lioncho/.claude/projects/-Users-lioncho-Work-lion-work/11b66f83-03c0-4542-ac34-140b9f3cd2e4/subagents/agent-a76a3488df2463e20.jsonl"`.
+  후보 좁히기 실측 — 기록 전체 3,301 개 중 `captured - 120초` 이후에 수정된 것이 147 개
+  (153.9MB)이고 그중 카드 이름을 담은 것이 27 개였다. **첫 호출 0.68 초**(같은 프로세스
+  재호출 0.000 초 · 페이지 캐시가 더워진 뒤 0.13 초). 앞선 판은 줄을 String 으로 쪼개고
+  줄마다 `String.contains` 를 물어 2.66~4.36 초였다 — 지금은 줄 경계를 바이트로 뜨고 카드
+  이름이 실제로 나온 줄만 JSON 으로 판다. codex 후보가 5 개 걸렸고 **가장 이른 것**을 골라
+  카드를 처음 만든 실행이 잡혔다(나머지 넷은 그 카드를 나중에 읽은 실행이다). claude 후보
+  3 개는 전부 `status`·`target_handle` 을 적은 나중 Edit 이라 codex 가 이겼다.
+  다른 카드 8 장으로도 돌렸다 — claude 갈래 3 건이
+  `claude-haiku-4-5-20251001` · `message.usage` 합계 118,716 / 148,108 토큰으로 잡혔고,
+  codex 갈래 1 건(`inbox/2026-09-06-1255-panama-ceo-nda-m-mata`)은 `tokens used` 줄이 없어
+  `tokens: 0` · `tokensFrom: ""` 로 나왔다. 못 찾는 카드 3 장은 `found:false` 와
+  "기록 N 개(전체 3,301 개 중 …)를 봤는데 이 카드 파일을 만든 실행이 없다 … 카드 이름을 담은
+  기록은 M 개였다" 라는 문장이 왔고, 그중
+  `inbox/2026-09-06-0455-condition-mate-orca-launch-confirm-undo` 는 실제로 Bash `mv` 로
+  옮겨진 카드여서 못 잡는 것이 맞다고 기록으로 확인했다.
+  `swift build -c release` 통과, `.e2e/issues.test.js` **203 PASS 0 FAIL**.
+  그 하네스가 이 파일을 `static func transcriptJSON(` 부터 **파일 끝까지** 잘라서 그 조각에
+  `jsonl` 이라는 낱말이 없는지를 보므로(DASH-13 이 원본 JSONL 을 그대로 붓지 않는다는 판정),
+  이 절은 `transcriptJSON` **앞**에 둔다. 처음에 뒤에 뒀더니 이 절의 `subagents/*.jsonl` 이
+  그 조각에 들어가 그 판정이 1 FAIL 로 거짓이 됐다 — 하네스를 고치지 않고 자리를 옮겨서 풀었다.
+  카드 파일과 `lion-work-queue/` 아래에는 한 바이트도 안 썼다.
+
+- **DASH-15 — 워크스페이스 루트는 큐 폴더를 따라가지 않는다.**
+  EN: The workspace root that `organization/...` artifact values and the Orca launcher resolve
+  against is found by walking UP from the queue folder to the first ancestor that actually has an
+  `organization/` directory on disk, and when no such ancestor exists it falls back to its OWN
+  constant — never to the queue folder itself. `CM_LION_WORK_DIR` still beats everything. The
+  queue path is a HINT for finding the root, not the root's source: picking an arbitrary folder in
+  큐 폴더 변경 changes where cards are read from and nothing else.
+  KO: 산출물 `organization/...` 값과 Orca 작업 폴더가 기준으로 삼는 워크스페이스 루트는, 큐
+  폴더에서 **위로 올라가며** `organization/` 하위 디렉터리를 디스크에 실제로 가진 첫 조상이다.
+  그런 조상이 없으면 **자기 상수**로 떨어지고 큐 폴더 자신이 되지 않는다. `CM_LION_WORK_DIR` 는
+  여전히 전부를 이긴다. 큐 경로는 루트를 **찾는 힌트**이지 루트의 출처가 아니다 — 큐 폴더
+  변경으로 아무 폴더나 골라도 바뀌는 것은 카드를 어디서 읽는가뿐이다.
+  이 항목이 보장하는 넷과 각각의 `Verify:` —
+  1. 큐 폴더가 어디든 루트는 `organization/` 트리를 가진 자리를 가리킨다.
+     Verify: `Core/WorkQueueStore.swift:131-148` (`resolveLionWorkRootPath(forQueuePath:)` 의
+     위로-걷기 · `:138` 의 `appendingPathComponent("organization")` + `fileExists(isDirectory:)`).
+     실행 근거는 `tests/RelatedGoalSearchTests/LionWorkRootTests.swift:51`
+     (`<root>/queue`) 과 `:61` (옛 `<root>/organization/lion/lion-work-queue`) 둘 다
+     `/Users/lioncho/Work/lion_work` 를 돌려주는 것.
+  2. 큐 폴더로 임의의 폴더를 골라도 워크스페이스 루트는 따라가지 않는다.
+     Verify: `Core/WorkQueueStore.swift:56-57` (`defaultLionWorkRootPath` 상수) 와 `:147`
+     (걸음이 끝나면 그 상수로 떨어지는 3 단계). 실행 근거는
+     `tests/RelatedGoalSearchTests/LionWorkRootTests.swift:74` — `/tmp/<uuid>` 를 큐로 골라도
+     루트가 `/Users/lioncho/Work/lion_work` 이고 큐 폴더 자신이 아니다.
+  3. `CM_LION_WORK_DIR` 가 전부를 이긴다.
+     Verify: `Core/WorkQueueStore.swift:99-104` (getter 의 **첫** 갈래). 실행 근거는
+     `tests/RelatedGoalSearchTests/LionWorkRootTests.swift:89` — 임의 큐 폴더일 때도, 오늘의
+     `<root>/queue` 일 때도 환경변수 값이 이긴다.
+  4. 라이브 큐 e2e 블록이 **실제로 도는** 경로를 본다.
+     Verify: `.e2e/issues.test.js:646-651` (`QDIR` 이 소스의 `defaultRootPath` 를 그대로 읽고,
+     둘이 다르면 실패한다) 와 `:862` (블록이 건너뛰어지면 그 자체를 실패로 세운다).
+  Mechanism: `Core/WorkQueueStore.swift` (`defaultLionWorkRootPath` · `lionWorkRoot` ·
+  `memoizedLionWorkRootPath(forQueuePath:)` · `resolveLionWorkRootPath(forQueuePath:)`),
+  `.e2e/issues.test.js` (`LWR` 블록의 DASH-15 단언 11 개 + 라이브 큐 블록),
+  `tests/RelatedGoalSearchTests/LionWorkRootTests.swift` (8 개).
+  성능: 2 단계가 파일시스템을 만지므로 **큐 경로를 키로 메모**한다(`:116-127`). `resolve()` 는
+  카드마다 포인터마다 불린다(2026-09-07 실측 167 장). `static let` 한 번 계산은 안 된다 —
+  사용자가 도는 중에 선택기로 큐 폴더를 바꾸면 굳은 값이 남은 세션 내내 틀린 채로 산다.
+  Why: 2026-09-07. 큐가 `<lion_work>/organization/lion/lion-work-queue` 에서 `<lion_work>/queue`
+  로 옮겨졌고 옛 경로는 디스크에 없다. 그런데 앞선 판은 루트를 큐 **경로 문자열**에서 되짚어
+  만들었다 — `/organization/` 앞을 자르고, 그 조각이 없으면 큐 폴더 자신을 루트로 봤다. 새
+  경로에는 그 조각이 없으므로 되짚기가 실패해 루트가 큐 폴더가 됐고, `organization/...` 상대
+  산출물 값이 `.../lion_work/queue/organization/...` — 없는 경로 — 로 풀렸다. PO 실측(지시서)은
+  카드 **166 장 중 67 장(40%)** 이 그런 상대값을 들고 있다고 셌고, 2026-09-07 e2e 실측은 카드
+  167 장 중 **47 장**이 산출물 포인터를 여섯 키 중 하나로 들고 있다고 센다 — 두 숫자는 다른
+  것을 센 것이고, 여기서 중요한 것은 그 링크들이 전부 죽어 있었다는 사실이다. 같은 날 실린 큐 폴더 선택기가 `Settings.shared.queueFolder` 를
+  `root` 의 최우선 출처로 만들어서, 사용자가 아무 폴더나 고르면 Orca 세션 작업 폴더까지 그
+  폴더를 따라가는 상태였다. 안 터진 것이 아니라 클릭 한 번 거리였다.
+  ASSUMPTION (L1, 갈래를 스스로 골랐다 · **미검증 전제**): "`organization/` 하위 디렉터리가
+  워크스페이스 루트의 표식이다" 는 **이 맥의 배치 규약에서 온 설계 가설이지 영구 사실이 아니다.**
+  규약이 바뀌면 표식도 바뀐다. 오늘 그 규약은 `lion_work/organization/<조직>/...` 이고 표식이
+  루트 바로 밑에 있다. 규약이 바뀌면 고칠 자리는 `resolveLionWorkRootPath` 의 걷기 한 곳이다.
+  되돌린 가정: 앞선 판의 `ASSUMPTION` 은 "상수로 못박지 않고 큐 경로에서 되짚는다 …
+  `/organization/` 이 없으면 그 폴더 자신을 루트로 본다" 였다. 되돌리는 근거 둘 — (1)
+  `organization/` 을 가진 픽스처는 2 단계가 그대로 잡으므로 잃는 것은 `organization/` 이 **없는**
+  픽스처뿐이고 그것은 `CM_LION_WORK_DIR` 하나로 해결된다. (2) 실측 — `CM_WORK_QUEUE_DIR` 를
+  설정하는 **자동 러너가 하나도 없다**(`.e2e/package.json` 과 `scripts/` 전수 확인). 옛 폴백이
+  지키던 상황은 오늘 아무도 밟지 않는다.
+  Verified: 2026-09-07 실측. `swift build` 통과(0 error). 단위 시험
+  `scripts/run-unit-tests.sh` **39 tests in 5 suites passed** (LionWorkRootTests 8 개 포함).
+  `.e2e/issues.test.js` **219 PASS 0 FAIL** 이고 라이브 큐 블록이 **실제로 돌았다** —
+  `live: total=167` · `47 reading all six keys` 가 출력에 있다. 고치기 전에는 이 블록이
+  통째로 건너뛰어지고 있었다: `QDIR` 폴백이 죽은 경로
+  `/Users/lioncho/Work/lion_work/organization/lion/lion-work-queue` 였고 바로 아래
+  `fs.existsSync` 가 거짓이 되어, **이 결함을 잡았어야 할 게이트가 스스로 꺼져 있었다.**
+  게이트가 진짜로 도는지는 **일부러 깨뜨려서** 확인했다 — (a) `lionWorkRoot` 에 큐 폴더로
+  떨어지는 갈래를 도로 넣으니 1 FAIL, (b) `defaultRootPath` 를 옛 경로로 되돌리니 3 FAIL 이고
+  그중 하나가 "라이브 블록이 안 돌았다" 자신이며, (c) 루트 상수를 큐 기본값에서 잘라 만드니
+  3 FAIL. (d) 단위 시험 쪽도 3 단계를 큐 폴더로 되돌려 5 issues 로 지는 것을 봤다. 넷 다
+  되돌린 뒤 다시 219 PASS 0 FAIL · 39 tests passed 다.
+  단위 시험은 `CM_DATA_DIR` 로 격리한 임시 store 에서만 돈다(`scripts/run-unit-tests.sh`).
+  `Settings` 는 UserDefaults 가 아니라 `<data>/settings.json` 에 진짜로 쓰므로, 도는 앱과 시험이
+  같은 파일에 붙으면 서로의 키를 덮어쓴다 — 이날 `cm.queueFolder` 가 한 번 그렇게 날아갔고
+  앱의 `/api/settings/queue-folder` 로 되돌려 놓았다. `.claude/settings.local.json` 이
+  `CM_DATA_DIR=~/.condition-mate` 를 넣어 두므로 "설정돼 있다" 가 곧 "격리돼 있다" 가 아니고,
+  러너가 `AppPaths.isCustom` 과 같은 규칙으로 경로를 비교해 판정한다.
+  앱을 다시 빌드해 `/Applications` 에 넣지 않았고, 커밋하지 않았고, `AppDelegate.swift` ·
+  `IssuesContent.swift` · `SessionRail.swift` 는 한 줄도 안 건드렸다 — 병렬 `FAST` 자식 소유다.

@@ -74,6 +74,13 @@ function bootGA() {
   global.fetch = url => { env.fetches.push(url);
     return Promise.resolve({ json: () => Promise.resolve(env.branchReply) }); };
   global._gaSessSeq = 0;  // 세션 뷰가 열린 목표 seq (0=세션 없음)
+  // 쿼리스트링 진입 변수(GoalAddContent.swift:564·567·571). gaStart/gaSlackCtxThenStart 가
+  // 직접 읽는데, 그 자리는 전부 .then() 안이라 빠지면 ReferenceError 를 뒤의 .catch() 가
+  // 삼킨다 — 스텁이 없으면 크래시가 아니라 "인라인 세션 뷰 진입 → got=undefined" 같은
+  // 엉뚱한 실패로 위장되어 제품 결함처럼 보인다. 기본값은 '평범한 진입'(쿼리 없음)이다.
+  global._gaTitle = '';       // ?gtitle= 로 넘어온 제목 프리필
+  global._gaSlackId = '';     // ?slackId= 로 넘어온 슬랙 메시지 id
+  global._gaSlackCtx = '';    // ?slackCtx=1 이면 스레드 맥락을 먼저 붙이고 시작
   for (const n of ['gaExec', 'gaPayload', 'gaStart',
                    'gaFolderBtnSync', 'gaFolderGo',
                    'gaFolderBrowse', 'gaFolderSet', 'gaFolderPersist', 'gaFolderCustom',

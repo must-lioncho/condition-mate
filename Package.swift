@@ -10,7 +10,8 @@ let package = Package(
     ],
     products: [
         // Exported so other packages/apps can depend on the GUI toolkit directly.
-        .library(name: "GUI", targets: ["GUI"])
+        .library(name: "GUI", targets: ["GUI"]),
+        .executable(name: "ConditionMate", targets: ["ConditionMate"])
     ],
     targets: [
         // The in-page web terminal stack (PTY engine + shared xterm.js client engine +
@@ -52,7 +53,7 @@ let package = Package(
             name: "Slack",
             dependencies: ["Integrations"],
             path: "Sources/Plugins/Slack",
-            exclude: ["Daemon"]
+            exclude: ["Daemon", "loops"]
         ),
         // 지라 번역 plugin (Sources/Plugins/Jira): 고정 포트 로컬 브리지 + Gemini 번역.
         // 짝이 되는 크롬 익스텐션은 Extension/ 에 있고 컴파일 대상이 아니다 —
@@ -67,7 +68,13 @@ let package = Package(
         .executableTarget(
             name: "ConditionMate",
             dependencies: ["WebCLI", "GUI", "Draw", "Slack", "Jira", "Integrations"],
-            path: "Sources/ConditionMate"
+            path: "Sources/ConditionMate",
+            // suno-mcp 는 Swift 가 한 줄도 없는 Node MCP 플러그인인데 node_modules 가
+            // 딸려 있어 파일이 3,700 개다. SwiftPM 은 타깃 폴더 밑을 전부 빌드 입력으로
+            // 훑어 build.db 에 적으므로, 이것이 들어가면 릴리즈 빌드가
+            // "accessing build database ...: disk I/O error" 로 죽고 바이너리가 안 나온다.
+            // Slack 타깃이 Daemon·loops 를 빼는 것과 같은 이유다.
+            exclude: ["Plugins/suno-mcp"]
         ),
         // Standalone web terminal: serves the in-app CLI 세션 view to a real browser,
         // reusing the WebCLI target (PtySession + CMWebCLI engine) verbatim. Run it
@@ -76,6 +83,10 @@ let package = Package(
             name: "WebCLIServer",
             dependencies: ["WebCLI"],
             path: "Sources/WebCLIServer"
+        ),
+        .executableTarget(
+            name: "NotionKeychainRegister",
+            path: "Sources/NotionKeychainRegister"
         ),
         // Deterministic unit tests for the AI 큐 연관성 검색 (DASH-9 content-substance cascade).
         // @testable imports the app target to reach RelatedGoalSearch's internal API. Never

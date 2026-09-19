@@ -1,7 +1,7 @@
 # 전략4 · 상태 인지형 BGM (Closed-Loop Observatory) — Spec
 
 Status: PROPOSED (Phase 1 ready to implement)
-Author: manager-pm
+Author: lion-condition-mate-pm
 Date: 2026-07-10 (KST)
 Supersedes-relationship: 전략3 · 플랜 맵 → 전략4 · 상태 인지형 (확장, 대체 아님 — 플랜 맵은 가설로 유지)
 
@@ -227,7 +227,7 @@ A2는 채택하지 않음(자동 mutation 위험), A3는 Phase 3로 미룸.
 ## 9. SPEC.md 반영 (구현과 함께 랜딩)
 
 구현 에이전트가 코드와 **함께** `docs/specs/SPEC.md`에 아래 항목을 추가한다(behavior가 코드와
-같이 이동해 manager-qa가 드리프트를 잡도록). manager-pm은 여기서 코드 미변경 원칙상 SPEC.md를
+같이 이동해 lion-condition-mate-worker-qa가 드리프트를 잡도록). lion-condition-mate-pm은 여기서 코드 미변경 원칙상 SPEC.md를
 직접 편집하지 않고 문구만 지정한다.
 
 신규 SPEC 항목 (BGM/전략 섹션):
@@ -275,7 +275,7 @@ A2는 채택하지 않음(자동 mutation 위험), A3는 Phase 3로 미룸.
 
 ```
 전략4 · 상태 인지형 BGM Phase 1(관측 전용)을 구현하라. 스펙:
-/Users/lioncho/Work/departtment_service/projects/condition-mate/docs/specs/strategy4-state-aware-bgm.md
+/Users/lioncho/Work/departtment_service/projects/org-lion/lion-condition-mate/docs/specs/strategy4-state-aware-bgm.md
 User: lioncho. 사용자 응답 한국어, 코드 주석·식별자 영어.
 
 범위(선곡 로직·오디오·플랜 파일은 절대 건드리지 말 것 — 순수 관측·표시 증분):
@@ -318,11 +318,11 @@ User: lioncho. 사용자 응답 한국어, 코드 주석·식별자 영어.
 
 빌드 통과(swift build) 후, GET /api/bgm/slot-scores가 골든 샘플을 hit으로 집계하는지 확인:
 '금 심야 · 애프터 라운지' 슬롯이 hits>=1, misses=0, score>=1로 나와야 한다(스펙 §2).
-완료 후 manager-qa 검증용으로 (a) 슬롯-성적표 응답 예시 JSON, (b) 전략 히스토리에 전략4 표시
+완료 후 lion-condition-mate-worker-qa 검증용으로 (a) 슬롯-성적표 응답 예시 JSON, (b) 전략 히스토리에 전략4 표시
 스크린샷/HTML 근거, (c) activeStrategy=4 확인을 보고하라.
 ```
 
-### 검증 게이트 → manager-qa
+### 검증 게이트 → lion-condition-mate-worker-qa
 
 ```
 전략4 Phase 1(관측 전용)을 SPEC §9 항목과 스펙

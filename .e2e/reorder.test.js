@@ -36,6 +36,10 @@ const helpers = `
   function ttimeHTML(g){return '';}
   function wbadgeHTML(g){return '';}
   function noteBtn(g,r){return '';}
+  // goalRow 가 부르는 부모 셀(DashboardContent.swift:4046). page.evaluate 안에서 터지므로
+  // 스텁이 없으면 render 전체가 죽고 드래그 단정이 하나도 안 돌아간다 — "정렬이 안 된다"
+  // 처럼 보이지만 실제로는 스텁 누락이다.
+  function parentCellHTML(g,board){return '';}
   function evCount(g){return 0;}
   function notePanel(g,r){return '';}
   function evidencePanel(g){return '';}

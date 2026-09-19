@@ -62,7 +62,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if path.hasPrefix("/goal") { return self?.goalPage(path) }
             if path.hasPrefix("/worker-log") { return self?.workerLogAllPage(path) }
             if path.hasPrefix("/worker") { return self?.workerLogPage(path) }
+            // NOTE: must precede "/cron" — it doesn't share the prefix today, but the
+            // device page is the more specific route and belongs above it either way.
+            if path.hasPrefix("/device-cron") { return self?.deviceCronPage(path) }
             if path.hasPrefix("/cron") { return self?.cronPage() }
+            if path.hasPrefix("/agents") { return AgentsContent.html() }
+            // 옛 이름(/orchestration)으로 들어온 북마크와 열어 둔 탭은 404 로 맞히지 않는다 —
+            // 사용자에게는 기능이 사라진 것으로 보이기 때문이다. 서버 헬퍼가 페이지를 200 고정으로
+            // 내보내므로(DashboardServer.swift) 302 대신 meta refresh 문서 한 장이 변경 폭이 가장 작다.
+            // 새 경로보다 위에 둔다 — hasPrefix 매칭이라 목록 순서가 곧 우선순위다.
+            // API 쪽(/api/orchestration)에는 이 이정표를 두지 않는다. 호출자가 저장소 안에 둘뿐이고
+            // 둘 다 같은 변경에서 고치므로, 별칭을 남기면 다음 사람이 어느 쪽이 진짜인지 모른다.
+            if path.hasPrefix("/orchestration") {
+                return "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\">"
+                     + "<meta http-equiv=\"refresh\" content=\"0;url=/loop-engineering\">"
+                     + "<title>루프 엔지니어링</title></head><body>"
+                     + "<p>이 페이지는 <a href=\"/loop-engineering\">/loop-engineering</a> 으로 옮겼습니다.</p>"
+                     + "</body></html>"
+            }
+            if path.hasPrefix("/loop-engineering") { return LoopEngineeringContent.html() }
+            // 위임 이슈 목록(/issues) — lion-work-queue 의 트랙 카드를 읽어 완료·미완료를 보인다.
+            if path.hasPrefix("/issues") { return IssuesContent.html() }
             if path.hasPrefix("/breakdown") { return self?.breakdownPage(path) }
             return self?.transcriptPage(path)
         },
@@ -122,12 +142,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let store = self?.pluginStore else { return "{\"plugins\":[]}" }
                 return "{\"plugins\":" + store.pluginsJSON() + "}"
             }
+            // 에이전트 페이지(/agents)의 인벤토리 — 전역 + 스킬 하네스 + 프로젝트별 정의를 한 번에.
+            // NOTE: must precede the generic "/api/agents" prefix below, which would swallow it.
+            if path.hasPrefix("/api/agents/inventory") {
+                return self?.agentInventoryJSON()
+            }
             if path.hasPrefix("/api/agents") {
                 return self?.agentsJSON()
             }
-            // 연동 레지스트리 — 플러그인 카드의 키 칸, LLM 연동 섹션, 슬랙 페이지가
+            // 루프 엔지니어링 페이지(/loop-engineering)의 단일 피드 — 병목 지수·열려 있는 대기·프로젝트별 라우트.
+            // 옛 경로 /api/orchestration 에는 별칭을 남기지 않는다 — 404 가 맞다. 자세한 이유는 위 페이지 라우트의 주석.
+            if path.hasPrefix("/api/loop-engineering") {
+                // 세션 원장 — 어떤 세션이 어느 루프를 돌리려고 열렸는지, 어디까지 분석했는지.
+                if path.hasPrefix("/api/loop-engineering/sessions") { return LoopSessionLedger.json(path) }
+                // 세션 한 개를 사람이 읽을 수 있게 줄인 것 (목록에서 한 회차를 눌렀을 때)
+                if path.hasPrefix("/api/loop-engineering/session") { return LoopSessionLedger.sessionJSON(path) }
+                if path.hasPrefix("/api/loop-engineering/v2") { return LoopDefinitionStore.json() }
+                return self?.loopEngineeringJSON()
+            }
+            // 이슈 페이지(/issues)의 단일 피드 — 위임 카드 전량 + 버킷별 카운트.
+            // 읽기 전용이다. 큐 폴더에는 한 바이트도 쓰지 않는다.
+            if path.hasPrefix("/api/issues") {
+                // AI 검색의 결과를 물어보는 자리. **아래 상세 갈래보다 먼저 서야 한다** —
+                // 아래는 `/api/issues/` 뒤의 것을 전부 카드 id 로 읽으므로, 여기서 안 가로채면
+                // `search` 라는 이름의 카드를 찾다가 unknown-card 를 돌려준다.
+                if path.hasPrefix("/api/issues/search") {
+                    let id = URLComponents(string: "http://x" + path)?.queryItems?
+                        .first(where: { $0.name == "id" })?.value ?? ""
+                    return IssueSearch.poll(id: id)
+                }
+                // md 팝업이 본문을 읽는 자리. `search` 와 같은 이유로 **아래 상세 갈래보다 먼저
+                // 서야 한다** — 안 그러면 `mdfile` 이라는 이름의 카드를 찾다가 unknown-card 가 온다.
+                if path.hasPrefix("/api/issues/mdfile") {
+                    let p = URLComponents(string: "http://x" + path)?.queryItems?
+                        .first(where: { $0.name == "path" })?.value ?? ""
+                    return self?.workQueueMarkdownRead(p)
+                }
+                // 세션 기록 팝업이 읽는 자리. `search`·`mdfile` 과 **같은 이유로 아래 상세
+                // 갈래보다 먼저 서야 한다** — 안 그러면 `transcript` 라는 이름의 카드를 찾다가
+                // unknown-card 가 온다.
+                if path.hasPrefix("/api/issues/transcript") {
+                    let p = URLComponents(string: "http://x" + path)?.queryItems?
+                        .first(where: { $0.name == "path" })?.value ?? ""
+                    return self?.workQueueTranscriptRead(p)
+                }
+                // `/api/issues/<id>` 는 상세, 그냥 `/api/issues` 는 목록. 상세를 갈라 둔 이유는
+                // 상세가 `## 원문` 전문을 싣기 때문이다 — 목록에 섞으면 85 개 분량의 원문이
+                // 새로고침마다 흐른다.
+                var rest = String(path.dropFirst("/api/issues".count))
+                if let q = rest.firstIndex(of: "?") { rest = String(rest[rest.startIndex..<q]) }
+                let id = rest.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                if !id.isEmpty {
+                    return WorkQueueStore.detailJSON(id: id.removingPercentEncoding ?? id)
+                }
+                // ?view=archive → 보관된 것만. 기본은 보관되지 않은 것만. 아카이브는 상태값이
+                // 아니라 별도의 축이라 버킷은 그대로 두고 목록에서만 가른다. 질의는 `rest` 가
+                // 아니라 `path` 에서 읽는다 — `rest` 는 위에서 `?` 를 이미 잘라 냈다.
+                return IssueArchiveStore.filter(
+                    listJSON: WorkQueueStore.json(),
+                    archivedOnly: URLComponents(string: "http://x" + path)?.queryItems?
+                        .first(where: { $0.name == "view" })?.value == "archive")
+            }
+            // 연동 레지스트리 — 플러그인 페이지의 연동 목록과 슬랙 페이지가
             // 모두 이 하나의 payload를 읽는다 (등록 여부 + 마지막 검사 결과 + 기능 게이팅).
             // 라이브 API 호출은 하지 않는다 — 그건 POST /api/integrations/check.
+            if path.hasPrefix("/api/integrations/notion/candidates") {
+                return IntegrationStore.notionCandidatesJSON()
+            }
+            if path.hasPrefix("/api/integrations/notion/register/status") {
+                let id = URLComponents(string: "http://localhost" + path)?.queryItems?
+                    .first(where: { $0.name == "id" })?.value ?? ""
+                guard CMKeychain.isSafeName(id) else { return "{\"ok\":false,\"error\":\"bad request\"}" }
+                let url = AppPaths.base.appendingPathComponent("notion-register-\(id).json")
+                guard let data = try? Data(contentsOf: url),
+                      let text = String(data: data, encoding: .utf8) else {
+                    return "{\"ok\":true,\"state\":\"waiting\"}"
+                }
+                return text
+            }
             if path.hasPrefix("/api/integrations") {
                 // 슬랙 번역의 '기본' 경로는 사용자가 고른 모델에 따라 달라진다 —
                 // 그 사실을 아는 쪽(Slack 플러그인)이 알려줘야 카드가 정확히 말한다.
@@ -140,6 +232,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if path.hasPrefix("/history.json") {
                 return self?.dashboardHistory(path)
+            }
+            if path.hasPrefix("/tokens-accounts.json") {
+                return LLMAccountStore.shared.allAccountsJSON()
             }
             if path.hasPrefix("/tokens-sessions.json") {   // /tokens.json 보다 먼저 (접두어 겹침)
                 return self?.dashboardTokenSessions(path)
@@ -163,6 +258,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let limit = URLComponents(string: "http://x" + path)?.queryItems?
                     .first(where: { $0.name == "limit" })?.value.flatMap(Int.init) ?? 200
                 return SlackActionLog.recentJSON(limit: limit)
+            }
+            // 워크스페이스 커스텀 이모지 — 이모지 고르기 팝업이 기본 세트 뒤에
+            // 붙여 보여준다 (emoji:read 없으면 빈 목록, 1시간 캐시).
+            if path.hasPrefix("/api/slack/emoji") {
+                return SlackTranslateStore.customEmojiJSON()
             }
             // 디버그 모드(버그 수집) 상태 — 위젯 밖 surface(진단 페이지·QA)가 같은 진실을 읽는다.
             if path.hasPrefix("/api/debug/capture/status") {
@@ -306,6 +406,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if path.hasPrefix("/workers.json") {
                 return self?.workersJSON()
             }
+            // Periodic jobs registered on the Mac itself (launchd + crontab) — the '이 디바이스'
+            // tab of the 크론 page. Scanned off the main thread and cached inside the scanner.
+            if path.hasPrefix("/device-cron.json") {
+                return DeviceCronScanner.shared.snapshotJSON()
+            }
             return nil
         },
         sse: { [weak self] path, channel in
@@ -334,6 +439,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // follow "window open", not "mode == .bgm" — the earlier mode-based rule left native audible
     // in .dashboard mode while the BGM webview kept playing underneath (double audio).
     private var windowOwnsAudio = false
+
+    // 받아쓰기(superwhisper) 중 음악을 눌러 두는 감시자와 그 현재 상태. 상태를 따로 들고 있는
+    // 이유는 창이 나중에 열려 오디오를 넘겨받을 때(onOwnAudio) 그 시점의 값을 웹뷰에 밀어
+    // 넣어야 하기 때문 — 말하는 도중에 창을 열면 웹뷰만 원래 볼륨으로 시작해 버린다.
+    private let voiceDictation = VoiceDictationMonitor()
+    private var voiceDucked = false
     // App-wide keyboard shortcuts (⌘M mute / ⌘S start·stop challenge). A LOCAL event monitor fires
     // only while the app is active and for ANY of its windows/pages — exactly "앱을 활성화한 뒤 어느
     // 페이지에서든" — without the system-wide Accessibility grant a global monitor would need.
@@ -491,6 +602,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var aiSec = 0        // AI runtime: human prompt -> last AI/tool line of that turn
         var models: [String: ModelUse] = [:]   // per-model raw usage, for $-cost (client-side rates)
         var leads: [Double] = []
+        var accounts: [String: Int] = [:]      // accountId -> tokens spent
+        var providers: [String: Int] = [:]     // provider -> tokens spent
+        // 창 점유 축 — 위의 누적 버킷과 단위가 다르다. spent 는 "창을 몇 번 채웠나"이고
+        // 아래 셋은 "창을 얼마나 채웠나"라서 더하면 안 되는 값이다. 그래서 여러 파일을
+        // 하루로 접는 자리에서는 합산하지 않고 비워 둔다(분포는 따로 센다).
+        var ctxFinal = 0     // window occupancy at the day's last non-sidechain assistant request
+        var ctxPeak  = 0     // max occupancy seen that day (non-sidechain)
+        var ctxModel = ""    // model of that last request — the window we divide by
     }
     // Raw per-model usage — kept separate from the display buckets above because $-cost
     // needs cache reads (excluded from `spent`) and the cache-write TTL split (5m=1.25x,
@@ -502,15 +621,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var cache5m = 0      // cache_creation ephemeral_5m (fallback bucket when no detail)
         var cache1h = 0      // cache_creation ephemeral_1h
         var outTok = 0
+        var effort: String = ""
+        var efforts: [String: Int] = [:]
     }
-    private var tokenDayCache: [String: (mtime: Date, size: Int, days: [String: DayTok], title: String)] = [:]
+    // 트랜스크립트 한 개에서 뽑히는 전부. 튜플로 늘려 가다 자리 순서를 세는 코드가 되어서
+    // 이름 붙인 형으로 바꿨다. days 밖의 값들은 토큰 뷰가 쓰지 않고 루프 세션 원장이 쓴다.
+    struct TranscriptFacts {
+        var days: [String: DayTok] = [:]
+        var title = ""
+        var cwd = ""
+        var prompt = ""          // 첫 사람 프롬프트 400자 — 어느 루프의 세션인가의 근거
+        var firstTS: Date?       // 세션이 열린 시각
+        var lastTS: Date?        // 마지막 줄이 쓰인 시각
+        var turns = 0            // 어시스턴트 메시지 수
+        var tools = 0            // 도구 호출 수
+        var accountId = ""       // e.g. "claude:3189e304-..."
+        var accountLabel = ""    // e.g. "클로드 계정 1"
+        var accountColor = ""    // e.g. "#7c3aed"
+        var provider = "claude"
+    }
+    private var tokenDayCache: [String: (mtime: Date, size: Int, facts: TranscriptFacts)] = [:]
     private let tokenDayLock = NSLock()
 
-    // JSON for a DayTok's per-model usage map: {"claude-fable-5":{"in":..,"cr":..,"c5m":..,"c1h":..,"out":..},...}
+    // JSON for a DayTok's per-model usage map: {"claude-fable-5":{"in":..,"cr":..,"c5m":..,"c1h":..,"out":..,"effort":..},...}
     private func modelsJSON(_ models: [String: ModelUse]) -> String {
         let rows = models.keys.sorted().map { m -> String in
             let u = models[m]!
-            return "\(jsonString(m)):{\"in\":\(u.inTok),\"cr\":\(u.cacheRead),\"c5m\":\(u.cache5m),\"c1h\":\(u.cache1h),\"out\":\(u.outTok)}"
+            let topEffort = u.efforts.max(by: { $0.value < $1.value })?.key ?? u.effort
+            return "\(jsonString(m)):{\"in\":\(u.inTok),\"cr\":\(u.cacheRead),\"c5m\":\(u.cache5m),\"c1h\":\(u.cache1h),\"out\":\(u.outTok),\"effort\":\(jsonString(topEffort))}"
         }
         return "{\(rows.joined(separator: ","))}"
     }
@@ -521,10 +659,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Slack 👀 번역 plugin (Sources/Plugins/Slack, app-agnostic) — wire the app's data
         // dir, the global debug-buttons setting, and the display-timezone boot HTML.
         SlackTranslateStore.dir = AppPaths.sub("slack-translate")
+        SlackTranslateStore.migrateConfigurationDefaults()
+        // 표시 타임존 1회 마이그레이션 — 다른 무엇보다 먼저 돌아야 한다. 이 뒤의 모든
+        // 일자 버킷(activityLog·토큰 뷰·CM_TZ 주입)이 Settings.displayTimeZone 을 읽는다.
+        migrateTimeZoneKSTDefault()
         // #hero 채널 수집 파일 (slack-eyes-daemon.mjs 소유, 앱은 읽기만)
         HeroStore.slackFile = AppPaths.sub("hero").appendingPathComponent("slack.jsonl")
+        // 루프 세션 원장 (Sources/ConditionMate/Plugins/Loop): 세션 트랜스크립트를 세션마다
+        // 딱 한 번 읽어 "이 세션은 어느 루프의 것인가"의 근거(첫 프롬프트·cwd)와 토큰·비용을
+        // 디스크에 남긴다. 파서는 토큰 뷰의 것을 그대로 꽂아 준다 — 같은 파일을 두 벌의 규칙으로
+        // 세면 루프 화면과 토큰 화면의 숫자가 서로 어긋난다.
+        LoopSessionLedger.storeDir = AppPaths.sub("loop-sessions")
+        LoopSessionLedger.log = AppLog.log
+        LoopSessionLedger.extractor = { [weak self] url, mtime, size in
+            guard let self else {
+                return LoopSessionLedger.Extract(days: [:], title: "", cwd: "", prompt: "",
+                                                 firstDay: "", lastDay: "")
+            }
+            let st = self.transcriptStats(file: url, mtime: mtime, size: size)
+            var days: [String: LoopSessionLedger.DaySpend] = [:]
+            for (day, t) in st.days where t.spent > 0 {
+                days[day] = LoopSessionLedger.DaySpend(t: t.spent, c: self.modelsCostUSD(t.models))
+            }
+            let keys = days.keys.sorted()
+            return LoopSessionLedger.Extract(days: days, title: st.title, cwd: st.cwd, prompt: st.prompt,
+                                             firstDay: keys.first ?? "", lastDay: keys.last ?? "",
+                                             startTS: st.firstTS?.timeIntervalSince1970 ?? 0,
+                                             endTS: st.lastTS?.timeIntervalSince1970 ?? 0,
+                                             turns: st.turns, tools: st.tools)
+        }
+        LoopSessionLedger.start()
         SlackTranslateStore.debugButtons = { Settings.shared.debugButtons }
         SlackTranslateContent.headExtraHTML = { CMTimeFilter.bootHTML() }
+        SlackTranslateContent.bodyLeadingHTML = { SessionRail.html() }
         // 지라 번역 plugin (Sources/Plugins/Jira): 크롬 익스텐션 하나만 상대하는 고정 포트
         // 로컬 브리지. Gemini 키를 브라우저에 두지 않으려고 실제 호출은 앱이 대신한다.
         JiraBridge.dataDir = AppPaths.sub("jira-bridge")
@@ -574,7 +741,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Restore the last mute state (ChallengeSession loads it from Settings): if the sound was
         // muted when the app went down, an update/relaunch must come back muted, not playing.
         applyNativeMute()
+        applySfxGate()
         if session.isMuted { AppLog.log("mute restored from last run -> muted") }
+        if !Settings.shared.sfxEnabled { AppLog.log("sfx switch restored from last run -> off") }
+        // 받아쓰기 덕킹: superwhisper 가 녹음하는 동안만 음악을 15% 로 눌러 둔다.
+        voiceDictation.onLog = { AppLog.log("voice-duck: \($0)") }
+        voiceDictation.onChange = { [weak self] on in self?.applyVoiceDuck(on) }
+        applyVoiceDuckSwitch()
         // Play-time accounting: AudioEngine times each audible segment; the store accrues
         // per-track seconds/plays that feed the BGM 관리 "재생 시간 순위" section.
         audio.onSegmentEnd = { [weak self] key, title, secs in
@@ -588,7 +761,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 카메라 지킴이 (camera-guard plugin): 위반 시 반응만 여기서 배선한다 — 시작/중지는
         // syncPluginWorkers가 설치 상태 + 카드 on/off(Settings.cameraGuardOn)로 게이팅.
         cameraWatch.onViolation = { msg in
-            NSSound(named: "Funk")?.play()
+            // 음소거/효과음 끔이면 소리는 삼킨다 — 아래 osascript 배너가 그대로 뜨므로 경고는 남는다.
+            if !SoundEffects.shared.muted { NSSound(named: "Funk")?.play() }
             // No UNUserNotificationCenter plumbing needed: a plain banner via
             // osascript, off-main (Process launch would stall the main thread).
             DispatchQueue.global(qos: .utility).async {
@@ -596,6 +770,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
                 p.arguments = ["-e",
                     "display notification \"\(msg)\" with title \"Condition Mate\" subtitle \"카메라 꺼짐 감지\""]
+                try? p.run()
+            }
+        }
+        // 권한이 없어 재활성화가 아예 못 도는 경우. 워커 로그 warn 한 줄은 아무도 안 보므로
+        // 배너로 올린다 — 2026-09-05 에 이것 때문에 "감지는 되는데 안 켜진다" 로 하루가 갔다.
+        cameraWatch.onAccessibilityMissing = { msg in
+            AppLog.log("camera-watch: 손쉬운 사용 권한 없음 — \(msg)")
+            DispatchQueue.global(qos: .utility).async {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                p.arguments = ["-e",
+                    "display notification \"\(msg)\" with title \"Condition Mate\" subtitle \"손쉬운 사용 권한 필요\""]
+                try? p.run()
+            }
+        }
+        // 감지 → 자동 재활성화가 실제로 닫혔을 때. 이 배너가 뜨는 것이 두 쪽이 서로
+        // 연결돼 있다는 눈에 보이는 증거다 (위반 배너와 소리를 다르게 둔 이유).
+        cameraWatch.onRecovered = { msg in
+            if !SoundEffects.shared.muted { NSSound(named: "Glass")?.play() }
+            AppLog.log("camera-watch: \(msg)")
+            DispatchQueue.global(qos: .utility).async {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                p.arguments = ["-e",
+                    "display notification \"\(msg)\" with title \"Condition Mate\" subtitle \"카메라 자동으로 다시 켬\""]
                 try? p.run()
             }
         }
@@ -631,7 +830,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.applyNativeMute()
             // The window's player starts unmuted; push the restored/current mute intent as soon as
             // it takes over so a muted user never hears a burst before the /api/bgm/now poll lands.
-            if owns { self.appWindow.setWebMute(self.session.isMuted) }
+            if owns {
+                self.appWindow.setWebMute(self.session.isMuted)
+                // 말하는 도중에 창이 열렸다면 웹뷰도 눌린 채로 시작해야 한다.
+                if self.voiceDucked { self.appWindow.setWebVoiceDuck(true) }
+            }
             AppLog.log("app window owns audio=\(owns) -> native muted=\(self.audio.muted)")
         }
         // Closing the app window quits the entire app — the window and the menu-bar app terminate
@@ -976,6 +1179,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 reg.recordError("slack-eyes", why: why, detail: effect)
             }
         }
+        // 사람 손이 필요한 상태가 되면 배너로 부른다. 워커 표와 슬랙 페이지에만 적으면
+        // 그 화면을 열기 전까지 아무도 모른다 — 2026-08-21 경로 사고 때 진단은 정확히
+        // 돌았는데 아무도 볼 수 없는 곳에 적혀 19시간이 그냥 지나갔다. 카메라 지킴이와
+        // 같은 osascript 배너 방식(별도 권한 배선 불필요)이고, 상태가 실제로 바뀔 때만
+        // 한 번 뜬다 (SlackHealth.reportStateChange가 전환을 걸러 준다).
+        SlackHealth.onNeedsUser = { title, detail in
+            DispatchQueue.global(qos: .utility).async {
+                let one = detail.replacingOccurrences(of: "\n", with: " ")
+                    .replacingOccurrences(of: "\"", with: "'")
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                p.arguments = ["-e",
+                    "display notification \"\(one.prefix(180))\" with title \"Condition Mate\" "
+                    + "subtitle \"슬랙 번역 — \(title)\""]
+                try? p.run()
+            }
+        }
+        // 설치본은 자기 번들 안의 데몬을 가리키도록 launchd plist를 직접 유지한다.
+        // 이 한 줄이 개발 트리와 운영 데몬을 갈라놓는다 — 레포를 옮기든 브랜치를 바꾸든
+        // 운영은 /Applications/ConditionMate.app/Contents/Resources/ 를 계속 본다.
+        // launchctl을 부르므로 메인 스레드에서 떼어낸다.
+        DispatchQueue.global(qos: .utility).async {
+            let r = SlackDaemonInstall.ensureInstalled()
+            if r.changed {
+                AppLog.log("slack daemon install: \(r.detail)")
+                WorkerRegistry.shared.recordRun("slack-eyes", why: "데몬 경로 정규화",
+                                                effect: r.detail)
+            }
+        }
         // Claude Desktop's session workers are NOT registered here — they are owned by
         // the plugin and appear/disappear with its connection (see syncPluginWorkers).
         migrateSlackPluginInstallState()
@@ -1163,6 +1395,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let off = FileManager.default.fileExists(atPath: Self.slackEyesDisabledFlag.path)
         Settings.shared.setPluginInstalled(!off, for: "slack-translate")
         if off { pluginStore.uninstall(pluginId: "slack-translate") }
+    }
+
+    // 표시 타임존 기본값이 "system" → "Asia/Seoul" 로 바뀐 것(2026-09-05)을 이미 디스크에
+    // 값이 있는 설치본에도 한 번만 적용한다. 기본값만 바꾸면 settings.json 에 이미
+    // cm.timeZone:"system" 이 들어 있는 맥은 영원히 안 바뀐다.
+    //
+    // WHY a one-shot flag and not a permanent read-time coercion of "system"→KST:
+    // the header selector's `시스템 (맥 설정)` option must stay usable. If every read
+    // coerced "system" into Asia/Seoul, that option would be a dead button — the user
+    // would click it, the value would store, and the app would keep showing KST. With
+    // the flag, a later explicit `시스템` choice sticks because the flag is already set.
+    //
+    // 이 판정은 L1 에서 사람 확인 없이 내려졌다 (issue/2026-09-05-token-view-timezone-
+    // directive.md 의 `판정` 절). 근거 요약: 앱이 이미 세 자리(AppLog.logTimeZone,
+    // isoWeek, aiTaskNameParts)에서 Asia/Seoul 을 못박고 있어 앱 안에 두 개의 "오늘" 이
+    // 공존했고, 이 제품이 세는 것은 기계 설정이 아니라 사람의 하루이며, 틀렸을 때는
+    // 헤더 셀렉터 한 번으로 되돌릴 수 있다.
+    private func migrateTimeZoneKSTDefault() {
+        let s = Settings.shared
+        guard !s.timeZoneKSTMigrated else { return }
+        // 정확히 "system" 일 때만 옮긴다. 사용자가 직접 고른 다른 값(UTC 등)은 건드리지 않는다.
+        if s.timeZoneID == "system" {
+            s.timeZoneID = "Asia/Seoul"
+            AppLog.log("timezone migration: cm.timeZone \"system\" -> \"Asia/Seoul\" (one-shot, 2026-09-05 KST default)")
+        }
+        s.timeZoneKSTMigrated = true
     }
 
     // MARK: - Heartbeat (1 Hz)
@@ -1949,6 +2207,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // native player and the BGM webview never both make sound.
     func applyNativeMute() { audio.muted = windowOwnsAudio || session.isMuted }
 
+    // 효과음(원샷 이펙트음)의 단 하나의 게이트. 두 스위치를 AND로 합친다:
+    // 마스터 음소거(⌃⌘M / 레일 '음소거')는 음악뿐 아니라 이펙트음까지 전부 끈다 —
+    // 음소거를 누르는 이유가 "지금 집중해야 하니 이 앱은 조용히 하라"이기 때문이다.
+    // 그와 별개로 '효과음' 스위치는 음악은 그대로 두고 알림음만 끈다(집중을 깨는 건
+    // 음악이 아니라 불쑥 튀는 소리라는 게 이 스위치의 존재 이유).
+    func applySfxGate() { SoundEffects.shared.muted = session.isMuted || !Settings.shared.sfxEnabled }
+
+    // 받아쓰기 덕킹을 두 출력 경로에 동시에 건다. 창이 열려 있으면 실제로 들리는 소리는 BGM
+    // 웹뷰가 내고 네이티브는 이미 뮤트(windowOwnsAudio)지만, 양쪽에 다 걸어 두는 편이 맞다 —
+    // 말하는 도중에 창이 닫히면 네이티브가 곧바로 소리를 넘겨받는데 그때 눌려 있지 않으면
+    // 음악이 튀어나온다. 뮤트 축은 건드리지 않으므로 ⌘M 상태는 그대로 유지된다.
+    private func applyVoiceDuck(_ on: Bool) {
+        guard voiceDucked != on else { return }
+        voiceDucked = on
+        audio.voiceDucked = on
+        if appWindow.isOpen { appWindow.setWebVoiceDuck(on) }
+    }
+
+    // 설정 스위치를 실제 감시자에 반영한다. 꺼져 있으면 감시 자체를 내려서(전역 키 모니터 +
+    // 폴더 감시) 비용을 0 으로 만들고, 눌려 있던 상태가 남지 않도록 먼저 되돌린다.
+    private func applyVoiceDuckSwitch() {
+        if Settings.shared.voiceDuckOn {
+            voiceDictation.start()
+        } else {
+            voiceDictation.stop()
+            applyVoiceDuck(false)
+        }
+    }
+
     // Push the current mute state to every audio surface: the BGM webview (what the user actually
     // hears while the window is open) and the native player. window.__setMute is idempotent, so
     // echoing it back to a webview that already flipped its own control is a harmless no-op — which
@@ -1956,6 +2243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyMuteToSurfaces() {
         if appWindow.isOpen { appWindow.setWebMute(session.isMuted) }
         applyNativeMute()
+        applySfxGate()
     }
 
     // Remote mute control from any page (POST /api/session/mute): set the source of truth and sync
@@ -2692,7 +2980,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return workerLogHTML(title: "워커 통합 로그", subtitle: subtitle, body: body)
     }
 
-    private func workerLogHTML(title: String, subtitle: String, body: String) -> String {
+    // GET /device-cron?id=<label> -> one launchd/crontab job's run history, in the same
+    // shape as the app's own worker log: when it ran, what it did, how it ended. launchd
+    // keeps no per-run trail (only a last exit code), so the history IS the job's log file
+    // — which is also the honest answer when a job writes no log: there is nothing to show.
+    func deviceCronPage(_ path: String) -> String? {
+        guard let comps = URLComponents(string: "http://x" + path),
+              let id = comps.queryItems?.first(where: { $0.name == "id" })?.value else { return nil }
+        guard let j = DeviceCronScanner.shared.job(id: id) else {
+            return workerLogHTML(title: "알 수 없는 작업", subtitle: htmlEscape(id),
+                body: "<p class=\"empty\">이 맥에 등록되지 않은 작업입니다.</p>", back: "/cron")
+        }
+
+        let status: String
+        if j.disabled { status = "꺼짐 (launchctl에서 disable됨)" }
+        else if !j.loaded { status = "미로드 — 파일만 있고 launchd에 등록되지 않았습니다 (지금은 실행되지 않음)" }
+        else if j.lastExit > 0 { status = "오류 — 마지막 실행이 종료 코드 \(j.lastExit)로 끝났습니다" }
+        else if j.pid > 0 { status = "동작 중 (PID \(j.pid))" }
+        else { status = "대기 — 로드됨, 다음 실행 시각을 기다리는 중" }
+
+        var facts: [(String, String)] = [
+            ("프로젝트", j.project.isEmpty ? "미분류" : j.project),
+            ("상태", status),
+            ("주기", j.schedule),
+            ("실행 횟수", j.runs >= 0 ? "\(j.runs)회" : "알 수 없음 (crontab은 집계하지 않음)"),
+            ("실행 대상", j.detail),
+            ("등록 위치", j.path),
+            ("작업명(개발용)", j.label)
+        ]
+        if !j.outLog.isEmpty { facts.append(("출력 로그", j.outLog)) }
+        if !j.errLog.isEmpty && j.errLog != j.outLog { facts.append(("오류 로그", j.errLog)) }
+
+        let factRows = facts.map {
+            "<tr><td class=\"t\">\(htmlEscape($0.0))</td><td class=\"eff\" colspan=\"2\">\(htmlEscape($0.1))</td></tr>"
+        }.joined()
+
+        // stderr first: when a job is failing, that is the line the human came here for.
+        var logBlocks = ""
+        for (title, file) in [("오류 로그", j.errLog), ("출력 로그", j.outLog)] {
+            guard !file.isEmpty else { continue }
+            if title == "출력 로그" && file == j.errLog { continue }
+            let lines = DeviceCronScanner.logTail(file)
+            let inner = lines.isEmpty
+                ? "<p class=\"empty\">비어 있습니다 — 아직 이 파일에 기록된 실행이 없습니다.</p>"
+                : "<pre>" + lines.map(htmlEscape).joined(separator: "\n") + "</pre>"
+            logBlocks += "<h2>\(title) <span class=\"mut\">\(htmlEscape(file)) · 최근 \(lines.count)줄</span></h2>\(inner)"
+        }
+        if j.outLog.isEmpty && j.errLog.isEmpty {
+            logBlocks = "<h2>실행 기록</h2><p class=\"empty\">이 작업은 로그 파일을 지정하지 않아 실행 기록이 남지 않습니다."
+                + " plist에 StandardOutPath를 추가하면 여기에 이력이 쌓입니다.</p>"
+        }
+
+        let body = """
+        <table><tbody>\(factRows)</tbody></table>
+        \(logBlocks)
+        """
+        let sub = "\(htmlEscape(j.project.isEmpty ? "미분류" : j.project)) · \(htmlEscape(j.source)) · \(htmlEscape(j.schedule))"
+        return workerLogHTML(title: j.name, subtitle: sub, body: body, back: "/cron")
+    }
+
+    private func workerLogHTML(title: String, subtitle: String, body: String,
+                               back: String = "/") -> String {
         return """
         <!doctype html><html lang="ko"><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2701,10 +3049,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           :root{--bg:#0e1116;--panel:#141821;--line:#222a36;--fg:#e6e9ef;--mut:#8a93a3;--accent:#5b8cff}
           *{box-sizing:border-box}
           body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif}
-          header{position:sticky;top:0;background:rgba(14,17,22,.92);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:14px 20px}
+          header{position:sticky;top:0;z-index:30;background:rgba(14,17,22,.92);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:12px 20px 14px}
           header h1{margin:0;font-size:16px}
           header .sub{color:var(--mut);font-size:12px;margin-top:2px}
-          header a{color:var(--accent);text-decoration:none;font-size:12px}
+          header a.back{display:inline-flex;align-items:center;gap:7px;min-height:44px;margin:-4px 0 2px -10px;
+            padding:0 12px;border-radius:9px;color:#b8c9e8;text-decoration:none;font-size:13px;font-weight:600}
+          header a.back:hover{background:#1b2230;color:#e6efff}
+          header a.back:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+          header a.back svg{width:17px;height:17px;stroke:currentColor;stroke-width:2;fill:none;flex:none}
           main{max-width:920px;margin:0 auto;padding:18px 20px 80px}
           table{width:100%;border-collapse:collapse}
           th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
@@ -2714,9 +3066,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           td.eff{color:#9fe0a0}
           tbody tr:hover{background:var(--panel)}
           .empty{color:var(--mut);text-align:center;padding:40px 0}
+          h2{font-size:13px;color:var(--mut);letter-spacing:.04em;text-transform:uppercase;margin:26px 0 8px}
+          h2 .mut{text-transform:none;letter-spacing:0;font-weight:400;font-size:11px}
+          pre{margin:0;padding:12px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+            white-space:pre-wrap;word-break:break-word;font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
+            color:#cdd4df;max-height:520px;overflow:auto}
         </style></head>
         <body>
-          <header><a href="/">← 대시보드</a><h1>\(htmlEscape(title))</h1><div class="sub">\(subtitle)</div></header>
+          <script>window.CM_PAGE='\(back == "/cron" ? "cron" : "")';</script>
+          \(SessionRail.html())
+          <header><a class="back" href="\(back)" aria-label="\(back == "/cron" ? "크론 목록으로 돌아가기" : "대시보드로 돌아가기")"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/><path d="M9 12h10"/></svg><span>\(back == "/cron" ? "크론 목록" : "대시보드")</span></a><h1>\(htmlEscape(title))</h1><div class="sub">\(subtitle)</div></header>
           <main>\(body)</main>
         </body></html>
         """
@@ -2766,15 +3125,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           .btn:disabled{opacity:.5;cursor:default}
           .legend{color:var(--mut);font-size:12px;margin-top:10px;display:flex;gap:18px;flex-wrap:wrap}
           .foot{color:var(--mut);font-size:11px;text-align:center;margin-top:18px}
+          /* 탭: 앱이 등록한 워커 vs 이 맥에 등록된 주기 작업 — 두 목록의 출처가 다르므로 섞지 않는다 */
+          .tabs{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+          .tab{background:#161b25;border:1px solid var(--line);color:var(--mut);border-radius:8px;
+            padding:7px 14px;font-size:13px;cursor:pointer}
+          .tab:hover{background:#1d2230;color:var(--fg)}
+          .tab[aria-selected="true"]{background:#1d2740;border-color:#33518f;color:var(--fg);font-weight:600}
+          .tab .count{color:var(--mut);font-weight:400;margin-left:6px;font-size:12px}
+          .mono{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#aab3c2}
+          /* 이 표에서 제일 먼저 읽어야 하는 건 경로가 아니라 상태다. 그래서 상태를 작업
+             바로 옆에 두고, 절대 경로인 실행 대상은 맨 끝에서 한 줄로 자른다(전체는 호버
+             title). 가로 스크롤이 생겨도 잘리는 건 제일 안 급한 열이 된다. */
+          .devtable{min-width:0}
+          /* 이름과 '하는 일'은 한 줄로 자른다(전체는 호버 title). 벤더 업데이터의 긴 인자
+             하나가 표 전체를 밀어내 정작 눌러야 할 '자세히'를 화면 밖으로 보내면 안 된다. */
+          .devtable td:nth-child(1){max-width:260px}
+          .devtable td:nth-child(3){white-space:nowrap;min-width:0}
+          /* 그래도 좁아지면 가로 스크롤이 생기므로, 행동 열만은 오른쪽에 고정해 항상 닿게 한다. */
+          .devtable th:last-child,.devtable td:last-child{position:sticky;right:0;
+            background:var(--panel);box-shadow:-8px 0 8px -8px #000}
+          .filters{margin-left:auto;display:flex;align-items:center;gap:12px;color:var(--mut);font-size:12px}
+          .filters label{display:flex;align-items:center;gap:6px}
+          .filters select{background:#161b25;border:1px solid var(--line);color:var(--fg);
+            border-radius:8px;padding:6px 8px;font-size:12px}
+          .hidden-note{color:var(--mut);font-size:11px}
+          /* 개발용 식별자(reverse-DNS 라벨, plist 경로)는 사람이 읽을 이름 밑에 작게. */
+          .devname{display:block}
+          .devlabel{display:block;color:var(--mut);font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
+            margin-top:2px;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          .devname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          .proj{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;
+            background:#1b2233;border:1px solid #2c3852;color:#a9bce0;white-space:nowrap}
+          .proj.sys{background:#1a1d24;border-color:#2a3038;color:#7c8494}
         </style></head>
         <body>
           <script>window.CM_PAGE='cron';</script>
           \(SessionRail.html())
           <header>
             <div><h1>크론 · 주기 작업</h1><div class="sub">주기적으로 실행해야 하는 백그라운드 작업(워커)을 등록·관리합니다</div></div>
-            <a class="btn" href="/worker-log" target="_blank">전체 로그 타임라인</a>
+            <a class="btn" href="/worker-log">전체 로그 타임라인</a>
           </header>
           <main>
+            <div class="tabs" role="tablist">
+              <button class="tab" role="tab" id="tabbtn-app" aria-selected="true"
+                      onclick="showTab('app')">컨디션 메이트 등록<span class="count" id="cnt-app"></span></button>
+              <button class="tab" role="tab" id="tabbtn-device" aria-selected="false"
+                      onclick="showTab('device')">이 디바이스 등록<span class="count" id="cnt-device"></span></button>
+              <!-- 보기 필터는 탭 줄 오른쪽 끝. 40개 프로젝트가 섞인 목록에서 "지금 뭐가 도나"와
+                   "이 프로젝트는 뭐가 도나" 두 질문에만 답하면 되므로 셀렉트 두 개로 충분하다. -->
+              <div class="filters">
+                <label>보기
+                  <select id="fState" onchange="setFilter()">
+                    <option value="live">동작 중만</option>
+                    <option value="bad">문제만 (오류·미로드·꺼짐)</option>
+                    <option value="all">전체</option>
+                  </select>
+                </label>
+                <label id="fProjWrap">프로젝트
+                  <select id="fProj" onchange="setFilter()"><option value="">전체</option></select>
+                </label>
+                <span class="hidden-note" id="hiddenNote"></span>
+              </div>
+            </div>
+            <section id="tab-app">
             <div class="panel">
               <div class="tablewrap">
               <table>
@@ -2784,6 +3197,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               </div>
               <div class="legend"><span><span class="chip" style="margin:0">동작 중</span> = 일정대로 실행 중 · <span class="chip bad" style="margin:0">유휴</span> = 현재 멈춤(세션 비활성 등) · <span class="chip bad" style="margin:0">오류</span> = 데이터 싱크 이상(로그 확인) · <b>구분</b> 기본=항상 실행, 플러그인=연결 시에만, 자동화=외부 스케줄러(launchd)가 주기 실행, SUT=Supertrust 일일 리포트(launchd 09:10 → /nss-report-daily), 수동=퇴근 시 손으로 실행(주기 칸은 1회 실행 중 라운드 간격)</span></div>
             </div>
+            </section>
+            <section id="tab-device" hidden>
+            <div class="panel">
+              <div class="tablewrap">
+              <table class="devtable">
+                <thead><tr><th>작업</th><th>프로젝트</th><th>상태</th><th>주기</th><th>마지막 실행</th><th>실행</th><th>로그</th></tr></thead>
+                <tbody id="devicerows"><tr><td colspan="7" class="empty">불러오는 중…</td></tr></tbody>
+              </table>
+              </div>
+              <div class="legend"><span>이 맥에 직접 등록된 주기 작업을 자동으로 훑어 보여 줍니다 — 앱이 아니라 launchd(<span class="mono">~/Library/LaunchAgents</span>, <span class="mono">/Library/LaunchAgents</span>)와 <span class="mono">crontab -l</span>이 원본입니다. 새로 등록하면 다음 새로고침에 그냥 나타납니다.</span></div>
+              <div class="legend"><span><span class="chip" style="margin:0">동작 중</span> = 지금 프로세스가 떠 있음 · <span class="chip" style="margin:0">대기</span> = 로드됨, 다음 시각을 기다리는 중 · <span class="chip bad" style="margin:0">오류</span> = 마지막 실행이 0이 아닌 코드로 종료 · <span class="chip bad" style="margin:0">미로드</span> = 파일만 있고 launchd에 등록되지 않음(죽어 있음) · <span class="chip bad" style="margin:0">꺼짐</span> = launchctl에서 disable됨 · <b>마지막 실행</b>은 로그 파일(StandardOutPath) 수정 시각 기준이라, 로그를 안 남기는 작업은 '–'로 나옵니다</span></div>
+            </div>
+            </section>
             <div class="foot">127.0.0.1 로컬 전용</div>
           </main>
           <script>
@@ -2806,6 +3232,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _workers=Array.isArray(arr)?arr:[];
             _workersBase=performance.now();
             var rows=document.getElementById('workerrows');
+            // 디바이스 탭과 같은 규칙: 탭을 열지 않아도 문제가 있는지 배지에서 보인다.
+            // 여기서 '문제'는 오류뿐 — 유휴/꺼짐은 의도한 상태라 세지 않는다.
+            var c=document.getElementById('cnt-app');
+            var werr=_workers.filter(function(w){ return w.error&&w.enabled!==false; }).length;
+            if(c) c.textContent=_workers.length+(werr?' · 문제 '+werr:'');
             if(!_workers.length){ rows.innerHTML='<tr><td colspan="9" class="empty">데이터 없음</td></tr>'; return; }
             var ownerLabel=function(o,manual){
               if(manual) return '<span class="chip" style="margin:0;background:#7a8699;color:#fff" title="퇴근 시 손으로 실행(Scripts/bug-hunt.sh) — 스케줄러가 돌리지 않음">수동</span>';
@@ -2814,13 +3245,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               if(o&&o!=='core') return '<span class="chip" style="margin:0;background:#9b7bff;color:#fff" title="'+esc(o)+'">플러그인</span>';
               return '<span class="muted">기본</span>';
             };
+            // 인덱스 i 는 필터와 무관하게 _workers 원본 기준으로 유지한다 — tickWorkers 가
+            // wk_ago_<i>/wk_next_<i> 로 셀을 찾기 때문. 걸러진 행은 id 가 없을 뿐이고,
+            // tickWorkers 는 이미 null 을 건너뛴다.
+            var shown=0;
             rows.innerHTML=_workers.map(function(w,i){
+              if(!workerVisible(w)) return '';
+              shown++;
               var off=w.enabled===false;
               var badge;
               if(off) badge='<span class="chip bad" title="사용자가 끔">꺼짐</span>';
               else { badge=w.active?'<span class="chip">동작 중</span>':'<span class="chip bad">유휴</span>';
                 if(w.error) badge='<span class="chip bad" title="'+esc(w.errorMsg||'')+'">오류 ⚠</span> '+badge; }
-              var more=w.id?'<a class="btn" href="/worker?id='+encodeURIComponent(w.id)+'" target="_blank">자세히</a>':'';
+              // 앱 창(WKWebView) 안에서 그대로 열려야 한다 — target="_blank" 는 기본 브라우저로 튕긴다.
+              var more=w.id?'<a class="btn" href="/worker?id='+encodeURIComponent(w.id)+'">자세히</a>':'';
               var ctrl='';
               if(w.toggleable) ctrl+=' <button class="btn" onclick="toggleWorker(\\''+esc(w.id)+'\\','+off+')">'+(off?'켜기':'끄기')+'</button>';
               if(w.runnable) ctrl+=' <button class="btn" title="지금 한 번 실행" onclick="runWorker(this,\\''+esc(w.id)+'\\')"'+(off?' disabled':'')+'>즉시 실행</button>';
@@ -2837,6 +3275,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 +'<td>'+badge+'</td>'
                 +'<td>'+more+ctrl+'</td></tr>';
             }).join('');
+            if(!shown) rows.innerHTML='<tr><td colspan="9" class="empty">이 조건에 맞는 워커가 없습니다 — 보기를 \\'전체\\'로 바꿔 보세요</td></tr>';
+            noteHidden(_workers.length-shown,'app');
           }
           function toggleWorker(id,wasOff){ post('/api/worker/toggle',{id:id,enabled:wasOff}).then(function(){ setTimeout(load,300); }); }
           function runWorker(btn,id){ if(btn){ btn.disabled=true; btn.textContent='실행 중…'; }
@@ -2851,9 +3291,141 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if(n) n.textContent=fmtCountdown(w.nextSec-elapsed); }
             });
           }
+          // --- 이 디바이스 탭 -------------------------------------------------------
+          // 출처가 launchd/crontab이라 앱이 켜고 끌 수 없다. 읽기 전용으로만 보여 주고,
+          // '죽어 있음'(미로드)과 '오류'(마지막 종료 코드 != 0)를 구분하는 게 이 표의 목적.
+          function fmtWhen(epoch){ if(!epoch) return '아직 없음';
+            var sec=Math.floor(Date.now()/1000)-epoch; if(sec<0) sec=0;
+            if(sec<60) return sec+'초 전';
+            if(sec<3600) return ((sec/60)|0)+'분 전';
+            if(sec<86400){ var h=(sec/3600)|0,m=((sec%3600)/60)|0; return h+'시간 '+(m>0?m+'분 ':'')+'전'; }
+            return ((sec/86400)|0)+'일 전'; }
+          function deviceBadge(j){
+            if(j.disabled) return '<span class="chip bad" title="launchctl에서 disable된 상태">꺼짐</span>';
+            if(!j.loaded) return '<span class="chip bad" title="plist 파일은 있지만 launchd에 로드되지 않음 — 지금은 절대 실행되지 않습니다">미로드</span>';
+            if(j.lastExit>0) return '<span class="chip bad" title="마지막 실행이 종료 코드 '+j.lastExit+'로 끝났습니다">오류 ⚠ (exit '+j.lastExit+')</span>';
+            if(j.pid>0) return '<span class="chip" title="PID '+j.pid+'">동작 중</span>';
+            return '<span class="chip" title="로드됨 — 다음 실행 시각을 기다리는 중">대기</span>';
+          }
+          // 홈 경로를 ~ 로 줄인다. 잘린 셀에서 앞의 /Users/<이름>/ 이 자리를 다 먹는 걸 막는다.
+          function tildify(s){ return String(s||'').replace(/\\/Users\\/[^/]+\\//g,'~/'); }
+          function sourceChip(src){
+            if(src==='crontab') return '<span class="chip" style="margin:0;background:#7a8699;color:#fff" title="classic unix crontab">crontab</span>';
+            return '<span class="chip" style="margin:0;background:#3aa0ff;color:#fff" title="macOS launchd LaunchAgent">launchd</span>';
+          }
+          // 실행 대상 전체 경로 대신 실행되는 것의 이름만. 경로는 title 과 상세 페이지에 남는다.
+          // '하는 일' 칸이 작업 이름의 반복이 되지 않으면서도 한 줄로 읽힌다.
+          function shortCmd(s){
+            var t=String(s||'').split(' ').filter(Boolean);
+            // 첫 리다이렉트부터는 배관이지 '하는 일'이 아니다 — 대상 파일까지 통째로 끊는다.
+            var cut=t.findIndex(function(x){ return /^\\d*>>?$/.test(x)||/^\\d*>/.test(x); });
+            if(cut>=0) t=t.slice(0,cut);
+            return t.map(function(x){ return x.indexOf('/')>=0 ? x.split('/').pop() : x; })
+                    .join(' ').slice(0,60) || '(실행 경로 미지정)';
+          }
+          function projChip(p){
+            if(!p) return '<span class="proj sys" title="어느 프로젝트에도 매이지 않음">미분류</span>';
+            var sys=(p==='시스템');
+            return '<span class="proj'+(sys?' sys':'')+'"'+(sys?' title="OS·벤더 업데이터 등 우리 작업이 아닌 것"':'')+'>'+esc(p)+'</span>';
+          }
+          var _device=[];
+          function renderDevice(arr){
+            _device=Array.isArray(arr)?arr:[];
+            var rows=document.getElementById('devicerows');
+            var cnt=document.getElementById('cnt-device');
+            // 배지에는 '문제 있는 개수'를 띄운다 — 탭을 열지 않아도 죽은 게 있는지 보이도록.
+            var bad=_device.filter(deviceBroken).length;
+            if(cnt) cnt.textContent=_device.length+(bad?' · 문제 '+bad:'');
+            syncProjectOptions();
+            if(!_device.length){ rows.innerHTML='<tr><td colspan="7" class="empty">이 맥에 등록된 launchd/crontab 작업이 없습니다</td></tr>'; return; }
+            var shown=0;
+            rows.innerHTML=_device.map(function(j){
+              if(!deviceVisible(j)) return '';
+              shown++;
+              var broken=deviceBroken(j)&&!j.disabled;
+              return '<tr'+(broken?' style="background:rgba(226,102,125,0.08)"':'')+(j.disabled?' style="opacity:0.6"':'')+'>'
+                // 사람이 부르는 이름이 먼저, 개발용 라벨은 그 밑에 작게.
+                +'<td title="'+esc(shortCmd(j.detail))+' — '+esc(j.detail)+'">'
+                  +'<b class="devname">'+esc(j.name)+'</b>'
+                  +'<span class="devlabel" title="'+esc(j.label)+' · '+esc(tildify(j.path))+'">'+esc(j.label)+'</span></td>'
+                +'<td>'+projChip(j.project)+'</td>'
+                +'<td>'+deviceBadge(j)+'</td>'
+                +'<td>'+esc(j.schedule)+'</td>'
+                +'<td>'+fmtWhen(j.lastRunEpoch)+'</td>'
+                +'<td>'+(j.runs>=0?j.runs.toLocaleString():'–')+'</td>'
+                +'<td><a class="btn" href="/device-cron?id='+encodeURIComponent(j.id)+'">자세히</a></td></tr>';
+            }).join('');
+            if(!shown) rows.innerHTML='<tr><td colspan="7" class="empty">이 조건에 맞는 작업이 없습니다 — 보기나 프로젝트를 바꿔 보세요</td></tr>';
+            noteHidden(_device.length-shown,'device');
+          }
+
+          // --- 보기 필터 -----------------------------------------------------------
+          // 두 표의 '살아 있음' 정의가 다르다. 앱 워커는 방금 실행됐어야 동작 중이고,
+          // launchd 작업은 로드만 돼 있으면 다음 시각에 확실히 뜬다(=대기도 살아 있는 것).
+          var _filter={state:'live',proj:''};
+          function deviceBroken(j){ return j.disabled||!j.loaded||j.lastExit>0; }
+          function workerVisible(w){
+            if(_filter.state==='all') return true;
+            var alive=(w.enabled!==false)&&w.active&&!w.error;
+            return _filter.state==='live' ? alive : !alive;
+          }
+          function deviceVisible(j){
+            if(_filter.proj && (j.project||'')!==_filter.proj) return false;
+            if(_filter.state==='all') return true;
+            return _filter.state==='live' ? !deviceBroken(j) : deviceBroken(j);
+          }
+          // 두 표가 같은 안내 줄을 공유한다 — 지금 보고 있는 탭의 숫자만 쓰게 막지 않으면
+          // 나중에 그려진 쪽(30초 폴링의 디바이스)이 앱 탭의 숫자를 덮어쓴다.
+          var _tab='app';
+          function noteHidden(n,which){
+            if(which!==_tab) return;
+            var el=document.getElementById('hiddenNote');
+            if(el) el.textContent=n>0?(n+'개 숨김'):'';
+          }
+          // 프로젝트 목록은 스캔 결과에서 그대로 만든다 — 새 프로젝트가 생기면 그냥 나타난다.
+          function syncProjectOptions(){
+            var sel=document.getElementById('fProj'); if(!sel) return;
+            var seen={}, list=[];
+            _device.forEach(function(j){ var p=j.project||''; if(p&&!seen[p]){ seen[p]=1; list.push(p); } });
+            list.sort(function(a,b){ return a==='시스템'?1:(b==='시스템'?-1:a.localeCompare(b)); });
+            var want='<option value="">전체</option>'+list.map(function(p){
+              return '<option value="'+esc(p)+'">'+esc(p)+'</option>'; }).join('');
+            if(sel.innerHTML===want) return;   // 매 폴링마다 선택을 날리지 않도록
+            sel.innerHTML=want;
+            sel.value=_filter.proj;
+            if(sel.value!==_filter.proj){ _filter.proj=''; sel.value=''; }
+          }
+          function setFilter(){
+            var s=document.getElementById('fState'), p=document.getElementById('fProj');
+            _filter.state=s?s.value:'live';
+            _filter.proj=p?p.value:'';
+            try{ localStorage.setItem('cmCronFilter',JSON.stringify(_filter)); }catch(e){}
+            renderWorkers(_workers); renderDevice(_device);
+          }
+
+          function showTab(which){
+            ['app','device'].forEach(function(t){
+              document.getElementById('tab-'+t).hidden=(t!==which);
+              document.getElementById('tabbtn-'+t).setAttribute('aria-selected',String(t===which));
+            });
+            // 프로젝트 축은 디바이스 목록에만 있다 — 앱 워커는 전부 컨디션 메이트 것.
+            var pw=document.getElementById('fProjWrap'); if(pw) pw.style.display=(which==='device'?'':'none');
+            _tab=which;
+            try{ localStorage.setItem('cmCronTab',which); }catch(e){}
+            noteHidden(which==='device' ? _device.filter(function(j){ return !deviceVisible(j); }).length
+                                        : _workers.filter(function(w){ return !workerVisible(w); }).length, which);
+          }
+          function loadDevice(){ fetch('/device-cron.json').then(function(r){ return r.json(); })
+            .then(function(d){ renderDevice(d.jobs); }).catch(function(){}); }
           function load(){ fetch('/workers.json').then(function(r){ return r.json(); })
             .then(function(d){ renderWorkers(d.workers); }).catch(function(){}); }
+          try{ var f=JSON.parse(localStorage.getItem('cmCronFilter')||'null');
+               if(f&&f.state){ _filter=f; document.getElementById('fState').value=f.state; } }catch(e){}
+          try{ var saved=localStorage.getItem('cmCronTab'); showTab(saved||'app'); }catch(e){ showTab('app'); }
           load();
+          // 서버가 30초 캐시를 물고 있으므로 이 주기보다 자주 훑을 이유가 없다.
+          loadDevice();
+          setInterval(loadDevice,30000);
           setInterval(tickWorkers,1000);
           </script>
         </body></html>
@@ -3211,6 +3783,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 + "\"pomoToday\":\(self.pomodoroStats.todayCount()),"
                 + "\"today\":\(Int(self.store.todaySeconds)),"
                 + "\"bgm\":\(Settings.shared.musicEnabled),"
+                + "\"sfx\":\(Settings.shared.sfxEnabled),"
+                + "\"voiceDuck\":\(Settings.shared.voiceDuckOn),"
+                + "\"voiceDucking\":\(self.voiceDucked),"
                 + "\"sprintStart\":\(spStart),\"sprintTarget\":\(spTarget)}"
         }
     }
@@ -3250,9 +3825,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ?? Settings.shared.musicFolderPath ?? ""
         let claude = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects").path
+        // 이슈 폴더: `issue` is the picked folder, or "" while it follows the caller's cwd.
+        // `issueDefault` is what an issue raised by THIS window would use right now, so the
+        // 설정 row can show a concrete example of the default instead of only describing it.
+        let issueOverride = IssueFolder.override?.path ?? ""
+        let issueDefault = IssueFolder.defaultRoot(cwd: latestAgentCwd()).path
+        let queueOverride = Settings.shared.queueFolder ?? ""
+        let queueDefault = WorkQueueStore.defaultRootPath
+        let queueIsDefault = Settings.shared.queueFolder == nil
         return "{\"data\":\(jsonString(dataDir)),\"bgm\":\(jsonString(bgm)),"
             + "\"claude\":\(jsonString(claude)),\"shared\":\(!AppPaths.isCustom),"
+            + "\"issue\":\(jsonString(issueOverride)),"
+            + "\"issueDefault\":\(jsonString(issueDefault)),"
+            + "\"issueIsDefault\":\(IssueFolder.isDefault),"
+            + "\"issueLabel\":\(jsonString(IssueFolder.displayLabel)),"
+            + "\"queue\":\(jsonString(queueOverride)),"
+            + "\"queueDefault\":\(jsonString(queueDefault)),"
+            + "\"queueIsDefault\":\(queueIsDefault),"
             + "\"dev\":\(AppPaths.isDev)}"
+    }
+
+    // The folder the agent was most recently invoked in: the cwd of the highest-numbered
+    // goal that carries one. This is what "기본값" resolves to right now, so 설정 can show a
+    // concrete path next to the rule instead of only the rule. Empty when no goal has ever
+    // been given a working folder — then the default falls back to the app's own store.
+    // Reads `goals` on main, like every other reader on the server queue (goalCwdRoots).
+    private func latestAgentCwd() -> String {
+        DispatchQueue.main.sync {
+            reviewStore.goals
+                .filter { !$0.cwd.trimmingCharacters(in: .whitespaces).isEmpty }
+                .max(by: { $0.seq < $1.seq })?.cwd ?? ""
+        }
+    }
+
+    // Set (or reset) the folder where delegation issues are created. A blank folder resets
+    // to the default — the folder the agent was invoked in. Returns the refreshed paths
+    // payload so the 설정 panel updates the row in one round-trip (mirrors setSkillsFolder).
+    func setIssueFolder(folder: String) -> String {
+        IssueFolder.setOverride(folder)
+        return settingsPathsJSON()
+    }
+    
+    // Set (or reset) the explicit Queue folder. Blank resets to default (env or hardcoded).
+    func setQueueFolder(folder: String) -> String {
+        Settings.shared.queueFolder = folder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : folder
+        return settingsPathsJSON()
+    }
+
+    func pickIssueFolder() -> String {
+        var chosen: String?
+        DispatchQueue.main.sync {
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.canCreateDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.prompt = "선택"
+            panel.message = "이슈 파일이 생성될 폴더를 선택하세요 (기본값은 에이전트를 부른 폴더입니다)"
+            panel.directoryURL = IssueFolder.override
+                ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+            if panel.runModal() == .OK, let url = panel.url { chosen = url.path }
+        }
+        if let c = chosen { IssueFolder.setOverride(c) }
+        return settingsPathsJSON()
+    }
+
+    // Opens a native folder picker for the Queue folder.
+    func pickQueueFolder() -> String {
+        var chosen: String?
+        DispatchQueue.main.sync {
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.canCreateDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.prompt = "선택"
+            panel.message = "큐 폴더를 선택하세요"
+            panel.directoryURL = WorkQueueStore.root
+            if panel.runModal() == .OK, let url = panel.url { chosen = url.path }
+        }
+        if let c = chosen { Settings.shared.queueFolder = c }
+        return settingsPathsJSON()
     }
 
     // GET /api/memo — the one global 메모장 text (MemoStore). `chars` is a convenience for
@@ -3619,7 +4272,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 continue
             }
-            guard url.pathExtension == "swift" else { continue }
+            // .mjs도 센다: 슬랙 데몬은 이제 번들에 실려 나가는 산출물이라 리빌드
+            // 대상이다. Scripts/build-app.sh·autobuild-watch.sh의 newest_src_mtime과
+            // 같은 기준을 유지해야 "업데이트 있음" 판정이 양쪽에서 어긋나지 않는다.
+            // slack-*.json(응답 정책·권한 등급·용어집)도 번들에 실려 나가는 산출물이라
+            // 같이 센다. 이름 대응만 고친 변경이 "업데이트 없음"으로 보이면 안 된다.
+            guard url.pathExtension == "swift" || url.pathExtension == "mjs"
+                    || (url.pathExtension == "json" && name.hasPrefix("slack-")) else { continue }
             if let d = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate {
                 latest = max(latest, d.timeIntervalSince1970)
             }
@@ -3694,6 +4353,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         var totals: [String: DayTok] = [:]        // day -> aggregated stats
         var sessionsPerDay: [String: Set<String>] = [:]  // day -> distinct session files that spent tokens
+        // 창 점유는 합산할 수 없는 값이라 totals 안에서 접히지 않는다(t.ctxFinal 은 0 으로 남는다).
+        // 대신 세션마다의 최종 점유율을 여기 모아 두고, 일 행에서 분포(중앙값·80%↑ 개수)로 낸다.
+        // 라우팅은 세션 하나가 아니라 분포를 봐야 바뀐다.
+        var ctxPctsPerDay: [String: [Double]] = [:]
         for f in files {
             let rv = try? f.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
             let mtime = rv?.contentModificationDate ?? .distantPast
@@ -3713,12 +4376,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     var mu = t.models[m, default: ModelUse()]
                     mu.inTok += u.inTok; mu.cacheRead += u.cacheRead
                     mu.cache5m += u.cache5m; mu.cache1h += u.cache1h; mu.outTok += u.outTok
+                    if !u.effort.isEmpty { mu.effort = u.effort }
+                    for (eff, cnt) in u.efforts { mu.efforts[eff, default: 0] += cnt }
                     t.models[m] = mu
                 }
                 t.leads.append(contentsOf: st.leads)
+                for (aid, amt) in st.accounts { t.accounts[aid, default: 0] += amt }
+                for (prv, amt) in st.providers { t.providers[prv, default: 0] += amt }
+                // 창 점유는 t 로 접지 않는다 — 세션별 값을 그대로 모은다.
+                if st.ctxFinal > 0, let w = Self.resolvedWindow(model: st.ctxModel, peak: st.ctxPeak), w > 0 {
+                    ctxPctsPerDay[day, default: []].append(Double(st.ctxFinal) / Double(w) * 100)
+                }
                 totals[day] = t
                 if st.spent > 0 { sessionsPerDay[day, default: []].insert(sid) }
             }
+        }
+
+        // Multi-LLM: Codex
+        let codexSessions = CodexTokenCollector.shared.fetchSessions(since: cutoff)
+        let codexAcc = LLMAccountStore.shared.resolve(provider: "codex", accountId: "local")
+        for cs in codexSessions {
+            var t = totals[cs.day, default: DayTok()]
+            let inTok = Int(Double(cs.tokensUsed) * 0.65)
+            let outTok = Int(Double(cs.tokensUsed) * 0.35)
+            t.spent += cs.tokensUsed
+            t.inTok += inTok
+            t.outTok += outTok
+            t.accounts[codexAcc.id, default: 0] += cs.tokensUsed
+            t.providers["codex", default: 0] += cs.tokensUsed
+            var mu = t.models[cs.model, default: ModelUse()]
+            mu.inTok += inTok; mu.outTok += outTok
+            if !cs.reasoningEffort.isEmpty {
+                mu.effort = cs.reasoningEffort
+                mu.efforts[cs.reasoningEffort, default: 0] += cs.tokensUsed
+            }
+            t.models[cs.model] = mu
+            totals[cs.day] = t
+            if cs.tokensUsed > 0 { sessionsPerDay[cs.day, default: []].insert(cs.id) }
+        }
+
+        // Multi-LLM: Antigravity
+        let agySessions = AntigravityTokenCollector.shared.fetchSessions(since: cutoff)
+        let agyAcc = LLMAccountStore.shared.resolve(provider: "antigravity", accountId: "default")
+        for asess in agySessions {
+            var t = totals[asess.day, default: DayTok()]
+            t.spent += asess.tokensUsed
+            t.inTok += asess.inTok
+            t.outTok += asess.outTok
+            t.accounts[agyAcc.id, default: 0] += asess.tokensUsed
+            t.providers["antigravity", default: 0] += asess.tokensUsed
+            var mu = t.models[asess.model, default: ModelUse()]
+            mu.inTok += asess.inTok; mu.outTok += asess.outTok
+            if !asess.effort.isEmpty {
+                mu.effort = asess.effort
+                mu.efforts[asess.effort, default: 0] += asess.tokensUsed
+            }
+            t.models[asess.model] = mu
+            totals[asess.day] = t
+            if asess.tokensUsed > 0 { sessionsPerDay[asess.day, default: []].insert(asess.id) }
         }
 
         // Active human seconds per day — for the 가치 mode's time-efficiency weighting.
@@ -3734,15 +4449,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let leadN = leads.count
             let leadSum = Int(leads.reduce(0, +).rounded())
             let leadMed = leadN > 0 ? Int(leads[leadN / 2].rounded()) : 0
+            let accountsJSON = "{" + st.accounts.keys.sorted().map { aid -> String in
+                let tok = st.accounts[aid] ?? 0
+                let acc = LLMAccountStore.shared.resolve(provider: aid.split(separator: ":").first.map(String.init) ?? "claude",
+                                                         accountId: aid.split(separator: ":").dropFirst().joined(separator: ":"))
+                return "\(self.jsonString(aid)):{\"tokens\":\(tok),\"label\":\(self.jsonString(acc.label)),\"color\":\(self.jsonString(acc.color)),\"provider\":\(self.jsonString(acc.provider))}"
+            }.joined(separator: ",") + "}"
+            let providersJSON = "{" + st.providers.keys.sorted().map { prov -> String in
+                let tok = st.providers[prov] ?? 0
+                return "\(self.jsonString(prov)):\(tok)"
+            }.joined(separator: ",") + "}"
+            // 창 점유 분포 — 창을 아는 세션이 하나도 없으면 중앙값은 null 이고 화면은 조각을 뺀다.
+            let ctxPcts = (ctxPctsPerDay[day] ?? []).sorted()
+            let ctxSessN = ctxPcts.count
+            let ctxMedPctJSON = ctxSessN > 0 ? String(format: "%.1f", ctxPcts[ctxSessN / 2]) : "null"
+            let ctxHighN = ctxPcts.filter { $0 >= 80 }.count
             return "{\"day\":\(jsonString(day)),\"tokens\":\(st.spent),\"k\":\(tokK),"
-                + "\"sessions\":\(sess),\"activeSec\":\(activeSec[day] ?? 0),"
                 + "\"inTok\":\(st.inTok),\"outTok\":\(st.outTok),\"thinkTok\":\(st.thinkTok),"
                 + "\"textTok\":\(st.textTok),\"toolTok\":\(st.toolTok),"
                 + "\"typedTok\":\(st.typedTok),\"imgN\":\(st.imgN),\"imgBytes\":\(st.imgBytes),"
                 + "\"imgTok\":\(st.imgTok),\"toolResTok\":\(st.toolResTok),\"reloadTok\":\(st.reloadTok),"
                 + "\"aiSec\":\(st.aiSec),"
                 + "\"models\":\(modelsJSON(st.models)),"
-                + "\"leadN\":\(leadN),\"leadSum\":\(leadSum),\"leadMed\":\(leadMed)}"
+                + "\"accounts\":\(accountsJSON),"
+                + "\"providers\":\(providersJSON),"
+                + "\"sessions\":\(sess),\"leadN\":\(leadN),\"leadSum\":\(leadSum),\"leadMed\":\(leadMed),"
+                + "\"ctxMedPct\":\(ctxMedPctJSON),\"ctxHighN\":\(ctxHighN),\"ctxSessN\":\(ctxSessN),"
+                + "\"activeSec\":\(activeSec[day] ?? 0)}"
         }
         return "{\"days\":[\(rows.joined(separator: ","))]}"
     }
@@ -3778,24 +4511,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let rv = try? f.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
                 let mtime = rv?.contentModificationDate ?? .distantPast
                 if mtime < dayStart { continue }
-                let stats = transcriptStats(file: f, mtime: mtime, size: rv?.fileSize ?? 0)
-                guard let st = stats.days[day], st.spent > 0 else { continue }
+                let facts = transcriptStats(file: f, mtime: mtime, size: rv?.fileSize ?? 0)
+                guard let st = facts.days[day], st.spent > 0 else { continue }
                 let sid = f.deletingPathExtension().lastPathComponent
                 let leads = st.leads.sorted()
                 let leadMed = leads.isEmpty ? 0 : Int(leads[leads.count / 2].rounded())
-                let json = "{\"sid\":\(jsonString(String(sid.prefix(8)))),\"proj\":\(jsonString(proj)),"
-                    + "\"title\":\(jsonString(stats.title)),"
+                // 이 세션이 어느 루프를 돌리려고 열린 것인지 — 판정은 세션 원장이 소유한다.
+                let v = LoopSessionLedger.verdict(sid: sid)
+                let primaryModel = st.models.max(by: { ($0.value.inTok + $0.value.outTok) < ($1.value.inTok + $1.value.outTok) })
+                let primaryEffort = primaryModel?.value.efforts.max(by: { $0.value < $1.value })?.key ?? primaryModel?.value.effort ?? ""
+                // 창 점유 — 값이 없으면 0 이 아니라 null 이다. 0 을 내려보내면 화면이
+                // "창을 안 썼다"로 그리게 되고, 그것은 없는 것과 다른 거짓말이 된다.
+                let ctxWin = Self.resolvedWindow(model: st.ctxModel, peak: st.ctxPeak)
+                let ctxFinalJSON = st.ctxFinal > 0 ? String(st.ctxFinal) : "null"
+                let ctxPeakJSON = st.ctxPeak > 0 ? String(st.ctxPeak) : "null"
+                let ctxWinJSON = ctxWin.map(String.init) ?? "null"
+                var ctxPctJSON = "null"
+                if let w = ctxWin, w > 0, st.ctxFinal > 0 {
+                    ctxPctJSON = String(format: "%.1f", (Double(st.ctxFinal) / Double(w)) * 100)
+                }
+                let json = "{\"sid\":\(jsonString(String(sid.prefix(8)))),\"provider\":\(jsonString(facts.provider)),"
+                    + "\"account\":\(jsonString(facts.accountId)),\"accountLabel\":\(jsonString(facts.accountLabel)),\"accountColor\":\(jsonString(facts.accountColor)),"
+                    + "\"proj\":\(jsonString(proj)),\"title\":\(jsonString(facts.title)),"
+                    + "\"loop\":\(jsonString(v?.label ?? "")),\"loopKind\":\(jsonString(v?.kind ?? "")),"
                     + "\"tokens\":\(st.spent),\"k\":\(Int((Double(st.spent) / 1000.0).rounded())),"
+                    + "\"effort\":\(jsonString(primaryEffort)),"
                     + "\"inTok\":\(st.inTok),\"outTok\":\(st.outTok),\"thinkTok\":\(st.thinkTok),"
                     + "\"textTok\":\(st.textTok),\"toolTok\":\(st.toolTok),"
                     + "\"typedTok\":\(st.typedTok),\"imgN\":\(st.imgN),\"imgBytes\":\(st.imgBytes),"
                     + "\"imgTok\":\(st.imgTok),\"toolResTok\":\(st.toolResTok),\"reloadTok\":\(st.reloadTok),"
                     + "\"aiSec\":\(st.aiSec),"
                     + "\"models\":\(modelsJSON(st.models)),"
+                    + "\"ctxFinal\":\(ctxFinalJSON),\"ctxPeak\":\(ctxPeakJSON),"
+                    + "\"ctxWin\":\(ctxWinJSON),\"ctxPct\":\(ctxPctJSON),"
+                    + "\"ctxModel\":\(jsonString(st.ctxModel)),"
                     + "\"leadN\":\(leads.count),\"leadMed\":\(leadMed)}"
                 rows.append((st.spent, json))
             }
         }
+
+        // Multi-LLM: Codex sessions for this day
+        let codexSessions = CodexTokenCollector.shared.fetchSessions(since: dayStart)
+        let codexAcc = LLMAccountStore.shared.resolve(provider: "codex", accountId: "local")
+        for cs in codexSessions where cs.day == day {
+            let proj = cs.cwd.split(separator: "/").last.map(String.init) ?? "codex"
+            let inTok = Int(Double(cs.tokensUsed) * 0.65)
+            let outTok = Int(Double(cs.tokensUsed) * 0.35)
+            let json = "{\"sid\":\(jsonString(String(cs.id.prefix(8)))),\"provider\":\"codex\","
+                + "\"account\":\(jsonString(codexAcc.id)),\"accountLabel\":\(jsonString(codexAcc.label)),\"accountColor\":\(jsonString(codexAcc.color)),"
+                + "\"proj\":\(jsonString(proj)),\"title\":\(jsonString(cs.title)),\"loop\":\"\",\"loopKind\":\"\","
+                + "\"tokens\":\(cs.tokensUsed),\"k\":\(Int((Double(cs.tokensUsed) / 1000.0).rounded())),"
+                + "\"effort\":\(jsonString(cs.reasoningEffort)),"
+                + "\"inTok\":\(inTok),\"outTok\":\(outTok),\"thinkTok\":0,"
+                + "\"textTok\":\(outTok),\"toolTok\":0,\"typedTok\":0,\"imgN\":0,\"imgBytes\":0,\"imgTok\":0,"
+                + "\"toolResTok\":0,\"reloadTok\":0,\"aiSec\":0,"
+                + "\"models\":{\(jsonString(cs.model)):{\"in\":\(inTok),\"cr\":0,\"c5m\":0,\"c1h\":0,\"out\":\(outTok),\"effort\":\(jsonString(cs.reasoningEffort))}},"
+                // 코덱스 수집기는 세션 총 토큰만 준다 — 턴별 컨텍스트가 없으므로 창 점유를
+                // 0 으로 내리지 않고 모른다고 한다. 0 은 "창이 텅 비었다"는 거짓말이 된다.
+                + "\"ctxFinal\":null,\"ctxPeak\":null,\"ctxWin\":null,\"ctxPct\":null,\"ctxModel\":\"\","
+                + "\"leadN\":0,\"leadMed\":0}"
+            rows.append((cs.tokensUsed, json))
+        }
+
+        // Multi-LLM: Antigravity sessions for this day
+        let agySessions = AntigravityTokenCollector.shared.fetchSessions(since: dayStart)
+        let agyAcc = LLMAccountStore.shared.resolve(provider: "antigravity", accountId: "default")
+        for asess in agySessions where asess.day == day {
+            let proj = asess.cwd.split(separator: "/").last.map(String.init) ?? "antigravity"
+            let json = "{\"sid\":\(jsonString(String(asess.id.prefix(8)))),\"provider\":\"antigravity\","
+                + "\"account\":\(jsonString(agyAcc.id)),\"accountLabel\":\(jsonString(agyAcc.label)),\"accountColor\":\(jsonString(agyAcc.color)),"
+                + "\"proj\":\(jsonString(proj)),\"title\":\(jsonString(asess.title)),\"loop\":\"\",\"loopKind\":\"\","
+                + "\"tokens\":\(asess.tokensUsed),\"k\":\(Int((Double(asess.tokensUsed) / 1000.0).rounded())),"
+                + "\"effort\":\(jsonString(asess.effort)),"
+                + "\"inTok\":\(asess.inTok),\"outTok\":\(asess.outTok),\"thinkTok\":0,"
+                + "\"textTok\":\(asess.outTok),\"toolTok\":0,\"typedTok\":\(asess.inTok),\"imgN\":0,\"imgBytes\":0,\"imgTok\":0,"
+                + "\"toolResTok\":0,\"reloadTok\":0,\"aiSec\":0,"
+                + "\"models\":{\(jsonString(asess.model)):{\"in\":\(asess.inTok),\"cr\":0,\"c5m\":0,\"c1h\":0,\"out\":\(asess.outTok),\"effort\":\(jsonString(asess.effort))}},"
+                // 안티그라비티도 턴별 컨텍스트가 없다 — 위 코덱스와 같은 이유로 전부 null.
+                + "\"ctxFinal\":null,\"ctxPeak\":null,\"ctxWin\":null,\"ctxPct\":null,\"ctxModel\":\"\","
+                + "\"leadN\":0,\"leadMed\":0}"
+            rows.append((asess.tokensUsed, json))
+        }
+
         rows.sort { $0.spent > $1.spent }
         return "{\"day\":\(jsonString(day)),\"sessions\":[\(rows.map(\.json).joined(separator: ","))]}"
     }
@@ -4024,14 +4821,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Full per-transcript stats: per-day aggregates + a human-readable session title
     // (last custom-title line, else the first human prompt's first line).
-    private func transcriptStats(file: URL, mtime: Date, size: Int) -> (days: [String: DayTok], title: String) {
+    private func transcriptStats(file: URL, mtime: Date, size: Int) -> TranscriptFacts {
         // Cache key carries the display timezone: switching KST↔UTC moves day boundaries,
         // so per-day splits cached under another zone must not be reused.
         let key = file.path + "|" + Settings.shared.displayTimeZone.identifier
         tokenDayLock.lock()
         let cached = tokenDayCache[key]
         tokenDayLock.unlock()
-        if let c = cached, c.mtime == mtime, c.size == size { return (c.days, c.title) }
+        if let c = cached, c.mtime == mtime, c.size == size { return c.facts }
 
         var perDay: [String: DayTok] = [:]
         let dayFmt = DateFormatter()
@@ -4040,14 +4837,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dayFmt.dateFormat = "yyyy-MM-dd"   // 표시 타임존 — same day boundary as the rest of the UI
 
         // Per-message accumulator: usage once, block chars summed across the message's lines.
-        struct MsgAgg { var day = ""; var model = ""; var input = 0; var output = 0; var cc = 0
+        struct MsgAgg { var day = ""; var model = ""; var effort = ""; var input = 0; var output = 0; var cc = 0
                         var cr = 0; var c5m = 0; var c1h = 0
-                        var th = 0; var tx = 0; var tool = 0; var blockSeen = Set<Int>() }
+                        var th = 0; var tx = 0; var tool = 0; var blockSeen = Set<Int>()
+                        // 창 점유 축 — 이 요청 하나에 실제로 실린 프롬프트 총량. 누적이 아니다.
+                        var ctx = 0
+                        // 서브에이전트 줄은 자기 컨텍스트를 따로 가지므로 부모의 창 점유로 세면 안 된다.
+                        var sidechain = false }
         var msgs: [String: MsgAgg] = [:]
         var msgOrder: [String] = []
         var lastAssistantTS: Date?   // end of the assistant's turn, for prompt lead time
         var customTitle = ""         // last custom-title line wins
         var firstPrompt = ""         // first human prompt, fallback title
+        // 세션 원장(LoopSessionLedger)이 "이 세션은 어느 루프를 돌리려고 열렸나"를 판정하는 근거.
+        // 제목용 firstPrompt 는 첫 줄 80자라 "Run exactly ONE SB-PO cycle now, following…" 같은
+        // 하네스 서명을 잘라 먹는다. 그래서 판정용으로 여러 줄 400자를 따로 남긴다.
+        var firstPromptFull = ""
+        var cwd = ""                 // 프로젝트 귀속의 근거 — 트랜스크립트 줄마다 실려 있다
+        var accountUuid = ""         // ownerAccountUuid / accountUuid — 다중 계정 귀속 근거
+        // 세션이 언제 열려 언제까지 갔는지, 그 안에서 몇 턴이 돌고 도구를 몇 번 불렀는지.
+        // 루프 세션 목록이 "8월 29일 05:30 · 24분 · 도구 61회"로 한 줄을 적는 근거다.
+        var firstTS: Date?
+        var lastTS: Date?
+        var turnCount = 0
+        var toolCount = 0
         // AI-runtime turn tracking: a turn spans human prompt -> last AI/tool line before
         // the next human prompt. Idle time after the AI stops is charged to nobody (the
         // user walking away for 8h must not inflate this), so the turn is closed at
@@ -4069,6 +4882,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                       let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
                       let type = obj["type"] as? String else { return }
                 let sidechain = (obj["isSidechain"] as? Bool) == true
+                if cwd.isEmpty, let c = obj["cwd"] as? String { cwd = c }
+                if accountUuid.isEmpty {
+                    if let a = obj["ownerAccountUuid"] as? String, !a.isEmpty { accountUuid = a }
+                    else if let a = obj["accountUuid"] as? String, !a.isEmpty { accountUuid = a }
+                }
+                if let t = (obj["timestamp"] as? String).flatMap({ self.parseTS($0) }) {
+                    if firstTS == nil { firstTS = t }
+                    lastTS = t
+                }
 
                 if type == "custom-title" {
                     if let t = obj["customTitle"] as? String, !t.isEmpty { customTitle = t }
@@ -4085,10 +4907,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     lastAITS = ts   // any assistant line (sidechain too) extends the AI turn
                     let mid = (msg["id"] as? String) ?? (obj["requestId"] as? String)
                         ?? (obj["uuid"] as? String) ?? line
+                    let eff = (obj["effort"] as? String) ?? ((msg["effort"] as? String) ?? "")
                     if msgs[mid] == nil {
                         var a = MsgAgg()
                         a.day = dayFmt.string(from: ts)
                         a.model = (msg["model"] as? String) ?? ""
+                        a.effort = eff
                         let usage = (msg["usage"] as? [String: Any]) ?? [:]
                         a.input = (usage["input_tokens"] as? Int) ?? 0
                         a.output = (usage["output_tokens"] as? Int) ?? 0
@@ -4103,7 +4927,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         } else {
                             a.c5m = a.cc
                         }
+                        // 이 요청이 창에 실제로 올린 프롬프트 = 새 입력 + 캐시 재사용 + 캐시 생성.
+                        // spent(누적)와 다른 축이다 — 더하면 안 되고 마지막·최대만 의미가 있다.
+                        a.ctx = a.input + a.cr + a.cc
+                        a.sidechain = sidechain
                         msgs[mid] = a; msgOrder.append(mid)
+                        if !sidechain { turnCount += 1 }
+                    } else if !eff.isEmpty, var existing = msgs[mid], existing.effort.isEmpty {
+                        existing.effort = eff
+                        msgs[mid] = existing
                     }
                     if var a = msgs[mid], let content = msg["content"] as? [[String: Any]] {
                         for b in content {
@@ -4121,7 +4953,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 var n = 16
                                 if let inp = b["input"],
                                    let bd = try? JSONSerialization.data(withJSONObject: inp) { n = max(n, bd.count) }
-                                if a.blockSeen.insert(("tool" + bid).hashValue).inserted { a.tool += n }
+                                if a.blockSeen.insert(("tool" + bid).hashValue).inserted {
+                                    a.tool += n; toolCount += 1
+                                }
                             default: break
                             }
                         }
@@ -4205,6 +5039,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         }
                         let line1 = text.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
                         firstPrompt = String(line1.trimmingCharacters(in: .whitespaces).prefix(80))
+                        firstPromptFull = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(400))
                     }
                     if let prev = lastAssistantTS {
                         let lead = ts.timeIntervalSince(prev)
@@ -4226,12 +5061,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let spent = a.input + a.output + a.cc
             if spent == 0 { continue }
             var st = perDay[a.day, default: DayTok()]
+            // 창 점유 — 더하지 않는다. 서브에이전트(sidechain)는 자기 창을 따로 쓰므로
+            // 부모 세션의 점유로 세면 부모가 쓰지도 않은 창을 쓴 것으로 보인다.
+            if !a.sidechain && a.ctx > 0 {
+                st.ctxPeak = max(st.ctxPeak, a.ctx)
+                st.ctxFinal = a.ctx          // msgOrder is file order, so the last write wins
+                st.ctxModel = a.model
+            }
             st.spent += spent
             st.inTok += a.input + a.cc
             st.outTok += a.output
             var mu = st.models[a.model, default: ModelUse()]
             mu.inTok += a.input; mu.cacheRead += a.cr
             mu.cache5m += a.c5m; mu.cache1h += a.c1h; mu.outTok += a.output
+            if !a.effort.isEmpty {
+                mu.effort = a.effort
+                mu.efforts[a.effort, default: 0] += spent
+            }
             st.models[a.model] = mu
             let chars = a.th + a.tx + a.tool
             if a.output > 0 {
@@ -4257,8 +5103,110 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let title = customTitle.isEmpty ? firstPrompt : customTitle
-        tokenDayLock.lock(); tokenDayCache[key] = (mtime, size, perDay, title); tokenDayLock.unlock()
-        return (perDay, title)
+        // ~/.claude/projects 아래에 있다고 전부 클로드가 아니다. glm-claude 는 Claude Code 를
+        // z.ai 의 Anthropic 호환 엔드포인트로 꺾어 띄우므로, GLM 세션의 트랜스크립트가 여기에
+        // 그대로 섞여 쌓인다. 그것을 클로드로 세면 GLM 이 쓴 토큰이 `클로드 기본` 에 묻혀
+        // 골라낼 수 없게 된다 — 총합에는 들어가는데 추적은 안 되는 상태. 그래서 provider 는
+        // 폴더가 아니라 메시지의 model 이름으로 판정한다.
+        let claudeAcc = LLMAccountStore.shared.resolve(provider: "claude", accountId: accountUuid)
+        let sawGLM = perDay.values.contains { st in
+            st.models.keys.contains { Self.providerForModel($0) == "glm" }
+        }
+        // GLM 계정 해석은 목록 파일을 읽으므로, GLM 이 실제로 쓰인 세션에서만 부른다.
+        let glmAcc = sawGLM ? LLMAccountStore.shared.activeGLMAccount() : nil
+        var glmTotal = 0, allTotal = 0
+        for day in perDay.keys {
+            var st = perDay[day]!
+            // 모델별 사용량에서 GLM 몫을 다시 뽑는다. ModelUse 의 네 필드 합은 그 모델의
+            // (input + output + cache_creation) 이라 spent 와 같은 단위다.
+            var glmSpent = 0
+            for (m, u) in st.models where Self.providerForModel(m) == "glm" {
+                glmSpent += u.inTok + u.outTok + u.cache5m + u.cache1h
+            }
+            glmSpent = min(max(0, glmSpent), st.spent)
+            let claudeSpent = st.spent - glmSpent
+            if let g = glmAcc, glmSpent > 0 {
+                st.accounts[g.id] = (st.accounts[g.id] ?? 0) + glmSpent
+                st.providers["glm"] = (st.providers["glm"] ?? 0) + glmSpent
+            }
+            if claudeSpent > 0 {
+                st.accounts[claudeAcc.id] = (st.accounts[claudeAcc.id] ?? 0) + claudeSpent
+                st.providers["claude"] = (st.providers["claude"] ?? 0) + claudeSpent
+            }
+            glmTotal += glmSpent; allTotal += st.spent
+            perDay[day] = st
+        }
+        // 세션 한 줄에 붙는 뱃지는 하나뿐이라 다수결로 정한다. 한 창은 엔드포인트가 하나이므로
+        // 실제로 섞이는 일은 드물다 — 섞였다면 더 많이 쓴 쪽이 그 세션의 성격이다.
+        let sessionIsGLM = (glmAcc != nil) && glmTotal * 2 > allTotal
+        let acc = sessionIsGLM ? glmAcc! : claudeAcc
+        let facts = TranscriptFacts(days: perDay, title: title, cwd: cwd, prompt: firstPromptFull,
+                                    firstTS: firstTS, lastTS: lastTS, turns: turnCount, tools: toolCount,
+                                    accountId: acc.id, accountLabel: acc.label, accountColor: acc.color,
+                                    provider: sessionIsGLM ? "glm" : "claude")
+        tokenDayLock.lock()
+        tokenDayCache[key] = (mtime, size, facts)
+        tokenDayLock.unlock()
+        return facts
+    }
+
+    // 한 세션·하루의 모델 사용량을 $ 로. 산식과 단가는 토큰 뷰의 TK_PRICE/tkModelCost 와 같은
+    // 것이어야 한다 — 화면 두 곳이 같은 세션에 다른 금액을 적으면 둘 다 못 믿게 된다.
+    // 캐시 읽기는 토큰 합계(spent)에는 안 들어가지만 과금에는 들어간다.
+    private static let modelPrices: [(String, Double, Double)] = [
+        ("claude-fable-5", 10, 50), ("claude-mythos", 10, 50),
+        ("claude-opus-4-1", 15, 75), ("claude-opus-4-0", 15, 75),
+        ("claude-opus", 5, 25),
+        ("claude-sonnet", 3, 15),
+        ("claude-3-5-haiku", 0.8, 4), ("claude-3-haiku", 0.25, 1.25),
+        ("claude-haiku", 1, 5),
+        // GLM (z.ai) — 접두어가 긴 것이 먼저 와야 한다(첫 일치가 이긴다).
+        ("glm-4.5-air", 0.2, 1.1), ("glm-4.6", 0.6, 2.2),
+        ("glm-5", 0.5, 1.5), ("glm-4", 0.5, 1.5),
+    ]
+
+    // 모델 이름 → provider. 트랜스크립트가 놓인 폴더가 아니라 모델이 근거다 — glm-claude 가
+    // Claude Code 를 z.ai 로 꺾어 띄우면 GLM 세션도 ~/.claude/projects 에 쌓이기 때문이다.
+    // 토큰 뷰의 provider 축과 계정 귀속이 둘 다 이 한 곳을 쓴다.
+    static func providerForModel(_ model: String) -> String {
+        let m = model.lowercased()
+        if m.hasPrefix("glm") { return "glm" }
+        return "claude"
+    }
+
+    // 모델 → 컨텍스트 윈도우 (2026-09-04 공시 기준). 접두어 매칭, 위에서 첫 일치.
+    // 모르는 모델은 nil 이다 — 화면이 "창 —" 로 남게 하려는 것이고, 지어낸 숫자를 넣으면
+    // 라우팅 판단이 틀린 분모 위에서 이루어진다.
+    static func contextWindow(forModel m: String) -> Int? {
+        let t: [(String, Int)] = [
+            ("claude-opus", 200_000), ("claude-fable", 200_000), ("claude-mythos", 200_000),
+            ("claude-sonnet", 200_000),
+            ("claude-3-5-haiku", 200_000), ("claude-3-haiku", 200_000), ("claude-haiku", 200_000),
+            ("gemini-", 1_048_576),
+            ("gpt-4o", 128_000), ("o1", 200_000), ("o3", 200_000),
+            // glm-* 은 공시 창 크기를 확인하지 못해 비워 둔다 (모르는 것을 채우지 않는다).
+        ]
+        for (p, w) in t where m.hasPrefix(p) { return w }
+        return nil
+    }
+    // 표는 시작값일 뿐이다. opus-5 의 기본 창은 200K 인데 1M 컨텍스트 베타로 띄운 창이 있고,
+    // 디스크에 823,490 토큰짜리 세션이 실제로 있다. 표만 믿으면 점유율이 400% 로 나온다.
+    // 그래서 관측 피크가 표를 넘으면 그것을 담는 가장 작은 공시 단계로 올린다. 위로만 교정된다.
+    static func resolvedWindow(model: String, peak: Int) -> Int? {
+        guard let base = contextWindow(forModel: model) else { return nil }
+        if peak <= base { return base }
+        for tier in [200_000, 1_000_000] where peak <= tier { return max(base, tier) }
+        return nil   // 어떤 단계로도 설명이 안 되면 모른다고 한다
+    }
+    private func modelsCostUSD(_ models: [String: ModelUse]) -> Double {
+        var total = 0.0
+        for (m, u) in models {
+            guard let r = Self.modelPrices.first(where: { m.hasPrefix($0.0) }) else { continue }
+            total += (Double(u.inTok) * r.1 + Double(u.cacheRead) * r.1 * 0.1
+                      + Double(u.cache5m) * r.1 * 1.25 + Double(u.cache1h) * r.1 * 2
+                      + Double(u.outTok) * r.2) / 1_000_000
+        }
+        return total
     }
 
     // Real token total (in K) for a goal's linked Claude session, summed from its transcript.
@@ -4653,7 +5601,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func agentsJSON() -> String {
         let fm = FileManager.default
         let agentsDir = skillsRoot.appendingPathComponent("agents", isDirectory: true)
-        let skillsBase = skillsDir
         var items: [[String: Any]] = []
         var history = loadAgentHistory()
         var historyDirty = false
@@ -4694,74 +5641,901 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             // Join run history + retrospective from the harness skill this agent belongs to
             // (declared via the agent's custom `harness:` frontmatter field).
-            var runs = 0, oks = 0
-            var lastTs = "", lastOutcome = "", retro = ""
-            var recent: [[String: Any]] = []
-            if !harness.isEmpty {
-                let hdir = skillsBase.appendingPathComponent(harness, isDirectory: true)
-                retro = (try? String(contentsOf: hdir.appendingPathComponent("retro.md"), encoding: .utf8)) ?? ""
-                let ledgerDir = hdir.appendingPathComponent("ledger", isDirectory: true)
-                let ledgerFiles = ((try? fm.contentsOfDirectory(at: ledgerDir, includingPropertiesForKeys: nil,
-                                                                options: [.skipsHiddenFiles])) ?? [])
-                    .filter { $0.pathExtension == "jsonl" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
-                for lf in ledgerFiles {
-                    let t = (try? String(contentsOf: lf, encoding: .utf8)) ?? ""
-                    for line in t.split(separator: "\n") {
-                        guard let d = line.data(using: .utf8),
-                              let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { continue }
-                        if (o["summary"] as? Bool) == true { continue }
-                        let ts = (o["ts"] as? String) ?? ""
-                        if ts.isEmpty && o["report"] == nil && o["goal_id"] == nil { continue }
-                        let label = (o["after"] as? String) ?? (o["report"] as? String) ?? (o["reason"] as? String) ?? ""
-                        let note = (o["note"] as? String) ?? ""
-                        // Exclude non-attempts (dry-runs) and infra failures (app down) — neither
-                        // reflects whether the AGENT did its job well.
-                        if label.hasPrefix("(dry-run") || note.contains("http-error")
-                            || note.contains("spawn-error") { continue }
-                        let ok = ((o["ok"] as? Bool) ?? (o["synced"] as? Bool)) ?? false
-                        runs += 1; if ok { oks += 1 }
-                        lastTs = ts; lastOutcome = ok ? "ok" : "fail"
-                        recent.append(["ts": ts, "ok": ok, "label": label])
-                    }
-                }
-            } else {
-                // Standalone agents (no harness) don't own a harness ledger — their runs live in the
-                // universal agent-update-log, keyed by agent name. Derive the SAME run headline from
-                // there so they don't read as "기록 없음" despite an active ledger. `updateLog` is
-                // chronological, so the last match is the most recent run.
-                for o in updateLog where (o["agent"] as? String) == name {
-                    let ts = (o["ts"] as? String) ?? ""
-                    if ts.isEmpty { continue }
-                    // A missing `ok` means a recorded, completed action — count it as a success
-                    // unless the entry explicitly says otherwise.
-                    let ok = (o["ok"] as? Bool) ?? true
-                    let label = (o["func"] as? String) ?? (o["summary"] as? String)
-                        ?? (o["type"] as? String) ?? ""
-                    runs += 1; if ok { oks += 1 }
-                    lastTs = ts; lastOutcome = ok ? "ok" : "fail"
-                    recent.append(["ts": ts, "ok": ok, "label": label])
-                }
-            }
-            // Headline = success over the last 20 real runs (reflects the current agent, not
-            // dragged down by old ledger entries).
-            let window = recent.suffix(20)
-            let windowOks = window.filter { ($0["ok"] as? Bool) == true }.count
-            // Per-function-role rollup from the universal ledger (this agent's entries only).
-            let functions = Self.functionRoles(forAgent: name, in: updateLog)
-            items.append([
-                "name": name, "file": url.lastPathComponent, "desc": desc, "model": model,
-                "harness": harness, "retro": retro, "runs": runs, "oks": oks,
-                "okRate": runs > 0 ? Double(oks) / Double(runs) : 0,
-                "recentRate": window.isEmpty ? 0 : Double(windowOks) / Double(window.count),
-                "recentN": window.count, "lastTs": lastTs, "lastOutcome": lastOutcome,
-                "recent": Array(recent.suffix(40)), "history": clientHist, "functions": functions,
-            ])
+            let stats = agentRunStats(name: name, harness: harness, updateLog: updateLog)
+            var row: [String: Any] = stats
+            row["name"] = name
+            row["file"] = url.lastPathComponent
+            row["desc"] = desc
+            row["model"] = model
+            row["harness"] = harness
+            row["history"] = clientHist
+            items.append(row)
         }
         items.sort { (($0["runs"] as? Int) ?? 0) > (($1["runs"] as? Int) ?? 0) }
         if historyDirty { saveAgentHistory(history) }
         let payload: [String: Any] = ["dir": agentsDir.path, "root": skillsRoot.path, "agents": items]
         let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
+    }
+
+    // 에이전트 페이지(/agents)의 단일 피드 — 전역·스킬 하네스·프로젝트에 흩어진 에이전트 정의를
+    // 스코프별로 묶어 한 번에 내려보낸다. 각 에이전트에는 세 가지가 함께 실린다:
+    //   (a) 정의 자체 — 목적(description)·모델·도구·마지막 수정 시각
+    //   (b) 실행 성적 — 원장에서 계산한 실행 횟수/성공률/기능 역할 (agentRunStats)
+    //   (c) 사람의 판정 — 목적 달성 / 교체 필요 + 사유 (AgentVerdicts)
+    // 셋이 같이 보여야 "어떤 에이전트를 교체할 것인가"를 근거로 결정할 수 있다. 성공률이 100%인데
+    // 결과물이 쓸모없는 경우가 있기 때문에 (c) 를 따로 둔다.
+    func agentInventoryJSON() -> String {
+        let updateLog = loadAgentUpdateLog()
+        let verdicts = AgentVerdicts.load()
+        var scopes = AgentInventory.scopes(globalRoot: skillsRoot, extraRoots: goalCwdRoots())
+        var total = 0, needReplace = 0, projectCount = 0, ranCount = 0
+        for i in scopes.indices {
+            var agents = (scopes[i]["agents"] as? [[String: Any]]) ?? []
+            for j in agents.indices {
+                let name = (agents[j]["name"] as? String) ?? ""
+                let harness = (agents[j]["harness"] as? String) ?? ""
+                for (k, v) in agentRunStats(name: name, harness: harness, updateLog: updateLog) {
+                    agents[j][k] = v
+                }
+                if ((agents[j]["runs"] as? Int) ?? 0) > 0 { ranCount += 1 }
+                if let path = agents[j]["path"] as? String, let vd = verdicts[path] {
+                    agents[j]["verdict"] = vd
+                    if (vd["state"] as? String) == "replace" { needReplace += 1 }
+                }
+            }
+            // 교체 필요 → 실행 기록 많은 순 → 이름. 손볼 것이 늘 맨 위에 온다.
+            agents.sort { a, b in
+                let ra = ((a["verdict"] as? [String: Any])?["state"] as? String) == "replace"
+                let rb = ((b["verdict"] as? [String: Any])?["state"] as? String) == "replace"
+                if ra != rb { return ra }
+                let na = (a["runs"] as? Int) ?? 0, nb = (b["runs"] as? Int) ?? 0
+                if na != nb { return na > nb }
+                return ((a["name"] as? String) ?? "") < ((b["name"] as? String) ?? "")
+            }
+            scopes[i]["agents"] = agents
+            total += agents.count
+            if (scopes[i]["kind"] as? String) == "project" { projectCount += 1 }
+        }
+        var totals: [String: Any] = [:]
+        totals["agents"] = total
+        totals["projects"] = projectCount
+        totals["scopes"] = scopes.count
+        totals["replace"] = needReplace
+        totals["ran"] = ranCount
+        var payload: [String: Any] = [:]
+        payload["root"] = skillsRoot.path
+        payload["globalDir"] = skillsRoot.appendingPathComponent("agents", isDirectory: true).path
+        payload["scopes"] = scopes
+        payload["totals"] = totals
+        let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    // 루프 엔지니어링 페이지(/loop-engineering)의 단일 피드 — "프로젝트별로 어떤 라우트가 실제로
+    // 돌았고, 어디서 막히는가"를 디스크 증거만으로 세운다.
+    //
+    // 화면이 우선순위대로 답해야 하는 질문은 셋이다:
+    //   1. 이 프로젝트에 어떤 라우트가 있는가      → 정의된 파트 + 트랜스크립트에서 재구성한 위임
+    //   2. 그 라우트가 실제로 돌고 끝났는가        → 실행 횟수 / 완료 / 끊김 / 결과 없음
+    //   3. 병목은 어디이고 얼마짜리인가            → 아래 사다리 순서로 하나를 지목하고 숫자를 붙인다
+    //
+    // 병목을 찾는 순서는 고정이다(자주 답인 순서다): 핸드오프 → 진입점 → 종료 조건 → 파트 자체.
+    // 다만 존재하지 않는 파트로의 위임('끊긴 홉')은 라우트가 시작조차 못 한 것이라 사다리보다 앞선다.
+    // 2026-08-23 정정: 핸드오프의 내부 기록은 측정할 수 있다. `subagents/` 아래에 받은 쪽
+    // 트랜스크립트가 남고, LoopScan 이 그것을 읽어 내부 턴·도구 호출·벽시계 시간을 돌려준다.
+    // 여전히 못 재는 것은 그 내부 도구 호출 중 몇 번이 "앞 홉이 이미 알던 것을 다시 캔 것"인지의
+    // 판정이다. 측정할 수 없는 것을 추측으로 채우지 않고, 못 잰다고 화면에 적는다.
+    func loopEngineeringJSON() -> String {
+        let extra = goalCwdRoots()
+        let roots = AgentInventory.discoveredProjects(extraRoots: extra)
+        let scopes = AgentInventory.scopes(globalRoot: skillsRoot, extraRoots: extra)
+        let scanned = LoopScan.scan()
+        let hops = scanned.hops
+        let inner = scanned.inner
+        let bn = scanned.bottleneck
+        let updateLog = loadAgentUpdateLog()
+        let nowISO = ISO8601DateFormatter().string(from: Date())
+
+        // 프로젝트 스코프에 정의된 파트(에이전트) — 경로로 묶는다.
+        var partsByRoot: [String: [[String: Any]]] = [:]
+        for sc in scopes where (sc["kind"] as? String) == "project" {
+            guard let p = sc["path"] as? String else { continue }
+            partsByRoot[p] = (sc["agents"] as? [[String: Any]]) ?? []
+        }
+        // 어디서든 부를 수 있는 파트 — 전역과 스킬 하네스. 프로젝트 라우트가 이 이름을 쓰면
+        // '정의 있음'으로 친다(그 프로젝트 폴더에 없다고 해서 이름 없는 파트가 아니다).
+        var sharedParts: [String: String] = [:]   // 이름 → 스코프 표시
+        for sc in scopes where (sc["kind"] as? String) != "project" {
+            let label = (sc["kind"] as? String) == "global" ? "전역" : "스킬 " + ((sc["name"] as? String) ?? "")
+            for a in (sc["agents"] as? [[String: Any]]) ?? [] {
+                if let n = a["name"] as? String { sharedParts[n] = label }
+            }
+        }
+
+        // cwd → 프로젝트 루트.
+        //
+        // 에이전트 정의를 가진 폴더만 프로젝트로 치면 프로젝트별 화면이 무너진다: 워크스페이스 루트
+        // (departtment_service)가 .claude/agents 를 하나 갖고 있다는 이유로 그 아래 저장소 전부의
+        // 위임을 빨아들여, MPC·condition-manager·metastarglobal 이 한 덩어리 53건으로 뭉쳤다.
+        // 그래서 위임이 일어난 cwd 마다 가장 가까운 .git 조상(= 사람이 "프로젝트"라고 부르는 단위)을
+        // 후보에 함께 넣고, 그중 가장 긴 접두사가 이기게 한다 — 중첩 저장소에서 안쪽이 이겨야 한다.
+        //
+        // 홈 폴더는 프로젝트가 아니다. ~/.claude/agents 가 있다는 이유로 후보에 들어오면 전역 스코프가
+        // 프로젝트로 둔갑하고, 홈 아래 아무 폴더에서 건 위임이 전부 거기 붙는다.
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        let fmgr = FileManager.default
+        var repoCache: [String: String] = [:]
+        func repoRoot(of cwd: String) -> String? {
+            if let hit = repoCache[cwd] { return hit.isEmpty ? nil : hit }
+            var u = URL(fileURLWithPath: cwd, isDirectory: true).standardizedFileURL
+            var found = ""
+            while u.path.count > home.count, u.path.hasPrefix(home + "/") {
+                if fmgr.fileExists(atPath: u.appendingPathComponent(".git").path) { found = u.path; break }
+                u = u.deletingLastPathComponent()
+            }
+            repoCache[cwd] = found
+            return found.isEmpty ? nil : found
+        }
+
+        var candidates = Set(roots.map { $0.path }.filter { $0 != home })
+        for h in hops where !h.cwd.isEmpty {
+            if let r = repoRoot(of: h.cwd) { candidates.insert(r) }
+        }
+        let sortedRoots = candidates.sorted { $0.count > $1.count }
+        func rootOf(_ cwd: String) -> String? {
+            for r in sortedRoots where cwd == r || cwd.hasPrefix(r + "/") { return r }
+            return nil
+        }
+
+        // 위임 한 건이 어느 프로젝트의 것인가.
+        //
+        // 작업 폴더가 아직 있으면 가장 구체적인 조상(.git 저장소 → 그다음 발견된 프로젝트 루트)에 붙인다.
+        // 폴더가 이미 사라졌으면 조상에 붙이지 않는다 — 저장소를 재편하면서 projects/MPC,
+        // projects/condition-manager 같은 폴더가 org-*/ 아래로 옮겨졌는데, 그 이력을 워크스페이스
+        // 루트에 몰아 주면 서로 다른 프로젝트 53건이 한 덩어리가 되어 정작 "프로젝트별"이 사라진다.
+        // 그래서 사라진 폴더는 자기 이름으로 남기고 화면에 그렇다고 적는다.
+        var missingCwds = Set<String>()
+        func bucket(_ cwd: String) -> String {
+            if !fmgr.fileExists(atPath: cwd) { missingCwds.insert(cwd); return cwd }
+            return repoRoot(of: cwd) ?? rootOf(cwd) ?? cwd
+        }
+
+        // 어느 프로젝트 스코프에든 정의가 있는 파트의 이름 — "이 저장소에 없다"와 "이 맥 어디에도
+        // 없다"는 다른 말이고, 둘을 섞으면 멀쩡히 돌아간 파트에 없는 결함을 씌우게 된다.
+        var definedAnywhere = Set(sharedParts.keys)
+        var defMtime: [String: String] = [:]
+        for sc in scopes {
+            for a in (sc["agents"] as? [[String: Any]]) ?? [] {
+                guard let n = a["name"] as? String else { continue }
+                definedAnywhere.insert(n)
+                let m = (a["mtime"] as? String) ?? ""
+                if let prev = defMtime[n], prev >= m { continue }
+                defMtime[n] = m
+            }
+        }
+
+        // 예약 워커 — 저장소가 소유한 plist 가 실제로 launchd 에 걸려 있는지. 커밋만 되고
+        // 설치되지 않은 워커는 '사람 없이 시작되는 진입점'이 없는 것과 같다.
+        let jobs = DeviceCronScanner.shared.jobsSnapshot()
+        var loadedByLabel: [String: (loaded: Bool, pid: Int, exit: Int)] = [:]
+        for j in jobs { loadedByLabel[j.label] = (j.loaded, j.pid, j.lastExit) }
+
+        // 팀 — 하나의 작업 목록을 나눠 갖는 팀원들. cwd 로 프로젝트에 붙인다.
+        var teamsByRoot: [String: [[String: Any]]] = [:]
+        var teamsTotal = 0, teamsWithMates = 0
+        for t in Self.scanTeams() {
+            teamsTotal += 1
+            if ((t["members"] as? Int) ?? 0) > 1 { teamsWithMates += 1 }
+            let cwd = (t["cwd"] as? String) ?? ""
+            let key = cwd.isEmpty ? "" : bucket(cwd)
+            if key.isEmpty { continue }
+            teamsByRoot[key, default: []].append(t)
+        }
+
+        // 위임 홉을 프로젝트별·에이전트별로 접는다.
+        struct Acc {
+            var runs = 0, done = 0, async = 0, dead = 0, open = 0
+            var sumSec = 0.0, maxSec = 0.0
+            var lastTs = "", sample = "", deadTs = ""
+            var promptSum = 0
+            var nested = 0          // 에이전트가 다시 부른 위임
+            var joined = 0          // 받은 쪽 트랜스크립트를 찾은 위임
+            var innerTurns = 0, innerTools = 0
+        }
+        var accByRoot: [String: [String: Acc]] = [:]
+        var outsideKeys = Set<String>()
+        for h in hops {
+            if h.cwd.isEmpty { continue }
+            let key = bucket(h.cwd)
+            if !candidates.contains(key) { outsideKeys.insert(key) }
+            var m = accByRoot[key] ?? [:]
+            var a = m[h.agent] ?? Acc()
+            a.runs += 1
+            a.promptSum += h.promptBytes
+            if h.depth >= 2 { a.nested += 1 }
+            if h.joined { a.joined += 1; a.innerTurns += h.innerTurns; a.innerTools += h.innerTools }
+            switch h.kind {
+            case "done": a.done += 1
+            case "async": a.async += 1
+            case "dead":
+                a.dead += 1
+                if h.ts > a.deadTs { a.deadTs = h.ts }
+            default: a.open += 1
+            }
+            // 시간은 끝맺음 종류가 아니라 "잰 값이 있는가"로 더한다. 확장 전에는 done 만 더했고,
+            // 그래서 백그라운드로 띄운 위임 절반이 합계에서 통째로 빠져 있었다. 이제 그 홉들도
+            // 받은 쪽 트랜스크립트의 벽시계 시간을 들고 온다(LoopScan.Hop.timeSource 참조).
+            if h.seconds >= 0 { a.sumSec += h.seconds; a.maxSec = max(a.maxSec, h.seconds) }
+            if h.ts > a.lastTs { a.lastTs = h.ts; a.sample = h.desc }
+            m[h.agent] = a
+            accByRoot[key] = m
+        }
+
+        // 화면에 실을 프로젝트 = 발견된 저장소 + 위임이 일어난 저장소 밖 폴더.
+        var keys = candidates
+        keys.formUnion(accByRoot.keys)
+        keys.formUnion(teamsByRoot.keys)
+
+        var projects: [[String: Any]] = []
+        // "지금 열려 있는 대기" — 성격이 다른 세 종류를 한 표에 모은다. 나누면 표가 셋이 되고
+        // 첫 화면이 다시 읽고 판단해야 하는 화면이 된다. 대신 행마다 종류를 적는다.
+        var openWaits: [[String: Any]] = []
+        var tRoutes = 0, tRuns = 0, tDead = 0, tUnused = 0, tSec = 0.0
+        for key in keys {
+            let known = candidates.contains(key)
+            let gone = missingCwds.contains(key)
+            let parts = partsByRoot[key] ?? []
+            let acc = accByRoot[key] ?? [:]
+            let teams = teamsByRoot[key] ?? []
+            let workers = known ? Self.projectWorkers(root: key, loaded: loadedByLabel) : []
+            // 아무 흔적도 없는 저장소는 싣지 않는다 — 목록을 채우는 것이 목적이 아니다.
+            if parts.isEmpty && acc.isEmpty && teams.isEmpty && workers.isEmpty { continue }
+
+            let projSum = acc.values.reduce(0.0) { $0 + $1.sumSec }
+            var routes: [[String: Any]] = []
+            for (agent, a) in acc {
+                // 파트의 출처 표시. 실제로 돌아간 홉을 "정의 없음"으로 적지 않는다 — 돌았다면
+                // 그 시점에 런타임이 그 이름을 알고 있었다는 뜻이고(내장 파트일 수도 있다),
+                // 정의 파일을 못 찾은 것은 우리 스캔의 한계지 그 라우트의 결함이 아니다.
+                // '정의 없음'은 실제로 끊긴 홉에만 붙인다.
+                let inProject = parts.contains { ($0["name"] as? String) == agent }
+                let ran = a.done > 0 || a.async > 0
+                let defined = inProject || sharedParts[agent] != nil || definedAnywhere.contains(agent) || ran
+                let scopeLabel: String
+                if inProject { scopeLabel = "프로젝트" }
+                else if let sh = sharedParts[agent] { scopeLabel = sh }
+                else if definedAnywhere.contains(agent) { scopeLabel = "다른 프로젝트" }
+                else if a.dead > 0 { scopeLabel = "정의 없음" }
+                else if ran { scopeLabel = "런타임" }   // 돌았지만 정의 파일은 못 찾음(내장 파트일 수 있다)
+                else { scopeLabel = "" }
+                var r: [String: Any] = [:]
+                r["agent"] = agent
+                r["runs"] = a.runs; r["done"] = a.done; r["async"] = a.async
+                r["dead"] = a.dead; r["open"] = a.open
+                r["sumSec"] = Int(a.sumSec.rounded()); r["maxSec"] = Int(a.maxSec.rounded())
+                r["share"] = projSum > 0 ? Int((a.sumSec / projSum * 100).rounded()) : 0
+                r["lastTs"] = a.lastTs; r["sample"] = a.sample
+                r["nested"] = a.nested; r["joined"] = a.joined
+                r["innerTurns"] = a.innerTurns; r["innerTools"] = a.innerTools
+                r["defined"] = defined || sharedParts[agent] != nil
+                r["scope"] = scopeLabel
+                r["avgPromptKB"] = a.runs > 0 ? Int((Double(a.promptSum) / Double(a.runs) / 1024).rounded()) : 0
+                // 실행 성적은 원장을 아는 한 곳(agentRunStats)에서만 계산한다 — 에이전트 페이지와
+                // 이 화면이 다른 숫자를 말하면 둘 다 못 믿게 된다.
+                let harness = (parts.first { ($0["name"] as? String) == agent }?["harness"] as? String) ?? ""
+                let stats = agentRunStats(name: agent, harness: harness, updateLog: updateLog)
+                r["ledgerRuns"] = stats["runs"] ?? 0
+                routes.append(r)
+            }
+            routes.sort { (($0["sumSec"] as? Int) ?? 0, ($0["runs"] as? Int) ?? 0)
+                       > (($1["sumSec"] as? Int) ?? 0, ($1["runs"] as? Int) ?? 0) }
+
+            let unused = parts.compactMap { $0["name"] as? String }.filter { acc[$0] == nil }.sorted()
+            let deadCount = acc.values.reduce(0) { $0 + $1.dead }
+            let openCount = acc.values.reduce(0) { $0 + $1.open }
+            let runCount = acc.values.reduce(0) { $0 + $1.runs }
+            let idleWorkers = workers.filter { ($0["loaded"] as? Bool) != true }
+
+            // 대기 큐 재료 ① 끊긴 홉. 체류는 "끊긴 뒤로 지난 시간"이다 — 끊긴 홉은 스스로 낫지
+            // 않으므로 그 시간이 곧 방치된 시간이다. 임계 1시간은 "알아채고 세션을 새로 열
+            // 만한 시간"이고, 실제로는 대부분 며칠씩 지나 있어 STALLED 로 뜬다.
+            for (agentName, a) in acc where a.dead > 0 {
+                let age = a.deadTs.isEmpty ? -1.0
+                    : Double(Self.secondsBetween(from: a.deadTs, to: nowISO))
+                openWaits.append([
+                    "kind": "dead", "kindLabel": "끊긴 홉", "owner": "워커",
+                    "title": agentName,
+                    "where": known ? AgentInventory.label(for: URL(fileURLWithPath: key))
+                                   : URL(fileURLWithPath: key).lastPathComponent,
+                    "note": "런타임이 이 이름을 모른다고 답했습니다 — \(a.dead)번. 정의 파일이 그때 이미 있었다면 파일이 아니라 세션을 새로 열어야 잡힙니다",
+                    "dwellSec": age, "thresholdSec": 3600,
+                    "stalled": age >= 3600,
+                    "actions": [["label": "세션 새로 열기", "act": "hint-dead"]],
+                ])
+            }
+            // 대기 큐 재료 ② 미등록 예약 워커. 사람 없이 라우트를 시작하는 유일한 부품이라,
+            // 안 걸려 있으면 그 라우트에는 진입점이 없다. 체류는 plist 파일이 마지막으로
+            // 저장된 뒤로 지난 시간이다 — 실제로 기록된 유일한 시각이고, 없으면 "기록 없음".
+            for w in idleWorkers {
+                let p = (w["path"] as? String) ?? ""
+                var age = -1.0
+                if !p.isEmpty,
+                   let m = (try? FileManager.default.attributesOfItem(atPath: p)[.modificationDate]) as? Date {
+                    age = Date().timeIntervalSince(m)
+                }
+                openWaits.append([
+                    "kind": "worker", "kindLabel": "미등록 워커", "owner": "진입점",
+                    "title": (w["label"] as? String) ?? "",
+                    "where": known ? AgentInventory.label(for: URL(fileURLWithPath: key))
+                                   : URL(fileURLWithPath: key).lastPathComponent,
+                    "note": "저장소에는 plist 가 있는데 launchd 에 걸려 있지 않습니다 — 사람 없이 시작하는 부품이 없는 것과 같습니다",
+                    "dwellSec": age, "thresholdSec": 86400,
+                    "stalled": age >= 86400,
+                    "path": p,
+                    "actions": [["label": "등록 방법 보기", "act": "hint-worker"]],
+                ])
+            }
+
+            // 병목 사다리 — 끊긴 홉 → 진입점 → 종료 조건 → 파트 자체. 하나만 지목하고 숫자를 붙인다.
+            var verdict: [String: Any] = [:]
+            if deadCount > 0 {
+                let deadRoutes = acc.filter { $0.value.dead > 0 }
+                let names = deadRoutes.keys.sorted().joined(separator: ", ")
+                // 끊긴 홉은 두 가지가 섞여 있고, 고치는 방법이 서로 다르다.
+                //   (a) 부를 때 정의가 아직 없었다              → 파트를 먼저 만들어야 한다
+                //   (b) 정의는 이미 디스크에 있었는데도 실패했다 → 세션이 시작할 때 읽은 파트 목록에
+                //       그 이름이 없었던 것이다. 파일을 더 고칠 게 아니라 세션을 새로 열어야 한다.
+                // 실측 5건 중 4건이 (b)였고, 정의가 저장된 지 26~79초 만에 부른 것들이었다. 둘을
+                // 구분해 주지 않으면 이미 만들어 둔 파트를 또 만들게 된다.
+                var staleLead = -1
+                for (agentName, a) in deadRoutes {
+                    guard let m = defMtime[agentName], !m.isEmpty, !a.deadTs.isEmpty else { continue }
+                    let gap = Self.secondsBetween(from: m, to: a.deadTs)
+                    if gap > 0 { staleLead = max(staleLead, gap) }
+                }
+                var text = "존재하지 않는 파트로 \(deadCount)번 위임했고 그때마다 라우트가 시작조차 못 했습니다 — \(names)"
+                if staleLead >= 0 {
+                    text += ". 정의 파일은 그때 이미 디스크에 있었습니다(가장 늦게 저장된 것도 위임 \(staleLead)초 전) — 세션이 시작할 때 읽은 파트 목록에 없었던 것이라, 파일을 더 고칠 게 아니라 세션을 새로 열어야 잡힙니다"
+                }
+                verdict = ["cat": "끊긴 홉", "num": deadCount, "text": text]
+            } else if !unused.isEmpty {
+                let pct = parts.isEmpty ? 0 : Int((Double(parts.count - unused.count) / Double(parts.count) * 100).rounded())
+                verdict = ["cat": "진입점", "num": unused.count,
+                           "text": "정의된 파트 \(parts.count)개 중 \(unused.count)개가 한 번도 호출되지 않았습니다 (호출률 \(pct)%) — \(unused.prefix(4).joined(separator: ", "))"]
+            } else if !idleWorkers.isEmpty {
+                let names = idleWorkers.compactMap { $0["label"] as? String }.joined(separator: ", ")
+                verdict = ["cat": "진입점", "num": idleWorkers.count,
+                           "text": "저장소가 소유한 예약 워커 \(idleWorkers.count)개가 launchd 에 걸려 있지 않습니다 — \(names)"]
+            } else if openCount > 0 {
+                verdict = ["cat": "종료 조건", "num": openCount,
+                           "text": "\(openCount)번의 위임이 결과를 돌려받은 기록 없이 끝났습니다 — 무엇이 완료인지 라우트가 말하지 않습니다"]
+            } else if let top = routes.first, ((top["sumSec"] as? Int) ?? 0) > 0 {
+                let share = (top["share"] as? Int) ?? 0
+                let name = (top["agent"] as? String) ?? ""
+                verdict = ["cat": "파트", "num": share,
+                           "text": "총 위임 시간 \(Int(projSum.rounded()))초 중 \(top["sumSec"] as? Int ?? 0)초(\(share)%)를 \(name) 한 파트가 붙들고 있습니다"]
+            } else if runCount > 0 {
+                // 위임은 있었는데 잴 수 있는 시간이 한 톨도 없다 = 전부 백그라운드로 띄운 위임이다.
+                // "라우트가 없다"고 적으면 바로 아래 줄에 보이는 실행 기록과 어긋난다.
+                verdict = ["cat": "측정 불가", "num": runCount,
+                           "text": "위임 \(runCount)회가 모두 백그라운드 실행이라, 각 홉이 얼마나 붙들었는지 잴 수 있는 기록이 남지 않았습니다"]
+            } else {
+                verdict = ["cat": "없음", "num": 0, "text": "이 프로젝트에서 실행된 라우트가 없습니다"]
+            }
+
+            var p: [String: Any] = [:]
+            p["name"] = known ? AgentInventory.label(for: URL(fileURLWithPath: key)) : URL(fileURLWithPath: key).lastPathComponent
+            p["path"] = key
+            p["known"] = known
+            p["gone"] = gone
+            p["parts"] = parts.count
+            p["partNames"] = parts.compactMap { $0["name"] as? String }
+            p["unused"] = unused
+            p["routes"] = routes
+            p["runs"] = runCount
+            p["dead"] = deadCount
+            p["open"] = openCount
+            p["sumSec"] = Int(projSum.rounded())
+            p["workers"] = workers
+            p["teams"] = teams
+            p["verdict"] = verdict
+            projects.append(p)
+
+            tRoutes += routes.count; tRuns += runCount; tDead += deadCount
+            tUnused += unused.count; tSec += projSum
+        }
+        // 손볼 것이 위로 온다: 끊긴 홉 → 실행량 → 이름.
+        projects.sort { a, b in
+            let da = (a["dead"] as? Int) ?? 0, db = (b["dead"] as? Int) ?? 0
+            if da != db { return da > db }
+            let ra = (a["runs"] as? Int) ?? 0, rb = (b["runs"] as? Int) ?? 0
+            if ra != rb { return ra > rb }
+            return ((a["name"] as? String) ?? "") < ((b["name"] as? String) ?? "")
+        }
+
+        // 스킬 하네스 — 프로젝트를 가로지르는 라우트다. 원장이 곧 실행 기록이다.
+        var harness: [[String: Any]] = []
+        for sc in scopes where (sc["kind"] as? String) == "skill" {
+            let name = (sc["name"] as? String) ?? ""
+            let agents = (sc["agents"] as? [[String: Any]]) ?? []
+            var runs = 0, last = ""
+            for a in agents {
+                let st = agentRunStats(name: (a["name"] as? String) ?? "",
+                                       harness: (a["harness"] as? String) ?? name, updateLog: updateLog)
+                runs += (st["runs"] as? Int) ?? 0
+                let ts = (st["lastTs"] as? String) ?? ""
+                if ts > last { last = ts }
+            }
+            harness.append(["skill": name, "agents": agents.count, "runs": runs, "lastTs": last,
+                            "dir": (sc["dir"] as? String) ?? ""])
+        }
+        harness.sort { (($0["runs"] as? Int) ?? 0) > (($1["runs"] as? Int) ?? 0) }
+
+        // 대기 큐 재료 ③ 사람 결정 대기. 이미 계측되어 있다 — status == "waiting" 이면
+        // waitingSince 에 그 창의 시작이, waitKind 에 종류(permission/decision)가 들어 있다.
+        //
+        // stopped 와 cancelled 는 여기 넣지 않는다. 둘은 사용자가 손으로 쥔 보류이고, 세션 훅도
+        // 되살리지 않는 상태다. 그걸 대기로 세면 사용자가 일부러 세워 둔 것을 전부 "당신이 만든
+        // 병목"이라고 되돌려 주게 된다. 보관(archived)된 것도 뺀다 — 화면에서 치운 것이다.
+        let waitingGoals: [ReviewStore.Goal] = DispatchQueue.main.sync {
+            reviewStore.goals.filter { $0.status == "waiting" && !$0.archived }
+        }
+        for g in waitingGoals {
+            let dwell = g.waitingSince.map { Date().timeIntervalSince($0) } ?? -1
+            let kindText = g.waitKind == "permission" ? "확인 요청" : (g.waitKind == "decision" ? "의사결정 요청" : "응답 대기")
+            // "막은 것" — goal 의 자식과 링크로 셀 수 있는 만큼만 센다. 사람이 손으로 적은
+            // 차단 서술은 이 저장소에 없으므로 지어내지 않는다.
+            let blocked = DispatchQueue.main.sync {
+                reviewStore.goals.filter { $0.parent == g.id && $0.status != "done" && $0.status != "cancelled" }.count
+            }
+            openWaits.append([
+                "kind": "human", "kindLabel": kindText, "owner": "사람",
+                "title": "seq \(g.seq)  \(g.text)",
+                "where": "",
+                "note": blocked > 0 ? "막은 것: 하위 목표 \(blocked)건" : "막은 것: 없음",
+                "dwellSec": dwell, "thresholdSec": 1800,
+                "stalled": dwell >= 1800,
+                "goalId": g.id, "seq": g.seq,
+                "actions": [
+                    ["label": "세션 열기", "act": "open-goal"],
+                    ["label": "진행으로", "act": "status", "value": "in_progress"],
+                    ["label": "보류", "act": "status", "value": "stopped"],
+                ],
+            ])
+        }
+        // 체류 내림차순. 잰 값이 없는 행(-1)은 맨 아래로 — 0으로 취급해 위로 올리면 "방금 생긴
+        // 대기"처럼 보이는데, 실제로는 "언제부터인지 모르는 것"이다.
+        openWaits.sort { a, b in
+            let da = (a["dwellSec"] as? Double) ?? -1, db = (b["dwellSec"] as? Double) ?? -1
+            if (da < 0) != (db < 0) { return db < 0 }
+            return da > db
+        }
+
+        // 사람 병목 지수. 분자·분모·상한·창을 전부 같이 내보낸다 — 백분율만 있으면 표본이
+        // 얼마나 얇은지와 어떤 정책으로 계산했는지가 숨는다(docs/loop-definition.md 5-3).
+        func idx(_ waitSec: Double) -> Double {
+            let w = waitSec / 3600, a = bn.agentSeconds / 3600
+            guard w + a > 0 else { return 0 }
+            return ((w / (w + a)) * 1000).rounded() / 10
+        }
+        var bottleneck: [String: Any] = [:]
+        bottleneck["windowStart"] = bn.windowStart
+        bottleneck["files"] = bn.files
+        bottleneck["turns"] = bn.turns
+        bottleneck["capHours"] = 4
+        bottleneck["humanHours"] = (bn.waitCapped / 3600 * 10).rounded() / 10
+        bottleneck["agentHours"] = (bn.agentSeconds / 3600 * 10).rounded() / 10
+        bottleneck["totalHours"] = ((bn.waitCapped + bn.agentSeconds) / 3600 * 10).rounded() / 10
+        bottleneck["index"] = idx(bn.waitCapped)
+        bottleneck["indexNoCap"] = idx(bn.waitUncapped)
+        bottleneck["indexHourCap"] = idx(bn.waitHour)
+        bottleneck["agentFiles"] = bn.agentFiles
+        // 화면이 반드시 같이 적어야 하는 한계. 문장을 서버가 들고 있는 이유는 정의 문서와 화면이
+        // 어긋나지 않게 하기 위해서다 — 화면이 스스로 지어내면 두 벌이 된다.
+        bottleneck["limits"] = [
+            "4시간 상한은 관측이 아니라 사용자가 정한 정책입니다 — 상한 없이는 \(idx(bn.waitUncapped))%, 1시간 상한에서는 \(idx(bn.waitHour))% 입니다",
+            "잠자는 시간이 대기로 잡힙니다. 사람은 상시 대기 인력이 아니고, 밤을 가로지르는 공백은 대부분 밤입니다",
+            "사람이 워커 자리에서 직접 일한 시간과 결정을 기다린 시간이 분리되지 않아, 실제 '기다리게 한 시간'보다 높게 나옵니다",
+            "이 지수는 루프 아홉 칸(L1..L9)을 잰 값이 아닙니다. 단계 이벤트 원장이 없어 잴 수 없고, 지금 재는 것은 세션 코퍼스 — 대화의 공백과 서브에이전트 벽시계 — 라는 대용치입니다",
+            "파일 선택자는 세션 시작 시각입니다. 파일 수정 시각으로 자르면 창 밖 세션의 공백이 분자에 실려 지수가 부풀고, 그렇게 계산된 옛 값 97.0%는 폐기됐습니다",
+        ]
+
+        var totals: [String: Any] = [:]
+        totals["projects"] = projects.count
+        totals["routes"] = tRoutes
+        totals["runs"] = tRuns
+        totals["dead"] = tDead
+        totals["unused"] = tUnused
+        totals["hours"] = (tSec / 3600 * 10).rounded() / 10
+        totals["teams"] = teamsTotal
+        totals["teamsWithMates"] = teamsWithMates
+        // 받은 쪽 트랜스크립트에서 나온 것들. 확장 전에는 전부 0 이었고 화면은 "0건"이라고 적었다.
+        totals["innerFiles"] = inner.files
+        totals["innerTurns"] = inner.turns
+        totals["innerTools"] = inner.tools
+        totals["innerHours"] = (inner.seconds / 3600 * 10).rounded() / 10
+        totals["nested"] = inner.nested
+        totals["joined"] = inner.joined
+        totals["joinPct"] = hops.isEmpty ? 0 : Int((Double(inner.joined) / Double(hops.count) * 100).rounded())
+        totals["hops"] = hops.count
+
+        var payload: [String: Any] = [:]
+        payload["totals"] = totals
+        payload["bottleneck"] = bottleneck
+        payload["openWaits"] = openWaits
+        payload["projects"] = projects
+        payload["harness"] = harness
+        payload["scannedAt"] = nowISO
+        // 추세는 조회마다가 아니라 정해진 간격으로만 한 줄 append 한다. 조회마다 적으면 원장이
+        // 화면을 연 횟수의 기록이 되고, 추세선이 사용자의 클릭 습관을 그리게 된다.
+        LoopHistory.appendIfDue(bottleneck: bottleneck, totals: totals)
+        payload["history"] = LoopHistory.recent(3)
+        let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    // 두 ISO8601 시각의 초 차이. 정의 파일이 저장된 시각과 그 이름으로 위임한 시각을 견주는 데 쓴다.
+    // 소수점 초가 붙은 형식과 안 붙은 형식이 섞여 들어오므로 이미 있는 두 파서를 그대로 쓴다.
+    static func secondsBetween(from: String, to: String) -> Int {
+        func d(_ s: String) -> Date? { isoFrac.date(from: s) ?? isoPlain.date(from: s) }
+        guard let a = d(from), let b = d(to) else { return -1 }
+        return Int(b.timeIntervalSince(a).rounded())
+    }
+
+    // 팀 구성 — ~/.claude/teams/session-*/config.json 과 그 팀의 작업 목록(~/.claude/tasks/<name>).
+    // 팀원이 리드 하나뿐이고 작업 목록이 비어 있으면 "만들었지만 돌지 않은 팀"이다.
+    private static func scanTeams() -> [[String: Any]] {
+        let fm = FileManager.default
+        let base = fm.homeDirectoryForCurrentUser.appendingPathComponent(".claude/teams", isDirectory: true)
+        let tasksBase = fm.homeDirectoryForCurrentUser.appendingPathComponent(".claude/tasks", isDirectory: true)
+        let dirs = (try? fm.contentsOfDirectory(at: base, includingPropertiesForKeys: nil,
+                                                options: [.skipsHiddenFiles])) ?? []
+        var out: [[String: Any]] = []
+        for d in dirs.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            guard let data = try? Data(contentsOf: d.appendingPathComponent("config.json")),
+                  let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
+            let members = (o["members"] as? [[String: Any]]) ?? []
+            let name = (o["name"] as? String) ?? d.lastPathComponent
+            let taskDir = tasksBase.appendingPathComponent(name, isDirectory: true)
+            let tasks = ((try? fm.contentsOfDirectory(at: taskDir, includingPropertiesForKeys: nil,
+                                                      options: [.skipsHiddenFiles])) ?? [])
+                .filter { $0.pathExtension == "json" }.count
+            var row: [String: Any] = [:]
+            row["name"] = name
+            row["members"] = members.count
+            row["tasks"] = tasks
+            row["cwd"] = (members.first?["cwd"] as? String) ?? ""
+            if let ms = o["createdAt"] as? Double {
+                row["createdAt"] = ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: ms / 1000))
+            }
+            out.append(row)
+        }
+        return out
+    }
+
+    // 저장소가 소유한 예약 워커 — 커밋된 plist 를 찾아 launchd 등록 여부와 맞춘다.
+    // 사람 없이 라우트를 시작하는 유일한 부품이라, 걸려 있지 않으면 진입점이 없는 것이다.
+    private static func projectWorkers(root: String,
+                                       loaded: [String: (loaded: Bool, pid: Int, exit: Int)]) -> [[String: Any]] {
+        let fm = FileManager.default
+        let skip: Set<String> = ["node_modules", ".build", ".git", "Pods", "vendor", "dist",
+                                 "build", "DerivedData", "venv", ".venv", "target", "__pycache__", ".next"]
+        var found: [URL] = []
+        func walk(_ dir: URL, depth: Int) {
+            guard depth > 0, found.count < 40 else { return }
+            let subs = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.isDirectoryKey],
+                                                    options: [.skipsHiddenFiles])) ?? []
+            for s in subs.prefix(200) {
+                if (try? s.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                    if skip.contains(s.lastPathComponent) { continue }
+                    walk(s, depth: depth - 1)
+                } else if s.pathExtension == "plist", s.lastPathComponent.hasPrefix("com.") {
+                    found.append(s)
+                }
+            }
+        }
+        walk(URL(fileURLWithPath: root, isDirectory: true), depth: 4)
+        var out: [[String: Any]] = []
+        for f in found.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            let label = f.deletingPathExtension().lastPathComponent
+            let st = loaded[label]
+            var row: [String: Any] = [:]
+            row["label"] = label
+            row["path"] = f.path
+            row["loaded"] = st?.loaded ?? false
+            row["pid"] = st?.pid ?? -1
+            row["exit"] = st?.exit ?? -1
+            out.append(row)
+        }
+        return out
+    }
+
+    // 에이전트 정의 파일을 Finder 에서 연다 — 프로젝트 에이전트는 전역 폴더 밖에 있으므로
+    // 절대 경로로 받는다. 임의 파일 열람 통로가 되지 않도록 (1) .md 이고 (2) 인벤토리가 실제로
+    // 스캔한 경로 집합 안에 있을 때만 연다. 목록에 없는 경로는 조용히 무시한다.
+    // 위임 이슈 상세의 결과물/작업지시서를 Finder 에서 연다. 라이언이 "완료폴더가 나와야 돼
+    // 결과물이 있고 그거를 누르면은 그 폴더를 볼수 있도록" 이라고 한 자리다.
+    //
+    // 보안 규칙은 revealAgentPath 와 같다 — (1) 절대경로이고 (2) `..` 이 없고 (3) **이번 스캔에서
+    // 카드로부터 실제로 파싱해 낸 경로 집합 안에 있을 때만** 연다. 웹뷰가 준 문자열을 그대로
+    // activateFileViewerSelecting 에 넘기면 대시보드가 임의 파일 열람 통로가 된다.
+    // 목록 밖은 열지 않고 unknown-path 로 거절한다.
+    func revealWorkQueuePath(_ path: String) -> String {
+        let p = path.trimmingCharacters(in: .whitespaces)
+        guard p.hasPrefix("/"), !p.contains(".."), WorkQueueStore.knownRevealPaths().contains(p) else {
+            return "{\"ok\":false,\"error\":\"unknown-path\"}"
+        }
+        // 허용 목록에 있어도 그 사이에 지워졌을 수 있다(status: done 인데 산출물이 없는 카드가
+        // 실재한다). 없는 것을 열면 Finder 가 엉뚱한 창을 띄우므로 여기서 한 번 더 본다.
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: p, isDirectory: &isDir) else {
+            return "{\"ok\":false,\"error\":\"missing\"}"
+        }
+        let dir = isDir.boolValue
+        DispatchQueue.main.async {
+            let url = URL(fileURLWithPath: p)
+            // 폴더와 파일이 갈린다. `activateFileViewerSelecting` 을 **폴더**에 부르면 그 폴더가
+            // 열리는 게 아니라 부모에서 그 폴더가 선택된다 — 라이언이 이 버튼에 대고 한 말은
+            // 위 주석의 "그 폴더를 볼수 있도록" 이고, 선택은 그 말과 다르다.
+            // 파일은 지금대로 선택이 맞다. 그래야 그 파일이 어느 폴더에 있는지 같이 보인다.
+            if dir { NSWorkspace.shared.open(url) }
+            else { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        }
+        return "{\"ok\":true}"
+    }
+
+    // ── 이슈 상세의 md 팝업 (읽기 · 쓰기) ────────────────────────────────────────
+    //
+    // 카드가 가리키는 .md 를 Finder 로 넘기지 않고 **앱 안에서** 열어 보고 고치기 위한 자리다.
+    // 라이언: "md 파일이 열리게 해줘요 … 팝업으로 띄워서 … 프리뷰가 있고 그리고 수정하기가 있어서
+    // … 수정을 했으면 저장을 해야지".
+    //
+    // 검증은 읽기와 쓰기가 **같은 함수 하나**를 통과한다. 쓰기 쪽만 느슨하면 루프백 대시보드가
+    // 임의 파일 쓰기 통로가 되고, 그것은 읽기 통로보다 훨씬 나쁘다. 통과 조건은 넷이다 —
+    //   (1) 절대경로이고 `..` 이 없다 (경로 순회 차단)
+    //   (2) `.md` 로 끝난다
+    //   (3) revealWorkQueuePath 와 **같은 허용 목록**(이번 스캔에서 카드로부터 실제로 파싱해 낸
+    //       경로 집합) 안에 있다
+    //   (4) 디스크에 실재하는 **파일**이다 (폴더가 아니다)
+    //
+    // ASSUMPTION (L1, 갈래를 스스로 골랐다): 경계를 "큐 루트 아래" 가 아니라 "허용 목록 안" 으로
+    // 잡았다. 작업지시서와 결과물 md 는 큐 루트가 아니라 목적지 폴더에 살아서, 큐 루트로 자르면
+    // 라이언이 열고 싶어 하는 파일이 대부분 안 열린다. 허용 목록은 그보다 좁다 — 루트 아래
+    // 전체가 아니라 카드에 실제로 적힌 경로만 들어 있기 때문이다.
+    private func workQueueMarkdownPath(_ path: String) -> String? {
+        let p = path.trimmingCharacters(in: .whitespaces)
+        guard p.hasPrefix("/"), !p.contains(".."), p.lowercased().hasSuffix(".md"),
+              WorkQueueStore.knownRevealPaths().contains(p) else { return nil }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: p, isDirectory: &isDir), !isDir.boolValue else { return nil }
+        return p
+    }
+
+    // GET /api/issues/mdfile?path=… — 본문을 그대로 돌려준다. 렌더는 화면이 한다.
+    func workQueueMarkdownRead(_ path: String) -> String {
+        guard let p = workQueueMarkdownPath(path) else {
+            return "{\"ok\":false,\"error\":\"unknown-path\"}"
+        }
+        guard let text = try? String(contentsOfFile: p, encoding: .utf8) else {
+            return "{\"ok\":false,\"error\":\"unreadable\"}"
+        }
+        // 팝업 하나에 부을 수 있는 상한. 큐의 md 는 대개 수 KB 이고, 상한에 걸리는 것이 있으면
+        // 그것은 md 가 아니라 로그다 — 웹뷰에 통째로 부으면 화면이 선다.
+        guard text.utf8.count <= 2_000_000 else {
+            return "{\"ok\":false,\"error\":\"too-large\"}"
+        }
+        return "{\"ok\":true,\"path\":\(jsonString(p)),\"text\":\(jsonString(text))}"
+    }
+
+    // POST /api/issues/mdsave {path,text} — 그 md 파일에 실제로 쓴다. 원자적으로 갈아 끼워서
+    // 쓰다 만 파일이 남지 않게 한다.
+    func workQueueMarkdownWrite(path: String, text: String) -> String {
+        guard let p = workQueueMarkdownPath(path) else {
+            return "{\"ok\":false,\"error\":\"unknown-path\"}"
+        }
+        do {
+            try text.write(toFile: p, atomically: true, encoding: .utf8)
+        } catch {
+            return "{\"ok\":false,\"error\":\(jsonString(error.localizedDescription))}"
+        }
+        return "{\"ok\":true,\"path\":\(jsonString(p)),\"bytes\":\(text.utf8.count)}"
+    }
+
+    // ── 세션 기록 팝업 (읽기 전용) ────────────────────────────────────────────────
+    //
+    // 라이언: "그 앞에 97cc3cc2 있잖아요 세션인데 누르면은 그 파일이 열리게끔 그래서 내용을
+    // 볼 수 있게끔". 이슈 상세의 세션 줄에서 그 세션의 기록을 앱 안에서 읽는 자리다.
+    //
+    // md 팝업을 재사용하지 않는다. 그쪽에는 `POST /api/issues/mdsave` 로 디스크에 실제로 쓰는
+    // 저장 경로가 붙어 있고, 세션 기록은 하네스가 쓰는 append-only 파일이라 사람이 고치면
+    // 안 된다. 저장 버튼을 숨기는 것으로 막으면 막는 것이 화면 상태 하나가 되고 그 상태는
+    // 언젠가 깨진다. 통로를 갈라 두면 쓰기 경로가 애초에 없다.
+    //
+    // 이 통로는 **사람의 대화 기록 전문을 루프백으로 내보내는 첫 자리**다. 그래서 경계를
+    // `~/.claude/projects/` 아래로 자르는 것만으로는 부족하고 허용 목록 안까지 같이 요구한다.
+    // 허용 목록에는 라이언이 상세를 실제로 연 카드의 세션만 들어간다 — 상세를 열기 전에는
+    // 아무것도 못 연다는 뜻이고, 그것이 실제 조작 순서와 같다.
+    //
+    // 통과 조건 다섯. `workQueueMarkdownPath` 와 같은 모양이고, 그 함수는 고치지 않았다 —
+    // `.md` 로 자르는 그쪽 규칙을 `.jsonl` 까지 넓히면 md 쓰기 경로가 같이 넓어진다.
+    //   (1) 절대경로 (2) `..` 없음 (3) `.jsonl` 로 끝남 (4) `~/.claude/projects/` 아래
+    //   (5) `WorkQueueSessionStore.revealAllowlist()` 안
+    // 마지막으로 디스크에 **파일로** 실재하는지 본다(폴더가 아니다).
+    private func workQueueTranscriptPath(_ path: String) -> String? {
+        let p = path.trimmingCharacters(in: .whitespaces)
+        let root = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/projects") + "/"
+        guard p.hasPrefix("/"), !p.contains(".."), p.lowercased().hasSuffix(".jsonl"),
+              p.hasPrefix(root),
+              WorkQueueSessionStore.revealAllowlist().contains(p) else { return nil }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: p, isDirectory: &isDir), !isDir.boolValue else { return nil }
+        return p
+    }
+
+    // GET /api/issues/transcript?path=… — 원본 JSONL 이 아니라 정리한 턴 배열을 돌려준다.
+    // 자르기와 턴 판정은 `WorkQueueSessionStore` 한 벌이 한다.
+    func workQueueTranscriptRead(_ path: String) -> String {
+        guard let p = workQueueTranscriptPath(path) else {
+            return "{\"ok\":false,\"error\":\"unknown-path\"}"
+        }
+        return WorkQueueSessionStore.transcriptJSON(path: p)
+    }
+
+    func revealAgentPath(_ path: String) -> String {
+        let p = path.trimmingCharacters(in: .whitespaces)
+        guard p.hasSuffix(".md"), !p.contains(".."), knownAgentPaths().contains(p) else {
+            return "{\"ok\":false,\"error\":\"unknown-path\"}"
+        }
+        DispatchQueue.main.async {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)])
+        }
+        return "{\"ok\":true}"
+    }
+
+    // 앱만 아는 작업 폴더 — 등록된 goal 들의 cwd. 인벤토리 탐색의 씨앗으로 넘긴다. 트랜스크립트에
+    // 흔적이 없는 폴더라도 "사용자가 여기서 일을 시켰다"는 사실은 앱 쪽에 남아 있기 때문이다.
+    private func goalCwdRoots() -> [String] {
+        let cwds: [String] = DispatchQueue.main.sync { reviewStore.goals.map { $0.cwd } }
+        return Array(Set(cwds.filter { !$0.isEmpty })).sorted().prefix(80).map { $0 }
+    }
+
+    // 현재 인벤토리에 잡히는 모든 에이전트 정의 파일의 절대 경로. reveal/판정/교체 요청이
+    // 가리키는 경로가 진짜 우리가 아는 에이전트인지 확인하는 화이트리스트다.
+    private func knownAgentPaths() -> Set<String> {
+        var out = Set<String>()
+        for sc in AgentInventory.scopes(globalRoot: skillsRoot, extraRoots: goalCwdRoots()) {
+            for a in (sc["agents"] as? [[String: Any]]) ?? [] {
+                if let p = a["path"] as? String { out.insert(p) }
+            }
+        }
+        return out
+    }
+
+    // 판정 기록 — {path, state:"ok"|"replace"|"", reason}. 갱신 후 새 인벤토리를 그대로
+    // 돌려주므로 화면은 한 번의 왕복으로 최신 상태가 된다.
+    func setAgentVerdict(path: String, state: String, reason: String) -> String {
+        guard knownAgentPaths().contains(path.trimmingCharacters(in: .whitespaces)) else {
+            return "{\"ok\":false,\"error\":\"unknown-path\"}"
+        }
+        AgentVerdicts.set(path: path, state: state, reason: reason)
+        return agentInventoryJSON()
+    }
+
+    // 교체 위임 — 이 에이전트를 고쳐 쓸 goal 세션을 만든다. 팀위임(/api/team/delegate)과 같은
+    // 방식이다: 여기서는 goal 만 만들어 번호와 첫 턴 프롬프트를 돌려주고, 페이지가 그 프롬프트를
+    // sessionStorage(cmGoalKick:<seq>) 에 넣고 /goal?seq=N 으로 이동하면 목표 페이지가 첫 턴으로
+    // 쏜다. 작업 폴더(cwd)는 그 에이전트가 사는 곳 — 프로젝트 에이전트면 그 프로젝트, 전역/스킬
+    // 에이전트면 ~/.claude — 로 잡아 Claude 가 곧바로 해당 파일을 고칠 수 있게 한다.
+    func delegateAgentReplacement(path: String, reason: String) -> String {
+        let p = path.trimmingCharacters(in: .whitespaces)
+        guard knownAgentPaths().contains(p) else { return "{\"ok\":false,\"error\":\"unknown-path\"}" }
+        let url = URL(fileURLWithPath: p)
+        let name = Self.parseFrontmatter((try? String(contentsOf: url, encoding: .utf8)) ?? "")["name"]
+            ?? url.deletingPathExtension().lastPathComponent
+        // <owner>/.claude/agents/x.md → <owner>
+        let owner = url.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let cwd = FileManager.default.fileExists(atPath: owner.path) ? owner.path : ""
+        let why = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = "에이전트 교체: " + name
+        let seq = DispatchQueue.main.sync {
+            reviewStore.addGoal(text: title, mode: "bypassPermissions", cwd: cwd)
+        }
+        guard seq > 0 else { return "{\"ok\":false,\"error\":\"create-failed\"}" }
+        AgentVerdicts.set(path: p, state: "replace", reason: why, seq: seq)
+        let prompt = """
+        에이전트 `\(name)` 이 원하는 결과를 내지 못하고 있습니다. 정의를 교체(개선)해 주세요.
+
+        - 정의 파일: \(p)
+        - 사용자가 말한 미달 사유: \(why.isEmpty ? "(사유 미기재 — 아래 3번에서 먼저 물어봐 주세요)" : why)
+
+        진행 순서:
+        1. 정의 파일을 읽고 현재 이 에이전트가 무엇을 하기로 되어 있는지 요약하세요.
+        2. 미달 사유와 대조해 어떤 지시가 빠졌거나 어긋났는지 진단하세요 — 추측이 아니라 파일의 문장을 근거로.
+        3. 사유가 비어 있거나 모호하면 먼저 사용자에게 무엇이 기대와 달랐는지 물어보세요.
+        4. 교체 방안을 제안하고 동의를 받은 뒤 파일을 수정하세요. 이전 버전은 되돌릴 수 있어야 합니다.
+        5. 워크스페이스 규칙(CLAUDE.md 의 문서 표준: 코드 예시·표·이모지·시간 추정 금지)을 지키세요.
+        """
+        var out: [String: Any] = [:]
+        out["ok"] = true
+        out["seq"] = seq
+        out["prompt"] = prompt
+        let data = (try? JSONSerialization.data(withJSONObject: out)) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    // 실행 성적 — "이 에이전트가 얼마나 돌았고 얼마나 목적을 달성했나"를 이름(+하네스)만으로 낸다.
+    // 위임 오버레이(/api/agents)와 에이전트 페이지(/api/agents/inventory)가 같은 수를 말해야 하므로
+    // 계산은 여기 한 곳에만 있다. harness 가 선언된 에이전트는 그 하네스 스킬의 ledger/*.jsonl 을
+    // 진실로 삼고, 없으면 범용 agent-update-log.jsonl 에서 자기 이름의 줄만 읽는다.
+    func agentRunStats(name: String, harness: String, updateLog: [[String: Any]]) -> [String: Any] {
+        let fm = FileManager.default
+        var runs = 0, oks = 0
+        var lastTs = "", lastOutcome = "", retro = ""
+        var recent: [[String: Any]] = []
+        if !harness.isEmpty {
+            let hdir = skillsDir.appendingPathComponent(harness, isDirectory: true)
+            retro = (try? String(contentsOf: hdir.appendingPathComponent("retro.md"), encoding: .utf8)) ?? ""
+            let ledgerDir = hdir.appendingPathComponent("ledger", isDirectory: true)
+            let ledgerFiles = ((try? fm.contentsOfDirectory(at: ledgerDir, includingPropertiesForKeys: nil,
+                                                            options: [.skipsHiddenFiles])) ?? [])
+                .filter { $0.pathExtension == "jsonl" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+            for lf in ledgerFiles {
+                let t = (try? String(contentsOf: lf, encoding: .utf8)) ?? ""
+                for line in t.split(separator: "\n") {
+                    guard let d = line.data(using: .utf8),
+                          let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { continue }
+                    if (o["summary"] as? Bool) == true { continue }
+                    let ts = (o["ts"] as? String) ?? ""
+                    if ts.isEmpty && o["report"] == nil && o["goal_id"] == nil { continue }
+                    let label = (o["after"] as? String) ?? (o["report"] as? String) ?? (o["reason"] as? String) ?? ""
+                    let note = (o["note"] as? String) ?? ""
+                    // Exclude non-attempts (dry-runs) and infra failures (app down) — neither
+                    // reflects whether the AGENT did its job well.
+                    if label.hasPrefix("(dry-run") || note.contains("http-error")
+                        || note.contains("spawn-error") { continue }
+                    let ok = ((o["ok"] as? Bool) ?? (o["synced"] as? Bool)) ?? false
+                    runs += 1; if ok { oks += 1 }
+                    lastTs = ts; lastOutcome = ok ? "ok" : "fail"
+                    recent.append(["ts": ts, "ok": ok, "label": label])
+                }
+            }
+        } else {
+            // Standalone agents (no harness) don't own a harness ledger — their runs live in the
+            // universal agent-update-log, keyed by agent name. Derive the SAME run headline from
+            // there so they don't read as "기록 없음" despite an active ledger. `updateLog` is
+            // chronological, so the last match is the most recent run.
+            for o in updateLog where (o["agent"] as? String) == name {
+                let ts = (o["ts"] as? String) ?? ""
+                if ts.isEmpty { continue }
+                // A missing `ok` means a recorded, completed action — count it as a success
+                // unless the entry explicitly says otherwise.
+                let ok = (o["ok"] as? Bool) ?? true
+                let label = (o["func"] as? String) ?? (o["summary"] as? String)
+                    ?? (o["type"] as? String) ?? ""
+                runs += 1; if ok { oks += 1 }
+                lastTs = ts; lastOutcome = ok ? "ok" : "fail"
+                recent.append(["ts": ts, "ok": ok, "label": label])
+            }
+        }
+        // Headline = success over the last 20 real runs (reflects the current agent, not
+        // dragged down by old ledger entries).
+        let window = recent.suffix(20)
+        let windowOks = window.filter { ($0["ok"] as? Bool) == true }.count
+        // Per-function-role rollup from the universal ledger (this agent's entries only).
+        let functions = Self.functionRoles(forAgent: name, in: updateLog)
+        var out: [String: Any] = [:]
+        out["retro"] = retro
+        out["runs"] = runs
+        out["oks"] = oks
+        out["okRate"] = runs > 0 ? Double(oks) / Double(runs) : 0
+        out["recentRate"] = window.isEmpty ? 0 : Double(windowOks) / Double(window.count)
+        out["recentN"] = window.count
+        out["lastTs"] = lastTs
+        out["lastOutcome"] = lastOutcome
+        out["recent"] = Array(recent.suffix(40))
+        out["functions"] = functions
+        return out
     }
 
     // Generic YAML frontmatter -> [key: value] for top-level single-line scalar fields.
@@ -5122,6 +6896,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "/api/bgm/control",                       // handler logs bgmOn/bgmOff
             "/api/session/control",                   // handler logs sessionStart/Stop
             "/api/session/mute",                      // handler logs mute/unmute
+            "/api/session/sfx",                       // handler logs sfxOn/sfxOff
             "/api/equipment/pomodoro",                // handler logs equipment.devAward
             "/api/equipment/tap",                     // 쓰다듬기 +1 XP — high-frequency, noise not workflow
             "/api/sfx",                               // handler logs harvest/chime
@@ -5580,6 +7355,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "claude":
                 url = FileManager.default.homeDirectoryForCurrentUser
                     .appendingPathComponent(".claude/projects", isDirectory: true)
+            case "issue":
+                // Only the CONFIGURED folder is revealable. While the setting is on its
+                // default the issue folder has no single location — it is whatever the
+                // next session's cwd is — so there is nothing honest to open.
+                url = IssueFolder.override
+            case "queue":
+                // 이슈 폴더와 같은 규칙이다 — UI 에서 고른 폴더(override)만 연다. 기본값일 때는
+                // 레일이 ↗ 를 아예 그리지 않으므로(SessionRail.queueRow) 여기서 볼 것은
+                // Settings 의 override 하나뿐이고, 환경변수/하드코딩 기본값은 보지 않는다.
+                url = Settings.shared.queueFolder.flatMap {
+                    $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true)
+                }
             default:
                 url = nil
             }
@@ -5692,6 +7479,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return self.session.stateJSON
             }
         }
+        // 효과음 스위치 (레일 설정 팝업의 '효과음'). 음소거와 나란한 세 번째 스위치로, 음악은
+        // 그대로 두고 원샷 이펙트음만 끈다. {toggle:true}는 뒤집고 {on:bool}은 명시적으로 설정한다.
+        // 값은 Settings에 남아 재실행에도 유지되고, 실제 침묵 여부는 applySfxGate가 음소거와
+        // 합쳐 판정한다 — 그래서 응답에 두 값을 함께 실어 준다(effective = 지금 실제로 들리는가).
+        if path == "/api/session/sfx" {
+            return DispatchQueue.main.sync {
+                let cur = Settings.shared.sfxEnabled
+                let want = (obj["toggle"] as? Bool) == true ? !cur : ((obj["on"] as? Bool) ?? cur)
+                if want != cur {
+                    Settings.shared.sfxEnabled = want
+                    ActionLog.shared.append(self.actionEvent(want ? "sfxOn" : "sfxOff",
+                        detail: want ? "효과음 켬" : "효과음 끔"))
+                    AppLog.log("sfx switch -> \(want) (muted=\(self.session.isMuted))")
+                }
+                self.applySfxGate()
+                return "{\"ok\":true,\"sfx\":\(want),\"muted\":\(self.session.isMuted),"
+                    + "\"effective\":\(!SoundEffects.shared.muted)}"
+            }
+        }
+        // 받아쓰기 덕킹 스위치. 효과음 스위치와 같은 모양이다({toggle:true} 는 뒤집고 {on:bool} 은
+        // 명시적으로 설정). 끄면 감시자 자체가 내려가므로 오른쪽 ⌘ 를 눌러도 아무 일도 일어나지
+        // 않고, 눌려 있던 볼륨은 즉시 되돌아온다. ducking 은 "지금 이 순간 눌려 있는가"라서
+        // 스위치(voiceDuck)와 다른 값이다 — 켜져 있어도 말하고 있지 않으면 false.
+        if path == "/api/session/voiceduck" {
+            return DispatchQueue.main.sync {
+                let cur = Settings.shared.voiceDuckOn
+                let want = (obj["toggle"] as? Bool) == true ? !cur : ((obj["on"] as? Bool) ?? cur)
+                if want != cur {
+                    Settings.shared.voiceDuckOn = want
+                    ActionLog.shared.append(self.actionEvent(want ? "voiceDuckOn" : "voiceDuckOff",
+                        detail: want ? "받아쓰기 덕킹 켬" : "받아쓰기 덕킹 끔"))
+                    AppLog.log("voice-duck switch -> \(want)")
+                }
+                self.applyVoiceDuckSwitch()
+                return "{\"ok\":true,\"voiceDuck\":\(want),\"ducking\":\(self.voiceDucked)}"
+            }
+        }
         // Switch the app window between the dashboard and the full condition (BGM) surface. Driven by
         // the rail's condition popup ("시스템관리") and the BGM page's "← 대시보드" back button —
         // these replace the old titlebar segmented toggle. The two-webview switch is seamless and the
@@ -5768,9 +7592,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if path == "/api/skills/reveal" {
             return revealSkill(name: (obj["name"] as? String) ?? "")
         }
-        // Agents page: reveal the official agent's .md file in ~/.claude/agents/.
+        // Agents page: reveal the official agent's .md file in ~/.claude/agents/. 에이전트
+        // 페이지는 전역 폴더 밖(프로젝트/스킬)의 정의도 열어야 하므로 절대 경로도 받는다.
+        // 이슈 상세의 [폴더 열기]. 위임 카드에서 파싱해 낸 경로만 연다 — 호출자가 준 문자열을
+        // 그대로 믿으면 루프백 대시보드가 임의 파일 열람 통로가 된다. revealAgentPath 와 같은
+        // 허용 목록 대조 패턴이고, 목록 밖은 unknown-path 로 거절한다.
+        if path == "/api/issues/reveal" {
+            return revealWorkQueuePath(((obj["path"] as? String) ?? ""))
+        }
+        // 이슈 상세의 [Orca 로 열기]. 결과물이 마음에 안 들 때 그 자리에서 Orca 로 넘어가
+        // 버전을 올리기 위한 것이다. 넘어가는 것은 카드 키 하나뿐이고, 작업 폴더와 창 제목은
+        // 서버가 카드에서 스스로 만든다 — reveal 과 같은 이유로 웹뷰 문자열은 셸에 안 닿는다.
+        // 이슈 상세의 md 팝업이 고친 본문을 저장하는 자리. 읽기(GET /api/issues/mdfile)와 **같은
+        // 검증 함수**를 통과한다 — 쓰기만 느슨하면 임의 파일 쓰기 통로가 된다.
+        if path == "/api/issues/mdsave" {
+            return workQueueMarkdownWrite(path: (obj["path"] as? String) ?? "",
+                                          text: (obj["text"] as? String) ?? "")
+        }
+        if path == "/api/issues/orca" {
+            return IssueOrcaLauncher.launch(key: (obj["path"] as? String) ?? (obj["key"] as? String) ?? "")
+        }
+        // 보관과 보관 해제. 아카이브는 상태값이 아니라 별도의 축이라 카드 파일에 쓰지 않고
+        // 앱 자기 폴더의 archive.json 에만 남는다 — 큐 폴더는 읽기 전용이다.
+        if path == "/api/issues/archive"   { return IssueArchiveStore.archive(key: (obj["path"] as? String) ?? "") }
+        if path == "/api/issues/unarchive" { return IssueArchiveStore.unarchive(key: (obj["path"] as? String) ?? "") }
+        // 일괄 보관. 무엇을 치울지는 화면이 정해 키 목록으로 보낸다 — 서버가 "전부" 를 스스로
+        // 정하면 라이언이 방금 필터로 좁혀 놓은 것을 무시하게 된다.
+        if path == "/api/issues/archive-bulk" {
+            return IssueArchiveStore.archiveMany(keys: (obj["paths"] as? [String]) ?? [])
+        }
+        // AI 검색을 **시작만** 한다. 여기서 모델을 기다리면 대시보드 서버의 직렬 큐가 그동안
+        // 통째로 멈춰서 다른 페이지까지 같이 선다. 결과는 GET /api/issues/search?id=... 로 받는다.
+        if path == "/api/issues/search" {
+            return IssueSearch.start(query: (obj["q"] as? String) ?? "")
+        }
         if path == "/api/agents/reveal" {
+            let p = ((obj["path"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+            if !p.isEmpty { return revealAgentPath(p) }
             return revealAgent(file: (obj["file"] as? String) ?? "")
+        }
+        // 에이전트 판정 기록 (목적 달성 / 교체 필요). 새 인벤토리를 그대로 돌려준다.
+        if path == "/api/agents/verdict" {
+            return setAgentVerdict(path: (obj["path"] as? String) ?? "",
+                                   state: (obj["state"] as? String) ?? "",
+                                   reason: (obj["reason"] as? String) ?? "")
+        }
+        // 교체 위임 — 이 에이전트를 고쳐 쓸 goal 세션을 만들고 첫 턴 프롬프트를 돌려준다.
+        if path == "/api/agents/replace" {
+            return delegateAgentReplacement(path: (obj["path"] as? String) ?? "",
+                                            reason: (obj["reason"] as? String) ?? "")
         }
         // Save the user-edited one-line summary into the skill's SKILL.md. Pure file I/O.
         if path == "/api/skills/summary" {
@@ -5784,6 +7654,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Native folder picker for the skills base folder (opens on main).
         if path == "/api/skills/folder/pick" {
             return pickSkillsFolder()
+        }
+        // 이슈 폴더 (rail ⚙️설정) — where a delegation issue file is created. Blank resets to
+        // the default (the folder the agent was invoked in). Both return the refreshed
+        // /api/settings/paths payload so the panel re-renders from one round-trip.
+        if path == "/api/settings/issue-folder" {
+            return setIssueFolder(folder: (obj["folder"] as? String) ?? "")
+        }
+        if path == "/api/settings/issue-folder/pick" {
+            return pickIssueFolder()
+        }
+        if path == "/api/settings/queue-folder" {
+            return setQueueFolder(folder: (obj["folder"] as? String) ?? "")
+        }
+        if path == "/api/settings/queue-folder/pick" {
+            return pickQueueFolder()
         }
         // Native folder picker for the 목표 추가 composer's 작업 폴더 (찾기 button). Modal on
         // main like pickSkillsFolder — a direct user action, so the brief block is fine.
@@ -6016,7 +7901,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // goal. That extracted link is returned as "link" so callers can act on it.
             return handleGoalTransfer(obj)
         }
-        return DispatchQueue.main.sync {
+        return DispatchQueue.main.sync { () -> String in
             let day = reviewStore.todayKey
             switch path {
             case "/api/goal/add":
@@ -6407,6 +8292,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // the guard starts/stops immediately without uninstalling the plugin.
                 Settings.shared.cameraGuardOn = (obj["on"] as? NSNumber)?.boolValue ?? true
                 syncPluginWorkers()
+            case "/api/camera/recover":
+                // 감지를 기다리지 않고 자동 재활성화 한 번을 지금 쏜다 (시연/QA용). 폴러가
+                // 쓰는 것과 같은 경로를 그대로 부른다 — 시연 전용 경로를 따로 두지 않는다.
+                cameraWatch.attemptRecovery(reason: "수동 트리거 (POST /api/camera/recover)")
             case "/api/draw/clear":
                 // Programmatic wipe (QA/debug parity with the left-⌃ gesture).
                 drawOverlay.clear()
@@ -6670,6 +8559,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                        ms: SlackTranslateStore.ms(since: t0), detail: detail)
                     return "{\"ok\":true}"
                 }
+                // 빠른 리액션 버튼 목록 — 이모지 고르기 팝업의 '기본에 추가/빼기'.
+                if let quick = obj["quick"] as? [String] {
+                    let t0 = DispatchTime.now()
+                    SlackTranslateStore.setQuick(quick)
+                    SlackActionLog.log("config.quick", ok: true,
+                                       ms: SlackTranslateStore.ms(since: t0),
+                                       detail: quick.joined(separator: " "))
+                    return "{\"ok\":true}"
+                }
                 SlackActionLog.log("config.model", ok: false, ms: 0, error: "bad model",
                                    detail: (obj["model"] as? String) ?? "")
                 return "{\"ok\":false,\"error\":\"bad model\"}"
@@ -6698,6 +8596,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return SlackTranslateStore.linkGui(id: id, seq: seq)
                 }
                 return "{\"ok\":false,\"error\":\"bad request\"}"
+            case "/api/slack/context":
+                // 컨텍스트 공유하기 — 이 메시지가 놓인 원 대화(스레드 전체 + 채널 앞뒤)를
+                // 슬랙에서 다시 긁어 목표 폴더에 문서로 남기고, 사용자가 적은 목표를
+                // goal-core.md 에 박아 둔다. 세션은 그 두 파일을 읽고 대화를 이어간다.
+                // 수집이 실패해도 ok:false 만 돌려준다 — 세션 시작 자체는 막지 않는다.
+                if let id = obj["id"] as? String {
+                    let seq = (obj["seq"] as? NSNumber)?.intValue ?? 0
+                    return slackContextShare(id: id, seq: seq,
+                                             goal: (obj["goal"] as? String) ?? "")
+                }
+                return "{\"ok\":false,\"error\":\"bad request\"}"
             case "/api/slack/reply/edit":
                 // 내가 보낸 답장 수정 — chat.update로 슬랙 원문을 고치고 ledger 동기화.
                 if let id = obj["id"] as? String, let ts = obj["ts"] as? String,
@@ -6713,11 +8622,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return SlackTranslateStore.deleteReply(id: id, ts: ts)
                 }
                 return "{\"ok\":false,\"error\":\"bad request\"}"
+            case "/api/slack/reaction":
+                // 항목 툴바의 빠른 리액션(✅·👀·👌)과 이모지 고르기 — 슬랙 원문에
+                // 그대로 이모지를 달거나 뗀다. 처리완료와는 별개 액션이다
+                // (처리완료의 ✅ 미러는 /api/slack/done → syncReaction 쪽).
+                if let id = obj["id"] as? String, let name = obj["name"] as? String {
+                    let on = (obj["on"] as? Bool) ?? ((obj["on"] as? NSNumber)?.boolValue ?? true)
+                    return SlackTranslateStore.setReaction(id: id, name: name, on: on)
+                }
+                return "{\"ok\":false,\"error\":\"bad request\"}"
             case "/api/slack/done":
                 // Slack 번역함 처리완료 toggle — app-owned done.json only; the
                 // daemon's items.jsonl is never rewritten (append-only ownership).
                 // Also mirrors the state to Slack: 완료 removes the 👀 reaction from
-                // the original message, 해제 re-adds it (best-effort, off-thread).
+                // the original message AND adds ✅, 해제 does the reverse
+                // (best-effort, off-thread — SlackTranslateStore.syncReaction).
                 // sync:false = caller is the daemon reacting to an emoji removal
                 // that ALREADY happened in Slack — skip the mirror (loop guard).
                 if let id = obj["id"] as? String {
@@ -6786,6 +8705,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return "{\"ok\":false,\"error\":\"bad request\"}"
                 }
                 return IntegrationStore.removeInstanceJSON(credId: credId, key: key)
+            case "/api/integrations/notion/connect":
+                guard let service = obj["service"] as? String,
+                      let account = obj["account"] as? String else {
+                    return "{\"ok\":false,\"error\":\"bad request\"}"
+                }
+                return IntegrationStore.connectNotionCandidateJSON(
+                    service: service, account: account, label: (obj["label"] as? String) ?? "")
+            case "/api/integrations/notion/register":
+                let service = "cm-notion-token-registered"
+                let account = "notion"
+                let id = UUID().uuidString.lowercased()
+                let result = AppPaths.base.appendingPathComponent("notion-register-\(id).json")
+                let bundled = Bundle.main.resourceURL?.appendingPathComponent("NotionKeychainRegister")
+                let dev = (AppPaths.projectRoot ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+                    .appendingPathComponent(".build/debug/NotionKeychainRegister")
+                let helper = (bundled.map { FileManager.default.isExecutableFile(atPath: $0.path) } == true)
+                    ? bundled! : dev
+                guard FileManager.default.isExecutableFile(atPath: helper.path) else {
+                    return "{\"ok\":false,\"error\":\"등록 도구가 없습니다 — 앱을 다시 빌드해 주세요\"}"
+                }
+                let command = [helper.path, service, account, result.path]
+                    .map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+                    .joined(separator: " ")
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                p.arguments = ["-e", "tell application \"Terminal\" to activate",
+                               "-e", "tell application \"Terminal\" to do script \(String(reflecting: command))"]
+                do { try p.run() } catch {
+                    return "{\"ok\":false,\"error\":\"Terminal을 열지 못했습니다\"}"
+                }
+                return "{\"ok\":true,\"id\":\(jsonString(id))," +
+                    "\"service\":\(jsonString(service)),\"account\":\(jsonString(account))}"
             case "/api/integrations/mcp":
                 // MCP 서버 등록·해제 — claude mcp add-json/remove 를 대신 눌러 준다.
                 guard let credId = obj["credId"] as? String, let key = obj["key"] as? String else {
@@ -6866,6 +8817,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 r.aiScore = result.score
                 r.aiNote = result.note
                 reviewStore.saveReview(r, day: day)
+            case "/api/tokens/account/label":
+                if let aid = obj["id"] as? String, let label = obj["label"] as? String {
+                    LLMAccountStore.shared.setLabel(id: aid, label: label)
+                    return "{\"ok\":true}"
+                }
+                return "{\"ok\":false,\"error\":\"missing id or label\"}"
             default:
                 break
             }
@@ -8114,6 +10071,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // POST /api/slack/context — 번역함의 "컨텍스트 공유하기". 방금 만들어진 목표(seq)에
+    // 두 가지를 남긴다:
+    //   attachments/slack-context.md — 슬랙에서 다시 긁어온 원 대화 전문 (SlackContextDoc)
+    //   goal-core.md                 — 사용자가 적은 목표 (세션 프리앰블이 항상 가리키는 파일)
+    // 카드 본문만 넘기던 옛 GUI세션은 앞 맥락(예: "문제부터 정의하라")을 몰라서 세션이
+    // 겉도는 답을 했다 — 이제 대화 전체가 파일로 세션 폴더에 들어간다. 슬랙 수집이
+    // 실패해도 목표는 남기고 ok:false 만 돌려준다 (세션은 메시지 컨텍스트만으로 시작).
+    func slackContextShare(id: String, seq: Int, goal: String) -> String {
+        guard seq > 0, let adir = IssuePaths.attachmentsDir(seq: seq) else {
+            return "{\"ok\":false,\"error\":\"bad seq\"}"
+        }
+        let doc = SlackTranslateStore.contextDoc(id: id)
+        var path = "", writeError = ""
+        if doc.ok {
+            let url = adir.appendingPathComponent("slack-context.md")
+            do {
+                try FileManager.default.createDirectory(at: adir, withIntermediateDirectories: true)
+                try doc.markdown.write(to: url, atomically: true, encoding: .utf8)
+                path = url.path
+            } catch {
+                // 문서를 못 써도 목표는 남긴다 (아래) — 세션이 기준점 없이 시작하는 게 더 나쁘다.
+                writeError = error.localizedDescription
+            }
+        }
+        // 목표는 수집 성공 여부와 무관하게 남긴다 — 이게 이 세션의 기준점이다.
+        let g = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !g.isEmpty, let core = IssuePaths.coreURL(seq: seq),
+           !FileManager.default.fileExists(atPath: core.path) {
+            _ = goalDefinitionSave(Scope(seq: seq, task: nil), kind: "core",
+                                   text: Self.slackGoalCore(goal: g, contextPath: path))
+        }
+        guard doc.ok, writeError.isEmpty else {
+            return "{\"ok\":false,\"error\":\(jsonString(doc.ok ? writeError : doc.error))}"
+        }
+        return "{\"ok\":true,\"path\":\(jsonString(path)),\"n\":\(doc.messages),"
+            + "\"thread\":\(doc.threadReplies)}"
+    }
+
+    // goal-core.md 본문 — 다른 목표와 같은 4개 섹션을 쓰되, '예상결과'에 사용자가 적은
+    // 목표를 그대로 둔다. 세션 프리앰블이 이 파일을 가리키므로 턴이 아무리 길어져도
+    // 에이전트가 기준을 다시 확인할 수 있다.
+    private static func slackGoalCore(goal: String, contextPath: String) -> String {
+        var out: [String] = []
+        out.append("# 슬랙 대화 대응")
+        out.append("")
+        out.append("## 문제정의")
+        out.append("슬랙에서 오간 대화를 이어받아 대응해야 한다. 앞 맥락이 길어 한 건씩 손으로 답하면 끝나지 않는다.")
+        if !contextPath.isEmpty {
+            out.append("원 대화 전문: \(contextPath)")
+        }
+        out.append("")
+        out.append("## 예상결과")
+        out.append(goal)
+        out.append("")
+        out.append("## 예상해결방안")
+        out.append("원 대화 전문과 위 목표를 근거로, 매 턴 다음에 보낼 답장 초안을 제안한다. 슬랙 전송은 사람이 번역함 화면에서 직접 한다.")
+        out.append("")
+        out.append("## 예상테스트시나리오")
+        out.append("- 상대의 새 메시지를 붙여넣으면 위 목표 기준의 답장 초안이 나온다.")
+        out.append("- 목표에서 벗어난 제안이 나오면 이 파일의 '예상결과'를 고쳐 바로잡는다.")
+        out.append("")
+        return out.joined(separator: "\n")
+    }
+
     // POST /api/goal/chat/send — one turn against the goal's conversation. BLOCKING.
     // Runs in powerful mode (bypassPermissions + workspace add-dir) so the comfortable
     // chat input can do real work — edits, commands — without dropping to a terminal.
@@ -8543,11 +10564,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // preset selects the FIRST-turn framing: "team" turns this chat into a team-lead
         // multi-agent debate (팀위임); "plan" into a planning-coach session (계획);
+        // "slack" into a Slack 대화 대응 세션 (번역함 컨텍스트 공유하기);
         // anything else keeps the 목표 명확화 preamble.
         let preamble: String
         switch preset {
         case "team": preamble = teamChatPreamble(scope)
         case "plan": preamble = planChatPreamble(scope)
+        case "slack": preamble = slackChatPreamble(scope)
         default: preamble = goalChatPreamble(scope)
         }
         let key = scope.key
@@ -9195,6 +11218,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         - 핵심 버전 파일: \(core)
         - 디테일 버전 파일: \(detail)
         지시가 목표 내용을 가리키면("내용을 보고", "위 목표대로" 등) 위 목표 내용과 두 파일을 근거로 작업하세요. 산출물은 파일로 남기고, 한국어로 간결하게 답하세요.
+        """
+    }
+
+    // First-turn context for a 슬랙 대화 대응 세션 (chat2 preset:"slack" — 번역함의
+    // "컨텍스트 공유하기"). 이 세션의 기준점은 목표(goal-core.md)이고, 재료는 슬랙에서
+    // 긁어온 원 대화 전문(attachments/slack-context.md)이다. 기본 프리앰블(목표 명확화)을
+    // 쓰면 에이전트가 대화를 이어받는 대신 목표를 캐묻기만 해서 따로 뒀다.
+    private func slackChatPreamble(_ scope: Scope) -> String {
+        let title = DispatchQueue.main.sync {
+            reviewStore.goals.first { $0.seq == scope.seq }?.text ?? ""
+        }
+        let core = scope.coreURL?.path ?? ""
+        let ctx = scope.attachmentsDir?.appendingPathComponent("slack-context.md").path ?? ""
+        return """
+        당신은 이 슬랙 대화를 사용자 대신 끌고 가는 대응 파트너입니다. 상대는 계속 질문하고 대화를 이어갈 것이고, 사용자는 매번 직접 답을 쓸 시간이 없습니다. 사용자가 정한 목표를 먼저 이해하고, 그 목표를 달성하는 방향으로 대화가 흘러가게 만드는 것이 당신의 일입니다.
+        - 골 번호: goal-\(scope.seq)
+        - 목표(사용자가 정한 기준점): \(title)
+        - 목표 파일: \(core)
+        - 슬랙 원 대화 전문: \(ctx)
+
+        진행 방식 — 반드시 이 순서대로:
+        1. 첫 턴에 위 두 파일을 Read 도구로 직접 읽습니다. 원 대화 전문에는 카드에 안 보이던 앞 맥락(누가 무엇을 요구했는지, 이미 합의된 것과 반박된 것)이 들어 있습니다.
+        2. 읽은 내용을 서너 줄로 정리해 보여줍니다: 지금 대화가 어디까지 왔는지, 상대가 실제로 요구하는 것이 무엇인지, 목표와 어긋나는 지점이 무엇인지.
+        3. 그 다음 바로 슬랙에 보낼 답장 초안을 제시합니다. 초안은 그대로 복사해 붙일 수 있는 완성된 글이어야 하고, 원 대화와 같은 언어로 씁니다.
+        4. 이후 사용자가 상대의 새 메시지를 붙여넣으면, 매번 같은 방식으로 목표 기준의 판단 + 다음 답장 초안을 냅니다.
+
+        규칙: 판단이 갈리는 지점에서는 목표 파일의 '예상결과'를 기준으로 결정합니다. 목표 자체가 바뀌면 목표 파일을 고쳐 기록합니다. 슬랙 전송은 절대 직접 하지 않습니다 — 전송은 사용자가 번역함 화면에서 합니다. 한국어로 간결하게 답하되, 답장 초안만은 원 대화의 언어로 씁니다.
+
+        사용자에게 되물어야 할 때는 본문 마크다운으로 길게 풀어쓰지 말고, 반드시 아래 형식의 cm-question 코드블록 하나로만 출력하세요(블록 앞에 짧은 맥락 한두 줄은 두어도 됩니다).
+        ```cm-question
+        {"q":[{"ask":"질문 한 줄","opts":[{"label":"짧은 선택지","why":"추천 이유 한 줄","rec":true},{"label":"다른 선택지"}]}]}
+        ```
+        규칙: 물어볼 질문을 q 배열에 모두 담고, 각 질문의 opts는 2~4개로 한다. 가장 가능성 높은 선택지 하나에만 rec를 true로 두고 why에 한 줄 근거를 적는다. label은 짧게 쓴다. 사용자는 직접 입력으로도 답할 수 있으니 모든 경우를 선택지로 나열할 필요는 없다. 질문이 아닌 일반 설명·답변은 평소대로 마크다운으로 답한다.
         """
     }
 

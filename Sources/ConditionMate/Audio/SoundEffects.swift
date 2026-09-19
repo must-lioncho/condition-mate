@@ -16,11 +16,19 @@ final class SoundEffects {
     private var primed = false
     private var primer: AVAudioPlayer?
 
+    // 효과음 전역 게이트. 마스터 음소거(⌃⌘M)와 효과음 스위치(레일 설정 팝업)가 만나는 곳으로,
+    // AppDelegate.applySfxGate가 유일한 writer다. 음소거는 "지금은 조용히 하라"는 뜻이므로
+    // 음악만 끄고 알림음이 튀어나오면 그 의도가 깨진다 — 여기서 한 번에 막는다.
+    // 막힌 재생은 조용한 no-op이고 playFirst는 nil을 돌려주므로, 호출부의 액션 로그도
+    // "울리지 않은 소리"를 기록하지 않는다.
+    var muted = false
+
     private init() {}
 
     // Play <data>/sound/<name> once. A missing or unreadable file is a silent
     // no-op — effects are cosmetic and must never fail the calling endpoint.
     func play(_ name: String, volume: Float = 0.9) {
+        guard !muted else { return }
         let url = AppPaths.sub("sound").appendingPathComponent(name)
         guard let player = try? AVAudioPlayer(contentsOf: url) else { return }
         primeOutputIfNeeded()
@@ -36,6 +44,7 @@ final class SoundEffects {
     // without a settings UI; the sound folder is the interface.
     @discardableResult
     func playFirst(_ names: [String], volume: Float = 0.9) -> String? {
+        guard !muted else { return nil }
         let dir = AppPaths.sub("sound")
         for n in names where FileManager.default.fileExists(atPath: dir.appendingPathComponent(n).path) {
             play(n, volume: volume)
