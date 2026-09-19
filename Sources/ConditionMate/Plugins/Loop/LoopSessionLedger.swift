@@ -98,10 +98,8 @@ enum LoopSessionLedger {
     private static var staleFiles = 0                   // 이번 패스에서 읽어야 할 파일 수
     private static var doneThisPass = 0
     private static var currentPath = ""
-    // 보통 패스는 최근에 생겼거나 자란 세션만 찾는다. 과거 행은 sessions.json에 이미 있어
-    // 화면과 합계에서 사라지지 않는다. 사용자가 전체 새로고침을 명시했을 때만 디렉터리의
-    // 오래된 파일까지 다시 검색한다.
-    private static let defaultLookback: TimeInterval = 24 * 60 * 60
+    // 매 패스에서 전체 파일 지문을 확인한다. 앱 미실행 중 생긴 오래된 파일도
+    // 놓치지 않되, 내용 파싱은 지문이 달라진 파일에만 수행한다.
     private static var fullScanRunning = false
     private static var fullScanQueued = false
     private static var fullScanScheduled = false
@@ -131,7 +129,7 @@ enum LoopSessionLedger {
 
     // 조회가 들어왔을 때 너무 오래된 원장이면 조용히 다음 패스를 예약한다. 조회 자체는
     // 기다리지 않는다 — 화면은 "어디까지 분석했는지"를 그리면 되고, 나머지는 다음 조회에 채워진다.
-    private static func scheduleIfStale(minInterval: TimeInterval = 180) {
+    private static func scheduleIfStale(minInterval: TimeInterval = 30) {
         lock.lock()
         let idle = !running && (lastPassAt.map { Date().timeIntervalSince($0) > minInterval } ?? true)
         lock.unlock()
@@ -168,7 +166,6 @@ enum LoopSessionLedger {
 
         let fm = FileManager.default
         var files: [(url: URL, mtime: Date, size: Int)] = []
-        let recentCutoff = Date().addingTimeInterval(-defaultLookback)
         if let subs = try? fm.contentsOfDirectory(at: projectsBase,
                 includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
             for dir in subs where (try? dir.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
@@ -177,9 +174,7 @@ enum LoopSessionLedger {
                 for f in inner where f.pathExtension == "jsonl" {
                     let rv = try? f.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
                     let mtime = rv?.contentModificationDate ?? .distantPast
-                    if fullScan || mtime >= recentCutoff {
-                        files.append((f, mtime, rv?.fileSize ?? 0))
-                    }
+                    files.append((f, mtime, rv?.fileSize ?? 0))
                 }
             }
         }
@@ -231,7 +226,7 @@ enum LoopSessionLedger {
         let n = doneThisPass, total = totalFiles, runQueuedFullScan = fullScanQueued
         fullScanQueued = false
         lock.unlock()
-        if n > 0 { log?("LOOP-SESSIONS pass — \(n)개 새로 분석 · 검색 \(total)개 · \(fullScan ? "전체" : "최근 24시간")") }
+        if n > 0 { log?("LOOP-SESSIONS pass — \(n)개 새로 분석 · 검색 \(total)개 · 전체 지문 확인") }
         if runQueuedFullScan { scheduleFullScan() }
     }
 
@@ -589,8 +584,7 @@ enum LoopSessionLedger {
             "running": running,
             "doneThisPass": doneThisPass,
             "current": currentPath,
-            "scope": (fullScanRunning || fullScanQueued || fullScanScheduled) ? "all" : "recent",
-            "lookbackHours": Int(defaultLookback / 3600),
+            "scope": "all",
             "lastPassAt": lastPassAt.map { ISO8601DateFormatter().string(from: $0) } ?? "",
             "startedAt": passStartedAt.map { ISO8601DateFormatter().string(from: $0) } ?? "",
         ]
@@ -608,6 +602,10 @@ enum LoopSessionLedger {
             var rows: [Row] = []
         }
         var groups: [String: Group] = [:]
+        let api = LoopAPIUsage.read(AppPaths.sub("slack-translate").appendingPathComponent("actions-daemon.jsonl"),
+                                    timeZone: Settings.shared.displayTimeZone)
+        let apiLoop = "condition-mate-slack-shared-reply"
+
         for (sid, r) in all {
             guard let v = verdicts[sid] else { continue }
             if let wantLoop, v.loopId != wantLoop { continue }
@@ -623,6 +621,19 @@ enum LoopSessionLedger {
             if !r.lastDay.isEmpty, r.lastDay > g.last { g.last = r.lastDay }
             g.rows.append(r)
             groups[v.key] = g
+        }
+
+        if wantLoop == nil || wantLoop == apiLoop {
+            let key = "loop:" + apiLoop
+            var g = groups[key] ?? Group(key: key, label: "Slack 공용 수신 · 번역 · 기본 응답", kind: "loop", loopId: apiLoop)
+            for e in api.events {
+                g.tokens += e.tokens; g.cost += e.cost ?? 0
+                var spend = g.days[e.day] ?? DaySpend()
+                spend.t += e.tokens; spend.c += e.cost ?? 0; g.days[e.day] = spend
+                if g.first.isEmpty || e.day < g.first { g.first = e.day }
+                if g.last.isEmpty || e.day > g.last { g.last = e.day }
+            }
+            if !api.events.isEmpty || !api.ambiguousDays.isEmpty { groups[key] = g }
         }
 
         func esc(_ s: String) -> String {
@@ -655,14 +666,23 @@ enum LoopSessionLedger {
                 // 실제로 한 번 그렇게 만들어 개수가 사라졌다. 목록은 회차(runs)다.
                 // 전체 기간 필터가 실제 전체를 뜻해야 하므로 회차를 자르지 않는다. 사람이 이
                 // 목록에서 찾는 것은 "어제 그 회차"라 크기순이 아니라 시간순/날짜축을 유지한다.
-                let sessJSON = g.rows.sorted { $0.startTS > $1.startTS }.map { r -> String in
-                    "{\"sid\":\(esc(String(r.sid.prefix(8)))),\"title\":\(esc(r.title)),"
+                var sessJSON = g.rows.sorted { $0.startTS > $1.startTS }.map { r -> String in
+                    let dayData = (try? JSONEncoder().encode(r.days)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                    return "{\"days\":\(dayData),\"sid\":\(esc(String(r.sid.prefix(8)))),\"title\":\(esc(r.title)),"
                         + "\"proj\":\(esc(r.proj)),\"tokens\":\(r.tokens),\"cost\":\(money(r.costUSD)),"
                         + "\"day\":\(esc(r.lastDay)),\"start\":\(Int(r.startTS)),\"end\":\(Int(r.endTS)),"
                         + "\"turns\":\(r.turns),\"tools\":\(r.tools)}"
                 }.joined(separator: ",")
+                let events = g.loopId == apiLoop ? api.events : []
+                let apiRuns = events.reversed().map { e -> String in
+                    "{\"sid\":\(esc(e.id)),\"source\":\"api\",\"title\":\(esc(e.model)),\"day\":\(esc(e.day)),"
+                        + "\"start\":\(Int(e.at)),\"end\":\(Int(e.at)),\"tokens\":\(e.tokens),\"cost\":\(e.cost.map(money) ?? "null")}"
+                }.joined(separator: ",")
+                if !apiRuns.isEmpty { sessJSON += (sessJSON.isEmpty ? "" : ",") + apiRuns }
+                let ambiguous = g.loopId == apiLoop ? api.ambiguousDays : [:]
+                let ambiguousJSON = (try? JSONSerialization.data(withJSONObject: ambiguous)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
                 groupJSON.append("{\"key\":\(esc(g.key)),\"label\":\(esc(g.label)),\"kind\":\(esc(g.kind)),"
-                    + "\"loopId\":\(esc(g.loopId)),\"sessions\":\(g.sessions),\"tokens\":\(g.tokens),"
+                    + "\"loopId\":\(esc(g.loopId)),\"apiCalls\":\(events.count),\"ambiguousDays\":\(ambiguousJSON),\"sessions\":\(g.sessions),\"tokens\":\(g.tokens),"
                     + "\"cost\":\(money(g.cost)),\"first\":\(esc(g.first)),\"last\":\(esc(g.last)),"
                     + "\"projects\":[\(g.projects.sorted().prefix(6).map(esc).joined(separator: ","))],"
                     + "\"days\":{\(dayJSON)},\"runs\":[\(sessJSON)]}")
@@ -682,7 +702,7 @@ enum LoopSessionLedger {
         }
         let progJSON = (try? JSONSerialization.data(withJSONObject: prog))
             .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-        return "{\"progress\":\(progJSON),"
+        return "{\"apiLogUnreadable\":\(api.unreadable),\"progress\":\(progJSON),"
             + "\"totals\":{\"loop\":{\"sessions\":\(loopSess),\"tokens\":\(loopTok),\"cost\":\(money(loopCost))},"
             + "\"candidate\":{\"sessions\":\(candSess),\"tokens\":\(candTok),\"cost\":\(money(candCost))},"
             + "\"human\":{\"sessions\":\(humanSess),\"tokens\":\(humanTok),\"cost\":\(money(humanCost))}},"

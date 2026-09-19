@@ -131,6 +131,7 @@ import { hangulRatio, hasEnglishSentence, countryLanguage, decideReplyLanguage,
   untranslatedSegments } from './reply-language.mjs';
 // 민감정보 요청 게이트. 규칙과 실측 근거는 그 파일에 있고 여기서 다시 판정하지 않는다.
 import { securityGate } from './security-gate.mjs';
+import { captureReplyUsage, replyUsageID, recordReplyUsage, geminiReplyUsage, anthropicReplyUsage, cliReplyUsage, replyModelLimits } from './reply-ai-usage.mjs';
 
 // ---------------------------------------------------------------- config
 
@@ -537,7 +538,7 @@ function modelCostUSD(model, input, output) {
 }
 
 function act(action, { id = '', ok = true, ms = 0, error = '', detail = '',
-  input_tokens, output_tokens, total_tokens, model } = {}) {
+  input_tokens, output_tokens, total_tokens, model, transport } = {}) {
   try {
     mkdirSync(OUT_DIR, { recursive: true });
     appendFileSync(
@@ -551,6 +552,7 @@ function act(action, { id = '', ok = true, ms = 0, error = '', detail = '',
         error: String(error || '').slice(0, 300),
         detail: String(detail || '').slice(0, 300),
         by: 'daemon',
+        ...(transport ? { transport } : {}),
         ...(Number(total_tokens || 0) > 0 ? {
           input_tokens: Number(input_tokens || 0), output_tokens: Number(output_tokens || 0),
           total_tokens: Number(total_tokens || 0), model: String(model || ''),
@@ -1462,8 +1464,9 @@ async function translateGemini(apiModel, prompt, inline = []) {
   );
   if (!res.ok) throw new Error(`gemini ${apiModel}: HTTP ${res.status}`);
   const json = await res.json();
+  recordReplyUsage(geminiReplyUsage(json, apiModel, await replyModelLimits('gemini', json.modelVersion || apiModel, geminiKey)));
   const u = json.usageMetadata || {};
-  act('model.usage', { id: '', detail: apiModel, input_tokens: Number(u.promptTokenCount || 0),
+  act('model.usage', { transport: 'api', id: replyUsageID(), detail: apiModel, input_tokens: Number(u.promptTokenCount || 0),
     output_tokens: Number(u.candidatesTokenCount || 0), total_tokens: Number(u.totalTokenCount || 0),
     model: apiModel });
   const out = (json.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('').trim();
@@ -1503,8 +1506,9 @@ async function translateAnthropicAPI(prompt, inline = []) {
   });
   if (!res.ok) throw new Error(`anthropic api: HTTP ${res.status}`);
   const json = await res.json();
+  recordReplyUsage(anthropicReplyUsage(json, 'claude-haiku-4-5', await replyModelLimits('anthropic', json.model || 'claude-haiku-4-5', anthropicKey)));
   const u = json.usage || {};
-  act('model.usage', { id: '', detail: 'claude-haiku-4-5', input_tokens: Number(u.input_tokens || 0),
+  act('model.usage', { transport: 'api', id: replyUsageID(), detail: 'claude-haiku-4-5', input_tokens: Number(u.input_tokens || 0),
     output_tokens: Number(u.output_tokens || 0),
     total_tokens: Number(u.input_tokens || 0) + Number(u.output_tokens || 0), model: 'claude-haiku-4-5' });
   const out = (json.content || [])
@@ -1537,11 +1541,12 @@ function translateClaude(prompt) {
         } else {
           try {
             const envelope = JSON.parse(stdout);
+            for (const call of cliReplyUsage(envelope, 'claude-haiku-4-5-20251001', process.env.CLAUDE_CODE_EFFORT_LEVEL)) recordReplyUsage(call);
             const u = envelope.usage || {};
             const input = Number(u.input_tokens || 0) + Number(u.cache_creation_input_tokens || 0)
               + Number(u.cache_read_input_tokens || 0);
             const output = Number(u.output_tokens || 0);
-            act('model.usage', { id: '', detail: 'claude-haiku-4-5-20251001', input_tokens: input,
+            act('model.usage', { transport: 'cli', id: replyUsageID(), detail: 'claude-haiku-4-5-20251001', input_tokens: input,
               output_tokens: output, total_tokens: input + output, model: 'claude-haiku-4-5-20251001' });
             resolve(String(envelope.result || '').trim() || null);
           } catch (e) {
@@ -2770,7 +2775,7 @@ async function postAcknowledgement(item, ctx) {
       return;
     }
   }
-  const out = await acknowledgementText({
+  const captured = await captureReplyUsage(item.id, () => acknowledgementText({
     text: item.textEn, ctx, thread, threadAfter, jiraCtx: ev.jira, extra: ev, language,
     format, prior, noRequestSignal, requestLevel,
     persona: policy.persona || '',
@@ -2778,7 +2783,8 @@ async function postAcknowledgement(item, ctx) {
     // 범위가 모호하면 밝히고 보내는 것이 아니라 보내지 않는다. 가정은 MD 노트로 간다.
     sendContext: { channelId: item.channel, channelName: item.channelName, files },
     noveltyOverlapMax: Number(policy?.noveltyGate?.overlapMax) || undefined,
-  });
+  }));
+  const out = captured.value;
 
   // 등급을 못 올린 자리는 전부 R1 로 내려온다. 왜 글이 안 나갔는지가 보이지 않으면
   // "왜 답이 없지" 가 다시 사람의 일이 된다 (설계 §6).
@@ -2950,6 +2956,8 @@ async function postAcknowledgement(item, ctx) {
     // 실제로 나간 본문. 여기 없으면 대시보드 발신 탭이 빈 화면이 된다 —
     // ack-threads.json 에도 남지만 그 파일은 스레드별 최신본만 들고 있다.
     ackBody: `${brief.text}`.slice(0, 2400),
+    // Internal feed only. Never passed to renderNote or chat.postMessage.
+    ackAI: captured.usage,
     ackLangRetried: out.languageRetried ? true : undefined,
     // 축 0. 새로 더한 네 필드는 전부 선택 항목이다 — 이 필드가 없는 옛 줄을 읽는 쪽이
     // 멈추지 않도록 값이 없으면 undefined 로 두고, rewriteItem 이 그 키를 지운다.
@@ -4983,7 +4991,7 @@ async function main() {
 const CODE_DIR = dirname(fileURLToPath(import.meta.url));
 const CODE_FILES = [
   process.argv[1] || '',
-  ...['alignment-engine.mjs', 'emoji-layer.mjs', 'answer-context.mjs', 'media-extract.mjs',
+  ...['reply-ai-usage.mjs', 'alignment-engine.mjs', 'emoji-layer.mjs', 'answer-context.mjs', 'media-extract.mjs',
     'slack-emoji-layer.json', 'slack-reply-policy.json', 'slack-permission-policy.json',
   ].map((f) => join(CODE_DIR, f)),
 ].filter(Boolean);

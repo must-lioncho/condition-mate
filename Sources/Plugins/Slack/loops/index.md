@@ -24,7 +24,7 @@
     "나는 물음의 모양을 보는 에이전트다.",
     "나는 응답의 분량을 깎는 에이전트다."
   ],
-  "sessionNote": "현재 데몬의 직접 API 호출은 usage 원장에서 세고, 이전 Claude CLI 번역·기본 응답 세션은 sessionSignatures로 소급해 이 루프에 붙인다. 2026-09-04 에 뒤 네 줄(answer-context·emoji-layer·problem-frame·alignment-engine)을 추가했다 — 이 층들은 위 layers 에 이미 이 루프의 층으로 선언돼 있는데 접두어가 없어 세션이 안 붙었고, 09-03 하루에만 17개 392,118토큰 $0.9490 이 미귀속으로 샜다. 근거는 issue/2026-09-04-slack-loop-9-vs-100-report.md 7절. 여기 없는 다섯째 후보 HERO_AI_PROMPT(#hero 칭찬 파싱, 77개 $1.0945, 전부 08-01자)는 이 루프의 일이 아니므로 일부러 뺐다. 이 화면은 여전히 세션 축만 보여 준다 — gemini 직접 호출은 원리상 안 들어오고, haiku 호출은 데몬 usage 원장과 같은 호출을 두 번 세므로 두 값을 더하면 안 된다.",
+  "sessionNote": "현재 데몬의 직접 API 호출은 usage 원장에서 세고, 이전 Claude CLI 번역·기본 응답 세션은 sessionSignatures로 소급해 이 루프에 붙인다. 2026-09-04 에 뒤 네 줄(answer-context·emoji-layer·problem-frame·alignment-engine)을 추가했다 — 이 층들은 위 layers 에 이미 이 루프의 층으로 선언돼 있는데 접두어가 없어 세션이 안 붙었고, 09-03 하루에만 17개 392,118토큰 $0.9490 이 미귀속으로 샜다. 근거는 issue/2026-09-04-slack-loop-9-vs-100-report.md 7절. 여기 없는 다섯째 후보 HERO_AI_PROMPT(#hero 칭찬 파싱, 77개 $1.0945, 전부 08-01자)는 이 루프의 일이 아니므로 일부러 뺐다. 2026-09-19: 세션 원장이 Gemini 및 transport=api 호출을 함께 표시한다. CLI 호출은 transcript에서만 세고, 과거 transport 미기록 Claude 호출은 중복 가능하여 별도 합산하지 않는다. 기간 필터는 세션별 활동일 기준이다.",
   "triggers": [
     {"kind":"cron", "name":"slack-eyes daemon", "label":"com.condition-mate.slack-eyes", "detail":"Sources/Plugins/Slack/Daemon/slack-eyes-daemon.mjs", "cadence":"항상 연결"},
     {"kind":"event", "name":"Slack Socket Mode", "detail":"message · reaction · mention · DM 이벤트 수신", "cadence":"이벤트가 올 때"}

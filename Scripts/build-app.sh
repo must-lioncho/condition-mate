@@ -131,6 +131,7 @@ cp "Sources/Plugins/Slack/Daemon/slack-emoji-layer.json" "$APP/Contents/Resource
 cp "Sources/Plugins/Slack/Daemon/send-layer.mjs" "$APP/Contents/Resources/send-layer.mjs"
 cp "Sources/Plugins/Slack/Daemon/novelty-gate.mjs" "$APP/Contents/Resources/novelty-gate.mjs"
 cp "Sources/Plugins/Slack/Daemon/ack-note.mjs" "$APP/Contents/Resources/ack-note.mjs"
+cp "Sources/Plugins/Slack/Daemon/reply-ai-usage.mjs" "$APP/Contents/Resources/reply-ai-usage.mjs"
 # reply-language.mjs — 수신자 언어 판정과 출력 언어 검사. 데몬이 **정적으로** import
 # 하므로 빠지면 데몬이 아예 안 뜬다 (위 send-layer 와 같은 부류).
 cp "Sources/Plugins/Slack/Daemon/reply-language.mjs" "$APP/Contents/Resources/reply-language.mjs"

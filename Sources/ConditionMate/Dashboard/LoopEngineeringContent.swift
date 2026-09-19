@@ -214,7 +214,7 @@ enum LoopEngineeringContent {
           .stotc .k{color:#7d899c;font-size:10.5px}.stotc .n{font-size:16px;font-weight:700;margin-top:2px}
           .stotc .s{color:#667389;font-size:10.5px}
           .stotc.loop{border-color:#23673b}.stotc.cand{border-color:#4a3d1a}
-          .grow{display:grid;grid-template-columns:minmax(180px,2fr) 70px 90px 80px minmax(120px,1fr);gap:10px;
+          .grow{display:grid;grid-template-columns:minmax(180px,2fr) 145px 90px 80px minmax(120px,1fr);gap:10px;
             align-items:center;padding:8px 14px;border-top:1px solid #171d28;font-size:12px}
           .grow:hover{background:#141a24}
           .grow .gl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -322,7 +322,7 @@ enum LoopEngineeringContent {
               .then(function(d){S=d;v2Render();
                 // 아직 읽는 중이면 스스로 다시 물어본다. 사람이 새로고침을 눌러야 진행률이
                 // 움직이면 "멈춘 것"과 구별되지 않는다.
-                if(d&&d.progress&&(d.progress.running||d.progress.pending>0)) setTimeout(sessLoad,4000);})
+                setTimeout(sessLoad,d&&d.progress&&(d.progress.running||d.progress.pending>0)?4000:30000);})
               .catch(function(){});
           }
           function money(v){v=v||0;if(v>=100)return '$'+Math.round(v);if(v>=10)return '$'+v.toFixed(1);if(v>0)return '$'+v.toFixed(2);return '-';}
@@ -341,12 +341,25 @@ enum LoopEngineeringContent {
             var t=sledDay(new Date()),s=t,e=t;if(key==='yesterday'){s=sledAdd(t,-1);e=s;}else if(key==='7d')s=sledAdd(t,-6);else if(key==='1m')s=sledAdd(t,-30);else if(key==='3m')s=sledAdd(t,-90);return {preset:key,start:s,end:e};
           }
           function sledInRange(day){return SLED_RANGE.preset==='all'||((!SLED_RANGE.start||day>=SLED_RANGE.start)&&(!SLED_RANGE.end||day<=SLED_RANGE.end));}
-          function sledGroup(g){
-            if(SLED_RANGE.preset==='all')return g;
-            var runs=(g.runs||[]).filter(function(r){return sledInRange(r.day||sledDay((r.start||0)*1000));});
-            var t=0,c=0,ds=[];Object.keys(g.days||{}).forEach(function(d){if(sledInRange(d)){t+=(g.days[d].t||0);c+=(g.days[d].c||0);ds.push(d);}});ds.sort();
-            return Object.assign({},g,{runs:runs,sessions:runs.length,tokens:t,cost:c,first:ds[0]||'',last:ds.slice(-1)[0]||''});
+          function sledRun(r){
+            if(SLED_RANGE.preset==='all')return r;
+            if(!r.days)return sledInRange(r.day||sledDay((r.start||0)*1000))?r:null;
+            var days=Object.keys(r.days).filter(sledInRange).sort();
+            if(!days.length)return Object.keys(r.days).length?null:(sledInRange(r.day||sledDay((r.start||0)*1000))?r:null);
+            var t=0,c=0;days.forEach(function(d){t+=r.days[d].t||0;c+=r.days[d].c||0;});
+            return Object.assign({},r,{tokens:t,cost:c,day:days[0]});
           }
+          function sledGroup(g){
+            var runs=(g.runs||[]).map(sledRun).filter(Boolean);
+            var t=0,c=0,ds=[],ambiguous=0;
+            Object.keys(g.days||{}).forEach(function(d){if(sledInRange(d)){t+=(g.days[d].t||0);c+=(g.days[d].c||0);ds.push(d);}});ds.sort();
+            Object.keys(g.ambiguousDays||{}).forEach(function(d){if(sledInRange(d))ambiguous+=g.ambiguousDays[d];});
+            return Object.assign({},g,{runs:runs,sessions:runs.filter(function(r){return r.source!=='api';}).length,
+              apiCalls:runs.filter(function(r){return r.source==='api';}).length,ambiguous:ambiguous,
+              unpriced:runs.filter(function(r){return r.source==='api'&&r.cost==null;}).length,
+              tokens:t,cost:c,first:ds[0]||'',last:ds.slice(-1)[0]||''});
+          }
+          function sledCount(g){return (g.sessions||0)+'세션'+(g.apiCalls?' · API '+g.apiCalls+'건':'');}
           function sledControlsHTML(){
             var b=function(k,lb){return '<button class="'+(SLED_RANGE.preset===k?'on':'')+'" onclick="sledPick(\''+k+'\')">'+lb+'</button>';};
             return '<div class="sledtools"><span class="ctl-label">기간</span>'+b('all','전체')+b('today','오늘')+b('yesterday','어제')+b('7d','7일')+b('1m','한달')+b('3m','3달')
@@ -364,22 +377,22 @@ enum LoopEngineeringContent {
           function sessPanelHTML(){
             if(!S) return '<div class="sled"><div class="shd"><b>세션 원장</b><span class="mini">세션 판정을 불러오는 중…</span></div></div>';
             var p=S.progress||{}, allGroups=S.groups||[];
-            var t=SLED_RANGE.preset==='all'?(S.totals||{}):{loop:{sessions:0,tokens:0,cost:0},candidate:{sessions:0,tokens:0,cost:0},human:{sessions:0,tokens:0,cost:0}};
-            if(SLED_RANGE.preset!=='all')allGroups.forEach(function(raw){var g=sledGroup(raw),x=t[g.kind]||t.human;x.sessions+=g.sessions||0;x.tokens+=g.tokens||0;x.cost+=g.cost||0;});
+            var t={loop:{sessions:0,apiCalls:0,tokens:0,cost:0},candidate:{sessions:0,apiCalls:0,tokens:0,cost:0},human:{sessions:0,apiCalls:0,tokens:0,cost:0}};
+            allGroups.forEach(function(raw){var g=sledGroup(raw),x=t[g.kind]||t.human;x.sessions+=g.sessions||0;x.apiCalls+=g.apiCalls||0;x.tokens+=g.tokens||0;x.cost+=g.cost||0;});
             var pct=p.total? Math.round(100*(p.total-(p.pending||0))/p.total) : 100;
             var scope=p.scope==='all'?'전체 세션':'최근 '+(p.lookbackHours||24)+'시간';
             var progTxt=p.running? (scope+' 분석 중 '+(p.total-(p.pending||0))+'/'+p.total+'개'+(p.current?(' · '+esc(String(p.current).slice(0,8))):''))
-                                 : ('분석 완료 '+(p.analyzed||0)+'/'+(p.total||0)+'개'+(p.lastPassAt?(' · '+fmtRel(p.lastPassAt)):''));
+                                 : ('Claude 파일 분석 '+(p.analyzed||0)+'/'+(p.total||0)+'개'+(p.lastPassAt?(' · '+fmtRel(p.lastPassAt)):''));
             var card=function(k,cls,lb,note){var x=t[k]||{};return '<div class="stotc '+cls+'"><div class="k">'+lb+'</div>'
               +'<div class="n">'+tokenFmt(x.tokens||0)+' <span style="font-size:11px;color:#7d899c">'+money(x.cost)+'</span></div>'
-              +'<div class="s">세션 '+(x.sessions||0)+'개 · '+note+'</div></div>';};
-            var groups=allGroups.map(sledGroup).filter(function(g){return g.kind!=='human'&&(SLED_RANGE.preset==='all'||g.sessions||g.tokens||g.cost);});
+              +'<div class="s">'+sledCount(x)+' · '+note+'</div></div>';};
+            var groups=allGroups.map(sledGroup).filter(function(g){return g.kind!=='human'&&(SLED_RANGE.preset==='all'||g.sessions||g.apiCalls||g.ambiguous||g.tokens||g.cost);});
             groups.sort(function(a,b){var av,bv;if(SLED_SORT==='name'){av=(a.label||'').toLocaleLowerCase();bv=(b.label||'').toLocaleLowerCase();var z=av.localeCompare(bv,'ko');return SLED_DESC?-z:z;}av=a[SLED_SORT]||0;bv=b[SLED_SORT]||0;return SLED_DESC?(bv-av):(av-bv);});
             var rows=groups.map(function(g){
               var kindLb=g.kind==='loop'?'등록':'미등록', op=!!OPENG[g.key];
               return '<div class="grow" onclick="lpToggleGroup(\''+esc(g.key).replace(/'/g,"&#39;")+'\')">'
                 +'<div class="gl" title="'+esc(g.label)+'"><span class="car">'+(op?'▾':'▸')+'</span> <span class="gk '+(g.kind==='loop'?'':'cand')+'">'+kindLb+'</span>'+esc(g.label)+'</div>'
-                +'<div class="num">'+g.sessions+'개</div>'
+                +'<div class="num">'+sledCount(g)+'</div>'
                 +'<div class="num">'+tokenFmt(g.tokens)+'</div>'
                 +'<div class="num c">'+money(g.cost)+'</div>'
                 +'<div class="pj" title="'+esc((g.projects||[]).join(', '))+'">'+esc((g.projects||[]).join(', '))+' · '+esc(g.first||'')+'~'+esc(g.last||'')+'</div></div>'
@@ -387,12 +400,15 @@ enum LoopEngineeringContent {
             }).join('');
             return '<div class="sled" id="lpSled">'
               +'<div class="shd"><b>세션 원장</b><span class="badge">'+groups.length+'개 루프</span>'
-              +'<span class="mini">기본 검색은 최근 24시간 · 분석된 세션은 다시 읽지 않음 · 과거 누락분은 전체 새로고침</span>'
+              +'<span class="mini">전체 Claude 파일 지문 확인 · 변경 파일만 분석 · Slack 직접 API 포함 · 활동일 기준</span>'
               +'<span class="prog">'+progTxt+'</span></div>'
               +'<div class="pbar"><i style="width:'+pct+'%"></i></div>'
               +'<div class="stot">'+card('loop','loop','등록된 루프','loops/index.md 에 선언됨')
                                    +card('candidate','cand','미등록 루프 후보','기계가 반복해서 연 세션')
                                    +card('human','','사람이 연 세션','매번 다른 프롬프트')+'</div>'
+              +'<div class="mini" style="padding:8px 14px">'+(S.apiLogUnreadable?'Slack API 원장을 읽지 못했습니다. ':'')
+              +'과거 경로 미기록 Claude 호출 '+allGroups.map(sledGroup).reduce(function(n,g){return n+(g.ambiguous||0);},0)+'건은 세션과 중복 가능하여 별도 합산하지 않습니다. '
+              +'API 비용 미기록 '+allGroups.map(sledGroup).reduce(function(n,g){return n+(g.unpriced||0);},0)+'건은 비용 합계에서 제외합니다.</div>'
               +sledControlsHTML()
               +(rows||'<div class="grow"><div class="gl mini">아직 루프로 판정된 세션이 없습니다</div></div>')
               +'</div>';
@@ -411,24 +427,24 @@ enum LoopEngineeringContent {
 
           // 회차 목록 — 크론 목록과 같은 읽는 법: 날짜가 머리, 그 아래 시각별로 한 줄.
           function sessListHTML(g){
-            var list=(g.runs||[]).filter(function(r){return sledInRange(r.day||sledDay((r.start||0)*1000));});
+            var list=(g.runs||[]).map(sledRun).filter(Boolean).sort(function(a,b){return (b.day||'').localeCompare(a.day||'')||(b.start||0)-(a.start||0);});
             if(!list.length) return '<div class="slist"><div class="sdate">회차 기록이 없습니다</div></div>';
             var out='<div class="slist">', last='';
             list.forEach(function(r){
-              var d=r.start? dstr(r.start) : (r.day||'');
+              var d=r.day||(r.start?dstr(r.start):'');
               if(d!==last){ out+='<div class="sdate">'+esc(d)+'</div>'; last=d; }
               var op=!!SDET[r.sid];
               // 토큰을 하나도 안 쓰고 끝난 회차 — 크론은 돌았는데 아무 일도 안 일어난 자리다.
               // 목록에서 이것이 다른 회차와 같아 보이면 실패가 정상 옆에 숨는다.
-              var dead=!(r.tokens>0)||(r.turns||0)<=1;
-              out+='<div class="srow'+(op?' on':'')+'" onclick="lpToggleSess(\''+esc(r.sid)+'\')"'
+              var dead=r.source!=='api'&&(!(r.tokens>0)||(r.turns||0)<=1);
+              out+='<div class="srow'+(op?' on':'')+'"'+(r.source==='api'?'':' onclick="lpToggleSess(\''+esc(r.sid)+'\')"')
                 +(dead?' style="opacity:.55"':'')+'>'
                 +'<span class="tm">'+(r.start? tstr(r.start) : '-')+'</span>'
                 +'<span class="du">'+durstr(r.start,r.end)+'</span>'
                 +'<span class="wt"'+(dead?' style="color:#d29922"':'')+'>'
-                +esc(dead? '빈 회차 — 토큰을 쓰지 않고 끝남' : ('턴 '+r.turns+' · 도구 '+r.tools))+'</span>'
+                +esc(r.source==='api'?'API · '+r.title:(dead? '빈 회차 — 토큰을 쓰지 않고 끝남' : ('턴 '+r.turns+' · 도구 '+r.tools+' · 기간 내 사용량')))+'</span>'
                 +'<span class="num">'+tokenFmt(r.tokens)+'</span>'
-                +'<span class="num">'+money(parseFloat(r.cost))+'</span></div>'
+                +'<span class="num">'+(r.cost==null?'미집계':money(parseFloat(r.cost)))+'</span></div>'
                 +(op? sessDetailHTML(r.sid) : '');
             });
             return out+'</div>';
@@ -479,7 +495,7 @@ enum LoopEngineeringContent {
           // 루프는 여기에만 남는다. (2) 세션 원장 — 이 루프를 돌리려고 열린 Claude 세션의
           // 트랜스크립트. 둘을 더해 한 숫자로 보여 주되, 어느 쪽에서 왔는지는 항상 같이 적는다.
           // 합계만 적으면 "세션이 안 잡힌 것"과 "정말 안 돈 것"이 구별되지 않는다.
-          function usageHTML(x){var ev=x.usageEvents||[], g=loopGroup(x.id);
+          function usageHTML(x){var ev=x.usageEvents||[], g=loopGroup(x.id), merged=!!g&&x.id==='condition-mate-slack-shared-reply';
             // 31일 창 밖의 기록만 있는 루프도 있다 — ev 가 비었다고 기록이 없는 것은 아니다.
             if(!ev.length&&!g&&!((x.usageTotals||{}).total)){
               var why=x.sessionNote? esc(x.sessionNote)
@@ -489,9 +505,9 @@ enum LoopEngineeringContent {
             // 대표하는 것처럼 읽히는데, 기록이 그날 20분치뿐일 수 있다. 누적과 기록 시작을
             // 같이 보여야 그 착시가 안 생긴다.
             var ut=x.usageTotals||{};
-            var cumTok=(ut.total||0)+((g&&g.tokens)||0), cumCost=(ut.costUSD||0)+((g&&g.cost)||0);
+            var cumTok=(merged?0:(ut.total||0))+((g&&g.tokens)||0), cumCost=(merged?0:(ut.costUSD||0))+((g&&g.cost)||0);
             var cumCard=cumTok? ('<div class="ucard" style="border-color:#2f4a6d">'
-              +'<div class="days">누적'+(ut.calls?(' · '+ut.calls+'회 원장'):'')+((ut.calls&&g&&g.tokens)?' · 세션':'')+'</div>'
+              +'<div class="days">누적'+(merged?' · '+sledCount(g):(ut.calls?(' · '+ut.calls+'회 원장'):'')+((ut.calls&&g&&g.tokens)?' · 세션':''))+'</div>'
               +'<div class="tok">'+tokenFmt(cumTok)+'</div>'
               +'<div class="io">'+(cumCost?money(cumCost):'단가 미상')
               +(ut.firstAt?(' · '+tdisp(ut.firstAt,10)+' ~'):'')+'</div></div>') : '';
@@ -512,15 +528,16 @@ enum LoopEngineeringContent {
                 +'원장 '+ut.calls+'회 중 '+(ut.calls-ut.pricedCalls)+'회는 단가를 모르는 모델이라 비용이 0으로 잡혔습니다.</div>';
             }
             var cards=[1,3,7,30].map(function(d){var a=usageAgg(ev,d), sg=sessAgg(g,d);
+              if(merged)a={total:0,cost:0,calls:0};
               var tot=a.total+sg.t, cost=a.cost+sg.c;
-              var src=(a.calls?(a.calls+'회 원장'):'')+((a.calls&&sg.t)?' · ':'')+(sg.t?'세션':'');
+              var src=(a.calls?(a.calls+'회 원장'):'')+((a.calls&&sg.t)?' · ':'')+(sg.t?(merged?'세션·API':'세션'):'');
               return '<div class="ucard"><div class="days">최근 '+d+'일'+(src?(' · '+src):'')+'</div><div class="tok">'+tokenFmt(tot)+'</div><div class="io">'
-                +(a.total?('원장 '+tokenFmt(a.total)):'')+((a.total&&sg.t)?' · ':'')+(sg.t?('세션 '+tokenFmt(sg.t)):'')
+                +(a.total?('원장 '+tokenFmt(a.total)):'')+((a.total&&sg.t)?' · ':'')+(sg.t?((merged?'세션·API ':'세션 ')+tokenFmt(sg.t)):'')
                 +(cost?(' · '+money(cost)):'')+'</div></div>';}).join('');
             var sess='';
             if(g){
-              sess='<section class="v2sec"><h3>이 루프를 돌린 세션</h3>'
-                +'<div class="mini" style="margin-bottom:6px">세션 '+g.sessions+'개 · 합계 '+tokenFmt(g.tokens)+' · '+money(g.cost)+' · '+esc(g.first||'')+' ~ '+esc(g.last||'')+' · 회차를 누르면 그 회차가 무엇을 했는지 펼쳐집니다</div>'
+              sess='<section class="v2sec"><h3>이 루프의 활동 기록</h3>'
+                +'<div class="mini" style="margin-bottom:6px">'+sledCount(g)+' · 합계 '+tokenFmt(g.tokens)+' · '+money(g.cost)+' · '+esc(g.first||'')+' ~ '+esc(g.last||'')+' · 회차를 누르면 그 회차가 무엇을 했는지 펼쳐집니다</div>'
                 +'<div id="lpLoopSess" data-loop="'+esc(x.id)+'">'+sessListHTML(g)+'</div></section>';
             }
             return '<section class="v2sec"><h3>토큰 사용량</h3>'+gap+'<div class="usagecards">'+cumCard+cards+'</div>'

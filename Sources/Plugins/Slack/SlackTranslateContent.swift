@@ -709,7 +709,7 @@ public enum SlackTranslateContent {
         // 존재 이유이므로, 탭을 옮긴 카드만 이 맵에 담긴다 (expanded 와 같은 규칙 —
         // 폴링 재렌더에는 유지되고 페이지를 다시 열면 전부 의사결정으로 돌아간다).
         const tabOf = new Map();
-        const TABS = [['decision','의사결정'], ['context','컨텍스트'], ['send','발신']];
+        const TABS = [['decision','의사결정'], ['context','컨텍스트'], ['send','발신'], ['ai','AI 실행']];
         function tabFor(id){ return tabOf.get(id) || 'decision'; }
         function setTab(ev, id, tab){
           ev.stopPropagation();
@@ -869,7 +869,40 @@ public enum SlackTranslateContent {
           if(btn){ ev.preventDefault(); pickDecision(btn); }
         });
 
+        function aiUsageHTML(it){
+          if(!ackState(it).sent)return '<div class="tnone">게시된 AI 답변이 없습니다.</div>';
+          const calls=it.ackAI?.calls;
+          if(!Array.isArray(calls)||!calls.length)return '<div class="tnone">이 답변의 AI 실행 정보는 기록되지 않았습니다. 업데이트 이후 생성·게시되는 답변부터 표시됩니다.</div>';
+          const number=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0?n.toLocaleString():'미제공';
+          const field=(label,value)=>'<div style="margin:5px 0"><b>'+label+'</b> '+value+'</div>';
+          const total=calls.reduce((sum,c)=>sum+(typeof c.tokens?.total==='number'?c.tokens.total:0),0);
+          const missing=calls.filter(c=>typeof c.tokens?.total!=='number').length;
+          return '<div class="meaning"><div class="mn-head">AI 실행 정보 · 앱 내부</div>'
+            +'<div>답변 생성·언어 재시도 범위 · 번역·근거 수집 제외</div>'
+            +field('전체 토큰',number(total)+(missing?' + 미제공 '+missing+'건':''))
+            +calls.map((c,i)=>{
+              const t=c.tokens||{},ctx=c.context||{},effort=c.effort||{};
+              const effortText=effort.state==='not-set'?'앱 지정 없음 · API 기본값':effort.state==='environment'?esc(effort.value)+' · CLI 환경 설정':'미확인 · CLI 내부 설정';
+              const limit=typeof ctx.inputLimit==='number'?ctx.inputLimit:ctx.window;
+              const limitLabel=ctx.inputLimit!=null?'입력 한도 ':'전체 한도 ';
+              const used=ctx.usedInput==null?'단일 요청 사용량 미제공':number(ctx.usedInput)+' tokens'+(limit>0?' / '+number(limit)+' ('+(ctx.usedInput/limit*100).toFixed(2)+'%)':'');
+              return '<div style="border-top:1px solid #303642;margin-top:12px;padding-top:8px">'
+                +field('모델 '+(i+1),esc(c.model||'미기록')+(c.modelResolved?'':' · 요청 ID, 실제 버전 미제공'))
+                +(c.requestedModel&&c.requestedModel!==c.model?field('요청 모델',esc(c.requestedModel)):'')
+                +field('실행 경로',esc(c.transport||'미기록'))+field('Effort',effortText)
+                +field('컨텍스트 윈도우',limit==null?'미제공':limitLabel+number(limit)+' tokens')
+                +field('입력 사용량',used)
+                +(ctx.outputLimit!=null?field('출력 한도',number(ctx.outputLimit)+' tokens'):'')
+                +field(c.transport==='cli'?'입력 토큰 (호출 누적)':'입력 토큰',number(t.input))
+                +field('출력 토큰',number(t.output))+field('추론 토큰',number(t.reasoning))
+                +field('캐시 읽기 토큰',number(t.cached))
+                +(t.cacheCreated!=null?field('캐시 생성 토큰',number(t.cacheCreated)):'')
+                +field('전체 토큰',number(t.total))+'</div>';
+            }).join('')+'<div style="margin-top:10px;opacity:.7">캐시 토큰은 입력에 포함됩니다. 이 정보는 Slack 답변·MD 첨부에 실리지 않습니다.</div></div>';
+        }
+
         function tabBodyHTML(it, tab){
+          if(tab === 'ai') return aiUsageHTML(it);
           if (tab === 'context') {
             // 컨텍스트 에이전트 — 무엇으로 읽었는가, 그리고 그것이 실제로 전달됐는가.
             return (it.meaning
@@ -898,8 +931,8 @@ public enum SlackTranslateContent {
           const a = ackState(it);
           // 탭 이름 옆의 점은 그 탭에 볼 것이 있는지다. 발신 탭은 안 나간 건도 볼
           // 것이 있으므로(사유) 언제나 켜진다.
-          const has = { decision: !!it.decision, context: !!it.meaning, send: true };
-          const dot = { decision:'#f0c045', context:'#4ac1b8', send: a.sent ? '#3fb27f' : '#f0a045' };
+          const has = { decision: !!it.decision, context: !!it.meaning, send: true, ai: a.sent };
+          const dot = { decision:'#f0c045', context:'#4ac1b8', send: a.sent ? '#3fb27f' : '#f0a045', ai: it.ackAI?.calls?.length ? '#3fb27f' : '#f0a045' };
           const btns = TABS.map(function(t){
             const k = t[0];
             return '<button class="'+(cur===k?'on':'')+'" onclick="setTab(event,\''+esc(it.id)+'\',\''+k+'\')">'
